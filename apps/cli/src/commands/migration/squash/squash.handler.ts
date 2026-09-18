@@ -1,98 +1,94 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
+import { resolveEphemeralPostgresRelease } from "@supabase/stack/effect";
 
 import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
-  LegacyDebugFlag,
-  LegacyDnsResolverFlag,
-  LegacyNetworkIdFlag,
-  legacyResolveYesWithProjectEnv,
-} from "../../../shared/legacy/global-flags.ts";
+  DebugFlag,
+  DnsResolverFlag,
+  NetworkIdFlag,
+  resolveYesWithProjectEnv,
+} from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { legacyAqua, legacyBold } from "../../../command-internal/legacy-colors.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { aqua, bold } from "../../../command-internal/colors.ts";
 import {
-  legacyBuildLocalDbContainerInputs,
-  type LegacyLocalDbContainerInputs,
+  buildLocalDbContainerInputs,
+  type LocalDbContainerInputs,
 } from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
 import {
-  legacyResolveDbSetupPrelude,
-  legacySetupDatabase,
+  resolveDbSetupPrelude,
+  setupDatabase,
 } from "../../../command-internal/db-bootstrap/db-setup.ts";
-import { legacyWaitForHealthyServices } from "../../../command-internal/db-bootstrap/health-check.ts";
+import { waitForHealthyServices } from "../../../command-internal/db-bootstrap/health-check.ts";
 import {
-  legacyBuildShadowSetupDatabaseInput,
-  legacyConnectShadowDatabase,
-  legacyCreateShadowDatabase,
-  legacyRemoveShadowDatabase,
-  legacyShadowRunInputFromLocalContainerInputs,
+  buildShadowSetupDatabaseInput,
+  connectShadowDatabase,
+  createShadowDatabase,
+  removeShadowDatabase,
+  shadowRunInputFromLocalContainerInputs,
 } from "../../../command-internal/db-bootstrap/shadow-database.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import {
-  legacyApplyProjectEnv,
-  legacyLoadProjectEnv,
-  legacyReadDbToml,
-  type LegacyDbTomlValues,
-} from "../../../command-internal/legacy-db-config.toml-read.ts";
-import type { LegacyResolvedDbConfig } from "../../../command-internal/legacy-db-config.types.ts";
+  loadProjectEnv,
+  readDbToml,
+  type DbTomlValues,
+} from "../../../command-internal/db-config.toml-read.ts";
+import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
+import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import { stackWithShadowDatabase } from "../../../command-internal/stack-shadow.ts";
 import {
-  LegacyDbConnection,
-  type LegacyPgConnInput,
-} from "../../../command-internal/legacy-db-connection.service.ts";
-import { resolveLegacyDbTargetFlags } from "../../../command-internal/legacy-db-target-flags.ts";
-import { LegacyDebugLogger } from "../../../command-internal/legacy-debug-logger.service.ts";
-import {
-  legacyErrorMessage,
-  legacyRelativizeErrorMessage,
-} from "../../../command-internal/legacy-error-message.ts";
-import {
-  legacyApplyMigrations,
-  LegacyMigrationApplyError,
-} from "../../../command-internal/legacy-migration-apply.ts";
+  dumpConnForHostClient,
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "../../../command-internal/postgres-client.run.ts";
+import { bundledPostgresClientRuntime } from "../../../command-internal/bundled-postgres-client.ts";
+import { applyMigrations, MigrationApplyError } from "../../../command-internal/migration-apply.ts";
 import {
   INSERT_MIGRATION_VERSION,
-  LEGACY_DELETE_MIGRATION_BEFORE,
-  legacyCreateMigrationTable,
-  legacyLoadLocalVersions,
-  legacyLoadPartialMigrations,
-  legacyReadMigrationFile,
-  legacyResolveMigrationFile,
-} from "../../../command-internal/legacy-migration-history.ts";
-import { legacyParseMigrationVersion } from "../../../command-internal/legacy-migration-timestamp.format.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+  DELETE_MIGRATION_BEFORE,
+  createMigrationTable,
+  loadLocalVersions,
+  loadPartialMigrations,
+  readMigrationFile,
+  resolveMigrationFile,
+} from "../../../command-internal/migration-history.ts";
+import { parseMigrationVersion } from "../../../command-internal/migration-timestamp.format.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
-  LegacyMigrationFileNotFoundError,
-  LegacyMigrationInvalidVersionError,
-  LegacyMigrationPasswordFlagsError,
-  LegacyMigrationTargetFlagsError,
+  MigrationFileNotFoundError,
+  MigrationInvalidVersionError,
+  MigrationPasswordFlagsError,
+  MigrationTargetFlagsError,
 } from "../migration.errors.ts";
-import { legacyMigrationConfirm } from "../migration.prompt.ts";
-import type { LegacyMigrationSquashFlags } from "./squash.command.ts";
-import { LEGACY_SQUASH_SEPARATOR_COMMENT, legacySquashLineByLineDiff } from "./squash.diff.ts";
-import { legacySquashDumpSchema, legacySquashDumpSchemaToString } from "./squash.dump.ts";
+import { migrationConfirm } from "../migration.prompt.ts";
+import type { MigrationSquashFlags } from "./squash.command.ts";
+import { SQUASH_SEPARATOR_COMMENT, squashLineByLineDiff } from "./squash.diff.ts";
+import { squashDumpSchema, squashDumpSchemaToString } from "./squash.dump.ts";
 import {
-  LegacyMigrationSquashBaselineError,
-  LegacyMigrationSquashMissingVersionError,
-  LegacyMigrationSquashWriteError,
+  MigrationSquashBaselineError,
+  MigrationSquashDumpError,
+  MigrationSquashMissingVersionError,
+  MigrationSquashWriteError,
 } from "./squash.errors.ts";
 
 type Spawner = ChildProcessSpawnerType["Service"];
 
 /**
- * `squashMigrations`:
- * shadow create -> health-wait -> connect -> `start.SetupDatabase` DIRECTLY
- * (NOT `setupShadowConn`, so NO `CREATE DATABASE contrib_regression` template) -> dump the
- * auth/storage schema before migrating -> apply every migration -> dump auth/storage again ->
- * write the target file as the FULL (unrestricted) dump + the separator + the auth/storage
- * line diff. `acquire` is only shadow creation (brief, Docker-API-bound); the health-wait/
- * connect/setup/dump/apply sequence runs in the interruptible `use` phase, matching the CLI-1956
- * review ruling `shadow-database.ts`/`diff.handler.ts` already established (a SIGINT during the
- * health-wait must land immediately, from a single cancellable scope).
+ * Creates the shadow database, then runs health-wait/connect/setup/dump/apply/dump in
+ * the interruptible `use` phase. `acquire` is only the brief, Docker-API-bound shadow
+ * creation, so a SIGINT during the health-wait lands immediately from a single
+ * cancellable scope.
  */
 const squashMigrations = Effect.fnUntraced(function* (
   spawner: Spawner,
@@ -100,18 +96,21 @@ const squashMigrations = Effect.fnUntraced(function* (
   path: Path.Path,
   workdir: string,
   migrations: ReadonlyArray<string>,
-  localInputs: LegacyLocalDbContainerInputs,
-  toml: LegacyDbTomlValues,
+  localInputs: LocalDbContainerInputs,
+  toml: DbTomlValues,
 ) {
-  const resolvedShadowImage = yield* localInputs.resolvePostgresImage;
-  const shadowInput = legacyShadowRunInputFromLocalContainerInputs(
+  const stackBackend = (yield* currentStackBackend).kind === "stack";
+  const resolvedShadowImage = stackBackend
+    ? "stack-ephemeral"
+    : yield* localInputs.resolvePostgresImage;
+  const shadowInput = shadowRunInputFromLocalContainerInputs(
     localInputs,
     resolvedShadowImage,
     toml,
     fs,
     path,
   );
-  const connConfig: LegacyPgConnInput = {
+  const connConfig: PgConnInput = {
     host: localInputs.context.hostname,
     port: toml.shadowPort,
     user: "postgres",
@@ -119,22 +118,140 @@ const squashMigrations = Effect.fnUntraced(function* (
     database: "postgres",
   };
   // The pin-resolved (not yet registry-mapped) image every
-  // `pg_dump` container below uses; `legacySquashDumpSchema` applies the registry mirror itself.
+  // `pg_dump` container below uses; `squashDumpSchema` applies the registry mirror itself.
   const image = localInputs.bootstrapConfig.postgresImage;
 
+  if (stackBackend) {
+    const runtimeInfo = yield* RuntimeInfo;
+    return yield* stackWithShadowDatabase(shadowInput, (handle) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const stackConn: PgConnInput = {
+            host: handle.host,
+            port: handle.port,
+            user: "postgres",
+            password: toml.password,
+            database: "postgres",
+          };
+          const networkIdFlag = yield* NetworkIdFlag;
+          const networkId = Option.getOrUndefined(networkIdFlag);
+          const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);
+          const dumpRuntime =
+            bundledPostgresClientRuntime(handle.runtime, runtimeInfo.platform, runtimeInfo.arch) ??
+            handle.runtime;
+          const release = yield* resolveEphemeralPostgresRelease(handle.ephemeral.version).pipe(
+            Effect.orElseSucceed(() => undefined),
+          );
+          const image = release?.image ?? localInputs.bootstrapConfig.postgresImage;
+          const dumpClient = {
+            kind: "bundled" as const,
+            command: "pg_dump" as const,
+            version: handle.ephemeral.version,
+            runtime: dumpRuntime,
+          };
+          const dumpConn: PgConnInput =
+            dumpRuntime.kind === "native"
+              ? dumpConnForHostClient(stackConn)
+              : {
+                  ...stackConn,
+                  host: rewriteDumpHostForToolContainer(handle.host, {
+                    platform: runtimeInfo.platform,
+                    usesHostNetwork: dumpUsesHostNetwork,
+                  }),
+                };
+          const session = yield* connectShadowDatabase(stackConn);
+          const before = yield* squashDumpSchemaToString({
+            image,
+            conn: dumpConn,
+            schema: ["auth", "storage"],
+            projectEnvValues: localInputs.context.projectEnvValues,
+            client: dumpClient,
+          });
+          yield* applyMigrations(
+            session,
+            fs,
+            path,
+            migrations,
+            (message) => new MigrationApplyError({ message }),
+          );
+          const after = yield* squashDumpSchemaToString({
+            image,
+            conn: dumpConn,
+            schema: ["auth", "storage"],
+            projectEnvValues: localInputs.context.projectEnvValues,
+            client: dumpClient,
+          });
+          const targetPath = migrations[migrations.length - 1]!;
+          const targetRel = path.relative(workdir, targetPath);
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const file = yield* fs.open(targetPath, { flag: "w", mode: 0o644 }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new MigrationSquashWriteError({
+                      message: `failed to open migration file: ${relativizeErrorMessage(errorMessage(cause), targetPath, targetRel)}`,
+                    }),
+                ),
+              );
+              yield* squashDumpSchema({
+                image,
+                conn: dumpConn,
+                schema: [],
+                projectEnvValues: localInputs.context.projectEnvValues,
+                client: dumpClient,
+                onStdout: (chunk) =>
+                  file.writeAll(chunk).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new MigrationSquashWriteError({
+                          message: `failed to copy docker logs: ${errorMessage(cause)}`,
+                        }),
+                    ),
+                  ),
+              });
+              const tail = SQUASH_SEPARATOR_COMMENT + squashLineByLineDiff(before, after);
+              yield* file.writeAll(new TextEncoder().encode(tail)).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new MigrationSquashWriteError({
+                      message: `failed to write line: ${relativizeErrorMessage(errorMessage(cause), targetPath, targetRel)}`,
+                    }),
+                ),
+              );
+            }),
+          );
+        }),
+      ).pipe(
+        Effect.catchIf(
+          (error): error is DockerRunError =>
+            Predicate.isTagged(error, "DockerRunError") &&
+            handle.runtime.kind === "native" &&
+            runtimeInfo.platform === "win32",
+          (error) =>
+            Effect.fail(
+              new MigrationSquashDumpError({
+                message: error.message,
+                suggestion: "Install Docker Desktop to squash a native stack on Windows.",
+              }),
+            ),
+        ),
+      ),
+    );
+  }
+
   yield* Effect.acquireUseRelease(
-    legacyCreateShadowDatabase(spawner, shadowInput),
+    createShadowDatabase(spawner, shadowInput),
     (handle) =>
       Effect.scoped(
         Effect.gen(function* () {
-          yield* legacyWaitForHealthyServices(spawner, [handle.containerId], {
+          yield* waitForHealthyServices(spawner, [handle.containerId], {
             timeoutSeconds: shadowInput.healthTimeoutSeconds,
           });
-          const session = yield* legacyConnectShadowDatabase(connConfig);
-          const resolved = yield* legacyResolveDbSetupPrelude(shadowInput.setup);
-          yield* legacySetupDatabase(
+          const session = yield* connectShadowDatabase(connConfig);
+          const resolved = yield* resolveDbSetupPrelude(shadowInput.setup);
+          yield* setupDatabase(
             spawner,
-            legacyBuildShadowSetupDatabaseInput(
+            buildShadowSetupDatabaseInput(
               {
                 fs: shadowInput.fs,
                 path: shadowInput.path,
@@ -150,20 +267,20 @@ const squashMigrations = Effect.fnUntraced(function* (
             ),
           );
 
-          const before = yield* legacySquashDumpSchemaToString({
+          const before = yield* squashDumpSchemaToString({
             image,
             conn: connConfig,
             schema: ["auth", "storage"],
             projectEnvValues: localInputs.context.projectEnvValues,
           });
-          yield* legacyApplyMigrations(
+          yield* applyMigrations(
             session,
             fs,
             path,
             migrations,
-            (message) => new LegacyMigrationApplyError({ message }),
+            (message) => new MigrationApplyError({ message }),
           );
-          const after = yield* legacySquashDumpSchemaToString({
+          const after = yield* squashDumpSchemaToString({
             image,
             conn: connConfig,
             schema: ["auth", "storage"],
@@ -174,23 +291,20 @@ const squashMigrations = Effect.fnUntraced(function* (
           const targetRel = path.relative(workdir, targetPath);
           yield* Effect.scoped(
             Effect.gen(function* () {
-              // One open call that both truncates (or creates) the target file AND opens it for the
-              // writes below, matching `new.handler.ts:87`'s identical `{ flag: "w" }` precedent.
-              // There is no separate truncate-then-reopen step.
+              // One open call truncates (or creates) the target file and opens it for the
+              // writes below; there is no separate truncate-then-reopen step.
               const file = yield* fs.open(targetPath, { flag: "w", mode: 0o644 }).pipe(
                 Effect.mapError(
                   (cause) =>
-                    new LegacyMigrationSquashWriteError({
-                      message: `failed to open migration file: ${legacyRelativizeErrorMessage(legacyErrorMessage(cause), targetPath, targetRel)}`,
+                    new MigrationSquashWriteError({
+                      message: `failed to open migration file: ${relativizeErrorMessage(errorMessage(cause), targetPath, targetRel)}`,
                     }),
                 ),
               );
-              // The full dump — NO schema restriction — streamed straight into the
-              // already-truncated file at constant memory. The underlying failure here is
-              // the docker-log-stream write into the file handle,
-              // not the line-diff writer below, so it byte-matches "failed to copy
-              // docker logs:" rather than "failed to write line:".
-              yield* legacySquashDumpSchema({
+              // The full, unrestricted dump streams into the already-truncated file at
+              // constant memory; a failure here is the docker-log-stream write, so it
+              // reports "failed to copy docker logs:" rather than "failed to write line:".
+              yield* squashDumpSchema({
                 image,
                 conn: connConfig,
                 schema: [],
@@ -199,22 +313,20 @@ const squashMigrations = Effect.fnUntraced(function* (
                   file.writeAll(chunk).pipe(
                     Effect.mapError(
                       (cause) =>
-                        new LegacyMigrationSquashWriteError({
-                          message: `failed to copy docker logs: ${legacyErrorMessage(cause)}`,
+                        new MigrationSquashWriteError({
+                          message: `failed to copy docker logs: ${errorMessage(cause)}`,
                         }),
                     ),
                   ),
               });
-              // The separator and the auth/storage line diff write sequentially to the
-              // SAME handle, with nothing observable
-              // between the two writes — combined into one `writeAll` here.
-              const tail =
-                LEGACY_SQUASH_SEPARATOR_COMMENT + legacySquashLineByLineDiff(before, after);
+              // Combined into a single writeAll so the separator and diff write atomically
+              // to the same handle.
+              const tail = SQUASH_SEPARATOR_COMMENT + squashLineByLineDiff(before, after);
               yield* file.writeAll(new TextEncoder().encode(tail)).pipe(
                 Effect.mapError(
                   (cause) =>
-                    new LegacyMigrationSquashWriteError({
-                      message: `failed to write line: ${legacyRelativizeErrorMessage(legacyErrorMessage(cause), targetPath, targetRel)}`,
+                    new MigrationSquashWriteError({
+                      message: `failed to write line: ${relativizeErrorMessage(errorMessage(cause), targetPath, targetRel)}`,
                     }),
                 ),
               );
@@ -222,12 +334,12 @@ const squashMigrations = Effect.fnUntraced(function* (
           );
         }),
       ),
-    (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
+    (handle) => removeShadowDatabase(spawner, handle.containerId),
   );
 });
 
 /** Outcome of {@link squashToVersion} — feeds the machine-mode payload. */
-interface LegacySquashToVersionResult {
+interface SquashToVersionResult {
   readonly alreadyEarliest: boolean;
   /** Workdir-relative path of the migration everything squashed into. */
   readonly target: string;
@@ -238,9 +350,9 @@ interface LegacySquashToVersionResult {
 }
 
 /**
- * `squashToVersion`: loads the local migrations up to `version` (all when empty), squashes
- * every one but the last into the shadow-produced dump, then removes the merged files — a
- * removal failure is NON-FATAL (only printed to stderr, then continues).
+ * Loads the local migrations up to `version` (all when empty), squashes every one but
+ * the last into the shadow-produced dump, then removes the merged files. A removal
+ * failure is non-fatal: only printed to stderr, then continues.
  */
 const squashToVersion = Effect.fnUntraced(function* (
   spawner: Spawner,
@@ -249,31 +361,29 @@ const squashToVersion = Effect.fnUntraced(function* (
   workdir: string,
   migrationsDir: string,
   version: string,
-  localInputs: LegacyLocalDbContainerInputs,
-  toml: LegacyDbTomlValues,
+  localInputs: LocalDbContainerInputs,
+  toml: DbTomlValues,
 ) {
   const output = yield* Output;
-  const migrations = yield* legacyLoadPartialMigrations(fs, path, migrationsDir, version);
+  const migrations = yield* loadPartialMigrations(fs, path, migrationsDir, version);
   if (migrations.length === 0) {
-    return yield* Effect.fail(
-      new LegacyMigrationSquashMissingVersionError({ message: "version not found" }),
-    );
+    return yield* new MigrationSquashMissingVersionError({ message: "version not found" });
   }
 
   const local = migrations[migrations.length - 1]!;
   const rel = path.relative(workdir, local);
   if (migrations.length === 1) {
-    yield* output.raw(`${legacyBold(rel)} is already the earliest migration.\n`, "stderr");
+    yield* output.raw(`${bold(rel)} is already the earliest migration.\n`, "stderr");
     return {
       alreadyEarliest: true,
       target: rel,
       removed: [],
       removeFailures: [],
-    } satisfies LegacySquashToVersionResult;
+    } satisfies SquashToVersionResult;
   }
 
   yield* squashMigrations(spawner, fs, path, workdir, migrations, localInputs, toml);
-  yield* output.raw(`Squashed local migrations to ${legacyBold(rel)}\n`, "stderr");
+  yield* output.raw(`Squashed local migrations to ${bold(rel)}\n`, "stderr");
 
   const removed: Array<string> = [];
   const removeFailures: Array<{ readonly path: string; readonly message: string }> = [];
@@ -282,11 +392,7 @@ const squashToVersion = Effect.fnUntraced(function* (
     yield* fs.remove(merged).pipe(
       Effect.matchEffect({
         onFailure: (cause) => {
-          const message = legacyRelativizeErrorMessage(
-            legacyErrorMessage(cause),
-            merged,
-            mergedRel,
-          );
+          const message = relativizeErrorMessage(errorMessage(cause), merged, mergedRel);
           removeFailures.push({ path: mergedRel, message });
           return output.raw(`${message}\n`, "stderr");
         },
@@ -302,37 +408,33 @@ const squashToVersion = Effect.fnUntraced(function* (
     target: rel,
     removed,
     removeFailures,
-  } satisfies LegacySquashToVersionResult;
+  } satisfies SquashToVersionResult;
 });
 
 /**
- * `baselineMigrations`: re-derives an empty `version` from the (POST-file-removal) local
- * version listing, prints the "Baselining…" banner BEFORE connecting, then deletes every
- * history row `<= version` and inserts the target migration's row in one transaction.
- *
- * The re-list runs AFTER `squashToVersion`'s file removals (this function is only ever called
- * once that has fully completed) — so when a merged-file removal failed non-fatally, this
- * baselines to the surviving OLDER version, not the squash target. Do not "optimise" this by
- * passing the already-known target version through instead; that would silently diverge from
- * the established behavior on exactly that path.
+ * Re-derives an empty `version` from the local version listing after
+ * `squashToVersion`'s removals complete (not the already-known target version), so a
+ * non-fatal removal failure baselines to the surviving older version instead. Prints
+ * the "Baselining…" banner before connecting, then deletes every history row `<=
+ * version` and inserts the target migration's row in one transaction.
  */
 const baselineMigrations = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   migrationsDir: string,
-  cfg: LegacyResolvedDbConfig,
+  cfg: ResolvedDbConfig,
   dnsResolver: "native" | "https",
   version: string,
 ) {
   const output = yield* Output;
-  const connection = yield* LegacyDbConnection;
-  const debugLogger = yield* LegacyDebugLogger;
+  const connection = yield* DbConnection;
+  const debugLogger = yield* DebugLogger;
 
   let resolvedVersion = version;
   if (resolvedVersion.length === 0) {
-    // A read failure only logs via the debug logger
-    // and leaves `version` empty; it never aborts the baseline.
-    const local = yield* legacyLoadLocalVersions(fs, path, migrationsDir).pipe(
+    // A read failure only logs via the debug logger and leaves version empty; it
+    // never aborts the baseline.
+    const local = yield* loadLocalVersions(fs, path, migrationsDir).pipe(
       Effect.catch((cause) =>
         debugLogger.debug(cause.message).pipe(Effect.as<ReadonlyArray<string>>([])),
       ),
@@ -340,41 +442,31 @@ const baselineMigrations = Effect.fnUntraced(function* (
     if (local.length > 0) resolvedVersion = local[0]!;
   }
 
-  // Printed BEFORE connecting — the opposite order from every other prompting migration
+  // Printed before connecting, the opposite order from every other prompting migration
   // subcommand.
   yield* output.raw(`Baselining migration history to ${resolvedVersion}\n`, "stderr");
 
   yield* Effect.scoped(
     Effect.gen(function* () {
-      // Always remote: `runSquash` already returned on the local target (step 9) before
-      // `baselineMigrations` is ever called, so `cfg.isLocal` is necessarily `false` here —
-      // the unconditional "Connecting to remote database..." on this path is the only
-      // reachable branch from `baselineMigrations`'s only caller.
+      // Always remote: runSquash already returns early on a local target, so
+      // cfg.isLocal is always false when this function runs.
       yield* output.raw("Connecting to remote database...\n", "stderr");
       const session = yield* connection.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
-      yield* legacyCreateMigrationTable(session);
+      yield* createMigrationTable(session);
 
-      const resolvedFile = yield* legacyResolveMigrationFile(
-        fs,
-        path,
-        migrationsDir,
-        resolvedVersion,
-      );
+      const resolvedFile = yield* resolveMigrationFile(fs, path, migrationsDir, resolvedVersion);
       if (Option.isNone(resolvedFile)) {
-        return yield* Effect.fail(
-          new LegacyMigrationFileNotFoundError({
-            message: `glob supabase/migrations/${resolvedVersion}_*.sql: file does not exist`,
-          }),
-        );
+        return yield* new MigrationFileNotFoundError({
+          message: `glob supabase/migrations/${resolvedVersion}_*.sql: file does not exist`,
+        });
       }
-      const m = yield* legacyReadMigrationFile(fs, path, resolvedFile.value);
+      const m = yield* readMigrationFile(fs, path, resolvedFile.value);
 
-      // Data statements only, no schema mutation, so
-      // (matching `migration repair`'s own `updateMigrationTable`) wrapped in an explicit
-      // transaction for atomicity between the DELETE and the INSERT.
+      // Wrapped in an explicit transaction for atomicity between the DELETE and the
+      // INSERT, like migration repair's updateMigrationTable.
       const txn = Effect.gen(function* () {
         yield* session.exec("BEGIN");
-        yield* session.query(LEGACY_DELETE_MIGRATION_BEFORE, [m.version]);
+        yield* session.query(DELETE_MIGRATION_BEFORE, [m.version]);
         yield* session.query(INSERT_MIGRATION_VERSION, [m.version, m.name, m.statements]);
         yield* session.exec("COMMIT");
       });
@@ -382,8 +474,8 @@ const baselineMigrations = Effect.fnUntraced(function* (
         Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)),
         Effect.mapError(
           (cause) =>
-            new LegacyMigrationSquashBaselineError({
-              message: `failed to update migration history: ${legacyErrorMessage(cause)}`,
+            new MigrationSquashBaselineError({
+              message: `failed to update migration history: ${errorMessage(cause)}`,
             }),
         ),
       );
@@ -394,84 +486,67 @@ const baselineMigrations = Effect.fnUntraced(function* (
 });
 
 const runSquash = Effect.fnUntraced(function* (
-  flags: LegacyMigrationSquashFlags,
-  target: ReturnType<typeof resolveLegacyDbTargetFlags>,
+  flags: MigrationSquashFlags,
+  target: ReturnType<typeof resolveDbTargetFlags>,
 ) {
   const output = yield* Output;
-  const resolver = yield* LegacyDbConfigResolver;
-  const cliSettings = yield* LegacyCliSettings;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  const resolver = yield* DbConfigResolver;
+  const cliSettings = yield* CommandSettings;
+  const linkedProjectCache = yield* LinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const dnsResolver = yield* LegacyDnsResolverFlag;
-  const debug = yield* LegacyDebugFlag;
+  const dnsResolver = yield* DnsResolverFlag;
+  const debug = yield* DebugFlag;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const runtimeInfo = yield* RuntimeInfo;
-  const networkIdFlag = yield* LegacyNetworkIdFlag;
+  const networkIdFlag = yield* NetworkIdFlag;
 
   // Resolved linked ref, captured so the post-run finalizer caches the project
   // (GET /v1/projects/{ref}).
   let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
-    // 1. Flag groups — parse-time mutual-exclusivity check, ahead of the root
-    // pre-run.
+    // Checked here, ahead of the root pre-run.
     if (target.setFlags.length > 1) {
-      return yield* Effect.fail(
-        new LegacyMigrationTargetFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(
-            ["db-url", "linked", "local"],
-            target.setFlags,
-          ),
-        }),
-      );
+      return yield* new MigrationTargetFlagsError({
+        message: cobraMutuallyExclusiveErrorMessage(["db-url", "linked", "local"], target.setFlags),
+      });
     }
     if (Option.isSome(flags.dbUrl) && Option.isSome(flags.password)) {
-      return yield* Effect.fail(
-        new LegacyMigrationPasswordFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(
-            ["db-url", "password"],
-            ["db-url", "password"],
-          ),
-        }),
-      );
+      return yield* new MigrationPasswordFlagsError({
+        message: cobraMutuallyExclusiveErrorMessage(["db-url", "password"], ["db-url", "password"]),
+      });
     }
 
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
-    // squash defaults to `--local`, same as `up`/`down`.
     const connType = target.connType ?? "local";
 
     // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on a non-linked target — see push.handler.ts's identical guard
-    // (db push) for the full TS-only rationale.
+    // discarded on a non-linked target; see push.handler.ts's identical guard.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new LegacyMigrationTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new MigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
-    // 2/3. Linked pre-resolution (mirrors `db diff --linked`, `diff.handler.ts:400-430`):
-    // resolve + cache the project ref, and read the remote-merged config, BEFORE
-    // `resolver.resolve()` below. Read unconditionally (base config when not linked) since the
-    // shadow is provisioned locally regardless of the remote/local target.
+    // Resolves and caches the project ref, then reads the remote-merged config before
+    // resolver.resolve() below (like db diff --linked); read unconditionally since the
+    // shadow is provisioned locally either way.
     let linkedRef: string | undefined;
     if (connType === "linked") {
-      const projectRefResolver = yield* LegacyProjectRefResolver;
+      const projectRefResolver = yield* ProjectRefResolver;
       linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
       linkedRefForCache = linkedRef;
     }
-    const toml = yield* legacyReadDbToml(fs, path, cliSettings.workdir, linkedRef);
+    const toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
 
-    // 4. The shadow's own container spec — always built, and built BEFORE `resolver.resolve()`
-    // below, matching `diff.handler.ts`'s identical
-    // rationale: all config load/validation happens ahead of the actual connection resolution.
-    const localInputs = yield* legacyBuildLocalDbContainerInputs(
+    // The shadow's container spec is always built before resolver.resolve() below, so
+    // all config load/validation happens ahead of the actual connection resolution.
+    const localInputs = yield* buildLocalDbContainerInputs(
       spawner,
       cliSettings.workdir,
       networkIdFlag,
@@ -481,8 +556,8 @@ const runSquash = Effect.fnUntraced(function* (
       toml.remoteOverrideKeys,
     );
 
-    // 5. Resolve the target connection — the resolver owns `--password`/`DB_PASSWORD`/
-    // temp-login-role/IPv6 handling for `--linked`, so squash needs no bespoke password prompt.
+    // The resolver owns --password/DB_PASSWORD/temp-login-role/IPv6 handling for
+    // --linked, so squash needs no bespoke password prompt.
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType,
@@ -495,39 +570,27 @@ const runSquash = Effect.fnUntraced(function* (
     }
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
 
-    // 6. The project `.env` loads after the
-    // flag-group validation above — so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
-    // the remote-baseline prompt, but a flag conflict still surfaces before any `.env` read.
-    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
-    // Make an allowlisted `supabase/.env` registry override visible to the
-    // synchronous `process.env` reader in `legacyGetRegistryImageUrl`, reverted
-    // when this scope closes. The project `.env` is applied
-    // before any container starts, and each of squash's three
-    // pg_dump containers resolves its image through the same registry-mirror lookup —
-    // so a dotenv-only mirror override reaches all three dumps below.
-    yield* legacyApplyProjectEnv(projectEnv);
-    const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
+    // Loads after the flag-group check above, so a flag conflict surfaces before any
+    // .env read; a SUPABASE_YES set only in supabase/.env still auto-confirms the
+    // remote-baseline prompt.
+    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+    const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
-    // 7. `--version` validation happens AFTER db-config resolution.
+    // Runs after DB-config resolution, so an invalid target surfaces first.
     const version = Option.getOrElse(flags.version, () => "");
     if (version.length > 0) {
-      if (legacyParseMigrationVersion(version) === undefined) {
-        // Bare message — squash does NOT inherit repair's "failed to parse <v>: " prefix.
-        return yield* Effect.fail(
-          new LegacyMigrationInvalidVersionError({ message: "invalid version number" }),
-        );
+      if (parseMigrationVersion(version) === undefined) {
+        // Bare message; squash does not inherit repair's "failed to parse <v>:" prefix.
+        return yield* new MigrationInvalidVersionError({ message: "invalid version number" });
       }
-      const versionFile = yield* legacyResolveMigrationFile(fs, path, migrationsDir, version);
+      const versionFile = yield* resolveMigrationFile(fs, path, migrationsDir, version);
       if (Option.isNone(versionFile)) {
-        return yield* Effect.fail(
-          new LegacyMigrationFileNotFoundError({
-            message: `glob supabase/migrations/${version}_*.sql: file does not exist`,
-          }),
-        );
+        return yield* new MigrationFileNotFoundError({
+          message: `glob supabase/migrations/${version}_*.sql: file does not exist`,
+        });
       }
     }
 
-    // 8. Squash local migrations.
     const squashResult = yield* squashToVersion(
       spawner,
       fs,
@@ -539,12 +602,12 @@ const runSquash = Effect.fnUntraced(function* (
       toml,
     );
 
-    // 9. Local target: suggest `migration repair` instead of touching the remote history.
+    // Local target: suggest migration repair instead of touching the remote history.
     if (cfg.isLocal) {
       if (output.format === "text") {
-        yield* output.raw(`Finished ${legacyAqua("supabase migration squash")}.\n`);
+        yield* output.raw(`Finished ${aqua("supabase migration squash")}.\n`);
         yield* output.raw(
-          `Run ${legacyAqua("supabase migration repair --status applied")} to update your remote migration history table.\n`,
+          `Run ${aqua("supabase migration repair --status applied")} to update your remote migration history table.\n`,
           "stderr",
         );
       } else {
@@ -560,10 +623,9 @@ const runSquash = Effect.fnUntraced(function* (
       return;
     }
 
-    // 10. Remote target: prompt before touching the remote history table. A DECLINED prompt is
-    // still a SUCCESS path here (returns cleanly, not a cancellation) — unlike
-    // repair/fetch/down, so this never raises `LegacyOperationCanceledError`.
-    const confirmed = yield* legacyMigrationConfirm("Update remote migration history table?", {
+    // A declined prompt is still a success path here (returns cleanly, not a
+    // cancellation), unlike repair/fetch/down.
+    const confirmed = yield* migrationConfirm("Update remote migration history table?", {
       defaultValue: true,
       yes,
     });
@@ -580,7 +642,7 @@ const runSquash = Effect.fnUntraced(function* (
     }
 
     if (output.format === "text") {
-      yield* output.raw(`Finished ${legacyAqua("supabase migration squash")}.\n`);
+      yield* output.raw(`Finished ${aqua("supabase migration squash")}.\n`);
     } else {
       yield* output.success("Migrations squashed", {
         squashedInto: squashResult.target,
@@ -597,17 +659,14 @@ const runSquash = Effect.fnUntraced(function* (
         linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
       ),
     ),
-    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
-    // command run: `legacyApplyProjectEnv` registers a finalizer that reverts it.
-    Effect.scoped,
   );
 });
 
-export const legacyMigrationSquash = Effect.fn("legacy.migration.squash")(function* (
-  flags: LegacyMigrationSquashFlags,
+export const migrationSquash = Effect.fn("migration.squash")(function* (
+  flags: MigrationSquashFlags,
 ) {
-  const telemetryState = yield* LegacyTelemetryState;
+  const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
-  const target = resolveLegacyDbTargetFlags(cliArgs.args);
+  const target = resolveDbTargetFlags(cliArgs.args);
   yield* runSquash(flags, target).pipe(Effect.ensuring(telemetryState.flush));
 });

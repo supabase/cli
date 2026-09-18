@@ -1,4 +1,4 @@
-import serviceImagesDockerfile from "../../../../cli-go/pkg/config/templates/Dockerfile" with { type: "text" };
+import serviceImagesDockerfile from "./Dockerfile" with { type: "text" };
 import { slimImageForAlias } from "./slim-images.ts";
 
 export interface DockerfileImageSpec {

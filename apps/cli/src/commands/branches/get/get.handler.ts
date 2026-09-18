@@ -7,11 +7,11 @@ import type {
 } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import {
@@ -19,100 +19,85 @@ import {
   encodeGoJson,
   encodeToml,
   encodeYaml,
-} from "../../../command-internal/legacy-go-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import { legacyResolveParentScopedProjectRef } from "../../../command-internal/legacy-parent-project-ref.ts";
+} from "../../../command-internal/go-output.encoders.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
 import {
-  LegacyBranchesApiKeysNetworkError,
-  LegacyBranchesApiKeysUnexpectedStatusError,
-  LegacyBranchesFindNetworkError,
-  LegacyBranchesFindUnexpectedStatusError,
-  LegacyBranchesGetNetworkError,
-  LegacyBranchesGetUnexpectedStatusError,
-  LegacyBranchesPoolerNetworkError,
-  LegacyBranchesPoolerUnexpectedStatusError,
-  LegacyBranchesPrimaryNotFoundError,
+  BranchesApiKeysNetworkError,
+  BranchesApiKeysUnexpectedStatusError,
+  BranchesFindNetworkError,
+  BranchesFindUnexpectedStatusError,
+  BranchesGetNetworkError,
+  BranchesGetUnexpectedStatusError,
+  BranchesPoolerNetworkError,
+  BranchesPoolerUnexpectedStatusError,
+  BranchesPrimaryNotFoundError,
 } from "../branches.errors.ts";
 import { renderBranchGetTable, toStandardEnvs } from "../branches.format.ts";
-import { legacyProjectHost } from "../../../command-internal/legacy-profile.ts";
-import { legacyPromptBranchId } from "../branches.prompt.ts";
+import { projectHost } from "../../../command-internal/profile.ts";
+import { promptBranchId } from "../branches.prompt.ts";
 import {
-  LEGACY_BRANCH_PROJECT_REF_PATTERN,
-  LEGACY_BRANCH_UUID_PATTERN,
-} from "../../../command-internal/legacy-ref-patterns.ts";
-import type { LegacyBranchesGetFlags } from "./get.command.ts";
+  BRANCH_PROJECT_REF_PATTERN,
+  BRANCH_UUID_PATTERN,
+} from "../../../command-internal/ref-patterns.ts";
+import type { BranchesGetFlags } from "./get.command.ts";
 
 type BranchDetail = typeof V1GetABranchConfigOutput.Type;
 type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
 type Pooler = typeof V1GetPoolerConfigOutput.Type;
 
-const mapFindError = mapLegacyHttpError({
-  networkError: LegacyBranchesFindNetworkError,
-  statusError: LegacyBranchesFindUnexpectedStatusError,
+const mapFindError = mapHttpError({
+  networkError: BranchesFindNetworkError,
+  statusError: BranchesFindUnexpectedStatusError,
   networkMessage: (cause) => `failed to find branch: ${cause}`,
   statusMessage: (status, body) => `unexpected find branch status ${status}: ${body}`,
 });
 
-const mapGetError = mapLegacyHttpError({
-  networkError: LegacyBranchesGetNetworkError,
-  statusError: LegacyBranchesGetUnexpectedStatusError,
+const mapGetError = mapHttpError({
+  networkError: BranchesGetNetworkError,
+  statusError: BranchesGetUnexpectedStatusError,
   networkMessage: (cause) => `failed to get branch: ${cause}`,
   statusMessage: (status, body) => `unexpected get branch status ${status}: ${body}`,
 });
 
-const mapApiKeysError = mapLegacyHttpError({
-  networkError: LegacyBranchesApiKeysNetworkError,
-  statusError: LegacyBranchesApiKeysUnexpectedStatusError,
+const mapApiKeysError = mapHttpError({
+  networkError: BranchesApiKeysNetworkError,
+  statusError: BranchesApiKeysUnexpectedStatusError,
   networkMessage: (cause) => `failed to get api keys: ${cause}`,
   statusMessage: (status, body) => `unexpected get api keys status ${status}: ${body}`,
 });
 
-const mapPoolerError = mapLegacyHttpError({
-  networkError: LegacyBranchesPoolerNetworkError,
-  statusError: LegacyBranchesPoolerUnexpectedStatusError,
+const mapPoolerError = mapHttpError({
+  networkError: BranchesPoolerNetworkError,
+  statusError: BranchesPoolerUnexpectedStatusError,
   networkMessage: (cause) => `failed to get pooler: ${cause}`,
   statusMessage: (status, body) => `unexpected get pooler status ${status}: ${body}`,
 });
 
-export const legacyBranchesGet = Effect.fn("legacy.branches.get")(function* (
-  flags: LegacyBranchesGetFlags,
-) {
+export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesGetFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
-  const cliSettings = yield* LegacyCliSettings;
-  void (yield* Tty); // ensures Tty is in handler R so legacyPromptBranchId resolves
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
+  const cliSettings = yield* CommandSettings;
+  void (yield* Tty); // ensures Tty is in handler R so promptBranchId resolves
 
-  // `branches` is PARENT-scoped: after `supabase link <branch>`,
-  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
-  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
-  const ref = yield* legacyResolveParentScopedProjectRef(flags.projectRef);
+  // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
+  // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
+  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
-    // Branch-id resolution. Empty input goes through the prompt helper.
-    const branchInput = yield* legacyPromptBranchId(flags.name, ref);
+    const branchInput = yield* promptBranchId(flags.name, ref);
 
-    // ------------------------------------------------------------------
-    // 1. Lookup: if input is not a UUID and not a ref pattern, fetch the
-    //    project ref via V1GetABranch (`GET /v1/projects/{ref}/branches/{name}`).
-    // ------------------------------------------------------------------
     let branchIdOrRef = branchInput;
-    if (
-      !LEGACY_BRANCH_UUID_PATTERN.test(branchInput) &&
-      !LEGACY_BRANCH_PROJECT_REF_PATTERN.test(branchInput)
-    ) {
+    if (!BRANCH_UUID_PATTERN.test(branchInput) && !BRANCH_PROJECT_REF_PATTERN.test(branchInput)) {
       const lookup = yield* api.v1
         .getABranch({ ref, name: branchInput })
         .pipe(Effect.catch(mapFindError));
       branchIdOrRef = lookup.project_ref;
     }
 
-    // ------------------------------------------------------------------
-    // 2. Detail: V1GetABranchConfig (`GET /v1/branches/{id_or_ref}`).
-    //    Mask db_user / db_pass / jwt_secret with `******` when nil.
-    // ------------------------------------------------------------------
     const fetching =
       output.format === "text" ? yield* output.task("Fetching branch...") : undefined;
     const rawDetail: BranchDetail = yield* api.v1
@@ -138,9 +123,6 @@ export const legacyBranchesGet = Effect.fn("legacy.branches.get")(function* (
       return;
     }
 
-    // ------------------------------------------------------------------
-    // 3+4. API keys + pooler config (only for non-pretty modes).
-    // ------------------------------------------------------------------
     const keys: ApiKeys = yield* api.v1
       .getProjectApiKeys({ ref: detail.ref })
       .pipe(Effect.catch(mapApiKeysError));
@@ -149,16 +131,14 @@ export const legacyBranchesGet = Effect.fn("legacy.branches.get")(function* (
       .pipe(Effect.catch(mapPoolerError));
     const primary = poolers.find((p) => p.database_type === "PRIMARY");
     if (primary === undefined) {
-      return yield* new LegacyBranchesPrimaryNotFoundError({
+      return yield* new BranchesPrimaryNotFoundError({
         message: "primary database not found",
       });
     }
 
-    const projectHost = legacyProjectHost(cliSettings.profile);
-    const projected = toStandardEnvs(detail, primary, keys, projectHost);
+    const host = projectHost(cliSettings.profile);
+    const projected = toStandardEnvs(detail, primary, keys, host);
     if (projected.poolerWarning !== undefined && output.format === "text") {
-      // Established output: `fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)`.
-      // The "WARNING:" prefix is yellow, then a space, then the parse error message.
       yield* output.raw(
         `${styleText("yellow", "WARNING:")} ${projected.poolerWarning}\n`,
         "stderr",
@@ -184,12 +164,11 @@ export const legacyBranchesGet = Effect.fn("legacy.branches.get")(function* (
     }
 
     if (wantsTsStructured) {
-      // No goFmt set but TS structured output requested.
       yield* output.success("", envMap);
       return;
     }
 
-    // Defensive — should be unreachable given the wantsEnvMap branch above.
+    // Unreachable in practice: wantsEnvMap is already true by this point.
     void wantsEnvMap;
     yield* output.raw(encodeGoJson(envMap));
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));

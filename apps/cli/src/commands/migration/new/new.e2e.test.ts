@@ -1,39 +1,35 @@
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
-import { runSupabase, stripAnsi } from "../../../../tests/helpers/cli.ts";
+import { runSupabaseEffect, stripAnsi } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase migration new (legacy)", () => {
-  let workdir: string;
-  beforeEach(() => {
-    workdir = mkdtempSync(join(tmpdir(), "sb-mig-new-e2e-"));
-  });
-  afterEach(() => {
-    rmSync(workdir, { recursive: true, force: true });
-  });
-
+describe("supabase migration new", () => {
   // Primary golden path: a real subprocess creates the migration file under the
   // working directory and prints the workdir-relative path. No infra required.
-  test(
+  it.live(
     "creates a timestamped migration file and prints its path",
-    { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout } = await runSupabase(["migration", "new", "create_widgets"], {
-        entrypoint: "legacy",
-        cwd: workdir,
-      });
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "sb-mig-new-e2e-" });
 
-      expect(exitCode).toBe(0);
-      const files = readdirSync(join(workdir, "supabase", "migrations"));
-      expect(files).toHaveLength(1);
-      expect(files[0]).toMatch(/^\d{14}_create_widgets\.sql$/u);
-      expect(stripAnsi(stdout)).toContain(
-        `Created new migration at supabase/migrations/${files[0]}`,
-      );
-    },
+        const { exitCode, stdout } = yield* runSupabaseEffect(
+          ["migration", "new", "create_widgets"],
+          { cwd: workdir },
+        );
+
+        expect(exitCode).toBe(0);
+        const files = yield* fs.readDirectory(path.join(workdir, "supabase", "migrations"));
+        expect(files).toHaveLength(1);
+        expect(files[0]).toMatch(/^\d{14}_create_widgets\.sql$/u);
+        expect(stripAnsi(stdout)).toContain(
+          `Created new migration at supabase/migrations/${files[0]}`,
+        );
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    E2E_TIMEOUT_MS,
   );
 });

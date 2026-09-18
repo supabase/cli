@@ -1,50 +1,49 @@
 import { randomUUID } from "node:crypto";
+
+import { Cause, Effect, Exit, Schema } from "effect";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
+import { throwWithCleanup, test } from "../../../../tests/helpers/live.ts";
+import {
+  awaitLiveBranchListedEffect,
+  awaitLiveBranchRemovedEffect,
+  createLiveBranchEffect,
+} from "../../../../tests/helpers/branches-live.ts";
 
-test("lists a preview branch for the project", async ({ cli, project }) => {
-  const name = `cli-e2e-list-${randomUUID().slice(0, 8)}`;
-  let targetError: unknown;
-  let cleanupError: unknown;
-  try {
-    const created = await cli(["branches", "create", name, "--project-ref", project.ref]);
-    requireLiveSuccess(created, "branches create setup");
+const ListedBranches = Schema.Array(Schema.Struct({ name: Schema.optional(Schema.String) }));
 
-    const result = await cli([
-      "branches",
-      "list",
-      "--output",
-      "json",
-      "--project-ref",
-      project.ref,
-    ]);
-    expect(result.exitCode, result.stderr).toBe(0);
-    const branches = JSON.parse(result.stdout) as Array<{ name?: string }>;
-    expect(branches.map((branch) => branch.name)).toContain(name);
-  } catch (error) {
-    targetError = error;
-  } finally {
-    try {
-      const deleted = await cli([
-        "branches",
-        "delete",
-        name,
-        "--project-ref",
-        project.ref,
-        "--yes",
-      ]);
-      if (
-        deleted.exitCode !== 0 &&
-        !/not found|does not exist/i.test(`${deleted.stdout}\n${deleted.stderr}`)
-      ) {
-        cleanupError = new Error(
-          `branches delete cleanup failed:\n${deleted.stdout}\n${deleted.stderr}`,
+test("lists a preview branch for the project", ({ cliEffect, project }) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const name = `cli-e2e-list-${randomUUID().slice(0, 8)}`;
+      let branchRef: string | undefined;
+
+      const target = Effect.gen(function* () {
+        branchRef = yield* createLiveBranchEffect(cliEffect, project, name);
+        yield* awaitLiveBranchListedEffect(cliEffect, project, name);
+        const result = yield* cliEffect([
+          "branches",
+          "list",
+          "--output",
+          "json",
+          "--project-ref",
+          project.ref,
+        ]);
+        expect(result.exitCode, result.stderr).toBe(0);
+        const branches = yield* Schema.decodeEffect(Schema.fromJsonString(ListedBranches))(
+          result.stdout,
         );
-      }
-    } catch (error) {
-      cleanupError = error;
-    }
-  }
-  throwWithCleanup(targetError, cleanupError === undefined ? [] : [cleanupError]);
-});
+        expect(branches.map((branch) => branch.name)).toContain(name);
+      });
+
+      const targetExit = yield* Effect.exit(target);
+      const cleanupExit =
+        branchRef === undefined
+          ? yield* Effect.exit(Effect.succeed(true))
+          : yield* Effect.exit(awaitLiveBranchRemovedEffect(cliEffect, project, branchRef));
+      return {
+        targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
+        cleanupErrors: Exit.isFailure(cleanupExit) ? [Cause.squash(cleanupExit.cause)] : [],
+      };
+    }),
+  ).then(({ targetError, cleanupErrors }) => throwWithCleanup(targetError, cleanupErrors)));

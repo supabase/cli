@@ -1,0 +1,64 @@
+name: Live E2E Suite
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to test
+        required: true
+        type: string
+      concurrency_group:
+        description: Concurrency group for this suite
+        required: false
+        type: string
+        default: live-e2e
+      cancel_in_progress:
+        description: Cancel an older run in the same group
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  live-e2e:
+    # Consumers identify this reusable job by the exact " / Live e2e" suffix.
+    # Keep the suffix aligned with live-e2e-gate.yml and live-e2e-notify.yml.
+    name: Live e2e
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 30
+    concurrency:
+      group: ${{ inputs.concurrency_group }}
+      cancel-in-progress: ${{ inputs.cancel_in_progress }}
+    env:
+      SUPABASE_LIVE_API_URL: https://api.supabase.green
+      SUPABASE_LIVE_PROJECT_NAME: supabase-cli-live
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Docker preflight
+        run: docker info
+
+      # Consumers also use this exact step name when deciding whether a suite ran.
+      - name: Run live e2e
+        timeout-minutes: 20
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
+        run: pnpm run test:live
+
+      - name: Cleanup leftover projects
+        if: always()
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
+        run: bash apps/cli/scripts/sweep-live-projects.sh "supabase-cli-live-${GITHUB_RUN_ID}-"

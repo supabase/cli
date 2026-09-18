@@ -4,48 +4,40 @@ import { CliOutput, Command } from "effect/unstable/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
-import { LEGACY_GLOBAL_FLAGS } from "../../shared/legacy/global-flags.ts";
+import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyPlatformApi,
-  useLegacyTempWorkdir,
-} from "../../../tests/helpers/legacy-mocks.ts";
-import { legacyStartCommand } from "./start.command.ts";
+  buildTestRuntime,
+  mockCommandSettings,
+  mockCommandPlatformApi,
+  useTempWorkdir,
+} from "../../../tests/helpers/command-mocks.ts";
+import { startCommand } from "./start.command.ts";
 
-// `--exclude`/`-x` is a string-slice flag (CLI-2005), so malformed CSV
-// aborts flag parsing before the handler runs — before any Docker
-// interaction — with the exact `invalid argument %q for %q flag: %v` line
-// on stderr. Because the flag has a shorthand, the diagnostic frames BOTH
-// spellings (`-x, --exclude`) regardless of which one the user typed.
-// These scenarios run the whole command tree (`Command.runWith`), mirroring
-// the network-bans/network-restrictions prior art from CLI-1983.
+// Malformed CSV aborts flag parsing before the handler runs, with pflag's exact
+// `invalid argument %q for %q flag: %v` line on stderr — a shorthand flag frames both spellings
+// (`-x, --exclude`). These run the whole command tree (`Command.runWith`), not just the flag parser.
 
-const tempRoot = useLegacyTempWorkdir("supabase-start-string-slice-int-");
+const tempRoot = useTempWorkdir("supabase-start-string-slice-int-");
 
-// `withGlobalFlags` must come AFTER `withSubcommands`: it only excludes each
-// global flag's context requirement from the R accumulated on the command
-// SO FAR, and `withSubcommands` unions in every subcommand's own requirements
-// (including `start`'s handler-chain reads of `LegacyDebugFlag`/
-// `LegacyNetworkIdFlag`/`LegacyDnsResolverFlag`/`LegacyProfileFlag`/
-// `LegacyWorkdirFlag`/`LegacyYesFlag`). Reversing the order leaves those
-// context tags in `Command.runWith`'s Environment type even though this
-// parse-failure path never reaches the handler at runtime.
+// `withGlobalFlags` must come after `withSubcommands`: it excludes each global flag's context
+// requirement only from what's already accumulated, so subcommand requirements need to be unioned
+// in first. Reversing the order would leave those context tags in `Command.runWith`'s Environment
+// type, even though this parse-failure path never reaches the handler.
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyStartCommand]),
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+  Command.withSubcommands([startCommand]),
+  Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
 function setup() {
   const out = mockOutput({ format: "text" });
-  const api = mockLegacyPlatformApi({ response: { status: 200, body: {} } });
-  const runtime = buildLegacyTestRuntime({
+  const api = mockCommandPlatformApi({ response: { status: 200, body: {} } });
+  const runtime = buildTestRuntime({
     out,
     api,
-    cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+    cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
     runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
   });
   const layer = Layer.mergeAll(
@@ -74,10 +66,9 @@ function setup() {
   return { layer };
 }
 
-describe("legacy start --exclude flag (pflag CSV parity)", () => {
-  // Verified against pflag's actual output (CLI-2005): the rendered line is
-  // identical for both spellings — pflag always frames a shorthand flag as
-  // `-x, --exclude`.
+describe("start --exclude flag (pflag CSV parity)", () => {
+  // Both spellings render the identical diagnostic line: pflag always frames a shorthand
+  // flag as `-x, --exclude`.
   const spellings: ReadonlyArray<{ readonly name: string; readonly flag: string }> = [
     { name: "--exclude", flag: "--exclude" },
     { name: "-x", flag: "-x" },

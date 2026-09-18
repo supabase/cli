@@ -1,27 +1,27 @@
-import { execSync, spawnSync } from "node:child_process";
+import { execFile, execSync, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { describe, expect, test } from "vitest";
 
-import { LEGACY_START_KONG_YML_TEMPLATE } from "../../commands/start/templates/kong.yml.ts";
-import { legacyEdgeRuntimeImage } from "../../command-internal/legacy-edge-runtime-image.ts";
+import { START_KONG_YML_TEMPLATE } from "../../commands/start/templates/kong.yml.ts";
+import { edgeRuntimeDockerfileImage } from "../../command-internal/edge-runtime-image.ts";
 import { ensureImage, resolveDeadline } from "../../../tests/helpers/docker-image.ts";
 import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
 import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
 
 /**
- * Regression guard for supabase/supabase#45570: the edge-runtime worker bootstrap
- * template must boot with **no network access**. Before bundling, the template
- * imported `deno.land/std` and `jsr:` modules that Deno resolved over the network on
- * every start, so `functions serve` failed offline.
+ * Regression guard for supabase/supabase#45570: the edge-runtime worker
+ * bootstrap template must boot with no network access. Before bundling, the
+ * template imported `deno.land/std` and `jsr:` modules resolved over the
+ * network on every start, so `functions serve` failed offline.
  *
- * This boots the real bundled template as an edge-runtime main service with
- * `--network none` and asserts it reaches the template's own "Serving functions"
- * log line without any remote fetch. The service is mounted at `/app` (read-only) so
- * `/root` stays writable for Deno's module cache — isolating the network as the only
- * variable (a control run of the unbundled template fails here with a DNS error).
+ * Boots the real bundled template with `--network none` and asserts it
+ * reaches the "Serving functions" log line without any remote fetch. Mounted
+ * at `/app` (read-only) so `/root` stays writable for Deno's module cache —
+ * isolating the network as the only variable.
  */
 
 function hasDocker(): boolean {
@@ -35,9 +35,10 @@ function hasDocker(): boolean {
 
 const dockerAvailable = hasDocker();
 const SERVE_OFFLINE_STARTUP_TIMEOUT_MS = 60_000;
-// Cold-cache image resolution (up to one shared 90s resolveDeadline budget)
-// runs inside the test body, ahead of the 60s startup wait — the test budget
-// must cover both stacked, or a healthy near-cap pull trips vitest first.
+const SERVE_OFFLINE_ATTEMPT_TIMEOUT_MS = 10_000;
+const DOCKER_COMMAND_TIMEOUT_MS = 5_000;
+// Cold-cache image resolution (up to a shared 90s budget) runs ahead of the
+// 60s startup wait; the test timeout must cover both stacked.
 const SERVE_OFFLINE_TEST_TIMEOUT_MS = 180_000;
 const AUTH_FUNCTIONS_CONFIG = JSON.stringify({
   test: {
@@ -80,17 +81,22 @@ const KONG_FUNCTIONS_CONFIG = JSON.stringify({
 });
 const CUSTOM_FUNCTION = `import { sharedValue } from "../_shared/value.ts";
 
-Deno.serve(() => new Response("ok", {
-  headers: {
-    "X-Custom-Id": "abc123",
-    "X-Function-Slug": Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "",
-    "X-Shared-Import": sharedValue,
-    "X-Shared": Deno.env.get("SHARED") ?? "",
-    "X-Function-Only": Deno.env.get("FUNCTION_ONLY") ?? "",
-    "X-Global-Only": Deno.env.get("GLOBAL_ONLY") ?? "",
-    "Access-Control-Expose-Headers": "X-Custom-Id",
-  },
-}));`;
+Deno.serve((req) => {
+  if (req.headers.get("x-reject-before-body") === "true") {
+    return new Response("rejected", { status: 400 });
+  }
+  return new Response("ok", {
+    headers: {
+      "X-Custom-Id": "abc123",
+      "X-Function-Slug": Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "",
+      "X-Shared-Import": sharedValue,
+      "X-Shared": Deno.env.get("SHARED") ?? "",
+      "X-Function-Only": Deno.env.get("FUNCTION_ONLY") ?? "",
+      "X-Global-Only": Deno.env.get("GLOBAL_ONLY") ?? "",
+      "Access-Control-Expose-Headers": "X-Custom-Id",
+    },
+  });
+});`;
 const NESTED_FUNCTION = `Deno.serve(() => new Response("ok", {
   headers: {
     "X-Function-Slug": Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "",
@@ -124,7 +130,7 @@ const authFailureCases = [
   {
     name: "invalid legacy JWT",
     authorization: `Bearer ${jwtWithInvalidSignature("HS256")}`,
-    code: "UNAUTHORIZED_LEGACY_JWT",
+    code: "UNAUTHORIZED_JWT",
     message: "Invalid JWT",
   },
   {
@@ -142,8 +148,62 @@ const authFailureCases = [
 ];
 
 function containerLogs(container: string): string {
-  const result = spawnSync("docker", ["logs", container], { encoding: "utf8" });
-  return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const result = spawnSync("docker", ["logs", container], {
+    encoding: "utf8",
+    timeout: DOCKER_COMMAND_TIMEOUT_MS,
+  });
+  const failure = result.error ? `\n<docker logs failed: ${result.error.message}>` : "";
+  return `${result.stdout ?? ""}\n${result.stderr ?? ""}${failure}`;
+}
+
+const execFileAsync = promisify(execFile);
+
+async function containerState(container: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(
+      "docker",
+      [
+        "inspect",
+        "--format",
+        '{{.State.Status}}{{if ne .State.Status "running"}} (exit code {{.State.ExitCode}}{{if .State.OOMKilled}}, OOM-killed{{end}}){{end}}',
+        container,
+      ],
+      { encoding: "utf8", timeout: DOCKER_COMMAND_TIMEOUT_MS },
+    );
+    return stdout.trim();
+  } catch (error) {
+    const stderr = error instanceof Error && "stderr" in error ? String(error.stderr) : "";
+    return `not inspectable (${stderr.trim() || String(error)})`;
+  }
+}
+
+function isTerminalContainerState(state: string): boolean {
+  return /^(exited|dead)\b/u.test(state);
+}
+
+async function containerDiagnostics(containers: readonly string[]): Promise<string> {
+  const blocks = await Promise.all(
+    containers.map(
+      async (container) =>
+        `${container} (${await containerState(container)}) logs:\n${containerLogs(container)}`,
+    ),
+  );
+  return blocks.join("\n");
+}
+
+async function fetchFunctionWithDiagnostics(
+  url: string,
+  diagnosticContainers: readonly string[],
+  init: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (cause) {
+    throw new Error(
+      `Function request to ${url} failed.\n${await containerDiagnostics(diagnosticContainers)}`,
+      { cause },
+    );
+  }
 }
 
 async function fetchColdFunction(
@@ -153,7 +213,9 @@ async function fetchColdFunction(
 ): Promise<Response> {
   // Runtime health does not start user workers, and Edge Runtime exposes no
   // per-worker readiness signal. A cold worker can briefly disconnect or
-  // return 502/503, so retry only those transient outcomes.
+  // return 502/503, so retry only those transient outcomes, each bounded so
+  // one hung request cannot eat the budget. A container that exited or died
+  // ends the wait: nothing will answer.
   const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
   let lastError: unknown;
 
@@ -161,7 +223,9 @@ async function fetchColdFunction(
     try {
       const response = await fetch(url, {
         ...init,
-        signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+        signal: AbortSignal.timeout(
+          Math.max(1, Math.min(SERVE_OFFLINE_ATTEMPT_TIMEOUT_MS, deadline - Date.now())),
+        ),
       });
       if (response.status !== 502 && response.status !== 503) {
         return response;
@@ -172,14 +236,23 @@ async function fetchColdFunction(
       lastError = error;
     }
 
+    const states = await Promise.all(
+      diagnosticContainers.map(async (container) => ({
+        container,
+        state: await containerState(container),
+      })),
+    );
+    const dead = states.filter(({ state }) => isTerminalContainerState(state));
     const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      const diagnostics = diagnosticContainers
-        .map((container) => `${container} logs:\n${containerLogs(container)}`)
-        .join("\n");
-      throw new Error(`Function at ${url} did not become ready.\n${diagnostics}`, {
-        cause: lastError,
-      });
+    if (dead.length > 0 || remainingMs <= 0) {
+      const reason =
+        dead.length > 0
+          ? `: ${dead.map(({ container, state }) => `${container} is ${state}`).join(", ")}`
+          : "";
+      throw new Error(
+        `Function at ${url} did not become ready${reason}.\n${await containerDiagnostics(diagnosticContainers)}`,
+        { cause: lastError },
+      );
     }
 
     await Bun.sleep(Math.min(250, remainingMs));
@@ -187,14 +260,9 @@ async function fetchColdFunction(
 }
 
 async function writeKongConfig(dir: string, edgeRuntimeContainer: string) {
-  // Was: read straight from apps/cli-go/internal/start/templates/kong.yml. That
-  // package was deleted outright (CLI-1966; unreachable from the TS CLI, directly
-  // or indirectly), so this now uses the TS transcription of the same template
-  // that legacy `start`'s Kong service already ports byte-for-byte.
-  const config = LEGACY_START_KONG_YML_TEMPLATE.replaceAll(
-    "{{ .EdgeRuntimeId }}",
-    edgeRuntimeContainer,
-  )
+  // Uses the TS transcription of the Kong template that `start`'s Kong
+  // service already ports byte-for-byte.
+  const config = START_KONG_YML_TEMPLATE.replaceAll("{{ .EdgeRuntimeId }}", edgeRuntimeContainer)
     .replaceAll("{{ .BearerToken }}", "$((headers.authorization or headers.apikey))")
     .replaceAll("{{ .QueryToken }}", "$((query_params.apikey))")
     .replace(/{{ \.[A-Za-z]+ }}/g, "unused");
@@ -206,7 +274,7 @@ describe("functions serve runtime template (offline)", () => {
     "boots under edge-runtime with networking disabled and fetches nothing remote",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
-      const runtimeImage = await ensureImage(legacyEdgeRuntimeImage());
+      const runtimeImage = await ensureImage(edgeRuntimeDockerfileImage());
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-offline-e2e-"));
       const container = `supabase-serve-offline-e2e-${process.pid.toString()}`;
       try {
@@ -254,9 +322,7 @@ describe("functions serve runtime template (offline)", () => {
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
 
-        // The template's own onListen message — proves the bundled worker booted.
         expect(logs).toMatch(/Serving functions on/);
-        // No remote module resolution occurred (the #45570 failure mode).
         expect(logs).not.toMatch(/deno\.land|jsr\.io/);
         expect(logs).not.toMatch(/dns error|name resolution|worker boot error/i);
       } finally {
@@ -270,7 +336,7 @@ describe("functions serve runtime template (offline)", () => {
     "returns canonical JWT auth failures",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
-      const runtimeImage = await ensureImage(legacyEdgeRuntimeImage());
+      const runtimeImage = await ensureImage(edgeRuntimeDockerfileImage());
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-auth-e2e-"));
       const container = `supabase-serve-auth-e2e-${process.pid.toString()}`;
       try {
@@ -320,17 +386,28 @@ describe("functions serve runtime template (offline)", () => {
 
         const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
         let ready = false;
+        let lastError: unknown;
         while (Date.now() < deadline) {
           try {
-            const response = await fetch(url);
+            const response = await fetch(url, {
+              signal: AbortSignal.timeout(SERVE_OFFLINE_ATTEMPT_TIMEOUT_MS),
+            });
             if (response.status === 401) {
               ready = true;
               break;
             }
-          } catch {}
+            lastError = new Error(`Received ${response.status} from ${url}`);
+          } catch (error) {
+            lastError = error;
+          }
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
-        expect(ready, containerLogs(container)).toBe(true);
+        if (!ready) {
+          throw new Error(
+            `Runtime at ${url} did not become ready.\n${await containerDiagnostics([container])}`,
+            { cause: lastError },
+          );
+        }
 
         for (const { name, authorization, code, message } of authFailureCases) {
           const response = await fetch(url, {
@@ -349,12 +426,12 @@ describe("functions serve runtime template (offline)", () => {
   );
 
   test.skipIf(!dockerAvailable)(
-    "preserves function env and CORS headers and exposes JWT errors through Kong",
+    "preserves function env and CORS headers, exposes JWT errors, and returns early responses through Kong",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
       const imageDeadline = resolveDeadline();
       const [runtimeImage, kongImage] = await Promise.all([
-        ensureImage(legacyEdgeRuntimeImage(), imageDeadline),
+        ensureImage(edgeRuntimeDockerfileImage(), imageDeadline),
         ensureImage(dockerfileServiceImage("kong"), imageDeadline),
       ]);
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-kong-e2e-"));
@@ -462,23 +539,32 @@ describe("functions serve runtime template (offline)", () => {
         const functionsUrl = `http://127.0.0.1:${port}/functions/v1`;
         const authUrl = `${functionsUrl}/test`;
 
+        const diagnosticContainers = [kongContainer, runtimeContainer] as const;
         const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
         let ready = false;
+        let lastError: unknown;
         while (Date.now() < deadline) {
           try {
-            const response = await fetch(authUrl);
+            const response = await fetch(authUrl, {
+              signal: AbortSignal.timeout(SERVE_OFFLINE_ATTEMPT_TIMEOUT_MS),
+            });
             if (response.status === 401) {
               ready = true;
               break;
             }
-          } catch {}
+            lastError = new Error(`Received ${response.status} from ${authUrl}`);
+          } catch (error) {
+            lastError = error;
+          }
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
-        expect(ready, `${containerLogs(kongContainer)}\n${containerLogs(runtimeContainer)}`).toBe(
-          true,
-        );
+        if (!ready) {
+          throw new Error(
+            `Runtime at ${authUrl} did not become ready.\n${await containerDiagnostics(diagnosticContainers)}`,
+            { cause: lastError },
+          );
+        }
 
-        const diagnosticContainers = [kongContainer, runtimeContainer] as const;
         const [customResponse, aliasResponse, nestedResponse] = await Promise.all([
           fetchColdFunction(`${functionsUrl}/custom`, diagnosticContainers, {
             headers: { Origin: "http://localhost:3000" },
@@ -501,6 +587,18 @@ describe("functions serve runtime template (offline)", () => {
         expect(aliasResponse.headers.get("x-shared-import")).toBe("shared-import-ok");
         expect(nestedResponse.status).toBe(200);
         expect(nestedResponse.headers.get("x-function-slug")).toBe("nested-worker-path");
+        const earlyResponse = await fetchFunctionWithDiagnostics(
+          `${functionsUrl}/custom`,
+          diagnosticContainers,
+          {
+            method: "POST",
+            headers: { "x-reject-before-body": "true" },
+            body: new Uint8Array(128 * 1024),
+            signal: AbortSignal.timeout(5_000),
+          },
+        );
+        expect(earlyResponse.status).toBe(400);
+        expect(await earlyResponse.text()).toBe("rejected");
         const runtimeLogs = containerLogs(runtimeContainer);
         expect(runtimeLogs).toContain("Functions config:");
         expect(runtimeLogs).toContain('"custom"');

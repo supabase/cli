@@ -14,10 +14,10 @@ Management API.
 
 ## Files Written
 
-| Path                                           | Format | When                                                  |
-| ---------------------------------------------- | ------ | ----------------------------------------------------- |
-| `~/.supabase/telemetry.json`                   | JSON   | always (PostHog state flush)                          |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | `--linked` only, via `LegacyLinkedProjectCache.cache` |
+| Path                                           | Format | When                                            |
+| ---------------------------------------------- | ------ | ----------------------------------------------- |
+| `~/.supabase/telemetry.json`                   | JSON   | always (PostHog state flush)                    |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | `--linked` only, via `LinkedProjectCache.cache` |
 
 The local lint query runs inside a transaction that is **always rolled back**.
 
@@ -49,7 +49,7 @@ One connection. Within one transaction: `BEGIN` → `set local search_path = ''`
 | `PGHOST` / `PGPORT` / … | connection overrides (local / `--db-url`)                            | no                                        |
 
 The API base URL is derived from `SUPABASE_PROFILE`; `SUPABASE_API_URL` is **not**
-honored (see `legacy-cli-settings.layer.unit.test.ts`).
+honored (see `command-settings.layer.unit.test.ts`).
 
 ## Exit Codes
 

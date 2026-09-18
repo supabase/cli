@@ -1,6 +1,6 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { legacyGenKeys } from "./keys.handler.ts";
+import { genKeys } from "./keys.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -13,12 +13,12 @@ const config = {
   ),
 } as const;
 
-export type LegacyGenKeysFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type GenKeysFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyGenKeysCommand = Command.make("keys", config).pipe(
+export const genKeysCommand = Command.make("keys", config).pipe(
   Command.withDescription(
     'Generate keys for preview branch. Deprecated: use "gen signing-key" instead.',
   ),
   Command.withShortDescription("Generate keys for preview branch (experimental)"),
-  Command.withHandler((flags) => legacyGenKeys(flags)),
+  Command.withHandler((flags) => genKeys(flags)),
 );

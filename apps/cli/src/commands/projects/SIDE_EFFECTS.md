@@ -85,7 +85,7 @@ subcommand's own `SIDE_EFFECTS.md`.
   cache is a telemetry-group record, separate from the `supabase/.temp` link
   removed during unlink.
 - **`create` non-interactive errors:** consolidates what used to be per-flag
-  "required flag(s) … not set" errors into a single `LegacyProjectsCreateMissingArgError`
+  "required flag(s) … not set" errors into a single `ProjectsCreateMissingArgError`
   that lists every missing item at once (a deliberate UX improvement over the
   old fail-on-first behavior).
 - `--plan` on `create` is accepted but ignored (no-op, hidden) — a vestigial flag.

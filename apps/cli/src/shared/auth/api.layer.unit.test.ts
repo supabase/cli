@@ -5,18 +5,10 @@ import { Api } from "./api.service.ts";
 import { ApiError } from "./errors.ts";
 import { makeApi } from "./api.layer.ts";
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const API_URL = "https://api.supabase.com";
 const SESSION_ID = "test-session-id";
 const DEVICE_CODE = "test-device-code";
 const EXPECTED_URL = `${API_URL}/platform/cli/login/${SESSION_ID}?device_code=${DEVICE_CODE}`;
-
-// ---------------------------------------------------------------------------
-// Mock factory
-// ---------------------------------------------------------------------------
 
 function mockHttpClient(opts: { status?: number; body?: unknown; transportError?: string }) {
   const requests: string[] = [];
@@ -55,20 +47,12 @@ function mockHttpClient(opts: { status?: number; body?: unknown; transportError?
   };
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function getFailError(exit: Exit.Exit<unknown, unknown>): unknown {
   if (!Exit.isFailure(exit)) throw new Error("Expected failure");
   const fail = exit.cause.reasons.find(Cause.isFailReason);
   if (!fail) throw new Error("Expected fail reason");
   return fail.error;
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("Api", () => {
   describe("fetchLoginSession", () => {

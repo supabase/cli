@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -47,13 +47,13 @@
+@@ -49,13 +49,13 @@
  inactivity_timeout = "0s"
  
  [email]
@@ -22,7 +22,7 @@ diff remote[auth] local[auth]
  [email.template]
  [email.template.confirmation]
  content_path = ""
-@@ -69,25 +69,25 @@
+@@ -71,25 +71,25 @@
  content_path = ""
  [email.notification]
  [email.notification.email_changed]

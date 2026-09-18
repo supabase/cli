@@ -6682,7 +6682,8 @@ type JitAccessResponseOutput struct {
 
 // JitAuthorizeAccessResponseOutput defines model for JitAuthorizeAccessResponse_Output.
 type JitAuthorizeAccessResponseOutput struct {
-	UserId   openapi_types.UUID `json:"user_id"`
+	Act      *string             `json:"act,omitempty"`
+	UserId   *openapi_types.UUID `json:"user_id,omitempty"`
 	UserRole struct {
 		AllowedNetworks *struct {
 			AllowedCidrs *[]struct {
@@ -7741,8 +7742,9 @@ type SslEnforcementResponseOutput struct {
 // StorageConfigResponseOutput defines model for StorageConfigResponse_Output.
 type StorageConfigResponseOutput struct {
 	Capabilities struct {
-		IcebergCatalog bool `json:"iceberg_catalog"`
-		ListV2         bool `json:"list_v2"`
+		IcebergCatalog   bool `json:"iceberg_catalog"`
+		ListV2           bool `json:"list_v2"`
+		ObjectVersioning bool `json:"object_versioning"`
 	} `json:"capabilities"`
 	External struct {
 		UpstreamTarget StorageConfigResponseOutputExternalUpstreamTarget `json:"upstreamTarget"`
@@ -7769,8 +7771,8 @@ type StorageConfigResponseOutput struct {
 			MaxIndexes int  `json:"maxIndexes"`
 		} `json:"vectorBuckets"`
 	} `json:"features"`
-	FileSizeLimit    int64  `json:"fileSizeLimit"`
-	MigrationVersion string `json:"migrationVersion"`
+	FileSizeLimit    int64                     `json:"fileSizeLimit"`
+	MigrationVersion nullable.Nullable[string] `json:"migrationVersion"`
 }
 
 // StorageConfigResponseOutputExternalUpstreamTarget defines model for StorageConfigResponseOutput.External.UpstreamTarget.
@@ -8120,25 +8122,25 @@ type UpdateCustomHostnameResponseOutput struct {
 		Errors   []JsonValueOutput `json:"errors"`
 		Messages []JsonValueOutput `json:"messages"`
 		Result   struct {
-			CustomOriginServer    string `json:"custom_origin_server"`
-			Hostname              string `json:"hostname"`
-			Id                    string `json:"id"`
+			CustomOriginServer    *string `json:"custom_origin_server,omitempty"`
+			Hostname              string  `json:"hostname"`
+			Id                    string  `json:"id"`
 			OwnershipVerification *struct {
-				Name  string `json:"name"`
-				Type  string `json:"type"`
-				Value string `json:"value"`
+				Name  *string `json:"name,omitempty"`
+				Type  *string `json:"type,omitempty"`
+				Value *string `json:"value,omitempty"`
 			} `json:"ownership_verification,omitempty"`
-			Ssl struct {
-				Status           string `json:"status"`
+			Ssl *struct {
+				Status           *string `json:"status,omitempty"`
 				ValidationErrors *[]struct {
 					Message string `json:"message"`
 				} `json:"validation_errors,omitempty"`
 				ValidationRecords *[]struct {
-					TxtName  string `json:"txt_name"`
-					TxtValue string `json:"txt_value"`
+					TxtName  *string `json:"txt_name,omitempty"`
+					TxtValue *string `json:"txt_value,omitempty"`
 				} `json:"validation_records,omitempty"`
-			} `json:"ssl"`
-			Status             string    `json:"status"`
+			} `json:"ssl,omitempty"`
+			Status             *string   `json:"status,omitempty"`
 			VerificationErrors *[]string `json:"verification_errors,omitempty"`
 		} `json:"result"`
 		Success bool `json:"success"`

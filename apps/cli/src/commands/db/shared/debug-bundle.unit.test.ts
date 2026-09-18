@@ -1,0 +1,95 @@
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Exit, FileSystem, Layer, Path } from "effect";
+
+import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { collectMigrationsList, saveDebugBundle } from "./debug-bundle.ts";
+
+const save = (workdir: string, tempDir: string, migrationsDir: string, id: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* saveDebugBundle(fs, path, workdir, tempDir, migrationsDir, {
+      id,
+      error: "boom",
+      migrationSql: "create table t();",
+    });
+  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)));
+
+describe("saveDebugBundle", () => {
+  it.effect("writes artifacts and returns the debug directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "debug-"));
+    const tempDir = join(root, "supabase", ".temp", "pgdelta");
+    return save(root, tempDir, join(root, "supabase", "migrations"), "20240101-000000").pipe(
+      Effect.tap((debugDir) =>
+        Effect.sync(() => {
+          expect(debugDir).toBe(join(tempDir, "debug", "20240101-000000"));
+          expect(existsSync(join(debugDir, "generated-migration.sql"))).toBe(true);
+          expect(readFileSync(join(debugDir, "error.txt"), "utf8")).toBe("boom");
+          rmSync(root, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("fails (does not return a path) when the debug directory cannot be created", () => {
+    // Plants a regular file where the `debug` directory needs to be, so the recursive
+    // makeDirectory fails.
+    const root = mkdtempSync(join(tmpdir(), "debug-fail-"));
+    const tempDir = join(root, "pgdelta");
+    writeFileSync(join(root, "pgdelta"), "not a directory");
+    return save(root, tempDir, join(root, "migrations"), "20240101-000000").pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          rmSync(root, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+});
+
+const collect = (migrationsDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* collectMigrationsList(fs, path, migrationsDir);
+  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)));
+
+describe("collectMigrationsList", () => {
+  it.effect("returns migration filenames when the dir is readable", () => {
+    const root = mkdtempSync(join(tmpdir(), "collect-"));
+    const migrationsDir = join(root, "supabase", "migrations");
+    mkdirSync(migrationsDir, { recursive: true });
+    writeFileSync(join(migrationsDir, "20240101120000_create.sql"), "create table x();");
+    return collect(migrationsDir).pipe(
+      Effect.tap((names) =>
+        Effect.sync(() => {
+          expect(names).toEqual(["20240101120000_create.sql"]);
+          rmSync(root, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "swallows an unreadable migrations dir (returns []) so it never masks the primary error",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "collect-fail-"));
+      const migrationsPath = join(root, "migrations");
+      writeFileSync(migrationsPath, "not a directory");
+      return collect(migrationsPath).pipe(
+        Effect.tap((names) =>
+          Effect.sync(() => {
+            expect(names).toEqual([]);
+            rmSync(root, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+});

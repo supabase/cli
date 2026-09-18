@@ -3,8 +3,6 @@ import { join } from "node:path";
 import { tmpdir, platform as osPlatform } from "node:os";
 import { randomUUID } from "node:crypto";
 
-export type CLITarget = "ts-legacy" | "ts-next";
-
 export interface CLIResult {
   stdout: string;
   stderr: string;
@@ -19,8 +17,8 @@ export interface HarnessOptions {
   accessToken: string;
   /** Working directory for the subprocess. Defaults to a fresh temp dir. */
   cwd?: string;
-  /** Set as SUPABASE_PROJECT_ID in the subprocess env. Storage commands read
-   *  this via viper (no --project-ref flag) for config validation in --local mode. */
+  /** Set as SUPABASE_PROJECT_ID in the subprocess env. Storage commands validate
+   *  against it (no --project-ref flag) for config validation in --local mode. */
   projectId?: string;
   /** Profile `project_host` — the domain the CLI derives per-project hosts from
    *  (storage `<ref>.<host>`, db `db.<ref>.<host>`, etc.). Defaults to "localhost"
@@ -30,7 +28,6 @@ export interface HarnessOptions {
 }
 
 export interface CLIHarness {
-  readonly target: CLITarget;
   readonly options: HarnessOptions;
 }
 
@@ -58,6 +55,7 @@ const WORKSPACE_ROOT = new URL("../../../", import.meta.url).pathname.replace(/\
 
 const BINARY_EXT = osPlatform() === "win32" ? ".exe" : "";
 const TS_CLI_SHIM = join(WORKSPACE_ROOT, "apps/cli/dist/supabase.js");
+const TS_CLI_BINARY = join(WORKSPACE_ROOT, `apps/cli/dist/supabase${BINARY_EXT}`);
 
 // E2E subprocesses should only enter agent output mode when a test explicitly
 // opts in via `opts.env`. Keep this list aligned with @vercel/detect-agent env
@@ -94,10 +92,6 @@ export function createSubprocessBaseEnv(
   return env;
 }
 
-function tsCliBinary(shell: "next" | "legacy"): string {
-  return join(WORKSPACE_ROOT, `apps/cli/dist/supabase-${shell}${BINARY_EXT}`);
-}
-
 function assertTsCliBuilt(binaryPath: string): void {
   if (!existsSync(TS_CLI_SHIM) || !existsSync(binaryPath)) {
     throw new Error(
@@ -113,23 +107,13 @@ interface BuiltCommand {
   binaryOverride?: string;
 }
 
-function buildCommand(target: CLITarget): BuiltCommand {
-  switch (target) {
-    case "ts-legacy": {
-      const binaryPath = tsCliBinary("legacy");
-      assertTsCliBuilt(binaryPath);
-      return { cmd: ["node", TS_CLI_SHIM], binaryOverride: binaryPath };
-    }
-    case "ts-next": {
-      const binaryPath = tsCliBinary("next");
-      assertTsCliBuilt(binaryPath);
-      return { cmd: ["node", TS_CLI_SHIM], binaryOverride: binaryPath };
-    }
-  }
+function buildCommand(): BuiltCommand {
+  assertTsCliBuilt(TS_CLI_BINARY);
+  return { cmd: ["node", TS_CLI_SHIM], binaryOverride: TS_CLI_BINARY };
 }
 
-export function createHarness(target: CLITarget, options: HarnessOptions): CLIHarness {
-  return { target, options };
+export function createHarness(options: HarnessOptions): CLIHarness {
+  return { options };
 }
 
 export async function exec(
@@ -138,7 +122,7 @@ export async function exec(
   opts?: { env?: Record<string, string> },
 ): Promise<CLIResult> {
   const start = performance.now();
-  const built = buildCommand(harness.target);
+  const built = buildCommand();
 
   const env: Record<string, string> = {
     ...createSubprocessBaseEnv(),
@@ -149,40 +133,31 @@ export async function exec(
     // tests don't touch the developer's real ~/.supabase.
     SUPABASE_HOME: harness.options.cwd ?? tmpdir(),
     ...(harness.options.projectId ? { SUPABASE_PROJECT_ID: harness.options.projectId } : {}),
-    // When a test writes a pooler-url file the Go CLI takes the pooler path in
-    // ParseDatabaseConfig. Setting a non-empty password avoids the initPoolerLogin
-    // API call so the only network traffic is the actual Management API call
-    // under test. Safe to set globally: it is only used when pooler-url exists.
+    // Setting a non-empty password avoids the interactive pooler login flow when a
+    // pooler-url file is present, so the only network traffic is the Management
+    // API call under test. Safe to set globally: only used when pooler-url exists.
     SUPABASE_DB_PASSWORD: "test-placeholder-password",
     ...(built.binaryOverride ? { SUPABASE_CLI_BINARY_OVERRIDE: built.binaryOverride } : {}),
     ...opts?.env,
   };
 
-  // The Go CLI uses a profile system rather than SUPABASE_API_URL. The ts-legacy
-  // CLI mirrors this dual semantics in `LegacyCliSettings` (built-in name first,
-  // YAML file path second) for any natively-ported command; proxy-wrapped
-  // commands still shell out to Go, which reads the same file directly via
-  // viper's SUPABASE_PROFILE (prefix SUPABASE_ + AutomaticEnv) when the value
-  // isn't a built-in profile name. Write a temporary profile file pointing at
-  // the replay server so both paths reach it.
-  // - ts-next reads SUPABASE_API_URL directly, so it doesn't need a profile file.
-  let profilePath: string | undefined;
-  if (harness.target === "ts-legacy") {
-    profilePath = join(tmpdir(), `cli-e2e-profile-${randomUUID()}.yaml`);
-    const url = harness.options.apiUrl;
-    writeFileSync(
-      profilePath,
-      [
-        `name: test`,
-        `api_url: "${url}"`,
-        `dashboard_url: "${url}"`,
-        `project_host: ${harness.options.projectHost ?? "localhost"}`,
-      ].join("\n"),
-    );
-    env["SUPABASE_PROFILE"] = profilePath;
-  } else {
-    env["SUPABASE_API_URL"] = harness.options.apiUrl;
-  }
+  // The CLI resolves its API base URL through the profile system, not
+  // SUPABASE_API_URL: `CommandSettings` accepts a built-in profile name or a YAML
+  // file path, and the still-proxied Go binary reads the same file via
+  // SUPABASE_PROFILE. Write a temp profile file pointing at the replay server so
+  // both paths reach it.
+  const profilePath = join(tmpdir(), `cli-e2e-profile-${randomUUID()}.yaml`);
+  const url = harness.options.apiUrl;
+  writeFileSync(
+    profilePath,
+    [
+      `name: test`,
+      `api_url: "${url}"`,
+      `dashboard_url: "${url}"`,
+      `project_host: ${harness.options.projectHost ?? "localhost"}`,
+    ].join("\n"),
+  );
+  env["SUPABASE_PROFILE"] = profilePath;
 
   const proc = Bun.spawn([...built.cmd, ...args], {
     env,

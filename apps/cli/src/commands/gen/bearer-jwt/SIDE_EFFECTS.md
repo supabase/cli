@@ -94,7 +94,7 @@ kid of your signing key (or leave blank to use the first one): ` on stderr, echo
   - `[auth].signing_keys_path` **configured**, **real TTY**: presents an interactive
     picker (`Select a signing key:`) built from each key's `kid`/`alg`/`key_ops`, then
     prints `Selected key ID: <kid>` to stderr. Does not byte-match the old interactive
-    picker UI (an accepted divergence — see `legacy-project-ref.layer.ts` for the
+    picker UI (an accepted divergence — see `project-ref.layer.ts` for the
     established precedent of only matching the observable "Selected ..." line).
   - **`[auth].enabled = false` quirk:** the `signing_keys_path` file is only read
     when `auth.enabled` is `true` — but which prompt is shown depends purely on

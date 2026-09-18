@@ -2,9 +2,9 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacySsoShow } from "./show.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { ssoShow } from "./show.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -19,9 +19,9 @@ const config = {
     Argument.withDescription("The ID of the SSO identity provider to show."),
   ),
 };
-export type LegacySsoShowFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type SsoShowFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacySsoShowCommand = Command.make("show", config).pipe(
+export const ssoShowCommand = Command.make("show", config).pipe(
   Command.withDescription(
     "Provides the information about an established connection to an identity provider. You can use --metadata to obtain the raw SAML 2.0 Metadata XML document stored in your project's configuration.",
   ),
@@ -34,10 +34,10 @@ export const legacySsoShowCommand = Command.make("show", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacySsoShow(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+    ssoShow(flags).pipe(
+      withCommandTelemetry({ flags, safeFlags: ["project-ref"] }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["sso", "show"])),
+  Command.provide(managementApiRuntimeLayer(["sso", "show"])),
 );

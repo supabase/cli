@@ -16,16 +16,9 @@ function dockerfileTextPlugin() {
   };
 }
 
-// Workspace packages such as @supabase/config publish a `bun` export
-// condition pointing at their TypeScript source (see
-// packages/config/package.json's `exports` map); without it, Vite's resolver
-// falls through to the `default` condition and loads the built `dist/*.js`
-// output instead — which is stale, or missing entirely on a fresh clone
-// before the package has been built. Extending (not replacing) Vite's
-// default condition lists keeps every other package's exports resolution
-// unchanged. Required on every inline `test.projects` entry below too:
-// Vitest builds a separate Vite config per project and does not inherit
-// these from the root config (see PR #6366 finding 0).
+// Workspace packages such as @supabase/config publish a `bun` export condition
+// pointing at their TypeScript source; without it, Vite falls through to `default`
+// and loads the built `dist/*.js`, which can be stale or missing.
 const workspacePackageResolve = { conditions: [...defaultClientConditions, "bun"] };
 const workspacePackageSsrResolve = { conditions: [...defaultServerConditions, "bun"] };
 
@@ -57,9 +50,6 @@ export default defineConfig({
     },
     projects: [
       {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           name: "unit",
           include: ["**/*.unit.test.ts"],
@@ -67,33 +57,23 @@ export default defineConfig({
         },
       },
       {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           name: "integration",
           include: ["**/*.integration.test.ts"],
         },
       },
       {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           name: "e2e",
           include: ["**/*.e2e.test.ts"],
           fileParallelism: false,
           maxWorkers: 1,
-          globalSetup: ["tests/e2e-global-setup.ts"],
           setupFiles: ["tests/e2e-setup.ts"],
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },
       },
       {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           // Live tests run against one provisioned project on the configured
           // platform. They are never part of the default unit/integration/e2e

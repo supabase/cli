@@ -3,13 +3,9 @@ import { BunServices } from "@effect/platform-bun";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Effect, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Layer, Option } from "effect";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
-import {
-  mockCliProjectContext,
-  mockRuntimeInfo,
-  processEnvLayer,
-} from "../../../tests/helpers/mocks.ts";
+import { mockCliProjectContext, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { getEffectiveConsent, readTelemetryConfig } from "./consent.ts";
 import type { TelemetryConfig } from "./types.ts";
 
@@ -23,25 +19,17 @@ function makeConfig(consent: TelemetryConfig["consent"]): TelemetryConfig {
 }
 
 function withEnv(env: Record<string, string>) {
-  const runtimeInfoLayer = mockRuntimeInfo();
-  const cliProjectContextLayer = mockCliProjectContext();
-  return Layer.mergeAll(
-    runtimeInfoLayer,
-    cliProjectContextLayer,
-    processEnvLayer(env),
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
+  return cliSettingsLayer.pipe(
+    Layer.provide(mockRuntimeInfo()),
+    Layer.provide(mockCliProjectContext()),
+    Layer.provide(
+      ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true })),
+    ),
   );
 }
 
 function emptyEnv() {
-  const runtimeInfoLayer = mockRuntimeInfo();
-  const cliProjectContextLayer = mockCliProjectContext();
-  return Layer.mergeAll(
-    runtimeInfoLayer,
-    cliProjectContextLayer,
-    processEnvLayer(),
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
-  );
+  return withEnv({});
 }
 
 function makeTempDir(): string {

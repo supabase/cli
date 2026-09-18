@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createStackE2eCleanupManager } from "../../../tests/helpers/stack-e2e-cleanup.ts";
+import { CliHomeDisposeError } from "../../../tests/helpers/cli.ts";
 
 function permissionError(message = "permission denied") {
   return Object.assign(new Error(message), { code: "EACCES" });
@@ -256,6 +257,30 @@ describe("stack e2e cleanup manager", () => {
       cleanup: async () => {
         calls.push("cleanup-project");
         throw permissionError();
+      },
+    });
+
+    await manager.drain();
+
+    expect(calls).toEqual(["cleanup-project", "docker-remove"]);
+  });
+
+  it("classifies a permission errno wrapped in a typed error's cause chain", async () => {
+    const calls: Array<string> = [];
+    const manager = createStackE2eCleanupManager(
+      cleanupEnvironment(calls, {
+        removeProjectWithDocker: async () => {
+          calls.push("docker-remove");
+          return true;
+        },
+      }),
+    );
+
+    manager.registerStackProject({
+      dir: "/tmp/project",
+      cleanup: async () => {
+        calls.push("cleanup-project");
+        throw new CliHomeDisposeError({ cause: permissionError() });
       },
     });
 

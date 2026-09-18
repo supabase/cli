@@ -1,7 +1,4 @@
-import { legacyMakeInspectDbHandler } from "../legacy-inspect-query.ts";
-import { legacyBloatSpec } from "./bloat.query.ts";
+import { makeInspectDbHandler } from "../inspect-query.ts";
+import { bloatSpec } from "./bloat.query.ts";
 
-export const legacyInspectDbBloat = legacyMakeInspectDbHandler(
-  legacyBloatSpec,
-  "legacy.inspect.db.bloat",
-);
+export const inspectDbBloat = makeInspectDbHandler(bloatSpec, "inspect.db.bloat");

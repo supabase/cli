@@ -3,20 +3,14 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 
 /**
- * Reproduces `apps/cli-go/internal/utils/git.go:GetGitBranchOrDefault`:
+ * Detects the current git branch: `$GITHUB_HEAD_REF` when set (CI
+ * pull-request workflows), otherwise the nearest `.git/HEAD` walking up from
+ * `startDir` (default: the runtime CWD), parsed as `ref: refs/heads/<name>`.
+ * Returns `Option.none()` when no git repository is found; callers substitute
+ * their own default.
  *
- * 1. `$GITHUB_HEAD_REF` wins when set (CI pull-request workflows).
- * 2. Otherwise walk from CWD up to the filesystem root reading `.git/HEAD`
- *    and parsing `ref: refs/heads/<name>`.
- *
- * Returns `Option.none()` when no git repository is detected. Callers may
- * substitute their own default (e.g. Go's `GetGitBranch` defaults to "main";
- * `branches create` defaults to the empty string so the prompt is skipped).
- *
- * `startDir` is the directory to begin the walk from; it defaults to the
- * runtime CWD. Commands that resolve a `--workdir` should pass it, because Go
- * chdirs into the workdir in `PersistentPreRunE` before calling `GetGitBranch`
- * (`cmd/root.go`), so the branch must reflect the project dir, not the caller's.
+ * Pass `startDir` explicitly for a resolved `--workdir` so the branch
+ * reflects the project directory, not the process's CWD.
  */
 export const detectGitBranch = (
   startDir?: string,

@@ -1,8 +1,4 @@
-import {
-  legacyInspectBacktickStmt,
-  legacyInspectText,
-  type LegacyInspectQuerySpec,
-} from "../legacy-inspect-query.ts";
+import { inspectBacktickStmt, inspectText, type InspectQuerySpec } from "../inspect-query.ts";
 
 const SQL = `SELECT
   query,
@@ -35,7 +31,7 @@ LIMIT 10`;
  * `inspect db calls` — pg_stat_statements ordered by number of calls.
  * The `query` column is whitespace-collapsed and rendered first.
  */
-export const legacyCallsSpec: LegacyInspectQuerySpec = {
+export const callsSpec: InspectQuerySpec = {
   name: "calls",
   sql: SQL,
   params: () => [],
@@ -47,10 +43,10 @@ export const legacyCallsSpec: LegacyInspectQuerySpec = {
     "Sync IO time",
   ],
   project: (row) => [
-    legacyInspectBacktickStmt(row["query"]),
-    legacyInspectText(row["total_exec_time"]),
-    legacyInspectText(row["prop_exec_time"]),
-    legacyInspectText(row["ncalls"]),
-    legacyInspectText(row["sync_io_time"]),
+    inspectBacktickStmt(row["query"]),
+    inspectText(row["total_exec_time"]),
+    inspectText(row["prop_exec_time"]),
+    inspectText(row["ncalls"]),
+    inspectText(row["sync_io_time"]),
   ],
 };

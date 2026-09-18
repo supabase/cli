@@ -1,54 +1,45 @@
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
-import { runSupabase, stripAnsi } from "../../../../tests/helpers/cli.ts";
+import { runSupabaseEffect, stripAnsi } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase migration fetch (legacy)", () => {
-  let workdir: string;
-  beforeEach(() => {
-    workdir = mkdtempSync(join(tmpdir(), "sb-mig-fetch-e2e-"));
-    mkdirSync(join(workdir, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), "[db]\nport = 54322\n");
-    writeFileSync(
-      join(workdir, "supabase", "migrations", "20240101000000_existing.sql"),
-      "select 1;\n",
-    );
-  });
-  afterEach(() => {
-    rmSync(workdir, { recursive: true, force: true });
-  });
-
-  // Real-subprocess guard for the production Stdin wiring + confirm prompt: a piped
-  // answer to the overwrite prompt must actually be read, not auto-defaulted. A declined
-  // `n` cancels before connecting, so no DB is required. This is the boundary in-process
-  // tests cannot cover — they inject a mock Stdin, which masked a missing-service bug
-  // where the migration DB runtime never provided the real stdin layer.
-  test(
+describe("supabase migration fetch", () => {
+  // Exercises the real Stdin wiring; in-process tests inject a mock Stdin and can't
+  // catch a missing real-stdin layer.
+  it.live(
     "reads a piped 'n' answer to the overwrite prompt and cancels",
-    { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stderr } = await runSupabase(["migration", "fetch", "--local"], {
-        entrypoint: "legacy",
-        cwd: workdir,
-        stdin: "n\n",
-      });
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "sb-mig-fetch-e2e-" });
+        const migrations = path.join(workdir, "supabase", "migrations");
+        yield* fs.makeDirectory(migrations, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(workdir, "supabase", "config.toml"),
+          "[db]\nport = 54322\n",
+        );
+        yield* fs.writeFileString(
+          path.join(migrations, "20240101000000_existing.sql"),
+          "select 1;\n",
+        );
 
-      // Declined → cancelled (exit 1), and the prompt label reached stderr.
-      expect(exitCode).toBe(1);
-      expect(stripAnsi(stderr)).toContain("[Y/n]");
-      // A declined prompt renders a lone `context canceled` line, with NO
-      // `SuggestDebugFlag` troubleshooting hint appended. CLI-1973.
-      const lines = stripAnsi(stderr).trimEnd().split("\n");
-      expect(lines.at(-1)).toBe("context canceled");
-      expect(stderr).not.toContain("Try rerunning the command with --debug");
-      // The existing file was NOT overwritten — the piped answer was honored.
-      expect(readdirSync(join(workdir, "supabase", "migrations"))).toEqual([
-        "20240101000000_existing.sql",
-      ]);
-    },
+        const { exitCode, stderr } = yield* runSupabaseEffect(["migration", "fetch", "--local"], {
+          cwd: workdir,
+          stdin: "n\n",
+        });
+
+        expect(exitCode).toBe(1);
+        expect(stripAnsi(stderr)).toContain("[Y/n]");
+        // A declined prompt exits with a lone "context canceled" line and no --debug hint.
+        const lines = stripAnsi(stderr).trimEnd().split("\n");
+        expect(lines.at(-1)).toBe("context canceled");
+        expect(stderr).not.toContain("Try rerunning the command with --debug");
+        expect(yield* fs.readDirectory(migrations)).toEqual(["20240101000000_existing.sql"]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    E2E_TIMEOUT_MS,
   );
 });

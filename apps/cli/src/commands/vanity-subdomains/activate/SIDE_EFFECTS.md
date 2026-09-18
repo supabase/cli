@@ -31,14 +31,14 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                       |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                         |
-| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                         |
-| `1`  | `--desired-subdomain` omitted (`LegacyDesiredSubdomainRequiredError`) — checked after gate/login/ref resolution; telemetry still fires          |
-| `1`  | API non-2xx (`LegacyVanitySubdomainsActivateUnexpectedStatusError`)                                                                             |
-| `1`  | transport failure (`LegacyVanitySubdomainsActivateNetworkError`)                                                                                |
+| Code | Condition                                                                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                   |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
+| `1`  | project ref unresolved (`ProjectRefNotLinkedError` / `InvalidProjectRefError`)                                                            |
+| `1`  | `--desired-subdomain` omitted (`DesiredSubdomainRequiredError`) — checked after gate/login/ref resolution; telemetry still fires          |
+| `1`  | API non-2xx (`VanitySubdomainsActivateUnexpectedStatusError`)                                                                             |
+| `1`  | transport failure (`VanitySubdomainsActivateNetworkError`)                                                                                |
 
 ## Telemetry Events Fired
 
@@ -57,7 +57,7 @@ Prints:
 Activated vanity subdomain at <custom_domain>
 ```
 
-### Legacy `--output {json,yaml,toml,env}`
+### `--output {json,yaml,toml,env}`
 
 Encodes the response object directly.
 
@@ -71,7 +71,7 @@ One `result` event with the full response object.
 
 ## Notes
 
-- The legacy `--output` flag wins over TS `--output-format` when both are provided.
+- The `--output` flag wins over TS `--output-format` when both are provided.
 - `linked-project.json` is written after ref resolution (once the `--experimental` gate is open),
   even when the API call fails. A closed gate writes nothing.
 - On gated 4xx responses this command prints an upgrade suggestion and fires `cli_upgrade_suggested`.

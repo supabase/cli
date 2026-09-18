@@ -2,9 +2,9 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { Command, Flag } from "effect/unstable/cli";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacySecretsList } from "./list.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { secretsList } from "./list.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -13,9 +13,9 @@ const config = {
   ),
 } as const;
 
-export type LegacySecretsListFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type SecretsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacySecretsListCommand = Command.make("list", config).pipe(
+export const secretsListCommand = Command.make("list", config).pipe(
   Command.withDescription("List all secrets in the linked project."),
   Command.withShortDescription("List all secrets on Supabase"),
   Command.withExamples([
@@ -29,10 +29,7 @@ export const legacySecretsListCommand = Command.make("list", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacySecretsList(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    secretsList(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["secrets", "list"])),
+  Command.provide(managementApiRuntimeLayer(["secrets", "list"])),
 );

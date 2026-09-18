@@ -1,16 +1,13 @@
 import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import {
-  mapLegacyHttpError,
-  sanitizeLegacyErrorBody,
-} from "../../../command-internal/legacy-http-errors.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { mapHttpError, sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
   decodeFunctionsResponse,
   encodeFunctionsGoJson,
@@ -19,29 +16,27 @@ import {
   hasJsonContentType,
 } from "./list.encoders.ts";
 import {
-  LegacyFunctionsEnvNotSupportedError,
-  LegacyFunctionsListNetworkError,
-  LegacyFunctionsListUnexpectedStatusError,
+  FunctionsEnvNotSupportedError,
+  FunctionsListNetworkError,
+  FunctionsListUnexpectedStatusError,
 } from "./list.errors.ts";
 import { renderFunctionsTable } from "./list.format.ts";
-import type { LegacyFunctionsListFlags } from "./list.command.ts";
+import type { FunctionsListFlags } from "./list.command.ts";
 
-const mapListError = mapLegacyHttpError({
-  networkError: LegacyFunctionsListNetworkError,
-  statusError: LegacyFunctionsListUnexpectedStatusError,
+const mapListError = mapHttpError({
+  networkError: FunctionsListNetworkError,
+  statusError: FunctionsListUnexpectedStatusError,
   networkMessage: (cause) => `failed to list functions: ${cause}`,
   statusMessage: (status, body) => `unexpected list functions status ${status}: ${body}`,
 });
 
-export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* (
-  flags: LegacyFunctionsListFlags,
-) {
+export const functionsList = Effect.fn("functions.list")(function* (flags: FunctionsListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
   let resolvedProjectRef = Option.none<string>();
 
   yield* Effect.gen(function* () {
@@ -60,11 +55,9 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
       Effect.catch(mapListError),
     );
     if (response.status !== 200) {
-      const body = sanitizeLegacyErrorBody(
-        yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-      );
+      const body = sanitizeErrorBody(yield* response.text.pipe(Effect.orElseSucceed(() => "")));
       yield* fetching?.fail() ?? Effect.void;
-      return yield* new LegacyFunctionsListUnexpectedStatusError({
+      return yield* new FunctionsListUnexpectedStatusError({
         status: response.status,
         body,
         message: `unexpected list functions status ${response.status}: ${body}`,
@@ -73,14 +66,13 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
     const rawBody = yield* response.text.pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(
-        (cause) =>
-          new LegacyFunctionsListNetworkError({ message: `failed to list functions: ${cause}` }),
+        (cause) => new FunctionsListNetworkError({ message: `failed to list functions: ${cause}` }),
       ),
     );
     if (!hasJsonContentType(response)) {
-      const body = sanitizeLegacyErrorBody(rawBody);
+      const body = sanitizeErrorBody(rawBody);
       yield* fetching?.fail() ?? Effect.void;
-      return yield* new LegacyFunctionsListUnexpectedStatusError({
+      return yield* new FunctionsListUnexpectedStatusError({
         status: response.status,
         body,
         message: `unexpected list functions status ${response.status}: ${body}`,
@@ -89,7 +81,7 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
     const decodedFunctions = decodeFunctionsResponse(rawBody);
     if (!decodedFunctions.ok) {
       yield* fetching?.fail() ?? Effect.void;
-      return yield* new LegacyFunctionsListNetworkError({
+      return yield* new FunctionsListNetworkError({
         message: decodedFunctions.message,
         decode: true,
       });
@@ -100,7 +92,7 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
     if (goFmt === "env") {
-      return yield* new LegacyFunctionsEnvNotSupportedError({
+      return yield* new FunctionsEnvNotSupportedError({
         message: "--output env flag is not supported",
       });
     }

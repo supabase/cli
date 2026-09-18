@@ -6,14 +6,7 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-// ---------------------------------------------------------------------------
-// HTTP-bound errors — one (Network + UnexpectedStatus) pair per error site.
-// Templates match the established `errors.Errorf(...)` phrasing byte-for-byte.
-// ---------------------------------------------------------------------------
-
-export class LegacyProjectsListNetworkError extends Data.TaggedError(
-  "LegacyProjectsListNetworkError",
-)<{
+export class ProjectsListNetworkError extends Data.TaggedError("ProjectsListNetworkError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -21,8 +14,8 @@ export class LegacyProjectsListNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsListUnexpectedStatusError extends Data.TaggedError(
-  "LegacyProjectsListUnexpectedStatusError",
+export class ProjectsListUnexpectedStatusError extends Data.TaggedError(
+  "ProjectsListUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -42,9 +35,7 @@ export class LegacyProjectsListUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsCreateNetworkError extends Data.TaggedError(
-  "LegacyProjectsCreateNetworkError",
-)<{
+export class ProjectsCreateNetworkError extends Data.TaggedError("ProjectsCreateNetworkError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -52,8 +43,8 @@ export class LegacyProjectsCreateNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsCreateUnexpectedStatusError extends Data.TaggedError(
-  "LegacyProjectsCreateUnexpectedStatusError",
+export class ProjectsCreateUnexpectedStatusError extends Data.TaggedError(
+  "ProjectsCreateUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -64,10 +55,8 @@ export class LegacyProjectsCreateUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// Interactive org list fetched by `create` when `--org-id` is omitted.
-export class LegacyProjectsOrgsListNetworkError extends Data.TaggedError(
-  "LegacyProjectsOrgsListNetworkError",
-)<{
+/** Interactive org list fetched by `create` when `--org-id` is omitted. */
+export class ProjectsOrgsListNetworkError extends Data.TaggedError("ProjectsOrgsListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -78,8 +67,8 @@ export class LegacyProjectsOrgsListNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsOrgsListUnexpectedStatusError extends Data.TaggedError(
-  "LegacyProjectsOrgsListUnexpectedStatusError",
+export class ProjectsOrgsListUnexpectedStatusError extends Data.TaggedError(
+  "ProjectsOrgsListUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -90,9 +79,7 @@ export class LegacyProjectsOrgsListUnexpectedStatusError extends Data.TaggedErro
   }
 }
 
-export class LegacyProjectsDeleteNetworkError extends Data.TaggedError(
-  "LegacyProjectsDeleteNetworkError",
-)<{
+export class ProjectsDeleteNetworkError extends Data.TaggedError("ProjectsDeleteNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -103,8 +90,8 @@ export class LegacyProjectsDeleteNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsDeleteUnexpectedStatusError extends Data.TaggedError(
-  "LegacyProjectsDeleteUnexpectedStatusError",
+export class ProjectsDeleteUnexpectedStatusError extends Data.TaggedError(
+  "ProjectsDeleteUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -115,10 +102,8 @@ export class LegacyProjectsDeleteUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// "Project does not exist:<ref>" (404 branch of the delete flow).
-export class LegacyProjectsDeleteNotFoundError extends Data.TaggedError(
-  "LegacyProjectsDeleteNotFoundError",
-)<{
+/** 404 branch of the delete flow. */
+export class ProjectsDeleteNotFoundError extends Data.TaggedError("ProjectsDeleteNotFoundError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -126,9 +111,7 @@ export class LegacyProjectsDeleteNotFoundError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsApiKeysNetworkError extends Data.TaggedError(
-  "LegacyProjectsApiKeysNetworkError",
-)<{
+export class ProjectsApiKeysNetworkError extends Data.TaggedError("ProjectsApiKeysNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -139,8 +122,8 @@ export class LegacyProjectsApiKeysNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsApiKeysUnexpectedStatusError extends Data.TaggedError(
-  "LegacyProjectsApiKeysUnexpectedStatusError",
+export class ProjectsApiKeysUnexpectedStatusError extends Data.TaggedError(
+  "ProjectsApiKeysUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -151,14 +134,8 @@ export class LegacyProjectsApiKeysUnexpectedStatusError extends Data.TaggedError
   }
 }
 
-// ---------------------------------------------------------------------------
-// Pure-path errors (validation, prompt-time semantics, user cancellation).
-// ---------------------------------------------------------------------------
-
-// `list` rejects `--output env` (`utils.ErrEnvNotSupported`).
-export class LegacyProjectsEnvNotSupportedError extends Data.TaggedError(
-  "LegacyProjectsEnvNotSupportedError",
-)<{
+/** `list` rejects `--output env`. */
+export class ProjectsEnvNotSupportedError extends Data.TaggedError("ProjectsEnvNotSupportedError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -166,10 +143,9 @@ export class LegacyProjectsEnvNotSupportedError extends Data.TaggedError(
   }
 }
 
-// Non-interactive `create` missing required params — `--org-id`,
-// `--db-password`, `--region` are required, plus exactly 1 positional arg.
-export class LegacyProjectsCreateMissingArgError extends Data.TaggedError(
-  "LegacyProjectsCreateMissingArgError",
+/** Non-interactive `create` missing a required param: `--org-id`, `--db-password`, `--region`, or the name argument. */
+export class ProjectsCreateMissingArgError extends Data.TaggedError(
+  "ProjectsCreateMissingArgError",
 )<{
   readonly message: string;
 }> {
@@ -178,9 +154,18 @@ export class LegacyProjectsCreateMissingArgError extends Data.TaggedError(
   }
 }
 
-// Interactive `create` name prompt returned blank.
-export class LegacyProjectsCreateNameEmptyError extends Data.TaggedError(
-  "LegacyProjectsCreateNameEmptyError",
+/** Interactive `create` name prompt returned blank. */
+export class ProjectsCreateNameEmptyError extends Data.TaggedError("ProjectsCreateNameEmptyError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+/** `delete` non-interactive with no positional ref given on a non-TTY. */
+export class ProjectsDeleteRefRequiredError extends Data.TaggedError(
+  "ProjectsDeleteRefRequiredError",
 )<{
   readonly message: string;
 }> {
@@ -189,22 +174,8 @@ export class LegacyProjectsCreateNameEmptyError extends Data.TaggedError(
   }
 }
 
-// `delete` non-interactive with no positional ref — exactly 1 positional
-// arg is required on a non-TTY.
-export class LegacyProjectsDeleteRefRequiredError extends Data.TaggedError(
-  "LegacyProjectsDeleteRefRequiredError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-// User declined the delete confirmation prompt (`errors.New(context.Canceled)`).
-export class LegacyProjectsDeleteCancelledError extends Data.TaggedError(
-  "LegacyProjectsDeleteCancelledError",
-)<{
+/** User declined the delete confirmation prompt. */
+export class ProjectsDeleteCancelledError extends Data.TaggedError("ProjectsDeleteCancelledError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

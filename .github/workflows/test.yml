@@ -35,9 +35,8 @@ permissions:
   actions: read
 
 # Literal prefix: called workflows inherit github.workflow from the caller
-# (`run-ci`), which would cancel the caller and the preview call. `inputs.force`
-# keeps a skipped native Test run on a develop draft from cancelling the
-# forced run-ci call.
+# (`run-ci`), which would cancel the caller. `inputs.force` keeps a skipped
+# native Test run on a develop draft from cancelling the forced run-ci call.
 concurrency:
   group: test.yml-${{ github.event.pull_request.number || github.head_ref || github.ref }}-${{ inputs.force && 'run-ci' || 'direct' }}
   cancel-in-progress: true
@@ -122,6 +121,40 @@ jobs:
       - name: Run integration tests
         run: pnpm run test:integration --coverage.enabled
 
+  test-stack-ports:
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event_name == 'merge_group' ||
+        inputs.force ||
+        github.event.pull_request.draft == false)
+    name: Run stack port tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [blacksmith-8vcpu-ubuntu-2404, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Run stack integration tests
+        working-directory: packages/stack
+        run: >-
+          pnpm test:integration
+          src/state/ports.integration.test.ts
+          src/state/registry-lease.integration.test.ts
+          src/state/state-store.integration.test.ts
+          src/supervisor/host-listener.integration.test.ts
+          src/supervisor/ingress.integration.test.ts
+          src/gateway/startup-transports.integration.test.ts
+
   test-summary:
     if: |
       always() &&
@@ -130,17 +163,21 @@ jobs:
         inputs.force ||
         github.event.pull_request.draft == false)
     name: Run unit and integration tests
-    needs: [test-unit, test-integration]
+    needs: [test-unit, test-integration, test-stack-ports]
     runs-on: ubuntu-latest
     steps:
       - name: Verify unit and integration tests succeeded
         run: |
           if [ "${{ needs.test-unit.result }}" = "failure" ] || [ "${{ needs.test-unit.result }}" = "cancelled" ] || \
             [ "${{ needs.test-integration.result }}" = "failure" ] || [ "${{ needs.test-integration.result }}" = "cancelled" ]; then
-            echo "::error ::Unit or integration tests failed: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}"
+            echo "::error ::Unit or integration tests failed: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}, stack-ports=${{ needs.test-stack-ports.result }}"
             exit 1
           fi
-          echo "Unit and integration tests reported: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}"
+          if [ "${{ needs.test-stack-ports.result }}" = "failure" ] || [ "${{ needs.test-stack-ports.result }}" = "cancelled" ]; then
+            echo "::error ::Stack port tests failed: stack-ports=${{ needs.test-stack-ports.result }}"
+            exit 1
+          fi
+          echo "Unit and integration tests reported: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}, stack-ports=${{ needs.test-stack-ports.result }}"
 
   test-e2e:
     if: |
@@ -148,7 +185,7 @@ jobs:
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
-    name: Run end-to-end tests (shard ${{ matrix.shard }}/3)
+    name: Run CLI end-to-end tests (shard ${{ matrix.shard }}/3)
     runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:
       fail-fast: false
@@ -178,24 +215,46 @@ jobs:
         run: go build -o supabase-go .
         working-directory: apps/cli-go
 
-      # The ts-legacy harness invokes `node apps/cli/dist/supabase.js` with
-      # `SUPABASE_CLI_BINARY_OVERRIDE` pointing at the compiled legacy binary
-      # in `apps/cli/dist/`. Build the CLI explicitly before invoking every
+      # The e2e harness invokes `node apps/cli/dist/supabase.js` with
+      # `SUPABASE_CLI_BINARY_OVERRIDE` pointing at the compiled binary in
+      # `apps/cli/dist/`. Build the CLI explicitly before invoking every
       # package-local e2e suite.
       - name: Build CLI
         run: pnpm exec turbo run supabase#build
 
       - name: Run end-to-end tests
-        run: pnpm exec turbo run test:e2e:run --only --concurrency=1 -- --shard=${{ matrix.shard }}/3
+        run: pnpm exec turbo run test:e2e:run --only --concurrency=1 --filter=supabase --filter=@supabase/cli-e2e -- --shard=${{ matrix.shard }}/3
         env:
-          CLI_HARNESS_TARGET: ts-legacy
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
 
-  # Summary job that gates branch protection.  The matrix `test-e2e` job
-  # produces per-shard check names (`Run end-to-end tests (shard N/3)`), so
-  # this job preserves the original `Run end-to-end tests` check name that
-  # branch protection rules already require.  It succeeds iff every shard
-  # succeeded (or skipped — `success()` is true for skipped jobs).
+  test-stack-e2e:
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event_name == 'merge_group' ||
+        inputs.force ||
+        github.event.pull_request.draft == false)
+    name: Run stack end-to-end tests (${{ matrix.runtime }})
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [native, container]
+    steps:
+      - name: Checkout
+        uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Run stack end-to-end tests
+        run: pnpm --filter @supabase/stack test:e2e:run
+        env:
+          SUPABASE_STACK_E2E_RUNTIME: ${{ matrix.runtime }}
+
+  # Summary job that gates branch protection. It preserves the original check
+  # name and succeeds iff every CLI shard and stack runtime succeeded.
   test-e2e-summary:
     if: |
       always() &&
@@ -204,13 +263,13 @@ jobs:
         inputs.force ||
         github.event.pull_request.draft == false)
     name: Run end-to-end tests
-    needs: test-e2e
+    needs: [test-e2e, test-stack-e2e]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all shards succeeded
         run: |
-          if [ "${{ needs.test-e2e.result }}" = "failure" ] || [ "${{ needs.test-e2e.result }}" = "cancelled" ]; then
-            echo "::error ::One or more e2e shards failed: ${{ needs.test-e2e.result }}"
+          if [ "${{ needs.test-e2e.result }}" = "failure" ] || [ "${{ needs.test-e2e.result }}" = "cancelled" ] || [ "${{ needs.test-stack-e2e.result }}" = "failure" ] || [ "${{ needs.test-stack-e2e.result }}" = "cancelled" ]; then
+            echo "::error ::One or more e2e jobs failed: cli=${{ needs.test-e2e.result }}, stack=${{ needs.test-stack-e2e.result }}"
             exit 1
           fi
-          echo "All e2e shards reported: ${{ needs.test-e2e.result }}"
+          echo "All e2e jobs reported: cli=${{ needs.test-e2e.result }}, stack=${{ needs.test-stack-e2e.result }}"

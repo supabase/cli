@@ -2,9 +2,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyDbReset } from "./reset.handler.ts";
-import { legacyDbResetRuntimeLayer } from "./reset.layers.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { dbReset } from "./reset.handler.ts";
+import { dbResetRuntimeLayer } from "./reset.layers.ts";
 
 const noSqlPaths: ReadonlyArray<string> = [];
 
@@ -23,7 +23,6 @@ const config = {
     Flag.withDescription("Resets the local database with local migrations."),
     Flag.withDefault(false),
   ),
-  // TS-only override of the linked project ref — see push.command.ts.
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
@@ -49,14 +48,14 @@ const config = {
   ),
 } as const;
 
-export type LegacyDbResetFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbResetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbResetCommand = Command.make("reset", config).pipe(
+export const dbResetCommand = Command.make("reset", config).pipe(
   Command.withDescription("Resets the local database to current migrations."),
   Command.withShortDescription("Resets the local database to current migrations"),
   Command.withHandler((flags) =>
-    legacyDbReset(flags).pipe(
-      withLegacyCommandInstrumentation({
+    dbReset(flags).pipe(
+      withCommandTelemetry({
         flags: {
           "db-url": flags.dbUrl,
           linked: flags.linked,
@@ -67,14 +66,11 @@ export const legacyDbResetCommand = Command.make("reset", config).pipe(
           version: flags.version,
           last: flags.last,
         },
-        // NO safeFlags: telemetry-safe marking is per flag INSTANCE — migration
-        // squash's `--version` is marked safe, but db reset's `--version` is
-        // unmarked, so it stays redacted here. `--project-ref` has no
-        // established telemetry-safety baseline either, so it stays redacted
-        // as well.
+        // No safeFlags: telemetry-safe marking is per flag instance, and neither `--version` nor
+        // `--project-ref` is marked safe on this command, so both stay redacted.
       }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyDbResetRuntimeLayer),
+  Command.provide(dbResetRuntimeLayer),
 );

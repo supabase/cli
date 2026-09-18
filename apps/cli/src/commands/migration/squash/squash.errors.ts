@@ -11,8 +11,8 @@ import {
  * directory is empty, or `--version` filtered out every file. Matches the
  * established `"version not found"` text.
  */
-export class LegacyMigrationSquashMissingVersionError extends Data.TaggedError(
-  "LegacyMigrationSquashMissingVersionError",
+export class MigrationSquashMissingVersionError extends Data.TaggedError(
+  "MigrationSquashMissingVersionError",
 )<{
   readonly message: string;
 }> {
@@ -21,14 +21,10 @@ export class LegacyMigrationSquashMissingVersionError extends Data.TaggedError(
   }
 }
 
-/**
- * One of squash's three `pg_dump` containers exited non-zero. Matches the
- * established `"error running container: exit " + code` text.
- */
-export class LegacyMigrationSquashDumpError extends Data.TaggedError(
-  "LegacyMigrationSquashDumpError",
-)<{
+/** A squash `pg_dump` run exited non-zero. Message text comes from `pgDumpClientExitMessage`. */
+export class MigrationSquashDumpError extends Data.TaggedError("MigrationSquashDumpError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbConnection;
@@ -41,9 +37,7 @@ export class LegacyMigrationSquashDumpError extends Data.TaggedError(
  * established `"failed to open migration file: " + err` / `"failed to write
  * line: " + err` text.
  */
-export class LegacyMigrationSquashWriteError extends Data.TaggedError(
-  "LegacyMigrationSquashWriteError",
-)<{
+export class MigrationSquashWriteError extends Data.TaggedError("MigrationSquashWriteError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -52,16 +46,12 @@ export class LegacyMigrationSquashWriteError extends Data.TaggedError(
 }
 
 /**
- * `baselineMigrations`'s history-table batch (`LEGACY_DELETE_MIGRATION_BEFORE` +
+ * `baselineMigrations`'s history-table batch (`DELETE_MIGRATION_BEFORE` +
  * `INSERT_MIGRATION_VERSION`) failed to send/commit. Matches the established
- * `"failed to update migration history: " + err` text. Classified `dbConnection`,
- * matching `migration repair`'s `LegacyMigrationRepairUpdateError`
- * (`repair.errors.ts:19`) — both wrap the identical history-table batch-send
- * failure shape.
+ * `"failed to update migration history: " + err` text, classified `dbConnection`
+ * like `migration repair`'s `MigrationRepairUpdateError` for the same failure shape.
  */
-export class LegacyMigrationSquashBaselineError extends Data.TaggedError(
-  "LegacyMigrationSquashBaselineError",
-)<{
+export class MigrationSquashBaselineError extends Data.TaggedError("MigrationSquashBaselineError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

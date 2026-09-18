@@ -1,16 +1,12 @@
 /**
- * Transcribed verbatim from `apps/cli-go/internal/db/start/templates/restore.sh`
- * (Go `//go:embed templates/restore.sh`, `apps/cli-go/internal/db/start/start.go:40-41`,
- * exported as `restoreScript`). Heredoc'd into `/docker-entrypoint-initdb.d/migrate.sh`
- * by the Postgres container's entrypoint ONLY when `--from-backup` is set
- * (`StartDatabase`, `apps/cli-go/internal/db/start/start.go:143-159`) — restores roles
- * then schema from the bind-mounted `/etc/backup.sql`, then runs
- * `/etc/postgresql.schema.sql` (the initial schema, written by the same entrypoint) as a
- * post-init step so a restored database still gets Supabase's roles/passwords applied.
- * Not a Go `text/template`. Do not hand-edit — re-transcribe from the Go source if it
- * changes.
+ * Heredoc'd into `/docker-entrypoint-initdb.d/migrate.sh` by the Postgres container's entrypoint
+ * only when `--from-backup` is set — restores roles then schema from the bind-mounted
+ * `/etc/backup.sql`, then runs `/etc/postgresql.schema.sql` (the initial schema, written by the
+ * same entrypoint) as a post-init step so a restored database still gets Supabase's
+ * roles/passwords applied. `${…}` sequences are escaped as `\${…}` so shell variable expansion
+ * stays literal instead of being interpolated by JS.
  */
-export const LEGACY_START_DB_RESTORE_SH = `#!/bin/sh
+export const START_DB_RESTORE_SH = `#!/bin/sh
 set -eu
 
 #######################################

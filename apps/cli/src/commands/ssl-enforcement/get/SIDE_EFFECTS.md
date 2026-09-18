@@ -31,13 +31,13 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                       |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — SSL enforcement status printed to stdout                                                                                              |
-| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                         |
-| `1`  | API non-200 (`LegacySslEnforcementGetUnexpectedStatusError`)                                                                                    |
-| `1`  | transport failure (`LegacySslEnforcementGetNetworkError`)                                                                                       |
+| Code | Condition                                                                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — SSL enforcement status printed to stdout                                                                                        |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
+| `1`  | project ref unresolved (`ProjectRefNotLinkedError` / `InvalidProjectRefError`)                                                            |
+| `1`  | API non-200 (`SslEnforcementGetUnexpectedStatusError`)                                                                                    |
+| `1`  | transport failure (`SslEnforcementGetNetworkError`)                                                                                       |
 
 ## Telemetry Events Fired
 

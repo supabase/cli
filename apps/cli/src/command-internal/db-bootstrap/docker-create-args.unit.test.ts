@@ -1,18 +1,16 @@
 import { describe, expect, test } from "vitest";
 
 import {
-  legacyBuildStartContainerCreateArgs,
-  legacyApplyBitbucketStartContainerFilter,
-  legacyBuildHealthCmdArg,
-  legacyIsDockerClientEnvKey,
-  type LegacyStartContainerSpec,
+  buildStartContainerCreateArgs,
+  applyBitbucketStartContainerFilter,
+  buildHealthCmdArg,
+  isDockerClientEnvKey,
+  type StartContainerSpec,
 } from "./docker-create-args.ts";
 
-// Mirrors the Logflare/analytics container (`start.go:350-394`): the fullest
-// worked example in the Go source — Hostname, Entrypoint+Cmd, exec-form
-// Healthcheck with StartPeriod, ExposedPorts alongside a matching
-// PortBinding, RestartPolicy, and network aliases.
-const full: LegacyStartContainerSpec = {
+// Exercises every optional field: Hostname, Entrypoint+Cmd, exec-form Healthcheck with
+// StartPeriod, ExposedPorts alongside a matching PortBinding, RestartPolicy, network aliases.
+const full: StartContainerSpec = {
   image: "supabase/logflare:1.0.0",
   containerName: "supabase_analytics_proj",
   hostname: "127.0.0.1",
@@ -42,9 +40,9 @@ const full: LegacyStartContainerSpec = {
   },
 };
 
-describe("legacyBuildStartContainerCreateArgs", () => {
+describe("buildStartContainerCreateArgs", () => {
   test("assembles full-option argv in the documented fixed order", () => {
-    expect(legacyBuildStartContainerCreateArgs(full)).toEqual([
+    expect(buildStartContainerCreateArgs(full)).toEqual([
       "create",
       "--name",
       "supabase_analytics_proj",
@@ -97,7 +95,7 @@ describe("legacyBuildStartContainerCreateArgs", () => {
   });
 
   test("emits only required flags for the minimal-options case", () => {
-    const minimal: LegacyStartContainerSpec = {
+    const minimal: StartContainerSpec = {
       image: "supabase/postgres-meta:v1",
       containerName: "supabase_pg_meta_proj",
       env: {},
@@ -105,7 +103,7 @@ describe("legacyBuildStartContainerCreateArgs", () => {
       networkId: "supabase_network_proj",
       labels: {},
     };
-    expect(legacyBuildStartContainerCreateArgs(minimal)).toEqual([
+    expect(buildStartContainerCreateArgs(minimal)).toEqual([
       "create",
       "--name",
       "supabase_pg_meta_proj",
@@ -116,7 +114,7 @@ describe("legacyBuildStartContainerCreateArgs", () => {
   });
 
   test("omits --name entirely when containerName is empty (Docker auto-generates one, e.g. the shadow database)", () => {
-    const spec: LegacyStartContainerSpec = {
+    const spec: StartContainerSpec = {
       image: "supabase/postgres:17.4.1.030",
       containerName: "",
       env: {},
@@ -124,13 +122,13 @@ describe("legacyBuildStartContainerCreateArgs", () => {
       networkId: "supabase_network_proj",
       labels: {},
     };
-    const args = legacyBuildStartContainerCreateArgs(spec);
+    const args = buildStartContainerCreateArgs(spec);
     expect(args).not.toContain("--name");
     expect(args).toEqual(["create", "--network", "supabase_network_proj", spec.image]);
   });
 
   test("emits --rm when autoRemove is true, omits it otherwise", () => {
-    const base: LegacyStartContainerSpec = {
+    const base: StartContainerSpec = {
       image: "supabase/postgres:17.4.1.030",
       containerName: "",
       env: {},
@@ -138,24 +136,21 @@ describe("legacyBuildStartContainerCreateArgs", () => {
       networkId: "supabase_network_proj",
       labels: {},
     };
-    expect(legacyBuildStartContainerCreateArgs(base)).not.toContain("--rm");
-    expect(legacyBuildStartContainerCreateArgs({ ...base, autoRemove: true })).toContain("--rm");
-    expect(legacyBuildStartContainerCreateArgs({ ...base, autoRemove: false })).not.toContain(
-      "--rm",
-    );
+    expect(buildStartContainerCreateArgs(base)).not.toContain("--rm");
+    expect(buildStartContainerCreateArgs({ ...base, autoRemove: true })).toContain("--rm");
+    expect(buildStartContainerCreateArgs({ ...base, autoRemove: false })).not.toContain("--rm");
   });
 
   test("never serializes env values into argv (CWE-214: secrets must not leak to ps)", () => {
-    const args = legacyBuildStartContainerCreateArgs(full);
+    const args = buildStartContainerCreateArgs(full);
     expect(args).toContain("DB_PASSWORD");
     expect(args.some((a) => a.includes("super-secret"))).toBe(false);
-    // Every -e argument is a bare key: no '=' anywhere in an -e value.
     const envValues = args.flatMap((a, i) => (args[i - 1] === "-e" ? [a] : []));
     expect(envValues.every((v) => !v.includes("="))).toBe(true);
   });
 
   test("emits DOCKER_HOST inline as -e KEY=value, not key-only, since it's not a secret (Vector's tcp/npipe daemon host)", () => {
-    const spec: LegacyStartContainerSpec = {
+    const spec: StartContainerSpec = {
       image: "timberio/vector:0.36.0-alpine",
       containerName: "supabase_vector_proj",
       env: { DOCKER_HOST: "http://host.docker.internal:2375", API_KEY: "super-secret" },
@@ -163,31 +158,28 @@ describe("legacyBuildStartContainerCreateArgs", () => {
       networkId: "supabase_network_proj",
       labels: {},
     };
-    const args = legacyBuildStartContainerCreateArgs(spec);
+    const args = buildStartContainerCreateArgs(spec);
     expect(args).toContain("-e");
     const dockerHostIndex = args.indexOf("DOCKER_HOST=http://host.docker.internal:2375");
     expect(dockerHostIndex).toBeGreaterThan(-1);
     expect(args[dockerHostIndex - 1]).toBe("-e");
-    // The genuine secret alongside it must still stay key-only.
     expect(args).toContain("API_KEY");
     expect(args.some((a) => a.includes("super-secret"))).toBe(false);
   });
 
-  test("legacyIsDockerClientEnvKey recognizes Docker/Podman client env vars and nothing else", () => {
-    expect(legacyIsDockerClientEnvKey("DOCKER_HOST")).toBe(true);
-    expect(legacyIsDockerClientEnvKey("DOCKER_TLS_VERIFY")).toBe(true);
-    expect(legacyIsDockerClientEnvKey("DOCKER_CERT_PATH")).toBe(true);
-    expect(legacyIsDockerClientEnvKey("DOCKER_CONTEXT")).toBe(true);
-    expect(legacyIsDockerClientEnvKey("DOCKER_API_VERSION")).toBe(true);
-    // `docker/cli`'s `EnvOverrideConfigDir` (`cli/config/config.go:25`) — also read by
-    // `legacyGetHostname`'s `dockerConfigDir()`, so a project-dotenv-only override must reach
-    // `process.env` the same way `DOCKER_HOST`/`DOCKER_CONTEXT` already do (review: PRRT_kwDOErm0O86Vk-ex).
-    expect(legacyIsDockerClientEnvKey("DOCKER_CONFIG")).toBe(true);
-    expect(legacyIsDockerClientEnvKey("DB_PASSWORD")).toBe(false);
+  test("isDockerClientEnvKey recognizes Docker/Podman client env vars and nothing else", () => {
+    expect(isDockerClientEnvKey("DOCKER_HOST")).toBe(true);
+    expect(isDockerClientEnvKey("DOCKER_TLS_VERIFY")).toBe(true);
+    expect(isDockerClientEnvKey("DOCKER_CERT_PATH")).toBe(true);
+    expect(isDockerClientEnvKey("DOCKER_CONTEXT")).toBe(true);
+    expect(isDockerClientEnvKey("DOCKER_API_VERSION")).toBe(true);
+    // Also read by `getHostname`'s `dockerConfigDir()`.
+    expect(isDockerClientEnvKey("DOCKER_CONFIG")).toBe(true);
+    expect(isDockerClientEnvKey("DB_PASSWORD")).toBe(false);
   });
 
   test("omits the protocol suffix for tcp ports and adds /udp when specified", () => {
-    const spec: LegacyStartContainerSpec = {
+    const spec: StartContainerSpec = {
       image: "img",
       containerName: "c",
       env: {},
@@ -201,7 +193,7 @@ describe("legacyBuildStartContainerCreateArgs", () => {
       ],
       exposedPorts: [{ containerPort: "9999" }, { containerPort: "9998", protocol: "udp" }],
     };
-    const args = legacyBuildStartContainerCreateArgs(spec);
+    const args = buildStartContainerCreateArgs(spec);
     expect(args).toEqual(
       expect.arrayContaining([
         "-p",
@@ -219,7 +211,7 @@ describe("legacyBuildStartContainerCreateArgs", () => {
   });
 
   test("emits --tmpfs with :options only when options are non-empty", () => {
-    const spec: LegacyStartContainerSpec = {
+    const spec: StartContainerSpec = {
       image: "img",
       containerName: "c",
       env: {},
@@ -228,14 +220,14 @@ describe("legacyBuildStartContainerCreateArgs", () => {
       labels: {},
       tmpfs: { "/tmp/bare": "", "/tmp/opts": "rw,size=100m" },
     };
-    const args = legacyBuildStartContainerCreateArgs(spec);
+    const args = buildStartContainerCreateArgs(spec);
     expect(args).toEqual(
       expect.arrayContaining(["--tmpfs", "/tmp/bare", "--tmpfs", "/tmp/opts:rw,size=100m"]),
     );
   });
 
   test("emits cmd tokens after the image even when entrypoint is absent (Pooler: start.go:1234-1237)", () => {
-    const spec: LegacyStartContainerSpec = {
+    const spec: StartContainerSpec = {
       image: "supabase/supavisor:2.0.0",
       containerName: "supabase_pooler_proj",
       env: {},
@@ -244,7 +236,7 @@ describe("legacyBuildStartContainerCreateArgs", () => {
       labels: {},
       cmd: ["/bin/sh", "-c", "/app/bin/migrate && /app/bin/server"],
     };
-    const args = legacyBuildStartContainerCreateArgs(spec);
+    const args = buildStartContainerCreateArgs(spec);
     expect(args).not.toContain("--entrypoint");
     const imageIdx = args.indexOf("supabase/supavisor:2.0.0");
     expect(args.slice(imageIdx)).toEqual([
@@ -256,7 +248,7 @@ describe("legacyBuildStartContainerCreateArgs", () => {
   });
 
   test("omits health flags entirely when healthcheck is absent (Kong/PostgREST: start.go:975)", () => {
-    const spec: LegacyStartContainerSpec = {
+    const spec: StartContainerSpec = {
       image: "kong:3",
       containerName: "supabase_kong_proj",
       env: {},
@@ -264,12 +256,12 @@ describe("legacyBuildStartContainerCreateArgs", () => {
       networkId: "net",
       labels: {},
     };
-    const args = legacyBuildStartContainerCreateArgs(spec);
+    const args = buildStartContainerCreateArgs(spec);
     expect(args.some((a) => a.startsWith("--health"))).toBe(false);
   });
 
   test("never reads spec.secretFiles — the pure builder emits nothing from it (container-lifecycle.ts alone `docker cp`s it into the container, CWE-214/522)", () => {
-    const spec: LegacyStartContainerSpec = {
+    const spec: StartContainerSpec = {
       image: "kong:3",
       containerName: "supabase_kong_proj",
       env: {},
@@ -278,23 +270,22 @@ describe("legacyBuildStartContainerCreateArgs", () => {
       labels: {},
       secretFiles: [{ containerPath: "/etc/secret.yml", content: "top-secret-content" }],
     };
-    const args = legacyBuildStartContainerCreateArgs(spec);
+    const args = buildStartContainerCreateArgs(spec);
     expect(args.some((a) => a.includes("top-secret-content"))).toBe(false);
     expect(args.some((a) => a.includes("/etc/secret.yml"))).toBe(false);
-    // Only the spec's own `binds` entries are ever emitted — secretFiles contributes nothing.
     expect(args.filter((a) => a === "-v")).toHaveLength(1);
   });
 });
 
-describe("legacyBuildHealthCmdArg", () => {
+describe("buildHealthCmdArg", () => {
   test("forwards CMD-SHELL scripts verbatim, with no quoting applied", () => {
     const script = `node --eval="fetch('http://127.0.0.1:8080/health').then((r) => {if (!r.ok) throw new Error(r.status)})"`;
-    expect(legacyBuildHealthCmdArg(["CMD-SHELL", script])).toBe(script);
+    expect(buildHealthCmdArg(["CMD-SHELL", script])).toBe(script);
   });
 
   test("shell-quotes each exec-form argument and joins with spaces", () => {
     expect(
-      legacyBuildHealthCmdArg([
+      buildHealthCmdArg([
         "CMD",
         "curl",
         "-sSfL",
@@ -307,16 +298,16 @@ describe("legacyBuildHealthCmdArg", () => {
   });
 
   test("quotes an exec-form argument containing spaces so the container shell re-splits it back to one token", () => {
-    expect(legacyBuildHealthCmdArg(["CMD", "echo", "hello world"])).toBe("echo 'hello world'");
+    expect(buildHealthCmdArg(["CMD", "echo", "hello world"])).toBe("echo 'hello world'");
   });
 
   test("escapes an embedded single quote using the '\\'' POSIX technique", () => {
-    expect(legacyBuildHealthCmdArg(["CMD", "echo", "it's here"])).toBe("echo 'it'\\''s here'");
+    expect(buildHealthCmdArg(["CMD", "echo", "it's here"])).toBe("echo 'it'\\''s here'");
   });
 });
 
-describe("legacyApplyBitbucketStartContainerFilter", () => {
-  const dbLike: LegacyStartContainerSpec = {
+describe("applyBitbucketStartContainerFilter", () => {
+  const dbLike: StartContainerSpec = {
     image: "supabase/postgres:15",
     containerName: "supabase_db_proj",
     env: {},
@@ -329,11 +320,11 @@ describe("legacyApplyBitbucketStartContainerFilter", () => {
   };
 
   test("passes the spec through unchanged outside Bitbucket", () => {
-    expect(legacyApplyBitbucketStartContainerFilter(dbLike, false)).toBe(dbLike);
+    expect(applyBitbucketStartContainerFilter(dbLike, false)).toBe(dbLike);
   });
 
   test("drops named-volume binds and clears security-opt under Bitbucket, leaving tmpfs/volumesFrom untouched", () => {
-    const filtered = legacyApplyBitbucketStartContainerFilter(dbLike, true);
+    const filtered = applyBitbucketStartContainerFilter(dbLike, true);
     expect(filtered.binds).toEqual(["/repo/backup.sql:/etc/backup.sql:ro"]);
     expect(filtered.securityOpt).toEqual([]);
     expect(filtered.tmpfs).toEqual({ "/docker-entrypoint-initdb.d": "" });

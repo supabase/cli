@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { legacyBearerJwtErrorMessage } from "./bearer-jwt.errors.ts";
+import { bearerJwtErrorMessage } from "./bearer-jwt.errors.ts";
 
-describe("legacyBearerJwtErrorMessage", () => {
+describe("bearerJwtErrorMessage", () => {
   it("extracts .message from a real Error instance", () => {
-    expect(legacyBearerJwtErrorMessage(new Error("boom"))).toBe("boom");
+    expect(bearerJwtErrorMessage(new Error("boom"))).toBe("boom");
   });
 
   it("stringifies a non-Error cause", () => {
-    expect(legacyBearerJwtErrorMessage("plain string cause")).toBe("plain string cause");
-    expect(legacyBearerJwtErrorMessage(42)).toBe("42");
+    expect(bearerJwtErrorMessage("plain string cause")).toBe("plain string cause");
+    expect(bearerJwtErrorMessage(42)).toBe("42");
   });
 });

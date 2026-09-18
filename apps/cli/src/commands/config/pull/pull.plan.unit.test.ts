@@ -9,15 +9,15 @@ import {
 import { describe, expect, test } from "vitest";
 
 import {
-  legacyConfigPullEnvVariableAtPath,
-  legacyConfigPullFamilyRootForPath,
-  legacyDropConfigPullUnvalidatableFamilies,
-  legacyExpandConfigPullChangeSet,
-  legacyPlanConfigPull,
-  LEGACY_CONFIG_PULL_FIXPOINT_ROUND_CAP,
-  type LegacyConfigPullPlan,
+  configPullEnvVariableAtPath,
+  configPullFamilyRootForPath,
+  dropConfigPullUnvalidatableFamilies,
+  expandConfigPullChangeSet,
+  planConfigPull,
+  CONFIG_PULL_FIXPOINT_ROUND_CAP,
+  type ConfigPullPlan,
 } from "./pull.plan.ts";
-import type { LegacyConfigPullDestination } from "./pull.scope.ts";
+import type { ConfigPullDestination } from "./pull.scope.ts";
 
 function change(
   overrides: Pick<ConfigChange, "path" | "class"> & Partial<ConfigChange>,
@@ -38,19 +38,19 @@ function changeSet(changes: ReadonlyArray<ConfigChange>): ConfigChangeSet {
   };
 }
 
-const ROOT: LegacyConfigPullDestination = { kind: "root" };
-const REMOTE: LegacyConfigPullDestination = { kind: "remote", label: "staging", created: false };
-const CREATED_REMOTE: LegacyConfigPullDestination = {
+const ROOT: ConfigPullDestination = { kind: "root" };
+const REMOTE: ConfigPullDestination = { kind: "remote", label: "staging", created: false };
+const CREATED_REMOTE: ConfigPullDestination = {
   kind: "remote",
   label: "staging",
   created: true,
 };
 
-describe("legacyPlanConfigPull", () => {
+describe("planConfigPull", () => {
   test("an update change is planned as a write with the remote value", () => {
     const path = ["api", "max_rows"];
     const c = change({ path, class: "update", local: 500, remote: 1000, declared: true });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
@@ -69,7 +69,7 @@ describe("legacyPlanConfigPull", () => {
       remote: "https://prod.example.com",
       declared: false,
     });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
@@ -84,7 +84,7 @@ describe("legacyPlanConfigPull", () => {
   test("a local_only change is always skipped — there is no remote value to write", () => {
     const path = ["auth", "enable_signup"];
     const c = change({ path, class: "local_only", local: true, remote: undefined, declared: true });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
@@ -104,7 +104,7 @@ describe("legacyPlanConfigPull", () => {
       declared: true,
       envVariables: ["DB_PORT"],
     });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
@@ -123,7 +123,7 @@ describe("legacyPlanConfigPull", () => {
       remote: null,
       declared: false,
     });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
@@ -142,7 +142,7 @@ describe("legacyPlanConfigPull", () => {
       remote: [["nested"]],
       declared: true,
     });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
@@ -160,7 +160,7 @@ describe("legacyPlanConfigPull", () => {
       remote: "env(SUPABASE_ACCESS_TOKEN)",
       declared: true,
     });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
@@ -179,7 +179,7 @@ describe("legacyPlanConfigPull", () => {
       remote: ["https://prod.example.com/callback", "env(EXTRA_REDIRECT)"],
       declared: true,
     });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
@@ -198,7 +198,7 @@ describe("legacyPlanConfigPull", () => {
       remote: { "+15551234": "000000", "+15555678": "env(TEST_OTP_CODE)" },
       declared: true,
     });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
@@ -217,7 +217,7 @@ describe("legacyPlanConfigPull", () => {
       remote: "see env(FOO) docs",
       declared: true,
     });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
@@ -236,7 +236,7 @@ describe("legacyPlanConfigPull", () => {
       remote: "env(foo-bar)",
       declared: true,
     });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
@@ -249,7 +249,7 @@ describe("legacyPlanConfigPull", () => {
   test("a write's documentPath is prefixed with the destination's remotes label", () => {
     const path = ["api", "max_rows"];
     const c = change({ path, class: "update", local: 500, remote: 1000, declared: true });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: REMOTE,
       rootDocument: {},
@@ -270,7 +270,7 @@ describe("legacyPlanConfigPull", () => {
       declared: true,
     });
 
-    const rootPlan = legacyPlanConfigPull({
+    const rootPlan = planConfigPull({
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
@@ -278,7 +278,7 @@ describe("legacyPlanConfigPull", () => {
     });
     expect(rootPlan.warnings).toEqual([{ kind: "dual_scope", path }]);
 
-    const remotePlan = legacyPlanConfigPull({
+    const remotePlan = planConfigPull({
       changeSet: changeSet([c]),
       destination: REMOTE,
       rootDocument: {},
@@ -290,7 +290,7 @@ describe("legacyPlanConfigPull", () => {
   test("dual_scope does not fire for a comparable path outside the registry's dual-scope list", () => {
     const path = ["api", "max_rows"];
     const c = change({ path, class: "update", local: 500, remote: 1000, declared: true });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: ROOT,
       rootDocument: {},
@@ -303,7 +303,7 @@ describe("legacyPlanConfigPull", () => {
     const path = ["api", "max_rows"];
     const c = change({ path, class: "update", local: 1000, remote: 500, declared: true });
     const rootDocument = { api: { max_rows: 500 } };
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: REMOTE,
       rootDocument,
@@ -315,7 +315,7 @@ describe("legacyPlanConfigPull", () => {
   test("duplicates_root does not fire when the root has no value at that path", () => {
     const path = ["api", "max_rows"];
     const c = change({ path, class: "update", local: 1000, remote: 500, declared: true });
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: REMOTE,
       rootDocument: {},
@@ -334,7 +334,7 @@ describe("legacyPlanConfigPull", () => {
       declared: false,
     });
     const rootDocument = { auth: { additional_redirect_urls: ["http://localhost:3000/callback"] } };
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: REMOTE,
       rootDocument,
@@ -353,7 +353,7 @@ describe("legacyPlanConfigPull", () => {
       declared: true,
     });
     const rootDocument = { auth: { additional_redirect_urls: ["http://localhost:3000/callback"] } };
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([c]),
       destination: REMOTE,
       rootDocument,
@@ -370,7 +370,7 @@ describe("legacyPlanConfigPull", () => {
       counts: { update: 0, remote_only: 0, local_only: 0, total: 0 },
       absencePolicy: "absent-is-hands-off",
     };
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: cs,
       destination: ROOT,
       rootDocument: {},
@@ -382,7 +382,7 @@ describe("legacyPlanConfigPull", () => {
   });
 
   test("createdTable reflects a newly created remote destination", () => {
-    const plan = legacyPlanConfigPull({
+    const plan = planConfigPull({
       changeSet: changeSet([]),
       destination: CREATED_REMOTE,
       rootDocument: {},
@@ -392,7 +392,7 @@ describe("legacyPlanConfigPull", () => {
   });
 
   test("createdTable is undefined when reusing an existing block or writing to root", () => {
-    const remotePlan = legacyPlanConfigPull({
+    const remotePlan = planConfigPull({
       changeSet: changeSet([]),
       destination: REMOTE,
       rootDocument: {},
@@ -400,7 +400,7 @@ describe("legacyPlanConfigPull", () => {
     });
     expect(remotePlan.createdTable).toBeUndefined();
 
-    const rootPlan = legacyPlanConfigPull({
+    const rootPlan = planConfigPull({
       changeSet: changeSet([]),
       destination: ROOT,
       rootDocument: {},
@@ -410,16 +410,16 @@ describe("legacyPlanConfigPull", () => {
   });
 });
 
-describe("legacyExpandConfigPullChangeSet", () => {
+describe("expandConfigPullChangeSet", () => {
   test("pins the round cap at 4", () => {
-    expect(LEGACY_CONFIG_PULL_FIXPOINT_ROUND_CAP).toBe(4);
+    expect(CONFIG_PULL_FIXPOINT_ROUND_CAP).toBe(4);
   });
 
   test("a changeSet with nothing writable is returned unchanged, in zero rounds", () => {
     const initialChangeSet = changeSet([
       change({ path: ["auth", "enable_signup"], class: "local_only", local: true, declared: true }),
     ]);
-    const result = legacyExpandConfigPullChangeSet({
+    const result = expandConfigPullChangeSet({
       initialChangeSet,
       baseConfig: {} as EffectiveConfig,
       baseDocument: {},
@@ -431,11 +431,9 @@ describe("legacyExpandConfigPullChangeSet", () => {
   });
 
   test("absorbs a sibling ADR 0021 gates as unmanaged, once the gate itself is projected (CLI-2064 live-bug repro)", () => {
-    // Mirrors the live dogfooding bug exactly: `[auth.sms.twilio]` disabled
-    // locally with empty credential placeholders, remote has it enabled with
-    // real credentials. Round 1 only sees `enabled` (the sids are gated out
-    // as unmanaged pre-write); the fixpoint's round 2 must absorb both sids
-    // once projecting `enabled: true` un-gates them.
+    // [auth.sms.twilio] is disabled locally with empty placeholders; remote has it enabled with
+    // real credentials. Round 1 only sees `enabled` (the sids are unmanaged pre-write); round 2
+    // must absorb both once `enabled: true` un-gates them.
     const baseConfig = {
       auth: { sms: { twilio: { enabled: false, account_sid: "", message_service_sid: "" } } },
     } as unknown as EffectiveConfig;
@@ -451,8 +449,6 @@ describe("legacyExpandConfigPullChangeSet", () => {
       local: { config: baseConfig, document: baseDocument },
       remote,
     });
-    // Sanity on the PRE-fixpoint diff — this is the bug: only `enabled` is a
-    // change, the sids are excluded as unmanaged.
     expect(initialChangeSet.changes.map((c) => c.path)).toEqual([
       ["auth", "sms", "twilio", "enabled"],
     ]);
@@ -463,7 +459,7 @@ describe("legacyExpandConfigPullChangeSet", () => {
       ]),
     );
 
-    const result = legacyExpandConfigPullChangeSet({
+    const result = expandConfigPullChangeSet({
       initialChangeSet,
       baseConfig,
       baseDocument,
@@ -479,16 +475,13 @@ describe("legacyExpandConfigPullChangeSet", () => {
         "auth.sms.twilio.message_service_sid",
       ]),
     );
-    // The fixpoint's own residual (what the caller's planner-defect/unpushable
-    // check consumes) shows NOTHING left drifting — every absorbed write
-    // actually converges once applied.
+    // The residual (what the planner-defect/unpushable check consumes) shows nothing left
+    // drifting: every absorbed write converges once applied.
     expect(result.residual.changes).toEqual([]);
     expect(result.residual.unmanaged).toEqual([]);
   });
 
   test("generalizes to a second, independent registry family (`auth.captcha`)", () => {
-    // A different `DISABLED_SENTINEL_PRUNES` family — confirms the fixpoint
-    // isn't special-cased to SMS providers.
     const baseConfig = {
       auth: { captcha: { enabled: false, provider: "hcaptcha" } },
     } as unknown as EffectiveConfig;
@@ -505,7 +498,7 @@ describe("legacyExpandConfigPullChangeSet", () => {
       expect.arrayContaining([["auth", "captcha", "provider"]]),
     );
 
-    const result = legacyExpandConfigPullChangeSet({
+    const result = expandConfigPullChangeSet({
       initialChangeSet,
       baseConfig,
       baseDocument,
@@ -553,7 +546,7 @@ describe("legacyExpandConfigPullChangeSet", () => {
       remote,
     });
 
-    const result = legacyExpandConfigPullChangeSet({
+    const result = expandConfigPullChangeSet({
       initialChangeSet,
       baseConfig,
       baseDocument,
@@ -565,57 +558,54 @@ describe("legacyExpandConfigPullChangeSet", () => {
       (c) => c.path.join(".") === "auth.sms.twilio.account_sid",
     );
     expect(accountSidChange?.envVariables).toEqual(["MY_VAR"]);
-    // Never projected (it's env-sourced, so `pull.plan.ts`'s own skip rule
-    // would never write it either) — it stays a residual, expected, not the
-    // "planner defect" the caller's own check would otherwise raise.
     expect(result.residual.changes.map((c) => c.path.join("."))).toEqual([
       "auth.sms.twilio.account_sid",
     ]);
   });
 });
 
-describe("legacyConfigPullFamilyRootForPath", () => {
+describe("configPullFamilyRootForPath", () => {
   test("returns the nearest ancestor table declaring an `enabled` key", () => {
     const document = { auth: { sms: { twilio: { enabled: true, account_sid: "" } } } };
-    expect(
-      legacyConfigPullFamilyRootForPath(["auth", "sms", "twilio", "account_sid"], document),
-    ).toEqual(["auth", "sms", "twilio"]);
+    expect(configPullFamilyRootForPath(["auth", "sms", "twilio", "account_sid"], document)).toEqual(
+      ["auth", "sms", "twilio"],
+    );
   });
 
   test("falls back to the immediate parent when no ancestor declares `enabled`", () => {
     const document = { api: { max_rows: 1000 } };
-    expect(legacyConfigPullFamilyRootForPath(["api", "max_rows"], document)).toEqual(["api"]);
+    expect(configPullFamilyRootForPath(["api", "max_rows"], document)).toEqual(["api"]);
   });
 
   test("falls back to the path itself when it has no parent", () => {
-    expect(legacyConfigPullFamilyRootForPath(["project_id"], {})).toEqual(["project_id"]);
+    expect(configPullFamilyRootForPath(["project_id"], {})).toEqual(["project_id"]);
   });
 });
 
-describe("legacyConfigPullEnvVariableAtPath", () => {
+describe("configPullEnvVariableAtPath", () => {
   test("extracts the variable name from an unresolved env() literal", () => {
     const document = { auth: { sms: { twilio: { auth_token: "env(MY_TOKEN)" } } } };
-    expect(
-      legacyConfigPullEnvVariableAtPath(["auth", "sms", "twilio", "auth_token"], document),
-    ).toBe("MY_TOKEN");
+    expect(configPullEnvVariableAtPath(["auth", "sms", "twilio", "auth_token"], document)).toBe(
+      "MY_TOKEN",
+    );
   });
 
   test("returns undefined for a plain value", () => {
     const document = { auth: { sms: { twilio: { account_sid: "AC123" } } } };
     expect(
-      legacyConfigPullEnvVariableAtPath(["auth", "sms", "twilio", "account_sid"], document),
+      configPullEnvVariableAtPath(["auth", "sms", "twilio", "account_sid"], document),
     ).toBeUndefined();
   });
 
   test("returns undefined when the path is absent", () => {
-    expect(legacyConfigPullEnvVariableAtPath(["auth", "sms", "twilio", "auth_token"], {})).toBe(
+    expect(configPullEnvVariableAtPath(["auth", "sms", "twilio", "auth_token"], {})).toBe(
       undefined,
     );
   });
 });
 
-describe("legacyDropConfigPullUnvalidatableFamilies", () => {
-  function planWith(writes: LegacyConfigPullPlan["writes"]): LegacyConfigPullPlan {
+describe("dropConfigPullUnvalidatableFamilies", () => {
+  function planWith(writes: ConfigPullPlan["writes"]): ConfigPullPlan {
     return { writes, skipped: [], warnings: [], createdTable: undefined };
   }
 
@@ -637,7 +627,7 @@ describe("legacyDropConfigPullUnvalidatableFamilies", () => {
     };
     const plan = planWith([enabledWrite, accountSidWrite, unrelatedWrite]);
 
-    const result = legacyDropConfigPullUnvalidatableFamilies(plan, [
+    const result = dropConfigPullUnvalidatableFamilies(plan, [
       {
         root: ["auth", "sms", "twilio"],
         missingFields: [{ path: ["auth", "sms", "twilio", "message_service_sid"] }],
@@ -669,7 +659,7 @@ describe("legacyDropConfigPullUnvalidatableFamilies", () => {
       documentPath: ["api", "max_rows"],
       value: 1000,
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [enabledWrite, unrelatedWrite],
       skipped: [],
       warnings: [
@@ -681,7 +671,7 @@ describe("legacyDropConfigPullUnvalidatableFamilies", () => {
       createdTable: undefined,
     };
 
-    const result = legacyDropConfigPullUnvalidatableFamilies(plan, [
+    const result = dropConfigPullUnvalidatableFamilies(plan, [
       {
         root: ["auth", "sms", "twilio"],
         missingFields: [{ path: ["auth", "sms", "twilio", "message_service_sid"] }],
@@ -689,11 +679,9 @@ describe("legacyDropConfigPullUnvalidatableFamilies", () => {
     ]);
 
     expect(result.writes).toEqual([unrelatedWrite]);
-    // The dropped family's own `dual_scope`/`unpushable` warnings are gone —
-    // both described a write that no longer landed. The unrelated
-    // `duplicates_root` warning (a DIFFERENT path) and the path-less
-    // `uncommitted_changes` warning both survive untouched, and the new
-    // `would_invalidate` warning is appended last.
+    // The dropped family's dual_scope/unpushable warnings are gone; the unrelated
+    // duplicates_root warning (a different path) and the path-less uncommitted_changes warning
+    // survive untouched, with the new would_invalidate warning appended last.
     expect(result.warnings).toEqual([
       { kind: "duplicates_root", path: ["api", "max_rows"] },
       { kind: "uncommitted_changes" },
@@ -713,7 +701,7 @@ describe("legacyDropConfigPullUnvalidatableFamilies", () => {
     };
     const plan = planWith([unrelatedWrite]);
 
-    const result = legacyDropConfigPullUnvalidatableFamilies(plan, [
+    const result = dropConfigPullUnvalidatableFamilies(plan, [
       { root: ["auth", "sms", "twilio"], missingFields: [] },
     ]);
 
@@ -722,6 +710,6 @@ describe("legacyDropConfigPullUnvalidatableFamilies", () => {
 
   test("no families means no-op", () => {
     const plan = planWith([]);
-    expect(legacyDropConfigPullUnvalidatableFamilies(plan, [])).toBe(plan);
+    expect(dropConfigPullUnvalidatableFamilies(plan, [])).toBe(plan);
   });
 });

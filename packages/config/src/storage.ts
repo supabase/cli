@@ -24,21 +24,14 @@ const defaultMaxTables = 10;
 const defaultMaxCatalogs = 2;
 const defaultAnalyticsBuckets = {};
 const defaultVector = {};
-// Go's embedded config template sets `[storage.vector] enabled = true`, which
-// `config.Load` merges as the base layer, so an omitted key resolves to `true`
-// (apps/cli-go/pkg/config/templates/config.toml + config_test.go:40).
+// Vector buckets default to enabled, unlike most other storage subsections.
 const defaultVectorEnabled = true;
 const defaultMaxBuckets = 10;
 const defaultMaxIndexes = 5;
 const defaultVectorBuckets = {};
 
-/**
- * `file_size_limit` accepts both a human-readable string (`"50MiB"`) and a bare
- * byte count (`5000000`), matching Go's `sizeInBytes` decoder
- * (apps/cli-go/pkg/config/config_test.go:TestFileSizeLimitConfigParsing). A
- * numeric value is normalized to its decimal string so the decoded type stays a
- * `string` for all consumers (`ramInBytes` parses either form identically).
- */
+// Accepts a human-readable string (`"50MiB"`) or a bare byte count (`5000000`); a numeric
+// value is normalized to its decimal string so the decoded type is always a `string`.
 const fileSizeLimit = Schema.Union([Schema.String, Schema.Number]).pipe(
   Schema.decodeTo(Schema.String, {
     decode: SchemaGetter.transform((value) => (typeof value === "number" ? String(value) : value)),

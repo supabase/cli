@@ -1,6 +1,3 @@
 {
-  "compilerOptions": {
-    "module": "CommonJS",
-    "skipLibCheck": true
-  }
+  "extends": "@tsconfig/bun/tsconfig.json"
 }

@@ -1,130 +1,120 @@
 import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
-import { describe, expect, test } from "vitest";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
-import { legacyStatusExcludeFlag, legacyStatusOverrideNameFlag } from "./status.command.ts";
+import { statusExcludeFlag, statusOverrideNameFlag } from "./status.command.ts";
 
-describe("legacy status --override-name flag (pflag StringSlice parity)", () => {
-  test("splits a comma-separated value into multiple overrides", async () => {
-    const [, overrideName] = await Effect.runPromise(
-      legacyStatusOverrideNameFlag
+describe("status --override-name flag (pflag StringSlice parity)", () => {
+  it.live("splits a comma-separated value into multiple overrides", () =>
+    Effect.gen(function* () {
+      const [, overrideName] = yield* statusOverrideNameFlag
         .parse({
           flags: { "override-name": ["api.url=FOO,db.url=BAR"] },
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer)),
-    );
+        .pipe(Effect.provide(BunServices.layer));
 
-    expect(overrideName).toEqual(["api.url=FOO", "db.url=BAR"]);
-  });
+      expect(overrideName).toEqual(["api.url=FOO", "db.url=BAR"]);
+    }),
+  );
 
-  test("accumulates repeated occurrences, each CSV-split", async () => {
-    const [, overrideName] = await Effect.runPromise(
-      legacyStatusOverrideNameFlag
+  it.live("accumulates repeated occurrences, each CSV-split", () =>
+    Effect.gen(function* () {
+      const [, overrideName] = yield* statusOverrideNameFlag
         .parse({
           flags: { "override-name": ["api.url=FOO,db.url=BAR", "studio.url=BAZ"] },
           arguments: [],
         })
-        .pipe(Effect.provide(BunServices.layer)),
-    );
+        .pipe(Effect.provide(BunServices.layer));
 
-    expect(overrideName).toEqual(["api.url=FOO", "db.url=BAR", "studio.url=BAZ"]);
-  });
+      expect(overrideName).toEqual(["api.url=FOO", "db.url=BAR", "studio.url=BAZ"]);
+    }),
+  );
 
-  test("defaults to an empty array when unset", async () => {
-    const [, overrideName] = await Effect.runPromise(
-      legacyStatusOverrideNameFlag
+  it.live("defaults to an empty array when unset", () =>
+    Effect.gen(function* () {
+      const [, overrideName] = yield* statusOverrideNameFlag
         .parse({ flags: {}, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer)),
-    );
+        .pipe(Effect.provide(BunServices.layer));
 
-    expect(overrideName).toEqual([]);
-  });
+      expect(overrideName).toEqual([]);
+    }),
+  );
 
-  test("keeps only the first CSV record of a multiline value (pflag reads ONE record)", async () => {
-    // Verified against pflag's actual CSV behavior (CLI-2005): `status --override-name $'a=1\nb"2'`
-    // raises no parse error — pflag calls `csv.Reader.Read()` once, so the malformed
-    // second line is silently dropped.
-    const [, overrideName] = await Effect.runPromise(
-      legacyStatusOverrideNameFlag
+  it.live("keeps only the first CSV record of a multiline value (pflag reads ONE record)", () =>
+    Effect.gen(function* () {
+      const [, overrideName] = yield* statusOverrideNameFlag
         .parse({ flags: { "override-name": ['a=1\nb"2'] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer)),
-    );
+        .pipe(Effect.provide(BunServices.layer));
 
-    expect(overrideName).toEqual(["a=1"]);
-  });
+      expect(overrideName).toEqual(["a=1"]);
+    }),
+  );
 
-  test("rejects malformed CSV (unterminated quote) with pflag's exact diagnostic", async () => {
-    const exit = await Effect.runPromise(
-      legacyStatusOverrideNameFlag
+  it.live("rejects malformed CSV (unterminated quote) with pflag's exact diagnostic", () =>
+    Effect.gen(function* () {
+      const exit = yield* statusOverrideNameFlag
         .parse({ flags: { "override-name": ['"api.url=FOO'] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer))
-        .pipe(Effect.exit),
-    );
+        .pipe(Effect.provide(BunServices.layer), Effect.exit);
 
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      // Matches the established pflag CSV error text (`"api.url=FOO` is 12 bytes → EOF at column 13).
-      expect(normalizeCause(exit.cause).message).toBe(
-        'invalid argument "\\"api.url=FOO" for "--override-name" flag: parse error on line 1, column 13: extraneous or missing " in quoted-field',
-      );
-    }
-  });
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(normalizeCause(exit.cause).message).toBe(
+          'invalid argument "\\"api.url=FOO" for "--override-name" flag: parse error on line 1, column 13: extraneous or missing " in quoted-field',
+        );
+      }
+    }),
+  );
 
-  test("rejects a blank-only value with pflag's EOF diagnostic", async () => {
-    // Verified against pflag's actual output (CLI-2005): `status --override-name $'\n'` →
-    // `invalid argument "\n" for "--override-name" flag: EOF`.
-    const exit = await Effect.runPromise(
-      legacyStatusOverrideNameFlag
+  it.live("rejects a blank-only value with pflag's EOF diagnostic", () =>
+    Effect.gen(function* () {
+      const exit = yield* statusOverrideNameFlag
         .parse({ flags: { "override-name": ["\n"] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer))
-        .pipe(Effect.exit),
-    );
+        .pipe(Effect.provide(BunServices.layer), Effect.exit);
 
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      expect(normalizeCause(exit.cause).message).toBe(
-        'invalid argument "\\n" for "--override-name" flag: EOF',
-      );
-    }
-  });
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(normalizeCause(exit.cause).message).toBe(
+          'invalid argument "\\n" for "--override-name" flag: EOF',
+        );
+      }
+    }),
+  );
 });
 
-describe("legacy status --exclude flag (pflag StringSlice parity)", () => {
-  test("splits a comma-separated value into multiple exclusions", async () => {
-    const [, exclude] = await Effect.runPromise(
-      legacyStatusExcludeFlag
+describe("status --exclude flag (pflag StringSlice parity)", () => {
+  it.live("splits a comma-separated value into multiple exclusions", () =>
+    Effect.gen(function* () {
+      const [, exclude] = yield* statusExcludeFlag
         .parse({ flags: { exclude: ["kong,auth"] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer)),
-    );
+        .pipe(Effect.provide(BunServices.layer));
 
-    expect(exclude).toEqual(["kong", "auth"]);
-  });
+      expect(exclude).toEqual(["kong", "auth"]);
+    }),
+  );
 
-  test("defaults to an empty array when unset", async () => {
-    const [, exclude] = await Effect.runPromise(
-      legacyStatusExcludeFlag
+  it.live("defaults to an empty array when unset", () =>
+    Effect.gen(function* () {
+      const [, exclude] = yield* statusExcludeFlag
         .parse({ flags: {}, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer)),
-    );
+        .pipe(Effect.provide(BunServices.layer));
 
-    expect(exclude).toEqual([]);
-  });
+      expect(exclude).toEqual([]);
+    }),
+  );
 
-  test("rejects malformed CSV (bare quote) with pflag's exact diagnostic", async () => {
-    const exit = await Effect.runPromise(
-      legacyStatusExcludeFlag
+  it.live("rejects malformed CSV (bare quote) with pflag's exact diagnostic", () =>
+    Effect.gen(function* () {
+      const exit = yield* statusExcludeFlag
         .parse({ flags: { exclude: ['a"b'] }, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer))
-        .pipe(Effect.exit),
-    );
+        .pipe(Effect.provide(BunServices.layer), Effect.exit);
 
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      // Verified against pflag's actual output (CLI-2005): `status --exclude 'a"b'` — bare quote at byte 2.
-      expect(normalizeCause(exit.cause).message).toBe(
-        'invalid argument "a\\"b" for "--exclude" flag: parse error on line 1, column 2: bare " in non-quoted-field',
-      );
-    }
-  });
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(normalizeCause(exit.cause).message).toBe(
+          'invalid argument "a\\"b" for "--exclude" flag: parse error on line 1, column 2: bare " in non-quoted-field',
+        );
+      }
+    }),
+  );
 });

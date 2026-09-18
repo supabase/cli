@@ -21,10 +21,6 @@ async function cleanupFunction(
 }
 
 describe("functions download (live)", () => {
-  // End to end artifact round trip: deploy a function whose source carries a
-  // unique marker, remove every local trace of it, download it back from the
-  // live project, and assert the marker survived — local source → platform
-  // bundle → unbundled back to disk.
   test("round-trips a deployed function's source through the live project", async ({
     cli,
     project,
@@ -52,22 +48,17 @@ describe("functions download (live)", () => {
         false,
       );
 
-      // The unbundle container creates missing output directories as root,
-      // which the CI runner user cannot remove at workspace teardown.
-      // Pre-create the directory host-owned and world-writable so any
-      // container uid can write into it — the deploy bundler pre-creates its
-      // container output dir the same way. This works because the function is
-      // flat: root-written files land directly in the host-owned dir, where
-      // unlinking needs only write access on the parent.
+      // The unbundle container writes as root; pre-create the directory
+      // host-owned and world-writable (mirroring the deploy bundler's own
+      // pre-created output dir) so the CI runner can remove it afterward.
       await mkdir(directory, { recursive: true });
       await chmod(directory, 0o777);
 
       const downloaded = await cli(["functions", "download", slug, "--project-ref", project.ref]);
       const downloadOutput = `stdout:\n${downloaded.stdout}\nstderr:\n${downloaded.stderr}`;
       expect(downloaded.exitCode, downloadOutput).toBe(0);
-      // The docker unbundle path banners "Downloading function:" (lowercase f)
-      // while the server-side fallback banners "Downloading Function:" — pin
-      // the docker journey positively so a silent downgrade fails loudly.
+      // Lowercase "function:" pins the docker unbundle path specifically,
+      // distinct from the server-fallback's "Downloading Function:".
       expect(downloaded.stderr, downloadOutput).toContain("Downloading function:");
       expect(existsSync(entrypoint), downloadOutput).toBe(true);
       const roundTripped = await readFile(entrypoint, "utf8");

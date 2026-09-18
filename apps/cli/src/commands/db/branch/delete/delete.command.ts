@@ -1,6 +1,6 @@
 import { Argument, Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { legacyDbBranchDelete } from "./delete.handler.ts";
+import { dbBranchDelete } from "./delete.handler.ts";
 
 const config = {
   branchName: Argument.string("branch name").pipe(
@@ -8,10 +8,10 @@ const config = {
   ),
 } as const;
 
-export type LegacyDbBranchDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbBranchDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbBranchDeleteCommand = Command.make("delete", config).pipe(
+export const dbBranchDeleteCommand = Command.make("delete", config).pipe(
   Command.withDescription("Delete a branch."),
   Command.withShortDescription("Delete a branch"),
-  Command.withHandler((flags) => legacyDbBranchDelete(flags)),
+  Command.withHandler((flags) => dbBranchDelete(flags)),
 );

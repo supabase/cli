@@ -6,6 +6,10 @@ platform view.
 Pg-delta runs in-process.
 Coverage gaps warn; `--strict-coverage` makes them fatal, and `PGDELTA_DEBUG`
 writes diagnostic JSON under `supabase/.temp/pgdelta/v2/debug/<id>/`.
+When `[experimental].stack` is on, `--local` uses the project stack. Shadow work from the
+sibling commands lives under `$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/`
+(`~/.supabase/managed/…` by default).
+
 `--no-cache` (a flag shared across the `declarative` group) has no effect on
 `generate` — the export connects directly to the target and provisions no
 shadow. The bundled formatter defaults to
@@ -31,9 +35,9 @@ formatting without disabling safe compaction.
 
 ## Subprocesses / Containers
 
-| What                                                                                                                                                                        | When                                                           |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `legacyResetLocalDatabase` | smart-mode Local choice when reset is confirmed (or `--reset`) |
+| What                                                                                                                                                                  | When                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` | smart-mode Local choice when reset is confirmed (or `--reset`) |
 
 ## Environment Variables
 

@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { Result } from "effect";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Result } from "effect";
+
+import { withEnvVar } from "../../../tests/helpers/command-mocks.ts";
 
 import {
   buildInfoPayload,
@@ -13,13 +15,30 @@ import {
   renderInfoMarkdown,
   renderListProviders,
   renderSingleProvider,
-  toLegacySsoProviderView,
+  toSsoProviderView,
   validateUuid,
 } from "./sso.format.ts";
 
 describe("formatSsoTimestamp", () => {
   it("formats RFC3339 input as Go's `YYYY-MM-DD HH:MM:SS` (UTC, no suffix)", () => {
     expect(formatSsoTimestamp("2023-03-28T13:50:14.464Z")).toBe("2023-03-28 13:50:14");
+  });
+
+  it.live("interprets timezone-free timestamps in local time before rendering UTC", () =>
+    withEnvVar(
+      "TZ",
+      "Asia/Kolkata",
+      Effect.sync(() => {
+        expect(formatSsoTimestamp("2023-03-28T13:50:14")).toBe("2023-03-28 08:20:14");
+        expect(formatSsoTimestamp("2023-03-28 13:50:14")).toBe("2023-03-28 08:20:14");
+      }),
+    ),
+  );
+
+  it("retains native parsing of lowercase zones and explicit offsets", () => {
+    expect(formatSsoTimestamp("2023-03-28T13:50:14z")).toBe("2023-03-28 13:50:14");
+    expect(formatSsoTimestamp("2023-03-28T13:50:14+05:30")).toBe("2023-03-28 08:20:14");
+    expect(formatSsoTimestamp("+010000-01-01T00:00:00Z")).toBe("10000-01-01 00:00:00");
   });
 
   it("returns an empty string for undefined input", () => {
@@ -152,24 +171,17 @@ describe("renderListProviders / renderSingleProvider markdown surface", () => {
     expect(out).not.toContain("## SAML 2.0 Metadata XML");
   });
 
-  // PARITY GUARD — do not "fix" this:
-  // This intentionally populates the `UPDATED AT (UTC)` row with
-  // `provider.created_at`, not `provider.updated_at` — an established output
-  // contract, not a rendering bug.
-  // If you find yourself reaching to change line 194 of sso.format.ts because
-  // "obviously UPDATED AT should use updated_at", this test will fail.
-  // Update the contract deliberately (renderer + this test) if that's ever
-  // truly desired.
+  // Not a bug: `renderSingleProvider` renders UPDATED AT from `created_at`,
+  // an established output contract. Changing this needs the renderer and
+  // this test updated together.
   it("intentionally renders UPDATED AT using created_at (Go-bug parity guard)", () => {
     const out = renderSingleProvider({
       id: "abc",
       created_at: "2023-01-01T00:00:00Z",
       updated_at: "2099-12-31T23:59:59Z",
     });
-    // CREATED row uses created_at:
     expect(out).toContain("CREATED AT (UTC)");
     expect(out).toContain("2023-01-01 00:00:00");
-    // UPDATED row uses created_at (the bug), not updated_at:
     expect(out).not.toContain("2099-12-31 23:59:59");
   });
 });
@@ -195,15 +207,11 @@ describe("buildInfoPayload + renderInfoMarkdown", () => {
 
 describe("formatSsoMetadataXml (xmlfmt parity port)", () => {
   it("indents nested tags by depth × indent", () => {
-    // Reference output captured by running go-xmlfmt v1.1.3
-    // `FormatXML("<a><b><c/></b></a>", "  ", "  ")`.
     const out = formatSsoMetadataXml("<a><b><c/></b></a>", "  ", "  ");
     expect(out).toBe("  \n  <a>\n    <b>\n      <c/>\n    </b>\n  </a>");
   });
 
   it("keeps close-tags inline with content (e.g. <b>text</b>)", () => {
-    // Reference: go-xmlfmt's `lastEndElem` flag suppresses the newline before
-    // a closing tag whose preceding sibling was an opening tag with text.
     const out = formatSsoMetadataXml("<a><b>text</b></a>", "  ", "  ");
     expect(out).toBe("  \n  <a>\n    <b>text</b>\n  </a>");
   });
@@ -225,8 +233,6 @@ describe("formatSsoMetadataXml (xmlfmt parity port)", () => {
       '<SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://example.com/sso"/>' +
       "</IDPSSODescriptor>" +
       "</EntityDescriptor>";
-    // Verified against `xmlfmt.FormatXML(saml, "  ", "  ")` in a Go program
-    // using `github.com/go-xmlfmt/xmlfmt@v1.1.3`.
     const expected =
       "  \n" +
       '  <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://example.com">\n' +
@@ -238,14 +244,14 @@ describe("formatSsoMetadataXml (xmlfmt parity port)", () => {
   });
 });
 
-describe("toLegacySsoProviderView coercion", () => {
+describe("toSsoProviderView coercion", () => {
   it("returns an empty view for non-object inputs", () => {
-    expect(toLegacySsoProviderView(null).id).toBe("");
-    expect(toLegacySsoProviderView("string").id).toBe("");
+    expect(toSsoProviderView(null).id).toBe("");
+    expect(toSsoProviderView("string").id).toBe("");
   });
 
   it("preserves arbitrary attribute_mapping data (incl. user keys)", () => {
-    const view = toLegacySsoProviderView({
+    const view = toSsoProviderView({
       id: "abc",
       saml: { attribute_mapping: { keys: { a: { default: 3 } } } },
     });

@@ -4,6 +4,12 @@ on:
   repository_dispatch:
     types:
       - api-sync
+  # Fallback for a lost dispatch, per docs/openapi-sync.md. This matters more
+  # now that the per-pull-request Codegen check reads the committed snapshot:
+  # this workflow is the only thing that looks at the live specification, so a
+  # dropped dispatch would otherwise leave drift undetected indefinitely.
+  schedule:
+    - cron: "17 6 * * *"
   workflow_dispatch: # allow manual triggering
 
 permissions:
@@ -23,13 +29,30 @@ jobs:
           go-version-file: apps/cli-go/go.mod
           cache: true
 
+      # The only place that reads the live spec. Every other consumer, including
+      # the per-PR Codegen check, regenerates from the committed snapshot, so
+      # upstream drift turns into this one pull request instead of a failure on
+      # every open pull request that touches apps/cli-go.
+      - name: Refresh the OpenAPI snapshot
+        run: curl -fsSL "$API_SPEC_URL" -o api/v1-openapi.yaml
+        env:
+          API_SPEC_URL: https://api.supabase.green/api/v1-yaml
+
       - name: Run codegen
         run: go generate
 
+      # Covers the snapshot as well as the generated client: an upstream edit
+      # that codegen ignores (a description, an example) would otherwise be
+      # refetched and discarded on every run, leaving the snapshot stale. The
+      # snapshot is compared byte-for-byte for the same reason -- under
+      # --ignore-space-at-eol a trailing-whitespace-only upstream edit would be
+      # refetched and discarded forever, which is the loop this check prevents.
+      # pkg keeps the flag: it is oapi-codegen output, not upstream bytes.
       - name: Check for changes
         id: check
         run: |
-          if git diff --ignore-space-at-eol --exit-code --quiet pkg; then
+          if git diff --exit-code --quiet api/v1-openapi.yaml &&
+            git diff --ignore-space-at-eol --exit-code --quiet pkg; then
             echo "No changes detected"
             echo "has_changes=false" >> $GITHUB_OUTPUT
           else
@@ -57,7 +80,7 @@ jobs:
           body: |
             This PR was automatically created to sync API types from the infrastructure repository.
 
-            Changes were detected in the generated API code after syncing with the latest spec from infrastructure.
+            Changes were detected after refreshing `apps/cli-go/api/v1-openapi.yaml` from the latest spec from infrastructure, and `apps/cli-go/pkg/api` is regenerated from it. The snapshot diff is the upstream API change and is worth reading: it is marked `linguist-generated`, so GitHub collapses it behind a "Load diff" click rather than hiding it.
           branch: sync/api-types
           base: develop
 

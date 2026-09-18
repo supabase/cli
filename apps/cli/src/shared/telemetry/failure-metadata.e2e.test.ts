@@ -47,11 +47,8 @@ describe("failed command telemetry", () => {
     capturedEvents.length = 0;
   });
 
-  // Both cases exercise the legacy shell (the only remaining shell). The
-  // `branches list` case needs a syntactically valid access token so the
-  // Management API auth gate builds successfully and the failure happens
-  // in-handler, during project-ref resolution, rather than at the auth gate
-  // (which deliberately keeps its existing no-event behavior).
+  // `branches list` needs a syntactically valid access token so the auth gate builds and the
+  // failure happens during project-ref resolution instead of at the auth gate itself.
   test.each([
     {
       args: ["branches", "list"],
@@ -60,7 +57,7 @@ describe("failed command telemetry", () => {
       expected: {
         error_kind: "user_actionable",
         error_category: "project_not_linked",
-        error_fingerprint: "tag:LegacyProjectNotLinkedError",
+        error_fingerprint: "tag:ProjectRefNotLinkedError",
         has_suggestion: true,
         suggestion_type: "link_project",
         suggested_command: "supabase link",
@@ -80,15 +77,14 @@ describe("failed command telemetry", () => {
       expected: {
         error_kind: "user_actionable",
         error_category: "db_connection",
-        error_fingerprint: "tag:LegacyDbConnectError",
+        error_fingerprint: "tag:DbConnectError",
         has_suggestion: true,
         suggestion_type: "update_config",
       },
       rawErrors: ["failed to connect", "127.0.0.1", "select 1"],
     },
-  ])("emits sanitized metadata from the compiled legacy shell ($command)", async (testCase) => {
+  ])("emits sanitized metadata from the compiled CLI ($command)", async (testCase) => {
     const result = await runSupabase(testCase.args, {
-      entrypoint: "legacy",
       env: {
         SUPABASE_ACCESS_TOKEN: testCase.accessToken,
         SUPABASE_TELEMETRY_DISABLED: "0",

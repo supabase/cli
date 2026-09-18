@@ -1,7 +1,4 @@
-import { legacyMakeInspectDbHandler } from "../legacy-inspect-query.ts";
-import { legacyOutliersSpec } from "./outliers.query.ts";
+import { makeInspectDbHandler } from "../inspect-query.ts";
+import { outliersSpec } from "./outliers.query.ts";
 
-export const legacyInspectDbOutliers = legacyMakeInspectDbHandler(
-  legacyOutliersSpec,
-  "legacy.inspect.db.outliers",
-);
+export const inspectDbOutliers = makeInspectDbHandler(outliersSpec, "inspect.db.outliers");

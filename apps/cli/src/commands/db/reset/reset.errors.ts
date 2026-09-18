@@ -10,9 +10,7 @@ import {
  * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
  * is an established output contract.
  */
-export class LegacyDbResetTargetFlagsError extends Data.TaggedError(
-  "LegacyDbResetTargetFlagsError",
-)<{
+export class DbResetTargetFlagsError extends Data.TaggedError("DbResetTargetFlagsError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -24,9 +22,7 @@ export class LegacyDbResetTargetFlagsError extends Data.TaggedError(
  * `--version` and `--last` together; message text is an established output
  * contract.
  */
-export class LegacyDbResetVersionFlagsError extends Data.TaggedError(
-  "LegacyDbResetVersionFlagsError",
-)<{
+export class DbResetVersionFlagsError extends Data.TaggedError("DbResetVersionFlagsError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -39,9 +35,7 @@ export class LegacyDbResetVersionFlagsError extends Data.TaggedError(
  * returned unwrapped) is an established output contract — the
  * `failed to parse <v>:` wrapper is the `migration repair` path only.
  */
-export class LegacyDbResetInvalidVersionError extends Data.TaggedError(
-  "LegacyDbResetInvalidVersionError",
-)<{
+export class DbResetInvalidVersionError extends Data.TaggedError("DbResetInvalidVersionError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -54,9 +48,7 @@ export class LegacyDbResetInvalidVersionError extends Data.TaggedError(
  * (`glob supabase/migrations/<version>_*.sql: file does not exist`) is an
  * established output contract.
  */
-export class LegacyDbResetMigrationFileError extends Data.TaggedError(
-  "LegacyDbResetMigrationFileError",
-)<{
+export class DbResetMigrationFileError extends Data.TaggedError("DbResetMigrationFileError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -68,7 +60,7 @@ export class LegacyDbResetMigrationFileError extends Data.TaggedError(
  * The user declined the reset confirmation; message text (`context canceled`)
  * is an established output contract.
  */
-export class LegacyDbResetCancelledError extends Data.TaggedError("LegacyDbResetCancelledError")<{
+export class DbResetCancelledError extends Data.TaggedError("DbResetCancelledError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -82,7 +74,7 @@ export class LegacyDbResetCancelledError extends Data.TaggedError("LegacyDbReset
  * (`"See schema file: <Bold(fp)>"`); every other apply failure on this command
  * leaves it unset.
  */
-export class LegacyDbResetApplyError extends Data.TaggedError("LegacyDbResetApplyError")<{
+export class DbResetApplyError extends Data.TaggedError("DbResetApplyError")<{
   readonly message: string;
   readonly suggestion?: string;
 }> {
@@ -96,7 +88,7 @@ export class LegacyDbResetApplyError extends Data.TaggedError("LegacyDbResetAppl
  * negative value is rejected at parse time. Message text is an established
  * output contract.
  */
-export class LegacyDbResetLastFlagError extends Data.TaggedError("LegacyDbResetLastFlagError")<{
+export class DbResetLastFlagError extends Data.TaggedError("DbResetLastFlagError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -110,7 +102,7 @@ export class LegacyDbResetLastFlagError extends Data.TaggedError("LegacyDbResetL
  * `"--sql-paths requires a non-empty path or glob pattern"`) is an
  * established output contract.
  */
-export class LegacyDbResetSeedFlagsError extends Data.TaggedError("LegacyDbResetSeedFlagsError")<{
+export class DbResetSeedFlagsError extends Data.TaggedError("DbResetSeedFlagsError")<{
   readonly message: string;
   /** Actionable hint rendered as a `Suggestion:` line. */
   readonly suggestion?: string;

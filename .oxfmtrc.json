@@ -1,6 +1,7 @@
 {
   "ignorePatterns": [
     ".repos/",
+    "apps/cli/src/shared/feedback/database.types.ts",
     "apps/cli-go/",
     "apps/cli-e2e/fixtures/",
     "apps/docs/content/docs/commands/",

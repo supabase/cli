@@ -2,38 +2,35 @@ import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
-import { legacyCredentialsLayer } from "../../auth/legacy-credentials.layer.ts";
-import { legacyPlatformApiFactoryLayer } from "../../auth/legacy-platform-api-factory.layer.ts";
-import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
-import { legacyDebugLoggerLayer } from "../../command-internal/legacy-debug-logger.layer.ts";
-import { LEGACY_RESOURCE_OUTPUT_FORMATS } from "../../command-internal/legacy-go-output-flag.ts";
-import { legacyIdentityStitchLayer } from "../../command-internal/legacy-identity-stitch.ts";
-import { legacyStringSliceFlag } from "../../command-internal/legacy-string-slice-flag.ts";
-import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
+import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts";
+import { commandPlatformApiFactoryLayer } from "../../auth/command-platform-api-factory.layer.ts";
+import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
+import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
+import { RESOURCE_OUTPUT_FORMATS } from "../../command-internal/go-output-flag.ts";
+import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
+import { stringSliceFlag } from "../../command-internal/string-slice-flag.ts";
+import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { machineErrorContextLayer } from "../../shared/output/machine-error-context.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
-import { legacyStatus } from "./status.handler.ts";
+import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
+import { status } from "./status.handler.ts";
 
-// `--override-name` and `--exclude` are pflag-style string-slice flags, which
-// CSV-split each occurrence and accumulate
-// across repeats — `--override-name a=1,b=2` is two overrides, not one.
-// Malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005,
-// see `legacyStringSliceFlag`).
-export const legacyStatusOverrideNameFlag = legacyStringSliceFlag(
+// pflag-style string-slice flags: each occurrence is CSV-split and accumulated across repeats,
+// so `--override-name a=1,b=2` is two overrides, not one. Malformed CSV fails at parse time.
+export const statusOverrideNameFlag = stringSliceFlag(
   "override-name",
   "Override specific variable names.",
 );
 
-export const legacyStatusExcludeFlag = legacyStringSliceFlag(
+export const statusExcludeFlag = stringSliceFlag(
   "exclude",
   "Names of containers to omit from output.",
 ).pipe(Flag.withHidden);
 
 const config = {
-  overrideName: legacyStatusOverrideNameFlag,
-  exclude: legacyStatusExcludeFlag,
+  overrideName: statusOverrideNameFlag,
+  exclude: statusExcludeFlag,
   ignoreHealthCheck: Flag.boolean("ignore-health-check").pipe(
     Flag.withDescription("Ignore unhealthy services and exit 0"),
     Flag.withHidden,
@@ -41,47 +38,37 @@ const config = {
   ),
 } as const;
 
-export type LegacyStatusFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type StatusFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// `status` makes no Management API calls (it needs no access token), so it
-// deliberately avoids `legacyManagementApiRuntimeLayer` (the EAGER
-// `LegacyPlatformApi` stack, which resolves a token at layer BUILD time and
-// fails outright with none) — mirrors `unlink`'s runtime shape.
-// `legacyCliSettingsLayer` is exposed at the top level directly (nothing else in
-// this runtime needs to consume it internally).
-const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+// `status` makes no Management API calls, so it avoids `managementApiRuntimeLayer` — the eager
+// `CommandPlatformApi` stack that resolves a token at layer build time and fails outright
+// without one.
+const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
-// TS-only QoL (CLI-2167 follow-up, no Go counterpart): a LAZY Management API
-// handle for `legacyResolveLinkedState`'s best-effort branch-name lookup
-// (`legacy-linked-state.ts`). `legacyPlatformApiFactoryLayer` — not the eager
-// `legacyPlatformApiLayer` — defers all token resolution and client
-// construction to the first `factory.make` call (memoised via
-// `Effect.cached`), i.e. only when a branch lookup actually fires, and its
-// own layer build never fails without a token/network. `legacyMakePlatformApi`
-// (which the factory wraps) also needs `LegacyIdentityStitch` for response
-// stitching, hence the extra provide + top-level merge below (mirrors
-// `db pull`'s `legacyLinkedDbResolverRuntimeLayer` composition).
-const credentials = legacyCredentialsLayer.pipe(
+// Lazy Management API handle for `resolveLinkedState`'s best-effort branch-name lookup:
+// `commandPlatformApiFactoryLayer` defers token resolution to the first `factory.make` call, so
+// its layer build never fails without a token, and provides `IdentityStitch` for response stitching.
+const credentials = commandCredentialsLayer.pipe(
   Layer.provide(cliSettings),
-  Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(debugLoggerLayer),
 );
-const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
+const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
   Layer.provide(credentials),
   Layer.provide(cliSettings),
-  Layer.provide(legacyDebugLoggerLayer),
-  Layer.provide(legacyIdentityStitchLayer),
+  Layer.provide(debugLoggerLayer),
+  Layer.provide(identityStitchLayer),
 );
 
-const legacyStatusRuntimeLayer = Layer.mergeAll(
+const statusRuntimeLayer = Layer.mergeAll(
   cliSettings,
   platformApiFactory,
-  legacyIdentityStitchLayer,
-  legacyTelemetryStateLayer,
+  identityStitchLayer,
+  telemetryStateLayer,
   machineErrorContextLayer,
   commandRuntimeLayer(["status"]),
 );
 
-export const legacyStatusCommand = Command.make("status", config).pipe(
+export const statusCommand = Command.make("status", config).pipe(
   Command.withDescription("Show status of local Supabase containers."),
   Command.withShortDescription("Show status of local Supabase containers"),
   Command.withExamples([
@@ -95,13 +82,13 @@ export const legacyStatusCommand = Command.make("status", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyStatus(flags).pipe(
-      withLegacyCommandInstrumentation({
+    status(flags).pipe(
+      withCommandTelemetry({
         flags,
-        outputFormats: LEGACY_RESOURCE_OUTPUT_FORMATS,
+        outputFormats: RESOURCE_OUTPUT_FORMATS,
       }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyStatusRuntimeLayer),
+  Command.provide(statusRuntimeLayer),
 );

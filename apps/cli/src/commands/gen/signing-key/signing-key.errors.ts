@@ -5,8 +5,8 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 
-export class LegacyGenSigningKeyConfigParseError extends Data.TaggedError(
-  "LegacyGenSigningKeyConfigParseError",
+export class GenSigningKeyConfigParseError extends Data.TaggedError(
+  "GenSigningKeyConfigParseError",
 )<{
   readonly message: string;
 }> {
@@ -15,9 +15,7 @@ export class LegacyGenSigningKeyConfigParseError extends Data.TaggedError(
   }
 }
 
-export class LegacyGenSigningKeyGenerateError extends Data.TaggedError(
-  "LegacyGenSigningKeyGenerateError",
-)<{
+export class GenSigningKeyGenerateError extends Data.TaggedError("GenSigningKeyGenerateError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -25,7 +23,7 @@ export class LegacyGenSigningKeyGenerateError extends Data.TaggedError(
   }
 }
 
-export class LegacyGenSigningKeyReadError extends Data.TaggedError("LegacyGenSigningKeyReadError")<{
+export class GenSigningKeyReadError extends Data.TaggedError("GenSigningKeyReadError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -33,9 +31,7 @@ export class LegacyGenSigningKeyReadError extends Data.TaggedError("LegacyGenSig
   }
 }
 
-export class LegacyGenSigningKeyDecodeError extends Data.TaggedError(
-  "LegacyGenSigningKeyDecodeError",
-)<{
+export class GenSigningKeyDecodeError extends Data.TaggedError("GenSigningKeyDecodeError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -43,9 +39,7 @@ export class LegacyGenSigningKeyDecodeError extends Data.TaggedError(
   }
 }
 
-export class LegacyGenSigningKeyWriteError extends Data.TaggedError(
-  "LegacyGenSigningKeyWriteError",
-)<{
+export class GenSigningKeyWriteError extends Data.TaggedError("GenSigningKeyWriteError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -53,9 +47,7 @@ export class LegacyGenSigningKeyWriteError extends Data.TaggedError(
   }
 }
 
-export class LegacyGenSigningKeyCancelledError extends Data.TaggedError(
-  "LegacyGenSigningKeyCancelledError",
-)<{
+export class GenSigningKeyCancelledError extends Data.TaggedError("GenSigningKeyCancelledError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

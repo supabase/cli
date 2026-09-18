@@ -3,7 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Effect, Layer } from "effect";
+import { Config, ConfigProvider, Effect, Layer, PlatformError } from "effect";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import { TelemetryRuntime } from "./runtime.service.ts";
 import { telemetryRuntimeLayer } from "./runtime.layer.ts";
@@ -22,23 +22,31 @@ function buildLayer(opts: {
   homeDir: string;
   env?: Record<string, string>;
   stdoutIsTty?: boolean;
-}): Layer.Layer<TelemetryRuntime> {
+}): Layer.Layer<TelemetryRuntime, Config.ConfigError | PlatformError.PlatformError> {
   const runtimeInfoLayer = mockRuntimeInfo({ homeDir: opts.homeDir });
   const cliProjectContextLayer = mockCliProjectContext();
   const envLayer = processEnvLayer({
     SUPABASE_HOME: opts.homeDir,
     ...opts.env,
   });
+  const providerLayer = ConfigProvider.layer(
+    ConfigProvider.fromEnvRecord(
+      { SUPABASE_HOME: opts.homeDir, ...opts.env },
+      { preserveEmptyStrings: true },
+    ),
+  );
   const ttyLayer = mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false });
   const configLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
     Layer.provide(cliProjectContextLayer),
+    Layer.provide(providerLayer),
   );
   const telemetryLayer = telemetryRuntimeLayer.pipe(
     Layer.provide(configLayer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(ttyLayer),
     Layer.provide(BunServices.layer),
+    Layer.provide(providerLayer),
   );
 
   return Layer.mergeAll(envLayer, telemetryLayer);
@@ -139,11 +147,9 @@ describe("telemetryRuntimeLayer", () => {
     );
   });
 
-  // CLI-1868 (telemetry enable/disable firing cli_command_executed on pre-toggle
-  // consent) depends on this exact property: `consent` is read from disk once
-  // at layer-construction time and does not reflect a later on-disk write —
-  // mirroring Go's PersistentPreRunE snapshot, which a command's own RunE
-  // (e.g. `telemetry disable`'s SetEnabled) cannot retroactively change.
+  // `consent` is read from disk once at layer-construction time and does not reflect a later
+  // on-disk write, so a command that rewrites telemetry.json mid-run doesn't retroactively
+  // change what that invocation already captured.
   it.live("captures consent once; a later on-disk write does not change it", () => {
     const homeDir = makeTempDir();
     const configPath = path.join(homeDir, "telemetry.json");
@@ -162,9 +168,8 @@ describe("telemetryRuntimeLayer", () => {
       const runtime = yield* TelemetryRuntime;
       expect(runtime.consent).toBe("granted");
 
-      // Simulates `disable`'s handler rewriting the file mid-command, after
-      // this layer already resolved `consent` — the already-built runtime
-      // must keep reporting the pre-toggle value.
+      // Simulates `disable` rewriting telemetry.json mid-command, after this layer already
+      // resolved `consent`.
       yield* Effect.sync(() =>
         writeFileSync(
           configPath,

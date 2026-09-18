@@ -4,15 +4,21 @@ Removes objects by path. Paths are grouped by bucket; each bucket is confirmed, 
 (chunked at 1000), and any prefix that resolved to a directory is removed recursively
 when `-r` is set. With no paths and `-r`, every bucket is cleared and deleted.
 
+`--local` resolves the Storage gateway through the `experimental.stack`
+feature flag, same `SUPABASE_EXPERIMENTAL_STACK=1|0` env precedence as
+[`docs/stack-commands.md`](../../../../docs/stack-commands.md). `--linked`/`--project-ref`
+targeting is unchanged under either backend; see Notes for the stack-backend endpoint,
+credential, capability-state, and error behavior.
+
 ## Files Read
 
-| Path                                          | Format     | When                                                                                                                                |
-| --------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[remotes.*]` merge when linked)                                                                               |
-| `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                                                                     |
-| `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                                                                                             |
-| local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                                                                                           |
-| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878); on the local path also the `SUPABASE_API_*` overrides for the gateway URL/TLS (#6452) |
+| Path                                          | Format     | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| --------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[remotes.*]` merge when linked). With an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target, a missing project config is now a hard failure (`StorageMissingProjectConfigError`) rather than a fall-back to embedded defaults — the default `api.port` would otherwise point the operation at a different local stack; a REMOTE (`--project-ref`/`--linked`) target never hard-fails on this, since credential resolution there reads the Management API, not local config |
+| `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| local Kong TLS cert/key                       | PEM        | legacy backend only, local + `api.enabled` + `api.tls.enabled`                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878) and, on both backends, for `env(VAR)` interpolation while loading `config.toml`; on the local, legacy-backend path also the `SUPABASE_API_*` overrides for the gateway URL/TLS (#6452) and `SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}` for the service-role key                                                                                                                                                                                          |
 
 ## Files Written
 
@@ -35,9 +41,10 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 
 ## Environment Variables
 
-`SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_AUTH_JWT_SECRET`, `SUPABASE_ACCESS_TOKEN`,
-`SUPABASE_PROJECT_ID`, `SUPABASE_SERVICES_HOSTNAME`, the `SUPABASE_API_*` override
-family, plus `SUPABASE_YES` (auto-confirm) —
+`SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_AUTH_JWT_SECRET`, `SUPABASE_SERVICES_HOSTNAME`,
+and the `SUPABASE_API_*` override family are legacy backend only; `SUPABASE_ACCESS_TOKEN`,
+`SUPABASE_PROJECT_ID`, `SUPABASE_EXPERIMENTAL_STACK` (backend selection), and `SUPABASE_YES`
+(auto-confirm) apply to either backend —
 read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files
 (shell wins; CLI-1878).
 `SUPABASE_PROJECT_ID`'s linked-ref resolution is superseded by `--project-ref` when set.
@@ -51,8 +58,12 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
 | Code | Condition                                                                                                                                                                    |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success (including a declined confirmation, and a tolerated `Bucket not found`)                                                                                              |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard, including any `DELETE` call                    |
+| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`) — also beats any `DELETE` call                     |
 | `1`  | invalid/parse url, missing bucket (root path), missing `-r` flag (directory or no args), object-not-found (recursive empty prefix), API non-2xx, network, auth, config parse |
 | `1`  | `--project-ref` set with `--local` (see Notes)                                                                                                                               |
+| `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                              |
+| `1`  | stack backend: stack not registered/running, missing API endpoint or credentials, or the stack API is unavailable (`StackStorageUnavailableError`)                           |
 
 ## Output
 
@@ -94,3 +105,29 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
 - Explicit deletes are attempted first ("in case the paths resolve to extensionless files");
   prefixes not returned as removed are then walked recursively when `-r` is set.
 - Object deletes are chunked at `DELETE_OBJECTS_LIMIT` (1000) per request.
+- **Stack backend (`--local`).** The Storage endpoint is the selected stack's API
+  gateway URL (`status.endpoints.api.url`) + `/storage/v1/...`; the credential is the
+  stack's service-role JWT read from the stack's credentials. The stack is located by
+  the project root (workdir realpath) via the `@supabase/stack` API, which reads stack
+  state under `SUPABASE_HOME`. `rm` never creates a stack.
+- **Stack backend — capability policy.** Storage `disabled` (e.g.
+  `stack start -x storage`) errors with `StackStorageCapabilityError` ("Storage is
+  disabled for this stack.") with guidance to enable `[storage]`, then run
+  `supabase stack stop` followed by `supabase stack start` without `-x storage`;
+  `failed`/`stopped` raises the same error class ("Storage failed to start for this
+  stack"/"Storage is stopped for this stack."), with the capability error appended
+  when present, and guidance to run `supabase stack restart`.
+  `dormant`/`starting`/`ready`/`stopping` all proceed — the
+  gateway activates a lazily-configured Storage on the first request and holds that
+  request, and wakes a stopping Storage once its cleanup completes; there is no
+  client-side polling. A stack that is not registered, not running, missing
+  its API endpoint or credentials, or whose stack API is unavailable errors with
+  `StackStorageUnavailableError` and guidance to run `supabase stack status` or
+  `supabase stack restart` (or `supabase start` when the stack was never configured). A
+  stack-gateway 502/503 during Storage activation is reported as
+  `StackStorageCapabilityError` with guidance to run `supabase stack logs` then
+  `supabase stack restart`, instead of a raw status body — for a `--local` target only;
+  a `--linked` failure passes through unchanged. No HTTP request is sent when Storage is
+  disabled or the stack is not running.
+- **Secrets.** The stack's service-role JWT is never printed or logged; error messages
+  contain only lifecycle/capability state text.

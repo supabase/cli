@@ -1,9 +1,4 @@
-import {
-  legacyInspectFloat1,
-  legacyInspectInt,
-  legacyInspectText,
-  type LegacyInspectQuerySpec,
-} from "../legacy-inspect-query.ts";
+import { inspectFloat1, inspectInt, inspectText, type InspectQuerySpec } from "../inspect-query.ts";
 
 const SQL = ` -- Query adapted from Crunchy Data blog: "Is Postgres Read Heavy or Write Heavy? (And Why You Should Care)" by David Christensen
 WITH
@@ -55,17 +50,17 @@ ORDER BY
  * `inspect db traffic-profile` — read/write activity ratio per table.
  * The `blocks_write` column is formatted with one decimal place.
  */
-export const legacyTrafficProfileSpec: LegacyInspectQuerySpec = {
+export const trafficProfileSpec: InspectQuerySpec = {
   name: "traffic-profile",
   sql: SQL,
   params: () => [],
   headers: ["Schema", "Table", "Blocks Read", "Write Tuples", "Blocks Write", "Activity Ratio"],
   project: (row) => [
-    legacyInspectText(row["schemaname"]),
-    legacyInspectText(row["table_name"]),
-    legacyInspectInt(row["blocks_read"]),
-    legacyInspectInt(row["write_tuples"]),
-    legacyInspectFloat1(row["blocks_write"]),
-    legacyInspectText(row["activity_ratio"]),
+    inspectText(row["schemaname"]),
+    inspectText(row["table_name"]),
+    inspectInt(row["blocks_read"]),
+    inspectInt(row["write_tuples"]),
+    inspectFloat1(row["blocks_write"]),
+    inspectText(row["activity_ratio"]),
   ],
 };

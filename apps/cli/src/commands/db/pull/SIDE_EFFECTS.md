@@ -14,6 +14,10 @@ runs the same in-process declarative export (`supabase/schemas` plus
 `--declarative`. `--experimental --declarative` does not print that line:
 `--declarative` already selected the export.
 
+When `[experimental].stack` is on, the shadow is `EphemeralPostgres` under
+`$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/` (`~/.supabase/managed/…` by default). Migra (`--diff-engine migra`) is rejected
+because that shadow is always stack.
+
 Pg-delta runs in-process. Coverage gaps warn; `--strict-coverage` makes them
 fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under
 `supabase/.temp/pgdelta/v2/debug/<id>/`. The engine may emit transaction-aware
@@ -52,14 +56,15 @@ disables formatting without disabling safe compaction.
 ## Docker
 
 - Edge-runtime container (migra engine only).
-- Shadow Postgres container — provisioned and torn down natively (`legacyPrepareShadowSource` in
-  `commands/db/shared/legacy-shadow-source.ts`, over the lower-level primitives in
+- Shadow Postgres container — provisioned and torn down natively (`prepareShadowSource` in
+  `commands/db/shared/shadow-source.ts`, over the lower-level primitives in
   `command-internal/db-bootstrap/shadow-database.ts`), no longer via a Go seam. Torn down with
   `docker rm -f -v` on every run, cache or no cache — see the shadow baseline cache section
   below. Migration-style pulls only; `--declarative` provisions no shadow.
 - `supabase/migra` container — the migra OOM bash fallback only.
 - `pg_dump` container — the initial-migra pull's native remote-schema dump
-  (`legacyStreamPgDump`, shared with `db dump`).
+  (`streamPgDumpWithClient`, shared with `db dump`). Stack-backed pulls skip dump
+  seeding: they always use pg-delta and reject `--diff-engine migra`.
 
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
@@ -153,7 +158,7 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 - `--declarative` / deprecated `--use-pg-delta` are mutually exclusive with
   `--diff-engine`; `--db-url` / `--linked` (default) / `--local` are a target group.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `LegacyProjectRefResolver`
+  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
   performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
   `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
   id/labels. It never implies `--linked`: passing it with a resolved
@@ -167,10 +172,10 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   declarative files and `schema_paths` do not replace that baseline.
 - Bundled nontransactional files begin with
   `-- pg-delta: transaction=false`, which later migration commands honor.
-- The initial-migra pull (no local migrations) is native: it streams a `pg_dump` of
-  the remote schema into the migration file, then appends the migra diff. An empty
-  diff after a non-empty dump is swallowed; an empty dump + empty diff is "No schema
-  changes found".
+- The initial-migra pull (no local migrations, Compose / non-stack only) is native:
+  it streams a `pg_dump` of the remote schema into the migration file, then appends
+  the migra diff. An empty diff after a non-empty dump is swallowed; an empty dump +
+  empty diff is "No schema changes found". Stack-backed pulls never take this path.
 - The `--experimental` structured-dump branch (or the `SUPABASE_EXPERIMENTAL`
   project-`.env` equivalent) now runs the same in-process declarative export
   as `--declarative`. It is deprecated: a warning pointing at `--declarative`

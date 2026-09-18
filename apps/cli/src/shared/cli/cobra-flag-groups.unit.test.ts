@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   cobraMutuallyExclusiveErrorMessage,
   explicitBooleanLongFlag,
+  GLOBAL_VALUE_FLAG_TOKENS,
   hasExplicitLongFlag,
   lastExplicitLongFlagValue,
   PERSISTENT_VALUE_FLAG_NAMES,
@@ -119,10 +120,6 @@ describe("pflagArgvScan", () => {
   };
 
   test("records value-taking persistent flags parsed BEFORE the command path", () => {
-    // cobra's Find/stripFlags steps over `--profile a.yml` while routing to
-    // `sso update`, but pflag parses it and marks it Changed — the pre-path
-    // occurrence is the effective value when later tokens are consumed
-    // (PR #5974 review round 10).
     const scan = pflagArgvScan(
       ["--profile", "a.yml", "sso", "update", "id", "--profile=b.yml"],
       SSO_UPDATE_PATH,
@@ -172,10 +169,6 @@ describe("pflagArgvScan", () => {
   });
 
   test("a consumed flag-shaped token becomes the value, not a sibling flag", () => {
-    // pflag's `--flag arg` branch consumes the next token unconditionally
-    // (`flag.go:1013-1031`), so `--metadata-file --metadata-url` gives
-    // `metadata-file` the literal value `"--metadata-url"` and never parses
-    // `--metadata-url` as its own flag.
     const scan = pflagArgvScan(
       ["sso", "update", "id", "--metadata-file", "--metadata-url"],
       SSO_UPDATE_PATH,
@@ -198,8 +191,6 @@ describe("pflagArgvScan", () => {
   });
 
   test("an inline (`=`) value never consumes the next token", () => {
-    // `--metadata-file=--metadata-url` is one token: metadata-file's value is
-    // the literal string "--metadata-url", and no token is consumed after it.
     const scan = pflagArgvScan(
       ["sso", "update", "id", "--metadata-file=--metadata-url", "--domains", "a.com"],
       SSO_UPDATE_PATH,
@@ -208,7 +199,6 @@ describe("pflagArgvScan", () => {
     expect(scan.occurrences.get("metadata-file")).toEqual(["--metadata-url"]);
     expect(scan.occurrences.has("metadata-url")).toBe(false);
     expect(scan.occurrences.get("domains")).toEqual(["a.com"]);
-    // The inline form consumed nothing — no flag token was swallowed.
     expect(scan.consumedFlagNames.size).toBe(0);
   });
 
@@ -243,9 +233,6 @@ describe("pflagArgvScan", () => {
   });
 
   test("an inline-empty boolean (`--flag=`) records the empty string, distinct from bare", () => {
-    // pflag `flag.go:1014-1019`: `--flag=` Sets `""` (which ParseBool later
-    // rejects) while a bare `--flag` Sets NoOptDefVal `"true"` — the scan
-    // must preserve that difference (PR #5974 review round 5).
     const scan = pflagArgvScan(
       ["sso", "update", "id", "--skip-url-validation=false", "--skip-url-validation="],
       SSO_UPDATE_PATH,
@@ -279,15 +266,12 @@ describe("pflagArgvScan", () => {
 
   describe("missing value detection (pflag ValueRequiredError parity)", () => {
     test("a bare value flag at the end of argv reports pflag's parse error", () => {
-      // pflag fails `ParseFlags` before anything else runs (`errors.go:78`),
-      // and the flag is never Set — so no occurrence is recorded either.
       const scan = pflagArgvScan(["sso", "update", "id", "--metadata-file"], SSO_UPDATE_PATH, SPEC);
       expect(scan.missingValueError).toBe("flag needs an argument: --metadata-file");
       expect(scan.occurrences.has("metadata-file")).toBe(false);
     });
 
     test("a bare value shorthand at the end of argv quotes the character", () => {
-      // pflag `errors.go:75`: `flag needs an argument: %q in -%s`.
       const scan = pflagArgvScan(["sso", "update", "id", "-o"], SSO_UPDATE_PATH, SPEC);
       expect(scan.missingValueError).toBe("flag needs an argument: 'o' in -o");
       expect(scan.occurrences.has("output")).toBe(false);
@@ -336,8 +320,6 @@ describe("pflagArgvScan", () => {
     const scan = pflagArgvScan(["--domains", "a.com"], SSO_UPDATE_PATH, SPEC);
     expect(scan.anchored).toBe(false);
     expect(scan.occurrences.get("domains")).toEqual(["a.com"]);
-    // An unscoped scan collects no positionals — it cannot tell command path
-    // segments apart from operands.
     expect(scan.positionals).toEqual([]);
   });
 
@@ -358,9 +340,6 @@ describe("pflagArgvScan", () => {
     });
 
     test("a consumed flag token shifts its parser-value into the positionals", () => {
-      // pflag hands `--metadata-url` to `--domains`; the URL the Effect
-      // parser read as metadata-url's value is a positional to pflag, so
-      // cobra's ExactArgs(1) sees 2 args (CLI-1982, PR #5974 review).
       const scan = pflagArgvScan(
         ["sso", "update", "--domains", "--metadata-url", "https://idp.example.com/m", "id"],
         SSO_UPDATE_PATH,
@@ -372,8 +351,6 @@ describe("pflagArgvScan", () => {
     });
 
     test("a persistent global value flag consumes its value token", () => {
-      // `--workdir .` must not count `.` as a positional — pflag consumes it
-      // (root persistent flags, `cmd/root.go:324-333`).
       const scan = pflagArgvScan(
         ["sso", "update", "--workdir", ".", "id", "--profile", "staging"],
         SSO_UPDATE_PATH,
@@ -382,9 +359,28 @@ describe("pflagArgvScan", () => {
       expect(scan.positionals).toEqual(["id"]);
     });
 
+    test("the built-in --log-level global consumes its value token", () => {
+      const scan = pflagArgvScan(
+        ["sso", "update", "--log-level", "error", "id"],
+        SSO_UPDATE_PATH,
+        SPEC,
+      );
+      expect(scan.occurrences.get("log-level")).toEqual(["error"]);
+      expect(scan.positionals).toEqual(["id"]);
+    });
+
+    test("a pre-path --log-level keeps the scan anchored instead of falling back unscoped", () => {
+      const scan = pflagArgvScan(
+        ["--log-level", "error", "sso", "update", "id"],
+        SSO_UPDATE_PATH,
+        SPEC,
+      );
+      expect(scan.anchored).toBe(true);
+      expect(scan.prePathOccurrences.get("log-level")).toEqual(["error"]);
+      expect(scan.positionals).toEqual(["id"]);
+    });
+
     test("a bare slice flag consumes a global flag token, orphaning its value", () => {
-      // Binary-verified Go behaviour: `--domains --profile staging <id>`
-      // arity-errors because `staging` becomes positional.
       const scan = pflagArgvScan(
         ["sso", "update", "--domains", "--profile", "staging", "id"],
         SSO_UPDATE_PATH,
@@ -447,10 +443,6 @@ describe("pflagArgvScan", () => {
 
   describe("anchoring across interspersed flags (cobra Find/stripFlags parity)", () => {
     test("a persistent value flag between group and leaf still anchors", () => {
-      // cobra routes `sso --profile foo update <id>` to `sso update`
-      // (`stripFlags` steps over the flag and its value while locating
-      // subcommands) — binary-verified; the arity re-count must not be
-      // skipped for such argv (PR #5974 review round 3).
       const scan = pflagArgvScan(
         ["sso", "--profile", "foo", "update", "id", "--domains", "a.com"],
         SSO_UPDATE_PATH,
@@ -462,8 +454,7 @@ describe("pflagArgvScan", () => {
     });
 
     test("an interspersed value flag consuming a path-named token still anchors", () => {
-      // `--profile update` hands the literal value "update" to --profile;
-      // the NEXT "update" is the real leaf segment.
+      // The first "update" is --profile's value; the second is the real leaf segment.
       const scan = pflagArgvScan(
         ["sso", "--profile", "update", "update", "id"],
         SSO_UPDATE_PATH,
@@ -499,8 +490,6 @@ describe("pflagArgvScan", () => {
     });
 
     test("a stray operand before the path fails the anchor open", () => {
-      // `sso foo update` never routes to `sso update` (cobra treats `foo`
-      // as an unknown subcommand), so the scan falls back to unscoped.
       const scan = pflagArgvScan(["sso", "foo", "update", "id"], SSO_UPDATE_PATH, SPEC);
       expect(scan.anchored).toBe(false);
       expect(scan.positionals).toEqual([]);
@@ -532,10 +521,6 @@ describe("pflagArgvScan", () => {
     });
 
     test("a consumed `-t` shorthand is tracked under its long name", () => {
-      // Binary-verified: `sso add --domains -t saml` fails Go's
-      // required-flag check — pflag hands `-t` to `--domains` and `type`
-      // stays unchanged, while `saml` becomes positional (PR #5974 review
-      // round 3).
       const scan = pflagArgvScan(["sso", "add", "--domains", "-t", "saml"], ADD_PATH, ADD_SPEC);
       expect(scan.occurrences.has("type")).toBe(false);
       expect(scan.consumedFlagNames.has("type")).toBe(true);
@@ -559,8 +544,6 @@ describe("pflagArgvScan", () => {
     });
 
     test("a shorthand `-t` occurrence coexists with a consumed `--type` token", () => {
-      // pflag: `-t saml` sets type; `--domains` then swallows `--type`. The
-      // flag IS changed, so required-flag emulation must not fire.
       const scan = pflagArgvScan(
         ["sso", "add", "-t", "saml", "--domains", "--type", "saml"],
         ADD_PATH,
@@ -576,6 +559,25 @@ describe("pflagArgvScan", () => {
       expect(scan.consumedFlagNames.size).toBe(0);
       expect(scan.positionals).toEqual(["x"]);
     });
+  });
+});
+
+describe("GLOBAL_VALUE_FLAG_TOKENS", () => {
+  test("holds exactly the value-taking global tokens the TS parser accepts", () => {
+    expect(GLOBAL_VALUE_FLAG_TOKENS).toEqual(
+      new Set([
+        "--workdir",
+        "--network-id",
+        "--profile",
+        "--output",
+        "--dns-resolver",
+        "--agent",
+        "--output-format",
+        "--log-level",
+        "-o",
+        "--completions",
+      ]),
+    );
   });
 });
 

@@ -6,28 +6,27 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { LegacyDbExecError } from "../../../command-internal/legacy-db-connection.errors.ts";
-import type { LegacyDbSession } from "../../../command-internal/legacy-db-connection.service.ts";
-import { LegacyDbPullWriteError } from "./pull.errors.ts";
-import { legacyUpdateMigrationHistory, type LegacyPulledMigration } from "./pull.sync.ts";
+import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
+import type { DbSession } from "../../../command-internal/db-connection.service.ts";
+import { DbPullWriteError } from "./pull.errors.ts";
+import { updateMigrationHistory, type PulledMigration } from "./pull.sync.ts";
 
-// Records exec statements and successful upserts in one ordered log so the tests
-// can assert the transaction envelope (BEGIN / UPSERT / COMMIT / ROLLBACK) around
-// the version writes. `failUpsertAt` fails the Nth upsert to simulate a dropped
+// Records exec statements and successful upserts in order so tests can assert the
+// transaction envelope. `failUpsertAt` fails the Nth upsert to simulate a dropped
 // connection mid-loop.
 function mockSession(opts: { readonly failUpsertAt?: number } = {}) {
   const calls: Array<string> = [];
   let upsertCount = 0;
-  const session: LegacyDbSession = {
+  const session: DbSession = {
     exec: (sql: string) => Effect.sync(() => void calls.push(sql)),
-    // `legacyUpdateMigrationHistory` owns its transaction envelope statement by
+    // `updateMigrationHistory` owns its transaction envelope statement by
     // statement; it never batches.
     execBatch: () => Effect.die("execBatch unused"),
     query: (sql: string) => {
       if (/INSERT INTO supabase_migrations/u.test(sql)) {
         upsertCount += 1;
         if (opts.failUpsertAt === upsertCount) {
-          return Effect.fail(new LegacyDbExecError({ message: "connection reset by peer" }));
+          return Effect.fail(new DbExecError({ message: "connection reset by peer" }));
         }
         calls.push("UPSERT");
       }
@@ -40,8 +39,8 @@ function mockSession(opts: { readonly failUpsertAt?: number } = {}) {
   return { session, calls };
 }
 
-function writeMigrations(dir: string): ReadonlyArray<LegacyPulledMigration> {
-  const migrations: ReadonlyArray<LegacyPulledMigration> = [
+function writeMigrations(dir: string): ReadonlyArray<PulledMigration> {
+  const migrations: ReadonlyArray<PulledMigration> = [
     { path: join(dir, "20240101000000_a.sql"), version: "20240101000000" },
     { path: join(dir, "20240101000001_b.sql"), version: "20240101000001" },
   ];
@@ -50,7 +49,7 @@ function writeMigrations(dir: string): ReadonlyArray<LegacyPulledMigration> {
   return migrations;
 }
 
-describe("legacyUpdateMigrationHistory", () => {
+describe("updateMigrationHistory", () => {
   it.effect("wraps the upserts in one BEGIN + N upserts + COMMIT transaction", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -60,15 +59,12 @@ describe("legacyUpdateMigrationHistory", () => {
       const out = mockOutput();
       const { session, calls } = mockSession();
 
-      yield* legacyUpdateMigrationHistory(session, fs, path, migrations).pipe(
-        Effect.provide(out.layer),
-      );
+      yield* updateMigrationHistory(session, fs, path, migrations).pipe(Effect.provide(out.layer));
 
-      // The create-table setup runs its own BEGIN/COMMIT first; the upsert
-      // transaction is the trailing envelope around every version write.
       expect(calls).not.toContain("ROLLBACK");
+      // Sliced to the trailing 4 calls since createMigrationTable's own BEGIN/COMMIT
+      // runs first.
       expect(calls.slice(-4)).toEqual(["BEGIN", "UPSERT", "UPSERT", "COMMIT"]);
-      // The success line matches the established output contract.
       expect(out.stderrText).toContain(
         "Repaired migration history: [20240101000000 20240101000001] => applied",
       );
@@ -84,19 +80,16 @@ describe("legacyUpdateMigrationHistory", () => {
       const out = mockOutput();
       const { session, calls } = mockSession({ failUpsertAt: 2 });
 
-      const error = yield* legacyUpdateMigrationHistory(session, fs, path, migrations).pipe(
+      const error = yield* updateMigrationHistory(session, fs, path, migrations).pipe(
         Effect.provide(out.layer),
         Effect.flip,
       );
 
-      // First upsert applied, second failed → the upsert transaction ends in
-      // ROLLBACK, never COMMIT (the create-table setup's own COMMIT ran earlier).
+      // Sliced to the trailing 3 calls for the same reason as above.
       expect(calls.slice(-3)).toEqual(["BEGIN", "UPSERT", "ROLLBACK"]);
       expect(calls[calls.length - 1]).toBe("ROLLBACK");
-      // Error message shape stays byte-identical to the pre-transaction version.
-      expect(error).toBeInstanceOf(LegacyDbPullWriteError);
+      expect(error).toBeInstanceOf(DbPullWriteError);
       expect(error.message).toBe("failed to update migration table: connection reset by peer");
-      // No success line when the repair failed.
       expect(out.stderrText).not.toContain("Repaired migration history");
     }).pipe(Effect.provide(BunServices.layer)),
   );

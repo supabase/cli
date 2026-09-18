@@ -53,5 +53,5 @@ Emits a structured success (`{ project_ref }`) and suppresses the human `Finishe
 ## Known divergence
 
 The `Finished supabase unlink.` line is emitted as **plain text**; the old Go CLI rendered
-`supabase unlink` in ANSI cyan. This matches the established legacy-port convention (color
+`supabase unlink` in ANSI cyan. This matches the established port convention (color
 helpers are rendered plain); ANSI-stripping scripts are unaffected.

@@ -1,37 +1,43 @@
 {
   "name": "@supabase/root",
   "private": true,
+  "type": "module",
   "scripts": {
-    "prepare": "effect-tsgo patch --no-typescript --oxlint",
+    "prepare": "effect-tsgo patch --no-typescript --oxlint && husky",
     "build": "pnpm exec turbo run build",
     "generate": "pnpm exec turbo run @supabase/api#generate && pnpm exec turbo run @supabase/docs#generate",
     "test:live": "pnpm exec turbo run supabase#test:live --concurrency=1 --",
     "record": "pnpm exec turbo run @supabase/cli-e2e#record --",
     "test:smoke": "pnpm exec turbo run supabase#test:smoke --",
+    "test:github-scripts": "bun test ./.github/scripts",
     "dev:docs": "pnpm exec turbo run @supabase/docs#dev",
     "test:unit": "pnpm exec turbo run test:unit:run --filter=!@supabase/cli-go --",
     "test:integration": "pnpm exec turbo run test:integration:run --",
     "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run test:e2e:run --only --concurrency=1 --",
+    "test:vitest": "bun --bun vitest run --project '!*e2e*' --project '!*live*'",
     "check:all": "pnpm exec turbo run types:check lint:check fmt:check knip:check lint:effect:check",
     "fix:all": "pnpm exec turbo run lint:fix fmt:fix knip:fix && pnpm run lint:effect:fix",
     "lint:check": "oxlint --config .oxlintrc.json",
     "lint:fix": "oxlint --config .oxlintrc.json --fix",
-    "lint:effect:check": "oxlint --config .oxlintrc.effect.json packages/stack packages/process-compose",
-    "lint:effect:fix": "oxlint --config .oxlintrc.effect.json --fix --fix-suggestions packages/stack packages/process-compose",
+    "lint:effect:check": "oxlint --config .oxlintrc.effect.json",
+    "lint:effect:fix": "oxlint --config .oxlintrc.effect.json --fix --fix-suggestions",
     "fmt:check": "oxfmt --config .oxfmtrc.json --check",
     "fmt:fix": "oxfmt --config .oxfmtrc.json",
     "knip:check": "knip-bun",
     "knip:fix": "knip-bun --fix",
     "check:config-api": "bun tools/config-api-compare.ts",
-    "repos:install": "git submodule update --init --recursive",
-    "repos:pull": "git submodule update --remote",
+    "repos:install": "git submodule sync && git submodule update --init",
+    "repos:pull": "git submodule sync && git submodule update --init --remote",
     "local-registry": "bun tools/release/local-registry.ts",
     "cli-release": "bun tools/release/local-release.ts"
   },
   "devDependencies": {
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
     "@effect/tsgo": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
+    "husky": "^9.1.7",
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
@@ -40,12 +46,13 @@
     "turbo": "catalog:",
     "typescript": "catalog:",
     "verdaccio": "^6.10.0",
-    "vite": "^8.2.2"
+    "vite": "^8.2.2",
+    "vitest": "catalog:"
   },
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "12.3.0",
+      "version": "12.4.0",
       "onFail": "warn"
     }
   }

@@ -7,31 +7,21 @@ import { join } from "node:path";
 
 import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliSettings,
-  mockLegacyTelemetryStateTracked,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { LegacyDnsResolverFlag } from "../../../shared/legacy/global-flags.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import { LegacyDbConfigLoadError } from "../../../command-internal/legacy-db-config.errors.ts";
-import type { LegacyResolvedDbConfig } from "../../../command-internal/legacy-db-config.types.ts";
-import {
-  LegacyDbConnectError,
-  LegacyDbCopyError,
-} from "../../../command-internal/legacy-db-connection.errors.ts";
-import {
-  LegacyDbConnection,
-  type LegacyPgConnInput,
-} from "../../../command-internal/legacy-db-connection.service.ts";
-import type { LegacyInspectReportFlags } from "./report.command.ts";
-import { legacyInspectReport } from "./report.handler.ts";
-import {
-  LEGACY_REPORT_QUERIES,
-  legacyReportIgnoreSchemas,
-  legacyWrapReportQuery,
-} from "./report.queries.ts";
+import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
+import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import { DbConnectError, DbCopyError } from "../../../command-internal/db-connection.errors.ts";
+import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import type { InspectReportFlags } from "./report.command.ts";
+import { inspectReport } from "./report.handler.ts";
+import { REPORT_QUERIES, reportIgnoreSchemas, wrapReportQuery } from "./report.queries.ts";
 
-const LOCAL_CONN: LegacyPgConnInput = {
+const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
   port: 54322,
   user: "postgres",
@@ -39,32 +29,29 @@ const LOCAL_CONN: LegacyPgConnInput = {
   database: "postgres",
 };
 
-// Map each query's wrapped COPY statement back to its file name so the mocked
-// `copyToCsv` can return the right canned CSV.
+// Maps each query's wrapped COPY statement back to its file name so the mocked `copyToCsv`
+// can return the right canned CSV.
 const WRAPPED_TO_FILE = new Map<string, string>();
-for (const { fileName, sql } of LEGACY_REPORT_QUERIES) {
-  WRAPPED_TO_FILE.set(
-    legacyWrapReportQuery(sql, legacyReportIgnoreSchemas(), "'postgres'"),
-    fileName,
-  );
+for (const { fileName, sql } of REPORT_QUERIES) {
+  WRAPPED_TO_FILE.set(wrapReportQuery(sql, reportIgnoreSchemas(), "'postgres'"), fileName);
 }
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
-function mockResolver(opts: { conn?: LegacyPgConnInput; isLocal?: boolean; fails?: boolean } = {}) {
+function mockResolver(opts: { conn?: PgConnInput; isLocal?: boolean; fails?: boolean } = {}) {
   let resolveInput: unknown;
-  const layer = Layer.succeed(LegacyDbConfigResolver, {
+  const layer = Layer.succeed(DbConfigResolver, {
     resolve: (flags) => {
       resolveInput = flags;
       if (opts.fails === true) {
-        return Effect.fail(new LegacyDbConfigLoadError({ message: "cannot load config" }));
+        return Effect.fail(new DbConfigLoadError({ message: "cannot load config" }));
       }
       return Effect.succeed({
         conn: opts.conn ?? LOCAL_CONN,
         isLocal: opts.isLocal ?? true,
-      } satisfies LegacyResolvedDbConfig);
+      } satisfies ResolvedDbConfig);
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
@@ -82,11 +69,11 @@ function mockReportConnection(opts: {
   copyFails?: boolean;
 }) {
   const copiedSql: Array<string> = [];
-  const layer = Layer.succeed(LegacyDbConnection, {
+  const layer = Layer.succeed(DbConnection, {
     connect: () => {
       if (opts.connectFails === true) {
         return Effect.fail(
-          new LegacyDbConnectError({ message: "failed to connect to postgres: refused" }),
+          new DbConnectError({ message: "failed to connect to postgres: refused" }),
         );
       }
       return Effect.succeed({
@@ -98,7 +85,7 @@ function mockReportConnection(opts: {
         copyToCsv: (sql: string) => {
           copiedSql.push(sql);
           if (opts.copyFails === true) {
-            return Effect.fail(new LegacyDbCopyError({ message: "failed to copy output: boom" }));
+            return Effect.fail(new DbCopyError({ message: "failed to copy output: boom" }));
           }
           const fileName = WRAPPED_TO_FILE.get(sql) ?? "unknown";
           const text = opts.csvs?.[`${fileName}.csv`] ?? "";
@@ -117,7 +104,7 @@ function mockReportConnection(opts: {
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  conn?: LegacyPgConnInput;
+  conn?: PgConnInput;
   isLocal?: boolean;
   csvs?: Record<string, string>;
   resolveFails?: boolean;
@@ -126,11 +113,11 @@ interface SetupOpts {
   stdoutIsTty?: boolean;
   cwd?: string;
   workdir?: string;
-  /** Raw CLI args slice — drives Changed-based flag detection (cobra parity). */
+  /** Raw CLI args slice, used to detect which flags were explicitly passed. */
   cliArgs?: ReadonlyArray<string>;
 }
 
-function setupLegacyReport(opts: SetupOpts = {}) {
+function setupReport(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const resolver = mockResolver({
     conn: opts.conn,
@@ -142,16 +129,16 @@ function setupLegacyReport(opts: SetupOpts = {}) {
     connectFails: opts.connectFails,
     copyFails: opts.copyFails,
   });
-  const telemetry = mockLegacyTelemetryStateTracked();
+  const telemetry = mockTelemetryStateTracked();
   const workdir = opts.workdir ?? tempDir("supabase-report-workdir-");
   const layer = Layer.mergeAll(
     out.layer,
     resolver.layer,
     connection.layer,
     telemetry.layer,
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
-    mockLegacyCliSettings({ workdir }),
+    mockCommandSettings({ workdir }),
     mockRuntimeInfo({ cwd: opts.cwd ?? tempDir("supabase-report-cwd-") }),
     mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false }),
     BunServices.layer,
@@ -159,7 +146,7 @@ function setupLegacyReport(opts: SetupOpts = {}) {
   return { layer, out, resolver, connection, telemetry, workdir };
 }
 
-const flags = (over: Partial<LegacyInspectReportFlags> = {}): LegacyInspectReportFlags => ({
+const flags = (over: Partial<InspectReportFlags> = {}): InspectReportFlags => ({
   dbUrl: over.dbUrl ?? Option.none<string>(),
   linked: over.linked ?? false,
   local: over.local ?? false,
@@ -167,9 +154,8 @@ const flags = (over: Partial<LegacyInspectReportFlags> = {}): LegacyInspectRepor
   outputDir: over.outputDir ?? ".",
 });
 
-// One CSV per referenced file with the REAL column headers each query emits, so
-// column lookups resolve exactly as they would against Postgres. `locks.csv`
-// carries an old (rule 1 fail) but granted (rule 2 pass) row.
+// Real column headers for each query, so column lookups resolve as they would against
+// Postgres. `locks.csv` has an old (rule 1 fail) but granted (rule 2 pass) row.
 const DEFAULT_RULE_CSVS: Record<string, string> = {
   "locks.csv": "stmt,age,granted\nLOCK_A,00:05:00,t\n",
   "unused_indexes.csv": "index\n",
@@ -195,26 +181,24 @@ function dateFolderContents(base: string): { dir: string; files: Array<string> }
   return { dir, files: readdirSync(dir) };
 }
 
-describe("legacy inspect report", () => {
+describe("inspect report", () => {
   it.live("writes one CSV per inspect query for the linked project", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer, connection } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
+    const { layer, connection } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     const prevUmask = process.umask(0);
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: base }));
+      yield* inspectReport(flags({ outputDir: base }));
       const { dir, files } = dateFolderContents(base);
       expect(files.length).toBe(14);
       expect(files).toContain("db_stats.csv");
       expect(files).toContain("unused_indexes.csv");
       expect(files).not.toContain("db-stats.csv");
-      // Every query was copied with both placeholders substituted.
       expect(connection.copiedSql.length).toBe(14);
       expect(
         connection.copiedSql.every(
           (s) => s.startsWith("COPY (") && s.endsWith("TO STDOUT WITH CSV HEADER"),
         ),
       ).toBe(true);
-      // The date folder is pinned to 0755 and each CSV to 0644.
       expect(statSync(dir).mode & 0o777).toBe(0o755);
       expect(statSync(join(dir, "db_stats.csv")).mode & 0o777).toBe(0o644);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => process.umask(prevUmask))));
@@ -222,46 +206,45 @@ describe("legacy inspect report", () => {
 
   it.live("inspects the local database with --local", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer, resolver } = setupLegacyReport({
+    const { layer, resolver } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
       cliArgs: ["--local"],
     });
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: base, local: true }));
+      yield* inspectReport(flags({ outputDir: base, local: true }));
       expect((resolver.resolveInput as { connType: string }).connType).toBe("local");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("inspects a custom database with --db-url and labels the diagnostic 'remote'", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer, resolver, out } = setupLegacyReport({
+    const { layer, resolver, out } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
       isLocal: false,
       cliArgs: ["--db-url=postgres://x"],
     });
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: base, dbUrl: Option.some("postgres://x") }));
+      yield* inspectReport(flags({ outputDir: base, dbUrl: Option.some("postgres://x") }));
       expect(Option.isSome((resolver.resolveInput as { dbUrl: Option.Option<string> }).dbUrl)).toBe(
         true,
       );
-      // The connect diagnostic reflects a non-local target.
       expect(out.stderrText).toContain("Connecting to remote database...");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("inspects the linked project by default when no connection flag is set", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer, resolver } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
+    const { layer, resolver } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: base }));
+      yield* inspectReport(flags({ outputDir: base }));
       expect((resolver.resolveInput as { connType: string }).connType).toBe("linked");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("rejects more than one of --db-url/--linked/--local", () => {
-    const { layer } = setupLegacyReport({ cliArgs: ["--linked", "--local"] });
+    const { layer } = setupReport({ cliArgs: ["--linked", "--local"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyInspectReport(flags({ linked: true, local: true })));
+      const exit = yield* Effect.exit(inspectReport(flags({ linked: true, local: true })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("are set none of the others can be");
@@ -271,21 +254,21 @@ describe("legacy inspect report", () => {
 
   it.live("--local=false is Changed and routes to local (not linked)", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer, resolver } = setupLegacyReport({
+    const { layer, resolver } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
       cliArgs: ["--local=false"],
     });
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: base, local: false }));
+      yield* inspectReport(flags({ outputDir: base, local: false }));
       expect((resolver.resolveInput as { connType: string }).connType).toBe("local");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("--linked --local=false raises the mutual-exclusion error", () => {
-    const { layer } = setupLegacyReport({ cliArgs: ["--linked", "--local=false"] });
+    const { layer } = setupReport({ cliArgs: ["--linked", "--local=false"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyInspectReport(flags({ linked: true, local: false, outputDir: "." })),
+        inspectReport(flags({ linked: true, local: false, outputDir: "." })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -297,12 +280,12 @@ describe("legacy inspect report", () => {
 
   it.live("--linked routes to linked", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer, resolver } = setupLegacyReport({
+    const { layer, resolver } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
       cliArgs: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: base, linked: true }));
+      yield* inspectReport(flags({ outputDir: base, linked: true }));
       expect((resolver.resolveInput as { connType: string }).connType).toBe("linked");
     }).pipe(Effect.provide(layer));
   });
@@ -310,11 +293,9 @@ describe("legacy inspect report", () => {
   it.live("reports on the project given via --project-ref on the default linked path", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const base = tempDir("supabase-report-out-");
-    const { layer, resolver } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
+    const { layer, resolver } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: base, projectRef: Option.some(FLAG_REF) }));
-      // `inspect report` never caches the ref — the resolver call it threads the
-      // flag into is the strongest observable this harness offers.
+      yield* inspectReport(flags({ outputDir: base, projectRef: Option.some(FLAG_REF) }));
       const resolveInput = resolver.resolveInput as {
         connType: string;
         linkedProjectRef: Option.Option<string>;
@@ -326,13 +307,13 @@ describe("legacy inspect report", () => {
 
   it.live("rejects --project-ref combined with an explicit --local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    const { layer, resolver } = setupLegacyReport({
+    const { layer, resolver } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
       cliArgs: ["--local"],
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyInspectReport(flags({ local: true, projectRef: Option.some(FLAG_REF) })),
+        inspectReport(flags({ local: true, projectRef: Option.some(FLAG_REF) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -348,14 +329,13 @@ describe("legacy inspect report", () => {
     "prints connect + running + saved progress to stderr and the rules table to stdout",
     () => {
       const base = tempDir("supabase-report-out-");
-      const { layer, out } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS, isLocal: true });
+      const { layer, out } = setupReport({ csvs: DEFAULT_RULE_CSVS, isLocal: true });
       return Effect.gen(function* () {
-        yield* legacyInspectReport(flags({ outputDir: base }));
+        yield* inspectReport(flags({ outputDir: base }));
         expect(out.stderrText).toContain("Connecting to local database...");
         expect(out.stderrText).toContain("Running queries...");
         expect(out.stderrText).toContain("Reports saved to ");
         expect(out.stderrText).toContain("Loading default rules...");
-        // stdout carries the Glamour rules table.
         expect(out.stdoutText).toContain("RULE");
         expect(out.stdoutText).toContain("STATUS");
         expect(out.stdoutText).toContain("MATCHES");
@@ -366,13 +346,11 @@ describe("legacy inspect report", () => {
 
   it.live("shows a passing rule as ✔/- and a failing rule with its message and matches", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer, out } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
+    const { layer, out } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: base }));
-      // Rule 1 fails (old lock): message + matched statement.
+      yield* inspectReport(flags({ outputDir: base }));
       expect(out.stdoutText).toContain("There is at least one lock older than 2 minutes");
       expect(out.stdoutText).toContain("LOCK_A");
-      // Rule 2 passes (lock is granted): ✔.
       expect(out.stdoutText).toContain("✔");
       expect(out.stdoutText).toContain("No duplicate indexes");
     }).pipe(Effect.provide(layer));
@@ -395,15 +373,14 @@ describe("legacy inspect report", () => {
           "",
         ].join("\n"),
       );
-      const { layer, out } = setupLegacyReport({
+      const { layer, out } = setupReport({
         workdir,
         csvs: { "locks.csv": "stmt,granted\nA,t\n" },
       });
       return Effect.gen(function* () {
-        yield* legacyInspectReport(flags({ outputDir: base }));
+        yield* inspectReport(flags({ outputDir: base }));
         expect(out.stderrText).not.toContain("Loading default rules...");
         expect(out.stdoutText).toContain("Custom rule");
-        // No-match COUNT(*) returns 0, a non-empty value → fail status for this rule.
         expect(out.stdoutText).toContain("bad");
       }).pipe(Effect.provide(layer));
     },
@@ -417,8 +394,7 @@ describe("legacy inspect report", () => {
       join(workdir, "supabase", "config.toml"),
       [
         "[[experimental.inspect.rules]]",
-        // References a CSV that was never produced — the provider returns no table
-        // and the evaluator surfaces the error as the STATUS cell (not a failure).
+        // `nope.csv` doesn't exist, so this surfaces as the rule's STATUS cell.
         'query = "SELECT COUNT(*) FROM `nope.csv`"',
         'name = "Broken rule"',
         'pass = "ok"',
@@ -426,9 +402,9 @@ describe("legacy inspect report", () => {
         "",
       ].join("\n"),
     );
-    const { layer, out } = setupLegacyReport({ workdir, csvs: DEFAULT_RULE_CSVS });
+    const { layer, out } = setupReport({ workdir, csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: base })));
+      const exit = yield* Effect.exit(inspectReport(flags({ outputDir: base })));
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stdoutText).toContain("Broken rule");
     }).pipe(Effect.provide(layer));
@@ -438,8 +414,6 @@ describe("legacy inspect report", () => {
     const base = tempDir("supabase-report-out-");
     const workdir = tempDir("supabase-report-workdir-");
     mkdirSync(join(workdir, "supabase"), { recursive: true });
-    // An invalid rule config (unknown key) must abort before the DB connection
-    // and before any CSV files are written.
     writeFileSync(
       join(workdir, "supabase", "config.toml"),
       [
@@ -452,15 +426,14 @@ describe("legacy inspect report", () => {
         "",
       ].join("\n"),
     );
-    const { layer, connection } = setupLegacyReport({ workdir });
+    const { layer, connection } = setupReport({ workdir });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: base })));
+      const exit = yield* Effect.exit(inspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("invalid keys: typo");
       }
-      // No connection and no dated output folder — config validation ran first,
-      // before mkdir / connect / COPY (base itself is the pre-created temp dir).
+      // `base` is the pre-created temp dir itself; no dated subfolder is created.
       expect(connection.copiedSql.length).toBe(0);
       expect(readdirSync(base).length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -468,9 +441,9 @@ describe("legacy inspect report", () => {
 
   it.live("emits a structured result and writes CSVs but no table in json mode", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer, out } = setupLegacyReport({ format: "json", csvs: DEFAULT_RULE_CSVS });
+    const { layer, out } = setupReport({ format: "json", csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: base }));
+      yield* inspectReport(flags({ outputDir: base }));
       expect(out.stdoutText).toBe("");
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "inspect report" }),
@@ -489,9 +462,9 @@ describe("legacy inspect report", () => {
 
   it.live("streams the structured result in stream-json mode", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer, out } = setupLegacyReport({ format: "stream-json", csvs: DEFAULT_RULE_CSVS });
+    const { layer, out } = setupReport({ format: "stream-json", csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: base }));
+      yield* inspectReport(flags({ outputDir: base }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "inspect report" }),
       );
@@ -502,9 +475,9 @@ describe("legacy inspect report", () => {
     // Point --output-dir at a regular file so mkdir of `<file>/<date>` fails.
     const fileAsDir = join(tempDir("supabase-report-out-"), "afile");
     writeFileSync(fileAsDir, "x");
-    const { layer } = setupLegacyReport();
+    const { layer } = setupReport();
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: fileAsDir })));
+      const exit = yield* Effect.exit(inspectReport(flags({ outputDir: fileAsDir })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to mkdir");
@@ -514,9 +487,9 @@ describe("legacy inspect report", () => {
 
   it.live("aborts with a copy error when COPY fails", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer } = setupLegacyReport({ copyFails: true });
+    const { layer } = setupReport({ copyFails: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: base })));
+      const exit = yield* Effect.exit(inspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to copy output");
@@ -526,12 +499,12 @@ describe("legacy inspect report", () => {
 
   it.live("aborts with a failed-to-create-output-file error when a CSV cannot be written", () => {
     const base = tempDir("supabase-report-out-");
-    // Pre-create the first CSV target (`bloat.csv`) as a DIRECTORY so the file
-    // write fails (EISDIR) while mkdir (recursive, idempotent) still succeeds.
+    // Pre-creates `bloat.csv` as a directory so the file write fails (EISDIR) while the
+    // recursive mkdir still succeeds.
     mkdirSync(join(base, localDateFolder(), "bloat.csv"), { recursive: true });
-    const { layer } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
+    const { layer } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: base })));
+      const exit = yield* Effect.exit(inspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to create output file");
@@ -541,9 +514,9 @@ describe("legacy inspect report", () => {
 
   it.live("aborts when the connection fails", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer } = setupLegacyReport({ connectFails: true });
+    const { layer } = setupReport({ connectFails: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: base })));
+      const exit = yield* Effect.exit(inspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to connect to postgres");
@@ -553,9 +526,9 @@ describe("legacy inspect report", () => {
 
   it.live("aborts when resolution fails", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer } = setupLegacyReport({ resolveFails: true });
+    const { layer } = setupReport({ resolveFails: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: base })));
+      const exit = yield* Effect.exit(inspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("cannot load config");
@@ -565,9 +538,9 @@ describe("legacy inspect report", () => {
 
   it.live("resolves a relative --output-dir under the process CWD", () => {
     const cwd = tempDir("supabase-report-cwd-");
-    const { layer } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS, cwd });
+    const { layer } = setupReport({ csvs: DEFAULT_RULE_CSVS, cwd });
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: "reports" }));
+      yield* inspectReport(flags({ outputDir: "reports" }));
       const { files } = dateFolderContents(join(cwd, "reports"));
       expect(files.length).toBe(14);
     }).pipe(Effect.provide(layer));
@@ -576,10 +549,9 @@ describe("legacy inspect report", () => {
   it.live("uses an absolute --output-dir as-is", () => {
     const base = tempDir("supabase-report-out-");
     const cwd = tempDir("supabase-report-cwd-");
-    const { layer } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS, cwd });
+    const { layer } = setupReport({ csvs: DEFAULT_RULE_CSVS, cwd });
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: base }));
-      // Written under the absolute base, not under the CWD.
+      yield* inspectReport(flags({ outputDir: base }));
       expect(dateFolderContents(base).files.length).toBe(14);
       expect(readdirSync(cwd).length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -587,28 +559,26 @@ describe("legacy inspect report", () => {
 
   it.live("renders the path in bold when stdout is a TTY", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer, out } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS, stdoutIsTty: true });
+    const { layer, out } = setupReport({ csvs: DEFAULT_RULE_CSVS, stdoutIsTty: true });
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: base }));
+      yield* inspectReport(flags({ outputDir: base }));
       expect(out.stderrText).toContain("\x1b[1m");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("flushes telemetry on success", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer, telemetry } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
+    const { layer, telemetry } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
-      yield* legacyInspectReport(flags({ outputDir: base }));
+      yield* inspectReport(flags({ outputDir: base }));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("flushes telemetry even when the command fails", () => {
-    const { layer, telemetry } = setupLegacyReport({ resolveFails: true });
+    const { layer, telemetry } = setupReport({ resolveFails: true });
     return Effect.gen(function* () {
-      yield* Effect.exit(
-        legacyInspectReport(flags({ outputDir: tempDir("supabase-report-out-") })),
-      );
+      yield* Effect.exit(inspectReport(flags({ outputDir: tempDir("supabase-report-out-") })));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });

@@ -1,5 +1,6 @@
 import type { Effect } from "effect";
 import { Context, Data } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -22,7 +23,10 @@ interface CliProjectHomeShape {
   readonly projectHomeDir: string;
   readonly projectLinkPath: string;
   readonly projectLocalVersionsPath: string;
-  readonly ensureCliProjectHomeDir: Effect.Effect<void>;
+  readonly ensureCliProjectHomeDir: Effect.Effect<
+    void,
+    PlatformError | CliProjectHomeNotDirectoryError
+  >;
 }
 
 export class CliProjectHome extends Context.Service<CliProjectHome, CliProjectHomeShape>()(

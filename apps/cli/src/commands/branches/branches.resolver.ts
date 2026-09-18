@@ -1,31 +1,30 @@
-import { mapLegacyHttpError } from "../../command-internal/legacy-http-errors.ts";
-import { legacyResolveBranchProjectRef as legacyResolveBranchProjectRefShared } from "../../command-internal/legacy-branch-ref.resolver.ts";
+import { mapHttpError } from "../../command-internal/http-errors.ts";
+import { resolveBranchProjectRef as resolveBranchProjectRefShared } from "../../command-internal/branch-ref.resolver.ts";
 import {
-  LegacyBranchesFindNetworkError,
-  LegacyBranchesFindUnexpectedStatusError,
-  LegacyBranchesGetNetworkError,
-  LegacyBranchesGetUnexpectedStatusError,
+  BranchesFindNetworkError,
+  BranchesFindUnexpectedStatusError,
+  BranchesGetNetworkError,
+  BranchesGetUnexpectedStatusError,
 } from "./branches.errors.ts";
 
-const mapFindError = mapLegacyHttpError({
-  networkError: LegacyBranchesFindNetworkError,
-  statusError: LegacyBranchesFindUnexpectedStatusError,
+const mapFindError = mapHttpError({
+  networkError: BranchesFindNetworkError,
+  statusError: BranchesFindUnexpectedStatusError,
   networkMessage: (cause) => `failed to find branch: ${cause}`,
   statusMessage: (status, body) => `unexpected find branch status ${status}: ${body}`,
 });
 
-const mapGetError = mapLegacyHttpError({
-  networkError: LegacyBranchesGetNetworkError,
-  statusError: LegacyBranchesGetUnexpectedStatusError,
+const mapGetError = mapHttpError({
+  networkError: BranchesGetNetworkError,
+  statusError: BranchesGetUnexpectedStatusError,
   networkMessage: (cause) => `failed to get branch: ${cause}`,
   statusMessage: (status, body) => `unexpected get branch status ${status}: ${body}`,
 });
 
 /**
- * The branches family's binding of the shared branch-ref resolver
- * (`command-internal/legacy-branch-ref.resolver.ts`) to this family's error
- * classes. See the shared module for resolution semantics.
+ * Binds the shared branch-ref resolver to this family's error classes. See
+ * `command-internal/branch-ref.resolver.ts` for resolution semantics.
  */
-export function legacyResolveBranchProjectRef(input: string, projectRef: string) {
-  return legacyResolveBranchProjectRefShared(input, projectRef, { mapGetError, mapFindError });
+export function resolveBranchProjectRef(input: string, projectRef: string) {
+  return resolveBranchProjectRefShared(input, projectRef, { mapGetError, mapFindError });
 }

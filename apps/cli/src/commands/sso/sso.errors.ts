@@ -6,9 +6,9 @@ import {
   planLimitGatedActionability,
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
-import type { LegacySsoFileErrorReason } from "./sso.saml.ts";
+import type { SsoFileErrorReason } from "./sso.saml.ts";
 
-function ssoFileActionability(reason: LegacySsoFileErrorReason): CliErrorActionabilityDeclaration {
+function ssoFileActionability(reason: SsoFileErrorReason): CliErrorActionabilityDeclaration {
   if (reason === "not_found") {
     return { ...actionability.provideFlags, fingerprint_suffix: "not_found" };
   }
@@ -25,10 +25,8 @@ function ssoFileActionability(reason: LegacySsoFileErrorReason): CliErrorActiona
 }
 
 /**
- * The SAML feature is entitlement-gated: handlers thread the typed result of
- * `legacySuggestUpgrade` (`upgradeSuggested`) into these errors so telemetry
- * can distinguish plan-gated failures from ordinary API failures without
- * sniffing message text.
+ * SAML is entitlement-gated: `upgradeSuggested` lets telemetry distinguish
+ * plan-gated failures from ordinary API failures without parsing message text.
  */
 const samlDisabledActionability = (
   upgradeSuggested: boolean | undefined,
@@ -42,10 +40,8 @@ const gatedNotFoundActionability = (
 ): CliErrorActionabilityDeclaration =>
   upgradeSuggested === true ? planLimitGatedActionability : actionability.invalidInput;
 
-// Shared across show / update / remove: invalid identity provider ID.
-// Message is a short, directly user-actionable string —
-// `identity provider ID %q is not a UUID` — tested in e2e.
-export class LegacySsoInvalidUuidError extends Data.TaggedError("LegacySsoInvalidUuidError")<{
+// Shared across show/update/remove. Message: `identity provider ID %q is not a UUID`.
+export class SsoInvalidUuidError extends Data.TaggedError("SsoInvalidUuidError")<{
   readonly providerId: string;
   readonly message: string;
 }> {
@@ -54,10 +50,9 @@ export class LegacySsoInvalidUuidError extends Data.TaggedError("LegacySsoInvali
   }
 }
 
-// Shared across list / show: TOML encode failure ("failed to output toml: %w")
-// — reachable when an `attribute_mapping` `default` value cannot be encoded
-// (e.g. an array with a nil element).
-export class LegacySsoTomlEncodeError extends Data.TaggedError("LegacySsoTomlEncodeError")<{
+// Shared across list/show. Reachable when an `attribute_mapping` `default`
+// value can't be encoded (e.g. an array with a nil element).
+export class SsoTomlEncodeError extends Data.TaggedError("SsoTomlEncodeError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -65,8 +60,7 @@ export class LegacySsoTomlEncodeError extends Data.TaggedError("LegacySsoTomlEnc
   }
 }
 
-// `sso list`
-export class LegacySsoListNetworkError extends Data.TaggedError("LegacySsoListNetworkError")<{
+export class SsoListNetworkError extends Data.TaggedError("SsoListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -77,9 +71,7 @@ export class LegacySsoListNetworkError extends Data.TaggedError("LegacySsoListNe
   }
 }
 
-export class LegacySsoListSamlDisabledError extends Data.TaggedError(
-  "LegacySsoListSamlDisabledError",
-)<{
+export class SsoListSamlDisabledError extends Data.TaggedError("SsoListSamlDisabledError")<{
   readonly message: string;
   readonly upgradeSuggested?: boolean;
 }> {
@@ -88,9 +80,7 @@ export class LegacySsoListSamlDisabledError extends Data.TaggedError(
   }
 }
 
-export class LegacySsoListUnexpectedStatusError extends Data.TaggedError(
-  "LegacySsoListUnexpectedStatusError",
-)<{
+export class SsoListUnexpectedStatusError extends Data.TaggedError("SsoListUnexpectedStatusError")<{
   readonly status: number;
   readonly body: string;
   readonly message: string;
@@ -101,8 +91,7 @@ export class LegacySsoListUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// `sso add`
-export class LegacySsoAddNetworkError extends Data.TaggedError("LegacySsoAddNetworkError")<{
+export class SsoAddNetworkError extends Data.TaggedError("SsoAddNetworkError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -110,9 +99,7 @@ export class LegacySsoAddNetworkError extends Data.TaggedError("LegacySsoAddNetw
   }
 }
 
-export class LegacySsoAddSamlDisabledError extends Data.TaggedError(
-  "LegacySsoAddSamlDisabledError",
-)<{
+export class SsoAddSamlDisabledError extends Data.TaggedError("SsoAddSamlDisabledError")<{
   readonly message: string;
   readonly upgradeSuggested?: boolean;
 }> {
@@ -121,9 +108,7 @@ export class LegacySsoAddSamlDisabledError extends Data.TaggedError(
   }
 }
 
-export class LegacySsoAddUnexpectedStatusError extends Data.TaggedError(
-  "LegacySsoAddUnexpectedStatusError",
-)<{
+export class SsoAddUnexpectedStatusError extends Data.TaggedError("SsoAddUnexpectedStatusError")<{
   readonly status: number;
   readonly body: string;
   readonly message: string;
@@ -134,29 +119,27 @@ export class LegacySsoAddUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacySsoAddMetadataFileError extends Data.TaggedError(
-  "LegacySsoAddMetadataFileError",
-)<{
+export class SsoAddMetadataFileError extends Data.TaggedError("SsoAddMetadataFileError")<{
   readonly message: string;
-  readonly reason: LegacySsoFileErrorReason;
+  readonly reason: SsoFileErrorReason;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return ssoFileActionability(this.reason);
   }
 }
 
-export class LegacySsoAddAttributeMappingFileError extends Data.TaggedError(
-  "LegacySsoAddAttributeMappingFileError",
+export class SsoAddAttributeMappingFileError extends Data.TaggedError(
+  "SsoAddAttributeMappingFileError",
 )<{
   readonly message: string;
-  readonly reason: LegacySsoFileErrorReason;
+  readonly reason: SsoFileErrorReason;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return ssoFileActionability(this.reason);
   }
 }
 
-export class LegacySsoMutexFlagError extends Data.TaggedError("LegacySsoMutexFlagError")<{
+export class SsoMutexFlagError extends Data.TaggedError("SsoMutexFlagError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -164,15 +147,10 @@ export class LegacySsoMutexFlagError extends Data.TaggedError("LegacySsoMutexFla
   }
 }
 
-// pflag's `ValueRequiredError` (`errors.go:63-78`), emulated for the case the
-// Effect parser accepts but pflag rejects: a bare value-taking flag as the
-// final argv token (`sso update <id> --domains`). pflag fails `ParseFlags`
-// (cobra `command.go:919`) before `ValidateArgs`, every hook, and `RunE`, so
-// Go exits without any API call. Shared across add + update; message
-// byte-matches pflag's template.
-export class LegacySsoFlagNeedsArgumentError extends Data.TaggedError(
-  "LegacySsoFlagNeedsArgumentError",
-)<{
+// Emulates pflag's rejection of a bare value-taking flag as the final argv
+// token, a case the Effect parser accepts. Shared by add + update; the
+// message matches pflag's template.
+export class SsoFlagNeedsArgumentError extends Data.TaggedError("SsoFlagNeedsArgumentError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -180,18 +158,12 @@ export class LegacySsoFlagNeedsArgumentError extends Data.TaggedError(
   }
 }
 
-// pflag's `InvalidValueError` (`errors.go:32-48`, raised when a flag's
-// `Value.Set` rejects an occurrence), emulated for values the Effect parser
-// accepts but pflag does not: a repeated flag whose later occurrence is
-// invalid (the Effect parser resolves repeats first-wins and never validates
-// the rest — `--type saml --type bogus`), and boolean literals outside Go's
-// `strconv.ParseBool` set (`--skip-url-validation=yes`). pflag fails
-// `ParseFlags` (cobra `command.go:919`) before `ValidateArgs`, every hook,
-// and `RunE`, so Go exits without any API call. Shared across add + update;
-// message byte-matches pflag's template.
-export class LegacySsoInvalidFlagValueError extends Data.TaggedError(
-  "LegacySsoInvalidFlagValueError",
-)<{
+// Emulates pflag's rejection of an invalid flag value in cases the Effect
+// parser accepts: a later occurrence of a repeated flag (the parser resolves
+// repeats first-wins and never validates the rest), or a boolean literal
+// outside pflag's accepted set. Shared by add + update; the message matches
+// pflag's template.
+export class SsoInvalidFlagValueError extends Data.TaggedError("SsoInvalidFlagValueError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -199,13 +171,10 @@ export class LegacySsoInvalidFlagValueError extends Data.TaggedError(
   }
 }
 
-// Emulates an edge case the flag parser cannot see directly: a required
-// flag's own token gets consumed as another flag's value, so the flag is
-// never marked as present and validation fails before any request is made.
-// Message text is an established output contract.
-export class LegacySsoAddRequiredFlagError extends Data.TaggedError(
-  "LegacySsoAddRequiredFlagError",
-)<{
+// Fires when a required flag's own token is consumed as another flag's
+// value, so it's never marked present. The message text is a stable output
+// contract.
+export class SsoAddRequiredFlagError extends Data.TaggedError("SsoAddRequiredFlagError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -214,9 +183,7 @@ export class LegacySsoAddRequiredFlagError extends Data.TaggedError(
 }
 
 // Shared across add + update — metadata URL validation.
-export class LegacySsoMetadataUrlInvalidError extends Data.TaggedError(
-  "LegacySsoMetadataUrlInvalidError",
-)<{
+export class SsoMetadataUrlInvalidError extends Data.TaggedError("SsoMetadataUrlInvalidError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -224,23 +191,17 @@ export class LegacySsoMetadataUrlInvalidError extends Data.TaggedError(
   }
 }
 
-export class LegacySsoMetadataUrlNetworkError extends Data.TaggedError(
-  "LegacySsoMetadataUrlNetworkError",
-)<{
+export class SsoMetadataUrlNetworkError extends Data.TaggedError("SsoMetadataUrlNetworkError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // Fired only during preflight validation of the USER-SUPPLIED
-    // `--metadata-url` (a third-party SAML IDP endpoint), never a Supabase
-    // service — a bad URL that times out / non-200s / is too large is user
-    // input, like its `MetadataUrlInvalid` / `NonUtf8` siblings.
+    // Fires only for the user-supplied `--metadata-url` endpoint, never a
+    // Supabase service, so failures here are user input like the sibling errors.
     return actionability.provideFlags;
   }
 }
 
-export class LegacySsoMetadataUrlNonUtf8Error extends Data.TaggedError(
-  "LegacySsoMetadataUrlNonUtf8Error",
-)<{
+export class SsoMetadataUrlNonUtf8Error extends Data.TaggedError("SsoMetadataUrlNonUtf8Error")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -248,8 +209,7 @@ export class LegacySsoMetadataUrlNonUtf8Error extends Data.TaggedError(
   }
 }
 
-// `sso show`
-export class LegacySsoShowNetworkError extends Data.TaggedError("LegacySsoShowNetworkError")<{
+export class SsoShowNetworkError extends Data.TaggedError("SsoShowNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -260,7 +220,7 @@ export class LegacySsoShowNetworkError extends Data.TaggedError("LegacySsoShowNe
   }
 }
 
-export class LegacySsoShowNotFoundError extends Data.TaggedError("LegacySsoShowNotFoundError")<{
+export class SsoShowNotFoundError extends Data.TaggedError("SsoShowNotFoundError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -268,9 +228,7 @@ export class LegacySsoShowNotFoundError extends Data.TaggedError("LegacySsoShowN
   }
 }
 
-export class LegacySsoShowUnexpectedStatusError extends Data.TaggedError(
-  "LegacySsoShowUnexpectedStatusError",
-)<{
+export class SsoShowUnexpectedStatusError extends Data.TaggedError("SsoShowUnexpectedStatusError")<{
   readonly status: number;
   readonly body: string;
   readonly message: string;
@@ -280,9 +238,7 @@ export class LegacySsoShowUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacySsoShowEnvNotSupportedError extends Data.TaggedError(
-  "LegacySsoShowEnvNotSupportedError",
-)<{
+export class SsoShowEnvNotSupportedError extends Data.TaggedError("SsoShowEnvNotSupportedError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -290,12 +246,10 @@ export class LegacySsoShowEnvNotSupportedError extends Data.TaggedError(
   }
 }
 
-// `sso update`
-// Emulates an edge case the flag parser cannot see directly: a flag token
-// gets consumed as another flag's value, shifting what the parser read as a
-// flag's value into the positional list, so the arg count is rejected before
-// any hook or request. Message text is an established output contract.
-export class LegacySsoUpdateArityError extends Data.TaggedError("LegacySsoUpdateArityError")<{
+// Fires when a flag token is consumed as another flag's value, shifting a
+// value into the positional list so arg-count validation rejects it first.
+// The message text is a stable output contract.
+export class SsoUpdateArityError extends Data.TaggedError("SsoUpdateArityError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -303,7 +257,7 @@ export class LegacySsoUpdateArityError extends Data.TaggedError("LegacySsoUpdate
   }
 }
 
-export class LegacySsoUpdateNetworkError extends Data.TaggedError("LegacySsoUpdateNetworkError")<{
+export class SsoUpdateNetworkError extends Data.TaggedError("SsoUpdateNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -314,7 +268,7 @@ export class LegacySsoUpdateNetworkError extends Data.TaggedError("LegacySsoUpda
   }
 }
 
-export class LegacySsoUpdateNotFoundError extends Data.TaggedError("LegacySsoUpdateNotFoundError")<{
+export class SsoUpdateNotFoundError extends Data.TaggedError("SsoUpdateNotFoundError")<{
   readonly message: string;
   readonly upgradeSuggested?: boolean;
 }> {
@@ -323,8 +277,8 @@ export class LegacySsoUpdateNotFoundError extends Data.TaggedError("LegacySsoUpd
   }
 }
 
-export class LegacySsoUpdateUnexpectedStatusError extends Data.TaggedError(
-  "LegacySsoUpdateUnexpectedStatusError",
+export class SsoUpdateUnexpectedStatusError extends Data.TaggedError(
+  "SsoUpdateUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -339,30 +293,27 @@ export class LegacySsoUpdateUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacySsoUpdateMetadataFileError extends Data.TaggedError(
-  "LegacySsoUpdateMetadataFileError",
-)<{
+export class SsoUpdateMetadataFileError extends Data.TaggedError("SsoUpdateMetadataFileError")<{
   readonly message: string;
-  readonly reason: LegacySsoFileErrorReason;
+  readonly reason: SsoFileErrorReason;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return ssoFileActionability(this.reason);
   }
 }
 
-export class LegacySsoUpdateAttributeMappingFileError extends Data.TaggedError(
-  "LegacySsoUpdateAttributeMappingFileError",
+export class SsoUpdateAttributeMappingFileError extends Data.TaggedError(
+  "SsoUpdateAttributeMappingFileError",
 )<{
   readonly message: string;
-  readonly reason: LegacySsoFileErrorReason;
+  readonly reason: SsoFileErrorReason;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return ssoFileActionability(this.reason);
   }
 }
 
-// `sso remove`
-export class LegacySsoRemoveNetworkError extends Data.TaggedError("LegacySsoRemoveNetworkError")<{
+export class SsoRemoveNetworkError extends Data.TaggedError("SsoRemoveNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -373,7 +324,7 @@ export class LegacySsoRemoveNetworkError extends Data.TaggedError("LegacySsoRemo
   }
 }
 
-export class LegacySsoRemoveNotFoundError extends Data.TaggedError("LegacySsoRemoveNotFoundError")<{
+export class SsoRemoveNotFoundError extends Data.TaggedError("SsoRemoveNotFoundError")<{
   readonly message: string;
   readonly upgradeSuggested?: boolean;
 }> {
@@ -382,8 +333,8 @@ export class LegacySsoRemoveNotFoundError extends Data.TaggedError("LegacySsoRem
   }
 }
 
-export class LegacySsoRemoveUnexpectedStatusError extends Data.TaggedError(
-  "LegacySsoRemoveUnexpectedStatusError",
+export class SsoRemoveUnexpectedStatusError extends Data.TaggedError(
+  "SsoRemoveUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -396,11 +347,10 @@ export class LegacySsoRemoveUnexpectedStatusError extends Data.TaggedError(
 }
 
 /**
- * Token gate: fired when the reconciled profile's token lookup finds
- * nothing — at first client use, AFTER required/mutex/workdir validation
- * (PR #5974 review round 10).
+ * Fired when the reconciled profile's token lookup finds nothing, at first
+ * use — after required/mutex/workdir validation runs.
  */
-export class LegacySsoAccessTokenError extends Data.TaggedError("LegacySsoAccessTokenError")<{
+export class SsoAccessTokenError extends Data.TaggedError("SsoAccessTokenError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

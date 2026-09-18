@@ -1,33 +1,31 @@
-import * as nodePath from "node:path";
+import { type Path } from "effect";
 
 /**
- * Pure path helper for `seed buckets` object upload, ported from
- * `UpsertObjects` (`apps/cli-go/pkg/storage/batch.go`). Content-type resolution
- * and the sniff read live in `command-internal/legacy-storage-content-type.ts`
- * (shared with `storage cp`); size parsing in
- * `command-internal/legacy-storage-bucket-config.ts`.
+ * Pure path helper for `seed buckets` object upload. Content-type resolution
+ * and the sniff read live in `command-internal/storage-content-type.ts`
+ * (shared with `storage cp`); size parsing lives in
+ * `command-internal/storage-bucket-config.ts`.
  */
 
 /**
- * Destination object key for a local file, ported from `UpsertObjects`
- * (`batch.go:101-118`). Mirrors `filepath.Rel(localPath, filePath)` +
- * `path.Join(name, …)`:
- *   - single-file `objects_path` (the file is the path itself, `relPath == "."`)
- *     → `<bucket>/<basename>`
+ * Destination object key for a local file relative to `objectsPath`:
+ *   - single-file `objects_path` (the file is the path itself) → `<bucket>/<basename>`
  *   - otherwise → `<bucket>/<relative-posix-path>`
  *
- * `objectsPath` and `filePath` are OS paths; the relative segment is normalised
- * to forward slashes (`filepath.ToSlash`) for the remote key.
+ * `objectsPath` and `filePath` are OS paths read through the platform `path`
+ * service; the relative segment is normalized to forward slashes for the remote
+ * key through `posixPath`, which must be a POSIX `Path` service.
  */
-export function legacyBucketObjectKey(
+export function bucketObjectKey(
+  { path, posixPath }: { readonly path: Path.Path; readonly posixPath: Path.Path },
   bucketName: string,
   objectsPath: string,
   filePath: string,
 ): string {
-  const relPath = nodePath.relative(objectsPath, filePath);
+  const relPath = path.relative(objectsPath, filePath);
   if (relPath === "") {
-    return nodePath.posix.join(bucketName, nodePath.basename(filePath));
+    return posixPath.join(bucketName, path.basename(filePath));
   }
-  const relPosix = relPath.split(nodePath.sep).join(nodePath.posix.sep);
-  return nodePath.posix.join(bucketName, relPosix);
+  const relPosix = relPath.split(path.sep).join(posixPath.sep);
+  return posixPath.join(bucketName, relPosix);
 }

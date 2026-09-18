@@ -1,8 +1,4 @@
-import {
-  legacyInspectBool,
-  legacyInspectText,
-  type LegacyInspectQuerySpec,
-} from "../legacy-inspect-query.ts";
+import { inspectBool, inspectText, type InspectQuerySpec } from "../inspect-query.ts";
 
 const SQL = `SELECT
   s.slot_name,
@@ -17,16 +13,16 @@ FROM pg_control_checkpoint(), pg_replication_slots s
 LEFT JOIN pg_stat_replication r ON (r.pid = s.active_pid)`;
 
 /** `inspect db replication-slots` — replication slot status. */
-export const legacyReplicationSlotsSpec: LegacyInspectQuerySpec = {
+export const replicationSlotsSpec: InspectQuerySpec = {
   name: "replication-slots",
   sql: SQL,
   params: () => [],
   headers: ["Name", "Active", "State", "Replication Client Address", "Replication Lag GB"],
   project: (row) => [
-    legacyInspectText(row["slot_name"]),
-    legacyInspectBool(row["active"]),
-    legacyInspectText(row["state"]),
-    legacyInspectText(row["replication_client_address"]),
-    legacyInspectText(row["replication_lag_gb"]),
+    inspectText(row["slot_name"]),
+    inspectBool(row["active"]),
+    inspectText(row["state"]),
+    inspectText(row["replication_client_address"]),
+    inspectText(row["replication_lag_gb"]),
   ],
 };

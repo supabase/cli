@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { cliSettingsLayer } from "./cli-settings.layer.ts";
 import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
@@ -154,7 +154,7 @@ describe("cliProjectHomeLayer", () => {
   });
 
   it.live(
-    "dies with CliProjectHomeNotDirectoryError when a FILE occupies the .supabase path",
+    "fails with CliProjectHomeNotDirectoryError when a FILE occupies the .supabase path",
     () => {
       const tempDir = makeTempDir();
       const projectRoot = join(tempDir, "repo");
@@ -176,14 +176,12 @@ describe("cliProjectHomeLayer", () => {
         const exit = yield* cliProjectHome.ensureCliProjectHomeDir.pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const defect = Cause.findDefect(exit.cause);
-          expect(Result.isSuccess(defect)).toBe(true);
-          if (Result.isSuccess(defect)) {
-            expect(defect.success).toBeInstanceOf(CliProjectHomeNotDirectoryError);
-            expect(defect.success).toMatchObject({ _tag: "CliProjectHomeNotDirectoryError" });
-            expect((defect.success as CliProjectHomeNotDirectoryError).message).toContain(
-              "could not be created",
-            );
+          const error = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value).toBeInstanceOf(CliProjectHomeNotDirectoryError);
+            expect(error.value).toMatchObject({ _tag: "CliProjectHomeNotDirectoryError" });
+            expect(error.value.message).toContain("could not be created");
           }
         }
       }).pipe(
@@ -193,13 +191,11 @@ describe("cliProjectHomeLayer", () => {
   );
 
   it.live(
-    "dies with CliProjectHomeNotDirectoryError (BadResource) when a FILE occupies an ancestor of the project home path",
+    "fails with CliProjectHomeNotDirectoryError (BadResource) when a FILE occupies an ancestor of the project home path",
     () => {
-      // Distinct from the AlreadyExists case above: here `.supabase` itself
-      // doesn't exist, but a FILE sits on one of ITS OWN parent directories
-      // (`<tempDir>/proj`), so `mkdir(..., { recursive: true })` fails with
-      // ENOTDIR (-> PlatformError reason "BadResource") while trying to
-      // traverse through it, rather than EEXIST on the leaf itself.
+      // Distinct from the AlreadyExists case above: here `.supabase` doesn't exist, but a file
+      // sits on one of its own parent directories, so `mkdir` fails with ENOTDIR while
+      // traversing, not EEXIST on the leaf itself.
       const tempDir = makeTempDir();
       const fileAsDir = join(tempDir, "proj");
       const cwd = join(fileAsDir, "child");
@@ -218,14 +214,12 @@ describe("cliProjectHomeLayer", () => {
         const exit = yield* cliProjectHome.ensureCliProjectHomeDir.pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const defect = Cause.findDefect(exit.cause);
-          expect(Result.isSuccess(defect)).toBe(true);
-          if (Result.isSuccess(defect)) {
-            expect(defect.success).toBeInstanceOf(CliProjectHomeNotDirectoryError);
-            expect(defect.success).toMatchObject({ _tag: "CliProjectHomeNotDirectoryError" });
-            expect((defect.success as CliProjectHomeNotDirectoryError).message).toContain(
-              "could not be created",
-            );
+          const error = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value).toBeInstanceOf(CliProjectHomeNotDirectoryError);
+            expect(error.value).toMatchObject({ _tag: "CliProjectHomeNotDirectoryError" });
+            expect(error.value.message).toContain("could not be created");
           }
         }
       }).pipe(

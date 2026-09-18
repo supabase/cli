@@ -7,13 +7,34 @@ import * as SmolToml from "smol-toml";
 import { CliConfigSchema } from "../base.ts";
 import { isSecretPath, secretPathPatterns } from "../lib/secret-paths.ts";
 import { getDefaultCliConfig } from "../sparse.ts";
-import { HOSTED_SECTION_KEYS } from "./hosted-sections.ts";
+import { DOCUMENT_ONLY_LOCAL_PATHS, HOSTED_SECTION_KEYS } from "./hosted-sections.ts";
 import { fromApiProjectConfig, fromConfigDocument, toProjectConfig } from "./project-config.ts";
 import type { ProjectConfig } from "./project-config.ts";
 import { ProjectConfigSchema, toProjectConfigJsonSchema } from "./project-schema.ts";
 
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+
+/**
+ * Walks an AST along `pattern` (`"*"` descends into an index signature, anything else into a
+ * same-named property signature); returns `undefined` once the path can no longer be followed.
+ */
+function findAtPattern(
+  ast: SchemaAST.AST,
+  pattern: ReadonlyArray<string>,
+): SchemaAST.AST | undefined {
+  let current: SchemaAST.AST | undefined = ast;
+  for (const segment of pattern) {
+    if (current === undefined || !SchemaAST.isObjects(current)) {
+      return undefined;
+    }
+    current =
+      segment === "*"
+        ? current.indexSignatures[0]?.type
+        : current.propertySignatures.find((property) => property.name === segment)?.type;
+  }
+  return current;
+}
 
 const legacyFixturePath = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -36,10 +57,8 @@ describe("ProjectConfigSchema acceptance", () => {
   });
 
   test("a sparse overlay leaving required-looking siblings unset still validates", () => {
-    // `db.pooler`'s own fields (`pool_mode`, `default_pool_size`, …) are all
-    // present in `CliConfigSchema`, but this schema wraps every one of them
-    // `optionalKey` — a fragment naming only `enabled` must not fail just
-    // because it says nothing about the rest of the section.
+    // `db.pooler`'s sibling fields are all wrapped `optionalKey`, so naming only `enabled` must
+    // not fail.
     expect(() => decodeProjectConfig({ db: { pooler: { enabled: true } } })).not.toThrow();
   });
 
@@ -73,13 +92,6 @@ describe("ProjectConfigSchema acceptance", () => {
     expect(() => decodeProjectConfig(projected)).not.toThrow();
   });
 
-  // `db.vault` is dropped from the schema entirely (an all-secret
-  // `Record<string, secret()>` container, project-schema.ts's
-  // `isAllSecretCollapsedContainer`) rather than kept as an empty,
-  // accept-anything node — so under this schema's permissive-excess design
-  // (never `additionalProperties: false`, never `onExcessProperty: "error"`),
-  // a `db.vault` of ANY shape is simply excess input: it validates, but is
-  // silently dropped from the decoded result rather than rejected.
   test("db.vault of any shape validates but is dropped, since the schema no longer knows the key", () => {
     expect(decodeProjectConfig({ db: { vault: 42 } })).toEqual({ db: {} });
     expect(decodeProjectConfig({ db: { vault: {} } })).toEqual({ db: {} });
@@ -105,12 +117,8 @@ describe("ProjectConfigSchema rejection", () => {
 });
 
 describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
-  // Schema-derived, exhaustive counterpart to a hand-picked field list
-  // (matching `project-config.unit.test.ts`'s own exhaustive-probe
-  // precedent): every `x-secret` path pattern the schema declares, rooted in
-  // one of the seven hosted sections, must be structurally absent from
-  // `ProjectConfigSchema`'s own AST — not merely absent from one hand-picked
-  // example.
+  // Exhaustive counterpart to a hand-picked field list: every `x-secret` path pattern rooted in a
+  // hosted section must be structurally absent from `ProjectConfigSchema`'s own AST.
   const reachablePatterns = secretPathPatterns.filter((pattern) =>
     HOSTED_SECTION_KEYS.some((key) => key === (pattern[0] ?? "")),
   );
@@ -123,50 +131,17 @@ describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
     }
   });
 
-  /**
-   * Walks {@link ProjectConfigSchema}'s own AST along `pattern`, treating a
-   * `"*"` segment as "descend into the node's own index signature" and every
-   * other segment as "descend into the property signature of that name" —
-   * returns `undefined` the moment the path can no longer be followed, which
-   * is exactly the outcome a dropped secret property/index-signature
-   * produces.
-   */
-  function findAtPattern(
-    ast: SchemaAST.AST,
-    pattern: ReadonlyArray<string>,
-  ): SchemaAST.AST | undefined {
-    let current: SchemaAST.AST | undefined = ast;
-    for (const segment of pattern) {
-      if (current === undefined || !SchemaAST.isObjects(current)) {
-        return undefined;
-      }
-      current =
-        segment === "*"
-          ? current.indexSignatures[0]?.type
-          : current.propertySignatures.find((property) => property.name === segment)?.type;
-    }
-    return current;
-  }
-
   test("no x-secret path from the schema's own pattern list survives in ProjectConfigSchema's AST", () => {
     for (const pattern of reachablePatterns) {
       expect(findAtPattern(ProjectConfigSchema.ast, pattern)).toBeUndefined();
     }
   });
 
-  // Guards against a vacuous pass: if an ANCESTOR of `pattern` vanished
-  // (e.g. a whole section got dropped by an unrelated bug), `findAtPattern`
-  // for the full secret path also returns `undefined` — indistinguishable,
-  // from that assertion alone, from the secret leaf being correctly
-  // stripped. Asserting the parent path is still reachable rules that out —
-  // EXCEPT for a known all-secret collapsed container (`db.vault`, a
-  // `Record<string, secret()>` — project-schema.ts's
-  // `isAllSecretCollapsedContainer`), whose own immediate parent is dropped
-  // entirely rather than kept as an empty node. That one case is accepted
-  // explicitly (checking the GRANDPARENT is reachable instead, and that the
-  // container's own name no longer survives as a property there) rather
-  // than by walking arbitrarily far up the ancestor chain, which would mask
-  // an unrelated regression dropping some other, unexpected ancestor.
+  // Guards against a vacuous pass: if an ancestor of `pattern` vanished entirely, the leaf lookup
+  // also returns `undefined`, indistinguishable from a correctly-stripped secret. Asserting the
+  // immediate parent is still reachable rules that out, except for a known all-secret collapsed
+  // container (`db.vault`), whose own parent is dropped entirely — checked via its grandparent
+  // instead.
   const KNOWN_ALL_SECRET_COLLAPSED_CONTAINER_PARENTS: ReadonlyArray<ReadonlyArray<string>> = [
     ["db", "vault"],
   ];
@@ -210,14 +185,9 @@ describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
   });
 
   /**
-   * Recursively collects the dotted path of every reachable `Objects` node
-   * with zero properties AND zero index signatures — the shape both a
-   * genuinely source-empty struct (`storage.analytics.buckets.*`,
-   * `storage.vector.buckets.*` — see `project-schema.ts`'s own doc comment)
-   * and (before CLI-2234's fix) an all-secret collapsed container would
-   * produce. `db.vault` is dropped entirely rather than emptied now, so it
-   * must NOT appear in this list — this is the "double-check no OTHER
-   * container becomes stripped-empty besides vault" guard.
+   * Recursively collects the dotted path of every reachable `Objects` node with zero properties
+   * and zero index signatures — the shape a genuinely source-empty struct produces, and what an
+   * all-secret collapsed container would also produce if it weren't dropped entirely instead.
    */
   function collectEmptyObjectPaths(
     ast: SchemaAST.AST,
@@ -262,32 +232,160 @@ describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
 });
 
 describe("ProjectConfigSchema hosted-section keys", () => {
-  // Moved from an import-time throw in `project-schema.ts` (CLI-2234): a
-  // schema-module import should never be able to crash a consumer's
-  // process for a condition a test already covers. Asserts against the
-  // PUBLIC, observable `ProjectConfigSchema.ast` rather than reaching into
-  // the module's private `hostedSectionsStruct`.
-  test("the schema's own top-level property names are exactly HOSTED_SECTION_KEYS", () => {
+  // Asserts against the schema's own public AST rather than the module's private struct, so a
+  // schema-module import can't crash a consumer for a condition this test already covers.
+  // `realtime`'s three fields (`enabled`, `ip_version`, `max_header_length`) are all
+  // `DOCUMENT_ONLY_LOCAL_PATHS` entries, so the whole section collapses to nothing and is dropped,
+  // matching `fromConfigDocument`'s own empty-container pruning.
+  test("the schema's own top-level property names are HOSTED_SECTION_KEYS minus the fully-local realtime section", () => {
     if (!SchemaAST.isObjects(ProjectConfigSchema.ast)) {
       throw new Error("expected ProjectConfigSchema.ast to be an Objects node");
     }
     const actualKeys = ProjectConfigSchema.ast.propertySignatures.map((property) =>
       String(property.name),
     );
-    expect(actualKeys.toSorted()).toEqual([...HOSTED_SECTION_KEYS].toSorted());
+    expect(actualKeys.toSorted()).toEqual(
+      HOSTED_SECTION_KEYS.filter((key) => key !== "realtime").toSorted(),
+    );
+  });
+});
+
+describe("ProjectConfigSchema local-only path exhaustiveness", () => {
+  const KNOWN_ALL_LOCAL_ONLY_COLLAPSED_CONTAINER_PARENTS: ReadonlyArray<ReadonlyArray<string>> = [
+    ["realtime"],
+  ];
+
+  function isKnownAllLocalOnlyContainer(parentPattern: ReadonlyArray<string>): boolean {
+    return KNOWN_ALL_LOCAL_ONLY_COLLAPSED_CONTAINER_PARENTS.some(
+      (known) =>
+        known.length === parentPattern.length &&
+        known.every((segment, index) => segment === parentPattern[index]),
+    );
+  }
+
+  test("guards the probe against a broken import silently emptying the path list", () => {
+    expect(DOCUMENT_ONLY_LOCAL_PATHS.length).toBeGreaterThan(0);
+  });
+
+  test("no DOCUMENT_ONLY_LOCAL_PATHS entry survives in ProjectConfigSchema's AST", () => {
+    for (const path of DOCUMENT_ONLY_LOCAL_PATHS) {
+      expect(findAtPattern(ProjectConfigSchema.ast, path)).toBeUndefined();
+    }
+  });
+
+  test("the parent of every excluded path is still reachable, except the fully-local realtime section", () => {
+    for (const path of DOCUMENT_ONLY_LOCAL_PATHS) {
+      const parentPath = path.slice(0, -1);
+      const parent =
+        parentPath.length === 0
+          ? ProjectConfigSchema.ast
+          : findAtPattern(ProjectConfigSchema.ast, parentPath);
+
+      if (parent !== undefined) {
+        continue;
+      }
+
+      expect(
+        isKnownAllLocalOnlyContainer(parentPath),
+        `parent of ${JSON.stringify(path)} vanished unexpectedly (not a known all-local-only collapsed container)`,
+      ).toBe(true);
+
+      const grandparentPath = parentPath.slice(0, -1);
+      const grandparent =
+        grandparentPath.length === 0
+          ? ProjectConfigSchema.ast
+          : findAtPattern(ProjectConfigSchema.ast, grandparentPath);
+      expect(grandparent, `grandparent of ${JSON.stringify(path)} vanished`).toBeDefined();
+
+      const droppedName = parentPath[parentPath.length - 1];
+      if (grandparent !== undefined && SchemaAST.isObjects(grandparent)) {
+        expect(
+          grandparent.propertySignatures.some((property) => property.name === droppedName),
+        ).toBe(false);
+      }
+    }
+  });
+
+  test("no DOCUMENT_ONLY_LOCAL_PATHS entry survives in the JSON schema, and the drop is per-field, not section-wide", () => {
+    const document = JSON.parse(JSON.stringify(toProjectConfigJsonSchema())) as Record<
+      string,
+      unknown
+    >;
+
+    function navigateToParentProperties(
+      path: ReadonlyArray<string>,
+    ): Record<string, unknown> | undefined {
+      let current: Record<string, unknown> | undefined = document;
+      for (const segment of path.slice(0, -1)) {
+        const properties = current?.["properties"];
+        if (!(typeof properties === "object" && properties !== null)) {
+          return undefined;
+        }
+        current = (properties as Record<string, unknown>)[segment] as
+          | Record<string, unknown>
+          | undefined;
+      }
+      const properties = current?.["properties"];
+      return typeof properties === "object" && properties !== null
+        ? (properties as Record<string, unknown>)
+        : undefined;
+    }
+
+    for (const path of DOCUMENT_ONLY_LOCAL_PATHS) {
+      const parentPath = path.slice(0, -1);
+      const parentProperties = navigateToParentProperties(path);
+      const leafName = path[path.length - 1] as string;
+
+      if (parentProperties === undefined) {
+        expect(
+          isKnownAllLocalOnlyContainer(parentPath),
+          `properties container for ${JSON.stringify(path)} vanished unexpectedly`,
+        ).toBe(true);
+        continue;
+      }
+      expect(Object.hasOwn(parentProperties, leafName)).toBe(false);
+    }
+
+    expect(Object.hasOwn(document.properties as Record<string, unknown>, "realtime")).toBe(false);
+
+    const apiProperties = (document.properties as Record<string, any>).api.properties;
+    expect(Object.hasOwn(apiProperties, "max_rows")).toBe(true);
+    expect(Object.hasOwn(apiProperties, "port")).toBe(false);
+
+    const poolerProperties = (document.properties as Record<string, any>).db.properties.pooler
+      .properties;
+    expect(Object.hasOwn(poolerProperties, "pool_mode")).toBe(true);
+    expect(Object.hasOwn(poolerProperties, "enabled")).toBe(false);
+    expect(Object.hasOwn(poolerProperties, "port")).toBe(false);
+  });
+
+  test("every DOCUMENT_ONLY_LOCAL_PATHS entry decodes to undefined through ProjectConfigSchema, while hosted siblings survive", () => {
+    function readAtPath(root: unknown, path: ReadonlyArray<string>): unknown {
+      let current = root;
+      for (const segment of path) {
+        if (current === null || typeof current !== "object" || Array.isArray(current)) {
+          return undefined;
+        }
+        current = (current as Record<string, unknown>)[segment];
+      }
+      return current;
+    }
+
+    const result = decodeProjectConfig(getDefaultCliConfig());
+
+    for (const path of DOCUMENT_ONLY_LOCAL_PATHS) {
+      expect(readAtPath(result, path)).toBeUndefined();
+    }
+    expect((result as Record<string, any>).api?.max_rows).toBeDefined();
+    expect((result as Record<string, any>).db?.pooler?.pool_mode).toBeDefined();
+    expect(Object.hasOwn(result, "realtime")).toBe(false);
   });
 });
 
 describe("ProjectConfigSchema derivation AST-walk exhaustiveness", () => {
-  // CLI-2234 group 7c/7d: `toDeepOptionalHostedAst` (`project-schema.ts`)
-  // enumerates AST node kinds explicitly rather than through a generic
-  // recursion helper (see that module's doc comment for why) and
-  // deliberately leaves `Suspend` unhandled. This walks the ACTUAL derived
-  // `ProjectConfigSchema.ast` and fails loudly the moment a node kind
-  // outside the set that derivation is written to understand appears,
-  // rather than letting a future schema addition silently fall through
-  // `toDeepOptionalHostedAst`'s final `return ast` (correct for a true
-  // leaf, silently wrong for an unhandled container/recursive kind).
+  // `toDeepOptionalHostedAst` (project-schema.ts) enumerates AST node kinds explicitly and leaves
+  // `Suspend` unhandled; this walks the actual derived AST and fails loudly if a node kind outside
+  // that set appears, instead of silently falling through to the leaf case.
   const HANDLED_CONTAINER_TAGS = new Set(["Objects", "Arrays", "Union"]);
   const HANDLED_LEAF_TAGS = new Set(["String", "Number", "Boolean", "Literal"]);
 
@@ -377,21 +475,19 @@ describe("ProjectConfigSchema Standard Schema interop", () => {
 
 describe("toProjectConfigJsonSchema", () => {
   const typedDocument = toProjectConfigJsonSchema();
-  // `JsonSchema.JsonSchema` (`effect`) is an open `[x: string]: unknown`
-  // record with no named properties, so TypeScript can't statically type
-  // `typedDocument`'s nested `properties`/`required`/… fields — the same
-  // reason `io.unit.test.ts`'s own `toCliConfigJsonSchema` coverage asserts
-  // through a stringified rendering rather than typed property access. A
-  // JSON round trip gives every assertion below a plainly-navigable value
-  // without an `as` cast.
+  // `JsonSchema.JsonSchema` has no named properties, so TypeScript can't statically type the
+  // nested fields; round-tripping through JSON gives a plainly-navigable value without an `as`
+  // cast.
   const document = JSON.parse(JSON.stringify(typedDocument));
 
   test("declares the draft 2020-12 dialect", () => {
     expect(typedDocument.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
   });
 
-  test("top-level properties are exactly the seven hosted sections", () => {
-    expect(Object.keys(document.properties).sort()).toEqual([...HOSTED_SECTION_KEYS].toSorted());
+  test("top-level properties are the seven hosted sections minus the fully-local realtime section", () => {
+    expect(Object.keys(document.properties).sort()).toEqual(
+      HOSTED_SECTION_KEYS.filter((key) => key !== "realtime").toSorted(),
+    );
   });
 
   test("no required array forces presence anywhere spot-checked", () => {
@@ -411,25 +507,11 @@ describe("toProjectConfigJsonSchema", () => {
 });
 
 describe("ProjectConfigSchema type-level pin", () => {
-  // Compile-time drift guard (CLI-2234 design requirement, mirroring
-  // `apps/cli/src/shared/config/project-config-api-drift.unit.test.ts`'s
-  // `_typeDriftGuard`/`AssertNever` style): `ProjectConfigSchema`'s own
-  // generic annotation (`project-schema.ts`) and `ProjectConfig`
-  // (`project-config.ts`) are independent expressions of the same shape —
-  // this file re-derives the expected shape from `ProjectConfig` itself
-  // (rather than importing `project-schema.ts`'s private type alias) so a
-  // future edit to either side that silently drifts fails to compile here.
-  //
-  // Both directions hold because the only structural difference between the
-  // two sides is optional-property PRESENCE: `ProjectConfigSchema`'s Type
-  // never carries an `_apiResponse` key at all (never modeled, ADR 0019), and
-  // `ProjectConfig` types every `x-secret` leaf as present-but-optional even
-  // though the runtime derivation drops those keys entirely from the schema.
-  // TypeScript's structural assignability does not require a source type to
-  // have (or lack) an optional property the target also lacks (or has), so a
-  // missing or extra OPTIONAL property never blocks assignability in either
-  // direction — verified by actually compiling both functions below, not
-  // merely asserted in prose.
+  // Compile-time drift guard: re-derives the expected shape from `ProjectConfig` itself, so a
+  // future edit to either side that silently drifts fails to compile here. Both directions hold
+  // because the only structural difference is optional-property presence (`_apiResponse` vs.
+  // `x-secret` leaves), and TypeScript's structural assignability doesn't require a source to have
+  // or lack an optional property the target lacks or has.
   type ExpectedProjectConfigSchemaType = Omit<ProjectConfig, "_apiResponse">;
   type DerivedProjectConfigSchemaType = typeof ProjectConfigSchema.Type;
 
@@ -444,5 +526,31 @@ describe("ProjectConfigSchema type-level pin", () => {
   test("both assignability directions compile", () => {
     expect(typeof _derivedAssignableToExpected).toBe("function");
     expect(typeof _expectedAssignableToDerived).toBe("function");
+  });
+});
+
+describe("ProjectConfig type-level local-only exclusion pin", () => {
+  // @ts-expect-error api.port is local-only
+  const localScalar: ProjectConfig = { api: { port: 54321 } };
+  // @ts-expect-error db.pooler.port is local-only
+  const localNestedScalar: ProjectConfig = { db: { pooler: { port: 54329 } } };
+  // @ts-expect-error experimental.pgdelta is a local-only subtree
+  const localSubtree: ProjectConfig = { experimental: { pgdelta: { enabled: true } } };
+  // @ts-expect-error realtime is fully local-only and has no key
+  const emptyRealtimeSection: ProjectConfig = { realtime: {} };
+  // @ts-expect-error realtime is fully local-only and has no key
+  const realtimeField: ProjectConfig = { realtime: { enabled: true } };
+  const hostedSiblings: ProjectConfig = {
+    api: { max_rows: 1 },
+    db: { pooler: { pool_mode: "transaction" } },
+  };
+
+  test("a future edit that reintroduces a local-only field into ProjectConfig fails tsc, not this test", () => {
+    expect(localScalar).toBeDefined();
+    expect(localNestedScalar).toBeDefined();
+    expect(localSubtree).toBeDefined();
+    expect(emptyRealtimeSection).toBeDefined();
+    expect(realtimeField).toBeDefined();
+    expect(hostedSiblings).toBeDefined();
   });
 });

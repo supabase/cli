@@ -8,22 +8,15 @@ import type { CliProjectEnvironment } from "./project.ts";
 import * as project from "./project.ts";
 
 export { configJsonPath, configTomlPath, saveCliConfig } from "./io.ts";
+export { validateCliConfig } from "./validate.ts";
 
-/**
- * Narrowed to the public `LoadCliConfigOptions` (no `goViperCompat`). The
- * underlying implementation in `./io.ts` is typed against the wider
- * `InternalLoadCliConfigOptions` (a strict superset — one additional optional
- * field), so assigning it here is a safe, cast-free narrowing: a function
- * accepting the wider options type is assignable to a variable typed to
- * accept only the narrower one. `@supabase/config/internal` re-exports this
- * same runtime function typed to additionally show `goViperCompat`.
- */
+/** Loads a CLI config document; the internal `goViperCompat` option is exposed only via `@supabase/config/internal`. */
 export const loadCliConfig: (
   cwd: string,
   options?: LoadCliConfigOptions,
 ) => ReturnType<typeof io.loadCliConfig> = io.loadCliConfig;
 
-/** See {@link loadCliConfig}'s doc comment for the narrowing rationale. */
+/** Loads a CLI config document from an explicit file path; see {@link loadCliConfig}. */
 export const loadCliConfigFile: (
   filePath: string,
   options?: LoadCliConfigOptions,
@@ -33,15 +26,8 @@ export { inferFunctionsManifest } from "./functions-manifest.ts";
 export { loadDotEnvFile, loadCliProjectEnvironment } from "./project.ts";
 
 /**
- * Explicit named exports take precedence over `export * from "./index.ts"`
- * above for a shared name (ESM re-export resolution), so these Effect-typed
- * variants deliberately shadow `./index.ts`'s plain sync
- * `resolveCliConfigValue`/`resolveCliConfigSubtree` on this subpath — the
- * Effect-typed variant wins on `./effect`; the sync variant lives on `.`.
- *
- * Narrowed to no options parameter (no `goViperCompat`) for the same reason
- * as {@link loadCliConfig} above; `@supabase/config/internal` re-exports
- * these same runtime functions typed to additionally show `goViperCompat`.
+ * Effect-typed counterpart to the sync `resolveCliConfigValue` exported from `.`; the internal
+ * `goViperCompat` option is exposed only via `@supabase/config/internal`.
  */
 export const resolveCliConfigValue: <T>(
   value: T,
@@ -49,7 +35,7 @@ export const resolveCliConfigValue: <T>(
   configPath: string,
 ) => Effect.Effect<ResolvedCliConfigValue<T>> = project.resolveCliConfigValue;
 
-/** See {@link resolveCliConfigValue}'s doc comment for the shadowing and narrowing rationale. */
+/** See {@link resolveCliConfigValue}. */
 export const resolveCliConfigSubtree: <T>(
   value: T,
   cliProjectEnv: Pick<CliProjectEnvironment, "values">,

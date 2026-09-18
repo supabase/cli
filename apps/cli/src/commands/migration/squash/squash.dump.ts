@@ -1,33 +1,38 @@
 import { Effect } from "effect";
 
-import type { LegacyPgConnInput } from "../../../command-internal/legacy-db-connection.service.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+
+import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import { buildSchemaDumpEnv, type DumpOptions } from "../../../command-internal/pg-dump.env.ts";
+import { dumpSchemaScript } from "../../../command-internal/pg-dump.scripts.ts";
 import {
-  legacyBuildSchemaDumpEnv,
-  type LegacyDumpOptions,
-} from "../../../command-internal/legacy-pg-dump.env.ts";
-import { legacyDumpSchemaScript } from "../../../command-internal/legacy-pg-dump.scripts.ts";
-import { legacyStreamPgDump } from "../../../command-internal/legacy-pg-dump.run.ts";
-import { LegacyMigrationSquashDumpError } from "./squash.errors.ts";
+  pgDumpClientExitMessage,
+  streamPgDumpWithClient,
+  type PgDumpClient,
+} from "../../../command-internal/pg-dump.run.ts";
+import { MigrationSquashDumpError } from "./squash.errors.ts";
 
 /**
- * Input to {@link legacySquashDumpSchema} — squash's own thin wrapper over one
+ * Input to {@link squashDumpSchema} — squash's own thin wrapper over one
  * schema-dump call.
  */
-export interface LegacySquashDumpParams<E> {
+export interface SquashDumpParams<E> {
   /**
    * The pin-resolved (not yet registry-mapped) Postgres
-   * image (`localInputs.bootstrapConfig.postgresImage`); {@link legacyStreamPgDump}
+   * image (`localInputs.bootstrapConfig.postgresImage`); {@link streamPgDump}
    * applies the registry mirror itself.
    */
   readonly image: string;
   /** The shadow's own connect target (host / shadow port / `postgres` / password / `postgres`). */
-  readonly conn: LegacyPgConnInput;
+  readonly conn: PgConnInput;
   /** `["auth","storage"]` for the before/after diff dumps, `[]` for the unrestricted full dump. */
   readonly schema: ReadonlyArray<string>;
   /** Receives each stdout chunk in arrival order; its failure aborts the run as `E`. */
   readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
-  /** Loaded project `supabase/.env` map — forwarded to {@link legacyStreamPgDump}'s own `SUPABASE_NETWORK_ID` fallback. */
+  /** Loaded project `supabase/.env` map — forwarded to {@link streamPgDump}'s own `SUPABASE_NETWORK_ID` fallback. */
   readonly projectEnvValues?: Readonly<Record<string, string>>;
+  /** Omitted → compose `pg_dump` container. Set for catalog artifact or one-shot container `pg_dump`. */
+  readonly client?: PgDumpClient;
 }
 
 /**
@@ -36,63 +41,53 @@ export interface LegacySquashDumpParams<E> {
  * with `WithSchema("auth","storage")`, and a third, unrestricted call for the final
  * full dump written straight to the target migration file.
  */
-export const legacySquashDumpSchema = Effect.fnUntraced(function* <E>(
-  params: LegacySquashDumpParams<E>,
-) {
-  const opt: LegacyDumpOptions = {
+export const squashDumpSchema = Effect.fnUntraced(function* <E>(params: SquashDumpParams<E>) {
+  const opt: DumpOptions = {
     schema: params.schema,
     keepComments: false,
     excludeTable: [],
     columnInsert: false,
   };
-  const result = yield* legacyStreamPgDump({
+  const client = params.client ?? { kind: "container" as const };
+  const backend = yield* currentStackBackend;
+  const result = yield* streamPgDumpWithClient({
     image: params.image,
-    script: legacyDumpSchemaScript,
-    env: legacyBuildSchemaDumpEnv(params.conn, opt),
+    script: dumpSchemaScript,
+    env: buildSchemaDumpEnv(params.conn, opt),
     onStdout: params.onStdout,
     projectEnvValues: params.projectEnvValues,
+    client,
+    forceHostNetwork: backend.kind === "stack",
   });
   if (result.exitCode !== 0) {
-    return yield* Effect.fail(
-      new LegacyMigrationSquashDumpError({
-        message: `error running container: exit ${result.exitCode}`,
-      }),
-    );
+    return yield* new MigrationSquashDumpError({
+      message: pgDumpClientExitMessage(client, result.exitCode),
+    });
   }
 });
 
-/** Concatenates stdout chunks into one buffer. */
-const concatChunks = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
-  const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return bytes;
-};
-
 /**
- * Buffered convenience over {@link legacySquashDumpSchema} for the before/after
+ * Buffered convenience over {@link squashDumpSchema} for the before/after
  * diff dumps — an `auth`/`storage` schema-only dump is tens of KB, not
- * a streaming-scale payload. The FULL dump never goes through this — it streams
+ * a streaming-scale payload. The full dump never goes through this — it streams
  * straight to the target migration file's own handle at constant memory
  * (`squash.handler.ts`'s `squashMigrations`).
  */
-export const legacySquashDumpSchemaToString = Effect.fnUntraced(function* (params: {
+export const squashDumpSchemaToString = Effect.fnUntraced(function* (params: {
   readonly image: string;
-  readonly conn: LegacyPgConnInput;
+  readonly conn: PgConnInput;
   readonly schema: ReadonlyArray<string>;
   readonly projectEnvValues?: Readonly<Record<string, string>>;
+  readonly client?: PgDumpClient;
 }) {
   const chunks: Array<Uint8Array> = [];
-  yield* legacySquashDumpSchema({
+  yield* squashDumpSchema({
     image: params.image,
     conn: params.conn,
     schema: params.schema,
     onStdout: (chunk) => Effect.sync(() => chunks.push(chunk)),
     projectEnvValues: params.projectEnvValues,
+    client: params.client,
   });
-  return new TextDecoder().decode(concatChunks(chunks));
+  return new TextDecoder().decode(Buffer.concat(chunks));
 });

@@ -1,94 +1,98 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
+import {
+  liveMigrationVersion,
+  requireLiveSuccess,
+  test,
+  throwWithCleanup,
+} from "../../../../tests/helpers/live.ts";
+import { MigrationLiveError } from "../../../../tests/helpers/migration-live.ts";
 
 const LIVE_TIMEOUT_MS = 120_000;
 
-// A uniquely named migration to seed into the remote history and fetch back.
 const NAME = "cli_live_fetch";
 
-function liveMigrationVersion(): string {
-  return new Date().toISOString().replace(/\D/gu, "").slice(0, 14);
-}
-
-// Destructive data-plane scenario (Postgres over the pooler) — the setup repairs
-// remote migration history and the teardown reverts that exact row. The fixture
-// provisions one ACTIVE_HEALTHY project for the serial live suite.
+// Destructive: repairs remote migration history in setup and reverts that row in
+// teardown.
 //
-// Golden path: `migration fetch` reads the remote `schema_migrations` history and
-// writes each row to `supabase/migrations/<version>_<name>.sql`.
-//
-// Unlike `migration list`, `migration fetch` does NOT tolerate a missing history
-// table: reading the migration table has no undefined-table fallback (only
-// the list path does), so against a freshly provisioned
-// project with no `supabase_migrations.schema_migrations` table it exits non-zero
-// (`relation … does not exist`). So we first SEED one migration into the remote
-// history via `migration repair --status applied` (which creates the migration
-// table then upserts the version from the local file), establishing
-// the table + a row for `fetch` to read back. The shared fixture's pooler URL is
-// passed explicitly so the test does not fall back to a direct IPv6 host.
+// `fetch` has no undefined-table fallback (unlike `list`), so it fails against a fresh
+// project with no schema_migrations table. The setup seeds one row via
+// `migration repair --status applied` first, which creates the table. The pooler URL
+// is passed explicitly to avoid falling back to a direct IPv6 host.
 test(
   "fetches a seeded remote migration into the local migrations directory",
   { timeout: LIVE_TIMEOUT_MS },
-  async ({ cli, project }) => {
-    const targetArgs = ["--db-url", project.dbUrl];
-    const version = liveMigrationVersion();
-    const migrationFile = `${version}_${NAME}.sql`;
-    const seedDir = await mkdtemp(path.join(tmpdir(), "sb-migration-seed-live-"));
-    const fetchDir = await mkdtemp(path.join(tmpdir(), "sb-migration-fetch-live-"));
-    let targetError: unknown;
-    const cleanupErrors: Array<unknown> = [];
-    try {
-      // Seed: record one migration in the remote history. `repair --status applied`
-      // reads the local file for the version's name/statements, so write it first.
-      await mkdir(path.join(seedDir, "supabase", "migrations"), { recursive: true });
-      await writeFile(
-        path.join(seedDir, "supabase", "migrations", migrationFile),
-        "create table if not exists public.cli_live_roundtrip (id int);\n",
-      );
-      const repairResult = await cli(
-        ["migration", "repair", version, "--status", "applied", ...targetArgs],
-        { cwd: seedDir },
-      );
-      requireLiveSuccess(repairResult, "migration repair setup");
+  ({ cliEffect, project, signal }) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const targetArgs = ["--db-url", project.dbUrl];
+        const version = liveMigrationVersion();
+        const migrationFile = `${version}_${NAME}.sql`;
+        const seedDir = yield* fs.makeTempDirectoryScoped({ prefix: "sb-migration-seed-live-" });
+        const fetchDir = yield* fs.makeTempDirectoryScoped({ prefix: "sb-migration-fetch-live-" });
 
-      // Fetch into a fresh (empty) dir so no overwrite prompt fires; it reads the
-      // remote history and writes <version>_<name>.sql.
-      const fetched = await cli(["migration", "fetch", ...targetArgs], { cwd: fetchDir });
-      expect(fetched.exitCode, `stdout:\n${fetched.stdout}\nstderr:\n${fetched.stderr}`).toBe(0);
-
-      // fetch wrote the seeded migration back, under its established filename format.
-      const files = await readdir(path.join(fetchDir, "supabase", "migrations"));
-      expect(files).toContain(migrationFile);
-    } catch (error) {
-      targetError = error;
-    } finally {
-      try {
-        const reverted = await cli(
-          ["migration", "repair", version, "--status", "reverted", ...targetArgs],
-          { cwd: seedDir },
-        );
-        if (
-          reverted.exitCode !== 0 &&
-          !/not found|does not exist/i.test(`${reverted.stdout}\n${reverted.stderr}`)
-        ) {
-          cleanupErrors.push(
-            new Error(`migration repair cleanup failed:\n${reverted.stdout}\n${reverted.stderr}`),
+        const target = Effect.gen(function* () {
+          // repair --status applied reads the local file for name/statements, so write it
+          // before running repair.
+          yield* fs.makeDirectory(path.join(seedDir, "supabase", "migrations"), {
+            recursive: true,
+          });
+          yield* fs.writeFileString(
+            path.join(seedDir, "supabase", "migrations", migrationFile),
+            "create table if not exists public.cli_live_roundtrip (id int);\n",
           );
-        }
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-      await rm(seedDir, { recursive: true, force: true }).catch((error) =>
-        cleanupErrors.push(error),
-      );
-      await rm(fetchDir, { recursive: true, force: true }).catch((error) =>
-        cleanupErrors.push(error),
-      );
-    }
-    throwWithCleanup(targetError, cleanupErrors);
-  },
+          const repairResult = yield* cliEffect(
+            ["migration", "repair", version, "--status", "applied", ...targetArgs],
+            { cwd: seedDir },
+          );
+          requireLiveSuccess(repairResult, "migration repair setup");
+
+          // A fresh, empty dir avoids the overwrite prompt.
+          const fetched = yield* cliEffect(["migration", "fetch", ...targetArgs], {
+            cwd: fetchDir,
+          });
+          expect(fetched.exitCode, `stdout:\n${fetched.stdout}\nstderr:\n${fetched.stderr}`).toBe(
+            0,
+          );
+
+          const files = yield* fs.readDirectory(path.join(fetchDir, "supabase", "migrations"));
+          expect(files).toContain(migrationFile);
+        });
+
+        const revert = Effect.gen(function* () {
+          const reverted = yield* cliEffect(
+            ["migration", "repair", version, "--status", "reverted", ...targetArgs],
+            { cwd: seedDir },
+          );
+          if (
+            reverted.exitCode !== 0 &&
+            !/not found|does not exist/i.test(`${reverted.stdout}\n${reverted.stderr}`)
+          ) {
+            return yield* new MigrationLiveError({
+              message: `migration repair cleanup failed:\n${reverted.stdout}\n${reverted.stderr}`,
+            });
+          }
+        });
+
+        return yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const targetExit = yield* Effect.exit(restore(target));
+            const cleanupExits: ReadonlyArray<Exit.Exit<unknown, unknown>> = [
+              yield* Effect.exit(revert),
+            ];
+            return {
+              targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
+              cleanupErrors: cleanupExits
+                .filter(Exit.isFailure)
+                .map((exit) => Cause.squash(exit.cause)),
+            };
+          }),
+        );
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      { signal },
+    ).then(({ targetError, cleanupErrors }) => throwWithCleanup(targetError, cleanupErrors)),
 );

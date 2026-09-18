@@ -1,13 +1,13 @@
 import { Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { legacyDbBranchList } from "./list.handler.ts";
+import { dbBranchList } from "./list.handler.ts";
 
 const config = {} as const;
 
-export type LegacyDbBranchListFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbBranchListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbBranchListCommand = Command.make("list", config).pipe(
+export const dbBranchListCommand = Command.make("list", config).pipe(
   Command.withDescription("List branches."),
   Command.withShortDescription("List branches"),
-  Command.withHandler((flags) => legacyDbBranchList(flags)),
+  Command.withHandler((flags) => dbBranchList(flags)),
 );

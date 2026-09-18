@@ -1,11 +1,11 @@
 import { CliError, Command } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
-import { legacyBranchesCommand } from "../../commands/branches/branches.command.ts";
-import { legacyNetworkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
+import { branchesCommand } from "../../commands/branches/branches.command.ts";
+import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
 import { formatCliErrorsForDisplay } from "./subcommand-flag-suggestions.ts";
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyBranchesCommand, legacyNetworkRestrictionsCommand]),
+  Command.withSubcommands([branchesCommand, networkRestrictionsCommand]),
 );
 
 describe("subcommand flag placement suggestions", () => {
@@ -159,9 +159,8 @@ describe("subcommand flag placement suggestions", () => {
   });
 
   it("also collapses the doubled prefix for a non-choice primitive whose failure text starts with 'Expected' (e.g. an invalid integer flag value)", () => {
-    // Real failure text from effect@4.0.0-beta.93's schema-backed `Primitive.integer`
-    // (also affects `float`, `boolean`, and `date` — every primitive whose parse
-    // failure happens to start with the word "Expected" hits the same doubling).
+    // Real failure text from effect's schema-backed `Primitive.integer` (also affects `float`,
+    // `boolean`, and `date`).
     const errors = formatCliErrorsForDisplay([
       new CliError.InvalidValue({
         option: "port",
@@ -179,9 +178,8 @@ describe("subcommand flag placement suggestions", () => {
   });
 
   it("leaves invalid-value errors whose expected text does not start with 'Expected' unchanged", () => {
-    // Real failure text from effect@4.0.0-beta.93's `Primitive.keyValuePair` —
-    // it never starts with the word "Expected", so it isn't doubled by
-    // `CliError.InvalidValue`'s own "Expected: " prefix and needs no rewriting.
+    // Real failure text from effect's `Primitive.keyValuePair`, which never starts with
+    // "Expected", so it needs no rewriting.
     const errors = formatCliErrorsForDisplay([
       new CliError.InvalidValue({
         option: "define",
@@ -199,10 +197,6 @@ describe("subcommand flag placement suggestions", () => {
   });
 
   it("passes a complete pflag-format diagnostic through verbatim (Go stderr parity, CLI-1983)", () => {
-    // Legacy flags that byte-match Go pflag's parse-time diagnostics
-    // (`legacyStringSliceFlag`'s malformed-CSV failure) emit the COMPLETE Go
-    // message as `expected`. Wrapping it in the `Invalid value for flag ...`
-    // template would double-frame it — pflag prints the bare line.
     const pflagMessage =
       'invalid argument "\\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field';
     const errors = formatCliErrorsForDisplay([
@@ -219,12 +213,6 @@ describe("subcommand flag placement suggestions", () => {
   });
 
   it("does not corrupt a value that itself contains the literal 'Expected: Expected' text", () => {
-    // Regression test: the fix must anchor on `error.expected` (the field the
-    // buggy primitive actually populates) rather than searching the fully
-    // composed `error.message`, since `error.value` is user-controlled and is
-    // interpolated into that same message twice (once directly, once again
-    // inside `expected`'s "got <value>" suffix). A value that happens to
-    // contain the literal doubled-prefix text must be left untouched.
     const errors = formatCliErrorsForDisplay([
       new CliError.InvalidValue({
         option: "env",

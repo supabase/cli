@@ -75,6 +75,11 @@ runs:
       shell: bash
       env:
         DEPENDENCY_FIREWALL_TOKEN: ${{ inputs.dependency-firewall-token }}
+        # Skip husky's hook install: the commit-msg hook is a local dev
+        # convenience, not a gate for bot-authored commits (e.g.
+        # propose-release-notes.ts), and CI already enforces scopes on the
+        # PR title separately.
+        HUSKY: "0"
       run: |
         if [ -z "$DEPENDENCY_FIREWALL_TOKEN" ]; then
           echo "Dependency Firewall token unavailable; using default npm registry."

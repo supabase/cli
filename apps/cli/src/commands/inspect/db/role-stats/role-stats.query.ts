@@ -1,8 +1,4 @@
-import {
-  legacyInspectInt,
-  legacyInspectText,
-  type LegacyInspectQuerySpec,
-} from "../legacy-inspect-query.ts";
+import { inspectInt, inspectText, type InspectQuerySpec } from "../inspect-query.ts";
 
 const SQL = `SELECT
   rolname as role_name,
@@ -27,15 +23,15 @@ ORDER BY 1 DESC`;
  * `inspect db role-stats` — roles, connection counts/limits, and custom config.
  * Also the routed query for the deprecated `role-configs` / `role-connections` aliases.
  */
-export const legacyRoleStatsSpec: LegacyInspectQuerySpec = {
+export const roleStatsSpec: InspectQuerySpec = {
   name: "role-stats",
   sql: SQL,
   params: () => [],
   headers: ["Role name", "Active connections", "Connection limit", "Custom config"],
   project: (row) => [
-    legacyInspectText(row["role_name"]),
-    legacyInspectInt(row["active_connections"]),
-    legacyInspectInt(row["connection_limit"]),
-    legacyInspectText(row["custom_config"]),
+    inspectText(row["role_name"]),
+    inspectInt(row["active_connections"]),
+    inspectInt(row["connection_limit"]),
+    inspectText(row["custom_config"]),
   ],
 };

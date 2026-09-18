@@ -1,10 +1,8 @@
 import { Effect } from "effect";
-import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
-import type { LegacyDbBranchListFlags } from "./list.command.ts";
+import { GoProxy } from "../../../../command-internal/go-proxy.service.ts";
+import type { DbBranchListFlags } from "./list.command.ts";
 
-export const legacyDbBranchList = Effect.fn("legacy.db.branch.list")(function* (
-  _flags: LegacyDbBranchListFlags,
-) {
-  const proxy = yield* LegacyGoProxy;
+export const dbBranchList = Effect.fn("db.branch.list")(function* (_flags: DbBranchListFlags) {
+  const proxy = yield* GoProxy;
   yield* proxy.exec(["db", "branch", "list"]);
 });

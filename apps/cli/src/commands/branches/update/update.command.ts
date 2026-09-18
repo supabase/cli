@@ -2,9 +2,9 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyBranchesUpdate } from "./update.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { branchesUpdate } from "./update.handler.ts";
 
 const BRANCH_STATUSES = [
   "RUNNING_MIGRATIONS",
@@ -44,16 +44,16 @@ const config = {
   ),
 } as const;
 
-export type LegacyBranchesUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type BranchesUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyBranchesUpdateCommand = Command.make("update", config).pipe(
+export const branchesUpdateCommand = Command.make("update", config).pipe(
   Command.withDescription("Update a preview branch by its name or ID."),
   Command.withShortDescription("Update a preview branch"),
   Command.withHandler((flags) =>
-    legacyBranchesUpdate(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"], config }),
+    branchesUpdate(flags).pipe(
+      withCommandTelemetry({ flags, safeFlags: ["project-ref"], config }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["branches", "update"])),
+  Command.provide(managementApiRuntimeLayer(["branches", "update"])),
 );

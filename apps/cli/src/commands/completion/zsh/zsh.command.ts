@@ -2,16 +2,16 @@ import { Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { LegacyCompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
-import { legacyCompletionZsh } from "./zsh.handler.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { CompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
+import { completionZsh } from "./zsh.handler.ts";
 
 const config = {
-  noDescriptions: LegacyCompletionNoDescriptionsFlagDef,
+  noDescriptions: CompletionNoDescriptionsFlagDef,
 } as const;
-export type LegacyCompletionZshFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type CompletionZshFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyCompletionZshCommand = Command.make("zsh", config).pipe(
+export const completionZshCommand = Command.make("zsh", config).pipe(
   Command.withDescription(
     "Generate the autocompletion script for the zsh shell.\n\n" +
       "If shell completion is not already enabled in your environment you will need\n" +
@@ -28,10 +28,7 @@ export const legacyCompletionZshCommand = Command.make("zsh", config).pipe(
   ),
   Command.withShortDescription("Generate the autocompletion script for zsh"),
   Command.withHandler((flags) =>
-    legacyCompletionZsh(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    completionZsh(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["completion", "zsh"])),
 );

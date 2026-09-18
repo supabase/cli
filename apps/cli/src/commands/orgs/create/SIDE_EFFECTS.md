@@ -2,11 +2,11 @@
 
 ## Files Read
 
-| Path                                      | Format                    | When                                                                                            |
-| ----------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliSettings.profile` |
-| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                        |
-| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                   |
+| Path                                      | Format                    | When                                                                                          |
+| ----------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
+| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
 
 ## Files Written
 
@@ -14,7 +14,7 @@
 | ---------------------------- | ------ | ----------------------------------------------- |
 | `~/.supabase/telemetry.json` | JSON   | always (in `Effect.ensuring`) at end of command |
 
-`orgs create` is a user-level command — it does not resolve a `--project-ref`, so the legacy
+`orgs create` is a user-level command — it does not resolve a `--project-ref`, so the
 linked-project cache is never written.
 
 ## Positional Arguments
@@ -38,12 +38,12 @@ linked-project cache is never written.
 
 ## Exit Codes
 
-| Code | Condition                                                                       |
-| ---- | ------------------------------------------------------------------------------- |
-| `0`  | success — organization created                                                  |
-| `1`  | `LegacyPlatformAuthRequiredError` — no token in env/keyring/file                |
-| `1`  | `LegacyOrgsCreateUnexpectedStatusError` — non-201 response from create endpoint |
-| `1`  | `LegacyOrgsCreateNetworkError` — transport-level network failure                |
+| Code | Condition                                                                 |
+| ---- | ------------------------------------------------------------------------- |
+| `0`  | success — organization created                                            |
+| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                 |
+| `1`  | `OrgsCreateUnexpectedStatusError` — non-201 response from create endpoint |
+| `1`  | `OrgsCreateNetworkError` — transport-level network failure                |
 
 Unlike `orgs list`, there is no env-not-supported branch — a single object flattens
 into `ID=… NAME=… SLUG=…` env lines.
@@ -111,8 +111,8 @@ message. No preamble line.
   (inherited from the old Go CLI's behavior). A malicious or compromised Management API
   could in principle return values containing terminal escape sequences. If sanitization
   is added later it should land at the renderer (and at any shared preamble helper) so
-  both shells inherit the fix.
+  every caller inherits the fix.
 - `--output env` values are escaped via `encodeEnv` (`\n`, `\r`, `\t` → backslash-escaped).
   ESC (`0x1b`) is not escaped.
-- Error response bodies embedded in `LegacyOrgsCreateUnexpectedStatusError` are sanitized
-  by `mapLegacyHttpError` (control chars stripped, capped at 1024 bytes).
+- Error response bodies embedded in `OrgsCreateUnexpectedStatusError` are sanitized
+  by `mapHttpError` (control chars stripped, capped at 1024 bytes).

@@ -1,46 +1,37 @@
 import type { V1CreateAnOrganizationOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
-import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import { LEGACY_GO_ORGANIZATION_RESPONSE } from "../orgs.go-payload.ts";
-import {
-  LegacyOrgsCreateNetworkError,
-  LegacyOrgsCreateUnexpectedStatusError,
-} from "../orgs.errors.ts";
+import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { GO_ORGANIZATION_RESPONSE } from "../orgs.go-payload.ts";
+import { OrgsCreateNetworkError, OrgsCreateUnexpectedStatusError } from "../orgs.errors.ts";
 import { renderOrgsListTable } from "../orgs.format.ts";
-import type { LegacyOrgsCreateFlags } from "./create.command.ts";
+import type { OrgsCreateFlags } from "./create.command.ts";
 
 type CreatedOrganization = typeof V1CreateAnOrganizationOutput.Type;
 
-const mapCreateError = mapLegacyHttpError({
-  networkError: LegacyOrgsCreateNetworkError,
-  statusError: LegacyOrgsCreateUnexpectedStatusError,
+const mapCreateError = mapHttpError({
+  networkError: OrgsCreateNetworkError,
+  statusError: OrgsCreateUnexpectedStatusError,
   networkMessage: (cause) => `failed to create organization: ${cause}`,
   statusMessage: (status, body) => `unexpected create organization status ${status}: ${body}`,
 });
 
-export const legacyOrgsCreate = Effect.fn("legacy.orgs.create")(function* (
-  flags: LegacyOrgsCreateFlags,
-) {
+export const orgsCreate = Effect.fn("orgs.create")(function* (flags: OrgsCreateFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    // Spinner runs only in text mode — it would corrupt machine-readable
-    // stdout. The output-routing branches below dispatch on `goFmt`, but the
-    // spinner uses `output.format` because `--output pretty` keeps the format
-    // as "text" while requiring the table render; both paths need the spinner.
+    // Spinner only runs in text mode, since it would corrupt machine-readable stdout. It
+    // gates on output.format rather than goFmt because --output pretty keeps the format
+    // "text" while still rendering the table.
     const creating =
       output.format === "text" ? yield* output.task("Creating organization...") : undefined;
     const created: CreatedOrganization = yield* api.v1
@@ -53,10 +44,9 @@ export const legacyOrgsCreate = Effect.fn("legacy.orgs.create")(function* (
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
-    // `fmt.Println("Created organization:", id)` is printed once before the
-    // format switch. The preamble is repeated inside each Go-format branch
-    // rather than hoisted, so the TS `--output-format json` / `stream-json`
-    // paths (which emit a single structured event below) stay preamble-free.
+    // Printed once before the format switch, but only for the Go-format branches — the
+    // --output-format json/stream-json paths emit a single structured event instead and
+    // stay preamble-free.
     const preamble = `Created organization: ${created.id}\n`;
 
     if (goFmt === "json") {
@@ -66,12 +56,12 @@ export const legacyOrgsCreate = Effect.fn("legacy.orgs.create")(function* (
     }
     if (goFmt === "yaml") {
       yield* output.raw(preamble);
-      yield* output.raw(encodeLegacyGoYaml(created, LEGACY_GO_ORGANIZATION_RESPONSE));
+      yield* output.raw(encodeGoYaml(created, GO_ORGANIZATION_RESPONSE));
       return;
     }
     if (goFmt === "toml") {
       yield* output.raw(preamble);
-      yield* output.raw(encodeLegacyGoToml(created, LEGACY_GO_ORGANIZATION_RESPONSE));
+      yield* output.raw(encodeGoToml(created, GO_ORGANIZATION_RESPONSE));
       return;
     }
     if (goFmt === "env") {

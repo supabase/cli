@@ -2,9 +2,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyDomainsCreate } from "./create.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { domainsCreate } from "./create.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -20,9 +20,9 @@ const config = {
   ),
 } as const;
 
-export type LegacyDomainsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DomainsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDomainsCreateCommand = Command.make("create", config).pipe(
+export const domainsCreateCommand = Command.make("create", config).pipe(
   Command.withDescription(
     "Create a custom hostname for your Supabase project. Expects your custom hostname to have a CNAME record to your Supabase project's subdomain.",
   ),
@@ -35,10 +35,7 @@ export const legacyDomainsCreateCommand = Command.make("create", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyDomainsCreate(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    domainsCreate(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["domains", "create"])),
+  Command.provide(managementApiRuntimeLayer(["domains", "create"])),
 );

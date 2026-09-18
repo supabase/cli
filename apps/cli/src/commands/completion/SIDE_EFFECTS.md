@@ -9,14 +9,14 @@
 ## Files Written
 
 These are written by the dynamic `__complete`/`__completeNoDesc` responder
-(`cli/legacy-complete.ts`), not by `supabase completion <shell>` itself —
+(`cli/complete.ts`), not by `supabase completion <shell>` itself —
 documented here for the same reason the Environment Variables section below
 covers that responder's own env vars: this is the only `SIDE_EFFECTS.md` for
 the completion family.
 
-| Path                                            | Format | When                                                                                                                                                                                                                                                                                                                 |
-| ----------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | Best-effort, on every `__complete`/`__completeNoDesc` request — written by the shared `TelemetryRuntime`/consent bootstrap the `cli_command_executed` capture below runs through (`telemetry/legacy-telemetry-state.layer.ts`'s file, same path/format), regardless of whether the PostHog delivery itself succeeds. |
+| Path                                            | Format | When                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | Best-effort, on every `__complete`/`__completeNoDesc` request — written by the shared `TelemetryRuntime`/consent bootstrap the `cli_command_executed` capture below runs through (`telemetry/telemetry-state.layer.ts`'s file, same path/format), regardless of whether the PostHog delivery itself succeeds. |
 
 ## API Routes
 
@@ -27,7 +27,7 @@ the completion family.
 ## Environment Variables
 
 These two are consumed by the dynamic `__complete`/`__completeNoDesc` responder
-(`cli/legacy-complete.ts`, `legacyResolveIncludeDescriptions`), not by
+(`cli/complete.ts`, `resolveIncludeDescriptions`), not by
 `supabase completion <shell>` itself — documented here because this is the only
 `SIDE_EFFECTS.md` for the completion family, and the two hidden commands are only
 ever reached via a script this family generates.
@@ -50,8 +50,8 @@ the former, and the alias-invariant primary name is what's recorded);
 and `1` for an unresolvable request (no completion args at all, see Exit Codes
 above); `output_format` is always the fixed literal `"text"`, since
 `__complete` never parses `--output`/`-o`. The capture is best-effort and
-bounded by a short timeout (`cli/legacy-complete.ts`'s
-`legacyCaptureCompleteTelemetry`) — a missing consent, network hiccup, or DNS
+bounded by a short timeout (`cli/complete.ts`'s
+`captureCompleteTelemetry`) — a missing consent, network hiccup, or DNS
 failure never blocks or fails the completion response itself, only adds a
 small delay to the process's own exit while it's awaited.
 
@@ -74,7 +74,7 @@ pure regression, not a parity fix.
 Supports four shells: `bash`, `fish`, `powershell`, `zsh`.
 
 As of CLI-1965, each leaf is generated **natively in TypeScript** — no Go binary is
-involved at all. `commands/completion/legacy-completion-scripts.ts` (`legacyGenerateCompletionScript`)
+involved at all. `commands/completion/completion-scripts.ts` (`generateCompletionScript`)
 transcribes cobra v1.10.2's own static script templates byte-for-byte, read directly from
 the vendored cobra source rather than reconstructed from memory:
 
@@ -98,9 +98,9 @@ installed completions previously — cached bytes in their `~/.zshrc`
 The generated scripts call back to `supabase __complete <args>` on every tab press to
 fetch dynamic completion candidates, or `supabase __completeNoDesc <args>` when the
 script was generated with `--no-descriptions` (cobra's alias for the same hidden
-command) — see `apps/cli/src/cli/legacy-complete.ts`, which intercepts both
+command) — see `apps/cli/src/cli/complete.ts`, which intercepts both
 `__complete` and `__completeNoDesc` before Effect's argv parser and natively
-reimplements cobra's dynamic-completion protocol by reflecting over `legacyRoot`
+reimplements cobra's dynamic-completion protocol by reflecting over `rootCommand`
 (this repo's own Effect CLI command tree) rather than proxying to the Go binary
 (CLI-1965, separate port; its internal candidate/directive algorithm is out of scope
 for this doc — see that file's own doc comments — but its externally-visible wire
@@ -112,13 +112,12 @@ a final `:<directive>` line (an integer — `0` default, `4` "no file completion
 
 ## Notes
 
-- Effect CLI's `--completions` global flag remains exposed at the root for `next/`
-  users; it does not satisfy the legacy parity contract and is not what this
-  subcommand routes through.
+- Effect CLI's `--completions` global flag remains exposed at the root; it is not
+  the compatibility path and is not what this subcommand routes through.
 - **Known divergence (CLI-1906):** the old Go CLI exited `0` on both bare
   `completion` (no shell subcommand) AND `completion <unknown-shell>` — an
   unrecognized subcommand name was treated the same as a missing one, printing
-  help and returning success. The legacy TS shell currently exits `1` for
+  help and returning success. The TS CLI currently exits `1` for
   both invocations; this is a real, systemic exit-code bug in the shared CLI
   harness (`shared/cli/run.ts`), not `completion`-specific — it reproduces on
   any bare or unrecognized-subcommand invocation of a group command with
@@ -128,7 +127,7 @@ a final `:<directive>` line (an integer — `0` default, `4` "no file completion
 - Each of `bash`/`zsh`/`fish`/`powershell` declares `--no-descriptions` and
   forwards it into the native generator (selecting the `__completeNoDesc` token
   instead of `__complete`), so the emitted script omits completion descriptions.
-- **Accepted `__complete` divergences from real cobra** (see `legacy-complete.ts`'s
+- **Accepted `__complete` divergences from real cobra** (see `complete.ts`'s
   module doc comment for the full, current list and rationale): mutually-exclusive
   flag-group hiding (`MarkFlagsMutuallyExclusive`) is not reproduced — hand-building
   a shadow table at that scale was judged higher-risk than the small, stable tables

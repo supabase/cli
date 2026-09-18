@@ -1,7 +1,7 @@
-import { legacyMakeInspectDbHandler } from "../legacy-inspect-query.ts";
-import { legacyLongRunningQueriesSpec } from "./long-running-queries.query.ts";
+import { makeInspectDbHandler } from "../inspect-query.ts";
+import { longRunningQueriesSpec } from "./long-running-queries.query.ts";
 
-export const legacyInspectDbLongRunningQueries = legacyMakeInspectDbHandler(
-  legacyLongRunningQueriesSpec,
-  "legacy.inspect.db.long-running-queries",
+export const inspectDbLongRunningQueries = makeInspectDbHandler(
+  longRunningQueriesSpec,
+  "inspect.db.long-running-queries",
 );

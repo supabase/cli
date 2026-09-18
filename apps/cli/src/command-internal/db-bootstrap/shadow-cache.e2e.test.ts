@@ -1,28 +1,21 @@
 /**
- * The shadow baseline cache's ONE subprocess scenario (golden path only, per the repo's e2e-scope
- * policy): the SAME `db diff` invocation run TWICE against a real local stack must cold-publish a
+ * The shadow baseline cache's one subprocess scenario (golden path only): running the same
+ * `db diff` invocation twice against a real local stack must cold-publish a
  * `shadow-baseline-<key>.tar` on the first run, warm-restore that exact tar on the second, and
  * produce byte-identical diff output either way.
  *
- * A black-box `runSupabase` subprocess test, like the other local Docker-stack `*.e2e.test.ts`
- * suites: the facts it is here to prove are the ones only the real wiring can — that `db diff`
- * actually routes through `legacyAcquireShadowDatabase`, that the cache engages with
- * `SUPABASE_SHADOW_CACHE` genuinely UNSET (the shipped default — the run removes the harness's
- * isolation pin rather than opting in) and that
- * `${SUPABASE_HOME}/cache/shadow-baseline` survives a real process boundary, that the cache key is STABLE across two
- * separate CLI processes (an in-process test computes it once), and that a warm-restored cluster
- * yields the same migration SQL as a cold-provisioned one. It replaces an earlier in-process
- * version of this file that called `legacyAcquireShadowDatabase` directly with a synthetic layer
- * graph — that shape could stay green while the `db diff` wiring, the env propagation, or the cache
- * enablement was broken.
+ * Proves what only real process wiring can: that `db diff` routes through
+ * `acquireShadowDatabase`, that the cache engages with `SUPABASE_SHADOW_CACHE` genuinely unset
+ * (the shipped default), that the cache directory survives a real process boundary, that the
+ * cache key is stable across two separate CLI processes, and that a warm-restored cluster
+ * yields the same migration SQL as a cold-provisioned one.
  *
- * The acquire/export/restore MECHANICS (cold export, warm restore, tar validation and rejection,
- * retention/LRU, cache-off and bypass paths) are covered exhaustively by
- * `shadow-cache.integration.test.ts` against its in-test Docker model plus a real filesystem, and
- * the pure key/retention logic by `shadow-cache.unit.test.ts`. Nothing branch-shaped belongs here.
+ * The acquire/export/restore mechanics are covered exhaustively by
+ * `shadow-cache.integration.test.ts`, and the pure key/retention logic by
+ * `shadow-cache.unit.test.ts`. Nothing branch-shaped belongs here.
  */
 
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -33,49 +26,61 @@ const CLEANUP_TIMEOUT_MS = 120_000;
 
 const START_TIMEOUT_MS = 280_000;
 const DIFF_TIMEOUT_MS = 180_000;
-// One full `start` plus the cold/warm `db diff` pair, with lifecycle overhead for `init`, the
-// filesystem inspection between runs, and the fast-failing port-conflict retries below (a
-// conflicting publish fails in `docker create`/`start`, i.e. seconds, never a whole
-// `DIFF_TIMEOUT_MS`) — same "budget each subprocess separately" shape as `diff.declarative.e2e.test.ts`.
+// One full `start` plus the cold/warm `db diff` pair, with lifecycle overhead for `init`,
+// filesystem inspection, and fast-failing port-conflict retries.
 const LIFECYCLE_OVERHEAD_MS = 90_000;
 
+const STACK_PORT_ATTEMPT_COUNT = 4;
+const STACK_PORT_BLOCK_SIZE = 32;
+const STACK_PORT_BASE =
+  49152 + ((process.pid * 53) % (16384 - STACK_PORT_ATTEMPT_COUNT * STACK_PORT_BLOCK_SIZE));
+const STACK_PORT_ASSIGNMENT =
+  /^(\s*(?:port|smtp_port|pop3_port|inspector_port|shadow_port) = )\d+$/u;
+
 /**
- * `db diff`'s shadow port, published on the host by the shadow container. Docker itself has to
- * bind it, so a test CANNOT truly reserve it up front: binding a listener and releasing it proves
- * nothing about the window between the release and the container's own bind. The honest mitigation
- * is therefore two-part — pick ports far from the `[db] shadow_port` default (54320) that a stray
- * local stack or a neighbouring suite would be holding, and retry the scenario on the next
- * candidate when the CLI reports a real bind conflict.
+ * `db diff`'s shadow port. Docker has to bind it, so a test cannot truly reserve it up front —
+ * retry on the next candidate (derived from this process's pid, so concurrent runs don't race for
+ * one shared port) when the CLI reports a real bind conflict.
  *
- * Fed through `SUPABASE_DB_SHADOW_PORT` (`legacy-db-config.toml-read.ts`'s `envOverride`) rather
- * than by rewriting the generated `config.toml`, so the `init` template stays exactly as a user's
- * would be. The port is deliberately NOT part of the cache key (see `legacyShadowCacheKey`), so
- * retrying on a different one cannot change which tar the run looks for.
- *
- * The candidate sequence is derived from this process's own pid, so two independently concurrent
- * runs of this suite start from different bases instead of racing for one shared pair, and a
- * locally-occupied port only costs one retry step. The base stays inside the IANA dynamic range
- * (49152-65535) with room for every candidate below its ceiling.
+ * The shadow port is not part of the cache key, so retrying on a different port cannot change
+ * which tar the run looks for. Candidates are assigned after the active stack ports below.
  */
 const SHADOW_PORT_CANDIDATE_COUNT = 8;
-const SHADOW_PORT_BASE = 49152 + ((process.pid * 37) % (16384 - SHADOW_PORT_CANDIDATE_COUNT));
-const SHADOW_PORT_CANDIDATES: ReadonlyArray<number> = Array.from(
-  { length: SHADOW_PORT_CANDIDATE_COUNT },
-  (_, index) => SHADOW_PORT_BASE + index,
-);
 
 const DIFF_ARGS = ["db", "diff", "--local", "--use-pg-delta"] as const;
 
 /** `shadow-cache.ts`'s published artifact name — `shadow-baseline-<16 hex key>.tar`. */
 const BASELINE_TAR_PATTERN = /^shadow-baseline-[0-9a-f]{16}\.tar$/u;
 
-/**
- * Docker's own bind-conflict wording, as it reaches stderr through the shadow's
- * `docker create`/`docker start` failure. Only used to decide whether to retry on another
- * candidate port — never asserted on.
- */
+/** Docker's own bind-conflict wording on stderr; only used to decide whether to retry. */
 function isShadowPortConflict(stderr: string): boolean {
   return /port is already allocated|address already in use|Bind for \S+ failed/iu.test(stderr);
+}
+
+function isStackPortConflict(stderr: string): boolean {
+  return /failed to bind host port [^\n]*: address already in use|Bind for \S+ failed: port is already allocated/iu.test(
+    stderr,
+  );
+}
+
+async function assignStackPorts(
+  projectDir: string,
+  attempt: number,
+): Promise<ReadonlyArray<number>> {
+  const configPath = path.join(projectDir, "supabase", "config.toml");
+  const config = await readFile(configPath, "utf8");
+  let index = 0;
+  const base = STACK_PORT_BASE + attempt * STACK_PORT_BLOCK_SIZE;
+  const lines = config.split("\n").map((line) => {
+    const match = STACK_PORT_ASSIGNMENT.exec(line);
+    if (match === null) return line;
+    return `${match[1]}${base + index++}`;
+  });
+  await writeFile(configPath, lines.join("\n"));
+  return Array.from(
+    { length: SHADOW_PORT_CANDIDATE_COUNT },
+    (_, shadowIndex) => base + index + shadowIndex,
+  );
 }
 
 async function baselineTars(cacheDir: string): Promise<ReadonlyArray<string>> {
@@ -92,7 +97,6 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
       // Best-effort cleanup even if an assertion above failed mid-lifecycle — a leaked local
       // stack would otherwise pollute the CI runner for later jobs.
       await runSupabase(["stop", "--no-backup"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: CLEANUP_TIMEOUT_MS,
         ...(home === undefined ? {} : { home: home.dir }),
@@ -107,18 +111,21 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
 
   test(
     "publishes a baseline snapshot on the first db diff, then restores it on the second with identical output",
-    { timeout: START_TIMEOUT_MS + 2 * DIFF_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS },
+    {
+      timeout:
+        STACK_PORT_ATTEMPT_COUNT * START_TIMEOUT_MS +
+        (STACK_PORT_ATTEMPT_COUNT - 1) * CLEANUP_TIMEOUT_MS +
+        2 * DIFF_TIMEOUT_MS +
+        LIFECYCLE_OVERHEAD_MS,
+    },
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-shadow-cache-e2e-"));
-      // One temp `SUPABASE_HOME` for every run in this test, so the two `db diff` processes share
-      // the global `${SUPABASE_HOME}/cache/shadow-baseline` directory the cache publishes into —
-      // `runSupabase` otherwise mints (and disposes) a fresh home per invocation, which would make
-      // every run a cold one.
+      // One temp `SUPABASE_HOME` per test run so both `db diff` processes share the same cache
+      // directory; `runSupabase` otherwise mints a fresh home per invocation.
       home = makeTempHome();
       const cacheDir = path.join(home.dir, "cache", "shadow-baseline");
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         home: home.dir,
       });
@@ -126,17 +133,44 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
 
       // Exclude the heaviest, least relevant services — `db diff` only needs the local Postgres
       // container reachable, same rationale as stop/status/diff.
-      const start = await runSupabase(
-        ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
-        { entrypoint: "legacy", cwd: projectDir, home: home.dir, exitTimeoutMs: START_TIMEOUT_MS },
-      );
+      let start: Awaited<ReturnType<typeof runSupabase>> | undefined;
+      let shadowPortCandidates: ReadonlyArray<number> = [];
+      for (let attempt = 0; attempt < STACK_PORT_ATTEMPT_COUNT; attempt++) {
+        const candidates = await assignStackPorts(projectDir, attempt);
+        const result = await runSupabase(
+          ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
+          { cwd: projectDir, home: home.dir, exitTimeoutMs: START_TIMEOUT_MS },
+        );
+        start = result;
+        if (result.exitCode === 0) shadowPortCandidates = candidates;
+        if (result.exitCode === 0 || !isStackPortConflict(result.stderr)) break;
+
+        if (attempt === STACK_PORT_ATTEMPT_COUNT - 1) break;
+        const cleanup = await runSupabase(["stop", "--no-backup"], {
+          cwd: projectDir,
+          home: home.dir,
+          exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+        });
+        if (cleanup.exitCode !== 0) {
+          throw new Error(
+            [
+              `Failed to clean up stack after port conflict (exit code ${cleanup.exitCode}).`,
+              `stdout:\n${cleanup.stdout}`,
+              `stderr:\n${cleanup.stderr}`,
+            ].join("\n"),
+          );
+        }
+      }
+      expect(start).toBeDefined();
+      if (start === undefined) return;
       expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+      expect(shadowPortCandidates).toHaveLength(SHADOW_PORT_CANDIDATE_COUNT);
 
       // Same drift setup as `db/diff/diff.declarative.e2e.test.ts`: create a fresh function
       // directly in the local database so `db diff --local` has real, deterministic SQL to
-      // produce — the payload whose byte-identity across the cold and warm runs is the actual
-      // user-visible contract here. (The next engine ignores `schema_paths` when building its
-      // migrations baseline, so declared schema files cannot supply the drift.)
+      // produce — the byte-identity of that output across cold/warm runs is the actual
+      // user-visible contract here. Schema files can't supply this drift since the next engine
+      // ignores `schema_paths` when building its migrations baseline.
       const createFunction = await runSupabase(
         [
           "db",
@@ -147,7 +181,7 @@ language sql
 as $$ select 1; $$;`,
           "--local",
         ],
-        { entrypoint: "legacy", cwd: projectDir, home: home.dir },
+        { cwd: projectDir, home: home.dir },
       );
       expect(
         createFunction.exitCode,
@@ -159,19 +193,18 @@ as $$ select 1; $$;`,
       let coldTars: ReadonlyArray<string> = [];
       let coldMtimeMs = 0;
 
-      for (const [index, shadowPort] of SHADOW_PORT_CANDIDATES.entries()) {
-        const canRetry = index < SHADOW_PORT_CANDIDATES.length - 1;
+      for (const [index, shadowPort] of shadowPortCandidates.entries()) {
+        const canRetry = index < shadowPortCandidates.length - 1;
         // Each attempt must start from an empty cache, or the previous attempt's tar would make
         // this attempt's first run a warm one.
         await rm(cacheDir, { recursive: true, force: true });
         const diffOptions = {
-          entrypoint: "legacy" as const,
           cwd: projectDir,
           home: home.dir,
           exitTimeoutMs: DIFF_TIMEOUT_MS,
           env: {
             // Remove the harness's isolation pin (`spawnSupabase` injects `=0`) so the suite
-            // runs with the key GENUINELY ABSENT — the shipped default-ON state — rather than
+            // runs with the key genuinely absent — the shipped default-on state — rather than
             // an explicit opt-in.
             SUPABASE_SHADOW_CACHE: undefined,
             SUPABASE_DB_SHADOW_PORT: String(shadowPort),
@@ -198,14 +231,14 @@ as $$ select 1; $$;`,
         break;
       }
 
-      // --- Run 1: cold. The baseline was provisioned and exported as one keyed tar. ---
+      // Run 1 (cold): the baseline was provisioned and exported as one keyed tar.
       expect(cold, "every candidate shadow port reported a bind conflict").toBeDefined();
       if (cold === undefined) return;
       expect(cold.exitCode, `stdout:\n${cold.stdout}\nstderr:\n${cold.stderr}`).toBe(0);
       expect(coldTars, `cache dir: ${cacheDir}\nstderr:\n${cold.stderr}`).toHaveLength(1);
       expect(coldTars[0]).toMatch(BASELINE_TAR_PATTERN);
 
-      // --- Run 2: warm. The same key restored that snapshot instead of rebuilding it. ---
+      // Run 2 (warm): the same key restored that snapshot instead of rebuilding it.
       expect(warm).toBeDefined();
       if (warm === undefined) return;
       expect(warm.exitCode, `stdout:\n${warm.stdout}\nstderr:\n${warm.stderr}`).toBe(0);
@@ -213,18 +246,16 @@ as $$ select 1; $$;`,
       // cold provision, and either would otherwise hide a broken warm path behind a passing run.
       expect(warm.stderr).not.toContain("cached shadow baseline unusable");
       expect(warm.stderr).not.toContain("shadow baseline not cached");
-      // Same single tar, same filename: the key is reproducible across processes, and the warm run
-      // published nothing of its own.
       const warmTars = await baselineTars(cacheDir);
       expect(warmTars).toEqual(coldTars);
       // Warm hits refresh mtime so a frequently used key survives LRU/TTL retention.
       const warmMtimeMs = (await stat(path.join(cacheDir, warmTars[0]!))).mtimeMs;
       expect(warmMtimeMs).toBeGreaterThan(coldMtimeMs);
 
-      // The user-visible contract is unchanged by which path ran: stdout carries the migration SQL
-      // (no `-f`, so `db diff` prints it), and a restored cluster must diff to exactly the same
-      // statements as a freshly baselined one. The regex tolerates pretty-print variations
-      // (quoting/whitespace), same anchor as `diff.declarative.e2e.test.ts`.
+      // stdout carries the migration SQL (no `-f`, so `db diff` prints it); a restored cluster
+      // must diff to exactly the same statements as a freshly baselined one. The regex tolerates
+      // pretty-print variations (quoting/whitespace), same anchor as
+      // `diff.declarative.e2e.test.ts`.
       expect(cold.stdout).toMatch(
         /CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION\s+"?public"?\s*\.\s*"?probe_fn"?\s*\(\)/i,
       );

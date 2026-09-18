@@ -56,12 +56,11 @@ export interface SupabaseApiClientShape {
     input: OperationInput<Id>,
   ) => Effect.Effect<OperationOutput<Id>, SupabaseApiError>;
   /**
-   * Execute an operation but return the raw HTTP response without decoding the
-   * output schema or filtering on status. Use this when the response body
-   * cannot satisfy the strict generated schema (e.g. cli-e2e replay fixtures
-   * embed a `__PROJECT_REF__` placeholder that violates `ref`'s 20-char
-   * pattern), so the caller can parse the body leniently. Request building —
-   * URL, auth, headers, body serialization — is identical to `execute`.
+   * Executes an operation but returns the raw HTTP response, without decoding
+   * the output schema or filtering on status. Use this when the response body
+   * can't satisfy the strict generated schema (e.g. a replay fixture embeds a
+   * placeholder value that violates a field's pattern). Request building is
+   * identical to `execute`.
    */
   readonly executeRaw: <Id extends OperationId>(
     definition: OperationDefinition<Id>,
@@ -86,12 +85,10 @@ export class SupabaseApiConfigError extends Error {
 export type SupabaseApiInputErrorSource = "generated_client" | "user_input";
 
 /**
- * The generated client's input schema rejected the request input before any
- * request was sent. This defaults to `generated_client` because a schema
- * rejection can be caused by a request assembled incorrectly by its caller;
- * command boundaries may opt a confirmed user-derived request into
- * `user_input` without inspecting the schema error message. The original
- * schema failure is preserved as `cause`.
+ * The generated client's input schema rejected the request before it was sent.
+ * Defaults to `generated_client` since a rejection is usually a caller assembly
+ * bug; command boundaries can reclassify a confirmed user-derived request as
+ * `user_input`. The original schema failure is preserved as `cause`.
  */
 export class SupabaseApiInputError extends Error {
   readonly _tag = "SupabaseApiInputError";
@@ -374,11 +371,9 @@ function asBinaryRequestBody(value: unknown): Effect.Effect<Uint8Array, HttpBody
   return Effect.succeed(new TextEncoder().encode(String(revealed)));
 }
 
-// Serialize JSON bodies with alphabetically-sorted keys (recursively) to match
-// Go's `encoding/json`, which emits oapi-codegen's alphabetically-declared
-// struct fields and sorts map keys. Without this, multi-field request bodies
-// serialize in OpenAPI-spec field order and diverge from the Go CLI on the
-// wire (only single/already-sorted bodies happen to match).
+// Serializes JSON bodies with keys sorted alphabetically (recursively) so the
+// wire format matches recorded replay fixtures; the spec's field order would
+// otherwise diverge from them for multi-field bodies.
 function sortJsonKeysDeep(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(sortJsonKeysDeep);

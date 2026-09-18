@@ -1,9 +1,9 @@
 import { Command } from "effect/unstable/cli";
-import { legacyDbRemoteChangesCommand } from "./changes/changes.command.ts";
-import { legacyDbRemoteCommitCommand } from "./commit/commit.command.ts";
+import { dbRemoteChangesCommand } from "./changes/changes.command.ts";
+import { dbRemoteCommitCommand } from "./commit/commit.command.ts";
 
-export const legacyDbRemoteCommand = Command.make("remote").pipe(
+export const dbRemoteCommand = Command.make("remote").pipe(
   Command.withDescription("Manage remote databases."),
   Command.withShortDescription("Manage remote databases"),
-  Command.withSubcommands([legacyDbRemoteChangesCommand, legacyDbRemoteCommitCommand]),
+  Command.withSubcommands([dbRemoteChangesCommand, dbRemoteCommitCommand]),
 );

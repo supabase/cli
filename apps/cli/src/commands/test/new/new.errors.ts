@@ -10,7 +10,7 @@ import {
  * The target test file already exists. Message format:
  * `<path> already exists.`
  */
-export class LegacyTestNewFileExistsError extends Data.TaggedError("LegacyTestNewFileExistsError")<{
+export class TestNewFileExistsError extends Data.TaggedError("TestNewFileExistsError")<{
   readonly path: string;
   readonly message: string;
 }> {
@@ -19,11 +19,8 @@ export class LegacyTestNewFileExistsError extends Data.TaggedError("LegacyTestNe
   }
 }
 
-/**
- * Writing the test file failed (e.g. permission denied). Mirrors Go's
- * `utils.WriteFile` error (`new.go:28`).
- */
-export class LegacyTestNewWriteError extends Data.TaggedError("LegacyTestNewWriteError")<{
+/** Writing the test file failed (e.g. permission denied). */
+export class TestNewWriteError extends Data.TaggedError("TestNewWriteError")<{
   readonly path: string;
   readonly message: string;
 }> {

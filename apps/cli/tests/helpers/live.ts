@@ -2,19 +2,26 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { Predicate } from "effect";
+import { Effect, Predicate } from "effect";
 import pg from "pg";
 import { expect, inject, test as vitestTest } from "vitest";
 
-import { makeTempHome, requireCliSuccess, runSupabase } from "./cli.ts";
+import {
+  type CliRunError,
+  makeTempHome,
+  requireCliSuccess,
+  runSupabase,
+  runSupabaseEffect,
+} from "./cli.ts";
 import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
 import type { LiveCliProjectEnvironment } from "./live-project.ts";
 
 export type LiveProject = LiveCliProjectEnvironment["project"];
 type RunOptions = NonNullable<Parameters<typeof runSupabase>[1]>;
 type RunResult = Awaited<ReturnType<typeof runSupabase>>;
+type RunEffectOptions = Parameters<typeof runSupabaseEffect>[1];
 
-export interface LiveWorkspace {
+interface LiveWorkspace {
   readonly path: string;
 }
 
@@ -29,6 +36,10 @@ export interface LiveFixtures {
   readonly workspace: LiveWorkspace;
   readonly home: ReturnType<typeof makeTempHome>;
   readonly cli: (args: string[], options?: RunOptions) => Promise<RunResult>;
+  readonly cliEffect: (
+    args: string[],
+    options?: RunEffectOptions,
+  ) => Effect.Effect<RunResult, CliRunError>;
   readonly invoke: (
     slug: string,
     options?: { readonly anonKey?: string; readonly payload?: unknown },
@@ -36,8 +47,7 @@ export interface LiveFixtures {
 }
 
 const base = vitestTest.extend<LiveFixtures>({
-  // eslint-disable-next-line no-empty-pattern
-  project: async ({}, use) => use(inject("liveProject")),
+  project: async ({ task: _task }, use) => use(inject("liveProject")),
 
   home: async ({ task: _task }, use) => {
     const home = makeTempHome();
@@ -53,7 +63,6 @@ const base = vitestTest.extend<LiveFixtures>({
     const directory = mkdtempSync(path.join(tmpdir(), `supabase-live-${suffix || "test"}-`));
     try {
       const initialized = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: directory,
         home: home.dir,
         env: { SUPABASE_PROFILE: inject("liveProfilePath") },
@@ -72,7 +81,21 @@ const base = vitestTest.extend<LiveFixtures>({
   cli: async ({ workspace, home }, use) => {
     await use((args, options) =>
       runSupabase(args, {
-        entrypoint: "legacy",
+        ...options,
+        cwd: options?.cwd ?? workspace.path,
+        home: home.dir,
+        exitTimeoutMs: options?.exitTimeoutMs ?? LIVE_EXIT_TIMEOUT_MS,
+        env: {
+          SUPABASE_PROFILE: inject("liveProfilePath"),
+          ...options?.env,
+        },
+      }),
+    );
+  },
+
+  cliEffect: async ({ workspace, home }, use) => {
+    await use((args, options) =>
+      runSupabaseEffect(args, {
         ...options,
         cwd: options?.cwd ?? workspace.path,
         home: home.dir,
@@ -114,6 +137,21 @@ const base = vitestTest.extend<LiveFixtures>({
 export const test = base;
 
 export { requireCliSuccess as requireLiveSuccess };
+
+/** Parse a command's stdout as JSON, failing with both streams when it is not. */
+export function requireLiveJson(
+  result: { readonly stdout: string; readonly stderr: string },
+  command: string,
+): unknown {
+  try {
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(
+      `${command} did not print JSON\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      { cause: error },
+    );
+  }
+}
 
 /** Flags every storage live test passes: the suite links the shared project
  * and the storage command family is experimental-gated. */
@@ -201,12 +239,7 @@ export async function expectPostgresConfigLiveOverride(
       { exitTimeoutMs: 20_000 },
     );
     requireCliSuccess(proof, label);
-    let config: unknown;
-    try {
-      config = JSON.parse(proof.stdout);
-    } catch {
-      config = undefined;
-    }
+    const config = requireLiveJson(proof, label);
     if (!Predicate.isObject(config)) {
       throw new Error(
         `${label}: unexpected postgres-config get payload\nstdout:\n${proof.stdout}\nstderr:\n${proof.stderr}`,

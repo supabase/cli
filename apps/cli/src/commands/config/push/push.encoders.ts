@@ -1,48 +1,46 @@
 /**
- * Pure encoders that turn the changes routed to one `config push` resource
- * into a v1 update-request body.
+ * Pure encoders that turn the changes routed to one `config push` resource into a v1
+ * update-request body.
  *
- * Encoders take the whole local AND remote projections, not just the
- * changed leaves, because several endpoints need companion values the API
- * requires together (`db_schema` when enabling the Data API, both CIDR
- * arrays, the iceberg/vector containers' required inner keys, the active SMS
- * provider's credential set). The change list decides *which* keys ship; a
- * companion's value always prefers the project's CURRENT (`remote`) value
- * over a schema-materialized local default, so an undeclared companion never
- * gets clobbered with a default the user never asked for. Only when `remote`
- * doesn't report a companion at all does resolution fall through to `local`
- * (and, for the storage feature containers only, the decoded `config`) — and
- * that fallback is disclosed via `forced`, never applied silently.
+ * Encoders take the whole local and remote projections, not just the changed leaves, because
+ * several endpoints need companion values the API requires together (`db_schema` when enabling
+ * the Data API, both CIDR arrays, the iceberg/vector containers' required inner keys, the active
+ * SMS provider's credential set). The change list decides *which* keys ship; a companion's value
+ * always prefers the project's current (`remote`) value over a schema-materialized local
+ * default, so an undeclared companion never gets clobbered with a default the user never asked
+ * for. Only when `remote` doesn't report a companion at all does resolution fall through to
+ * `local` (and, for the storage feature containers only, the decoded `config`) — and that
+ * fallback is disclosed via `forced`, never applied silently.
  */
 
 import type { CliConfig, ConfigChange, ProjectConfig } from "@supabase/config";
 import { AUTH_HOOK_NAMES } from "@supabase/config/internal";
 
-import { ramInBytes } from "../../../command-internal/legacy-size-units.ts";
-import { legacyPasswordRequirementsToChar } from "../../../command-internal/legacy-password-requirements.ts";
-import { legacyParseDuration } from "./push.duration.ts";
+import { ramInBytes } from "../../../command-internal/size-units.ts";
+import { passwordRequirementsToChar } from "../../../command-internal/password-requirements.ts";
+import { parseDuration } from "./push.duration.ts";
 import {
-  legacyComparePaths,
-  legacyContainerEnabled,
-  legacyIsPrefixOf,
-  legacyIsRecord,
-  legacyPathIn,
-  legacySamePath,
-  legacyValueAtPath,
+  comparePaths,
+  containerEnabled,
+  isPrefixOf,
+  isRecord,
+  pathIn,
+  samePath,
+  valueAtPath,
 } from "./push.paths.ts";
 import {
-  LEGACY_EMAIL_NOTIFICATION_NAMES,
-  LEGACY_EMAIL_TEMPLATE_NAMES,
-  LEGACY_EXTERNAL_PROVIDER_IDS,
-  LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL,
-  LEGACY_PROVIDERS_WITH_SKIP_NONCE_CHECK,
-  LEGACY_PROVIDERS_WITH_URL,
-  LEGACY_SMS_PROVIDER_NAMES,
+  EMAIL_NOTIFICATION_NAMES,
+  EMAIL_TEMPLATE_NAMES,
+  EXTERNAL_PROVIDER_IDS,
+  PROVIDERS_WITH_EMAIL_OPTIONAL,
+  PROVIDERS_WITH_SKIP_NONCE_CHECK,
+  PROVIDERS_WITH_URL,
+  SMS_PROVIDER_NAMES,
 } from "./push.registry-names.ts";
-import type { LegacyAuthEmailContent } from "./push.auth-email-content.ts";
-import type { LegacyPushSecretDecision } from "./push.secrets.ts";
+import type { AuthEmailContent } from "./push.auth-email-content.ts";
+import type { PushSecretDecision } from "./push.secrets.ts";
 
-export interface LegacyPushEncoderInput {
+export interface PushEncoderInput {
   /** Pushable changes routed to this resource. */
   readonly changes: ReadonlyArray<ConfigChange>;
   /** `fromConfigDocument(loaded)` — canonical, presence-masked, sentinel-pruned. */
@@ -52,16 +50,15 @@ export interface LegacyPushEncoderInput {
 }
 
 /**
- * The storage encoder's own input: adds the decoded `config` as the LAST
- * resort for the `storage.analytics`/`storage.vector` containers' required
- * inner keys, which the local projection prunes entirely once disabled
- * (CLI-2314 readiness). No other encoder needs this fourth tier.
+ * The storage encoder's own input: adds the decoded `config` as the last resort for the
+ * `storage.analytics`/`storage.vector` containers' required inner keys, which the local
+ * projection prunes entirely once disabled. No other encoder needs this fourth tier.
  */
-export interface LegacyStorageEncoderInput extends LegacyPushEncoderInput {
+export interface StorageEncoderInput extends PushEncoderInput {
   readonly config: CliConfig;
 }
 
-export interface LegacyPushEncoded<Body> {
+export interface PushEncoded<Body> {
   /** `undefined` = nothing to write for this resource. */
   readonly body: Body | undefined;
   /** Change paths this body communicated, sorted. */
@@ -80,7 +77,7 @@ export interface LegacyPushEncoded<Body> {
   readonly forced: ReadonlyArray<{ readonly path: ReadonlyArray<string>; readonly value: unknown }>;
   /**
    * Secret paths this body actually placed a plaintext value for, sorted —
-   * auth-only (`legacyEncodeAuthBody`); every other encoder omits it, since
+   * auth-only (`encodeAuthBody`); every other encoder omits it, since
    * none of their endpoints carry a secret. A container encoder can drop a
    * `send` decision when its required-together group turns out unencodable
    * (the container's fields end up in `unencodable` instead), so a caller
@@ -90,20 +87,20 @@ export interface LegacyPushEncoded<Body> {
   readonly secretsEncoded?: ReadonlyArray<ReadonlyArray<string>>;
 }
 
-export interface LegacyApiUpdateBody {
+export interface ApiUpdateBody {
   readonly db_schema?: string;
   readonly db_extra_search_path?: string;
   readonly max_rows?: number;
 }
-export type LegacyDbSettingsUpdateBody = Readonly<Record<string, string | number | boolean>>;
-export interface LegacyNetworkRestrictionsUpdateBody {
+export type DbSettingsUpdateBody = Readonly<Record<string, string | number | boolean>>;
+export interface NetworkRestrictionsUpdateBody {
   readonly dbAllowedCidrs: ReadonlyArray<string>;
   readonly dbAllowedCidrsV6: ReadonlyArray<string>;
 }
-export interface LegacySslEnforcementUpdateBody {
+export interface SslEnforcementUpdateBody {
   readonly requestedConfig: { readonly database: boolean };
 }
-export interface LegacyStorageUpdateBody {
+export interface StorageUpdateBody {
   readonly fileSizeLimit?: number;
   readonly features?: {
     readonly imageTransformation?: { readonly enabled: boolean };
@@ -122,20 +119,19 @@ export interface LegacyStorageUpdateBody {
   };
 }
 
-export interface LegacyAuthEncoderInput extends LegacyPushEncoderInput {
+export interface AuthEncoderInput extends PushEncoderInput {
   /** Secret send/unchanged/not_set/gated decisions, from `push.secrets.ts`. */
-  readonly secrets: ReadonlyArray<LegacyPushSecretDecision>;
+  readonly secrets: ReadonlyArray<PushSecretDecision>;
   /** HTML bodies loaded from `content_path`, for the unmapped mailer `*_content` keys. */
-  readonly emailContent: LegacyAuthEmailContent;
+  readonly emailContent: AuthEmailContent;
   /** Raw `data.attributes.auth` — for comparing the 13 unmapped mailer `*_content` keys. */
   readonly remoteAuthAttributes: Readonly<Record<string, unknown>>;
   /** Clock value for `sms_test_otp_valid_until` (+10 calendar years). */
   readonly now: Date;
 }
 
-// --- shared reasons (D5; everything else is a defensive fallback that the
-// mapping registry's own schema validation should make unreachable) --------
-
+// Everything else is a defensive fallback that the mapping registry's own schema validation
+// should make unreachable.
 const REASON_API_ENABLE_NEEDS_SCHEMA =
   "enabling the Data API needs at least one schema in api.schemas";
 const REASON_SMS_ACTIVE_PROVIDER_ONLY =
@@ -154,20 +150,18 @@ const REASON_COMPANION_TYPE_MISMATCH =
   "a required companion value has an unexpected type and could not be sent";
 const REASON_NO_ENCODER = "config push has no encoder for this property";
 
-// --- generic path/value helpers ---------------------------------------------
-
 function findChange(
   changes: ReadonlyArray<ConfigChange>,
   path: ReadonlyArray<string>,
 ): ConfigChange | undefined {
-  return changes.find((change) => legacySamePath(change.path, path));
+  return changes.find((change) => samePath(change.path, path));
 }
 
 function changesUnderPrefix(
   changes: ReadonlyArray<ConfigChange>,
   prefix: ReadonlyArray<string>,
 ): ReadonlyArray<ConfigChange> {
-  return changes.filter((change) => legacyIsPrefixOf(prefix, change.path));
+  return changes.filter((change) => isPrefixOf(prefix, change.path));
 }
 
 type LeafSource = "change" | "remote" | "local" | "config" | "none";
@@ -194,11 +188,11 @@ function resolveLeaf(
   if (change !== undefined) {
     return { value: change.local, source: "change" };
   }
-  const fromRemote = legacyValueAtPath(remote, path);
+  const fromRemote = valueAtPath(remote, path);
   if (fromRemote !== undefined) {
     return { value: fromRemote, source: "remote" };
   }
-  const fromLocal = legacyValueAtPath(local, path);
+  const fromLocal = valueAtPath(local, path);
   if (fromLocal !== undefined) {
     return { value: fromLocal, source: "local" };
   }
@@ -222,11 +216,12 @@ function resolveStorageFeatureLeaf(
   if (resolved.source !== "none") {
     return resolved;
   }
-  const fromConfig = legacyValueAtPath(prunedFallback, path);
+  const fromConfig = valueAtPath(prunedFallback, path);
   return fromConfig === undefined ? resolved : { value: fromConfig, source: "config" };
 }
 
-/** Records a companion as `forced` when it was NOT itself a routed change AND `remote` didn't report it. */
+/** Records a companion as `forced` when it wasn't itself a routed change and `remote` didn't
+ *  report it. */
 function pushForced(
   forced: Array<{ path: ReadonlyArray<string>; value: unknown }>,
   path: ReadonlyArray<string>,
@@ -238,22 +233,20 @@ function pushForced(
 }
 
 function findSecretDecision(
-  secrets: ReadonlyArray<LegacyPushSecretDecision>,
+  secrets: ReadonlyArray<PushSecretDecision>,
   path: ReadonlyArray<string>,
-): LegacyPushSecretDecision | undefined {
-  return secrets.find((decision) => legacySamePath(decision.path, path));
+): PushSecretDecision | undefined {
+  return secrets.find((decision) => samePath(decision.path, path));
 }
 
 /**
- * The paths a dropped container's `unencodable` entries must cover: its
- * ordinary routed changes, PLUS its own secret's path when that secret was
- * about to be sent — so a container triggered purely by a `send` secret
- * (no ordinary field change at all) is never silently dropped with nothing
- * reported.
+ * The paths a dropped container's `unencodable` entries must cover: its ordinary routed
+ * changes, plus its own secret's path when that secret was about to be sent — so a container
+ * triggered purely by a `send` secret is never silently dropped with nothing reported.
  */
 function unencodableTargets(
   containerChanges: ReadonlyArray<ConfigChange>,
-  secret: LegacyPushSecretDecision | undefined,
+  secret: PushSecretDecision | undefined,
 ): ReadonlyArray<ReadonlyArray<string>> {
   const paths = containerChanges.map((change) => change.path);
   return secret?.status === "send" ? [...paths, secret.path] : paths;
@@ -278,7 +271,7 @@ function asStringArray(value: unknown): ReadonlyArray<string> | undefined {
 }
 
 function asStringRecord(value: unknown): Readonly<Record<string, string>> | undefined {
-  if (!legacyIsRecord(value)) {
+  if (!isRecord(value)) {
     return undefined;
   }
   const result: Record<string, string> = {};
@@ -294,7 +287,7 @@ function asStringRecord(value: unknown): Readonly<Record<string, string>> | unde
 function sortByPath<T extends { readonly path: ReadonlyArray<string> }>(
   entries: ReadonlyArray<T>,
 ): ReadonlyArray<T> {
-  return [...entries].sort((a, b) => legacyComparePaths(a.path, b.path));
+  return [...entries].sort((a, b) => comparePaths(a.path, b.path));
 }
 
 /**
@@ -306,14 +299,14 @@ function sortByPath<T extends { readonly path: ReadonlyArray<string> }>(
  */
 function finalizeEncoded<Body>(
   changes: ReadonlyArray<ConfigChange>,
-  result: LegacyPushEncoded<Body>,
-): LegacyPushEncoded<Body> {
+  result: PushEncoded<Body>,
+): PushEncoded<Body> {
   const covered = [
     ...result.encoded,
     ...result.unencodable.map((entry) => entry.path),
     ...result.extras.map((entry) => entry.path),
   ];
-  const missing = changes.filter((change) => !legacyPathIn(change.path, covered));
+  const missing = changes.filter((change) => !pathIn(change.path, covered));
   if (missing.length === 0) {
     return result;
   }
@@ -328,9 +321,9 @@ function finalizeEncoded<Body>(
 
 /** Wraps an encoder's implementation with the {@link finalizeEncoded} exhaustiveness check,
  *  applied once here rather than at every one of an encoder's internal return points. */
-function withExhaustiveness<In extends LegacyPushEncoderInput, Body>(
-  encode: (input: In) => LegacyPushEncoded<Body>,
-): (input: In) => LegacyPushEncoded<Body> {
+function withExhaustiveness<In extends PushEncoderInput, Body>(
+  encode: (input: In) => PushEncoded<Body>,
+): (input: In) => PushEncoded<Body> {
   return (input) => finalizeEncoded(input.changes, encode(input));
 }
 
@@ -363,9 +356,7 @@ function makeLeafAdder(
   };
 }
 
-// --- api ---------------------------------------------------------------------
-
-function encodeApiBody(input: LegacyPushEncoderInput): LegacyPushEncoded<LegacyApiUpdateBody> {
+function encodeApiBodyImpl(input: PushEncoderInput): PushEncoded<ApiUpdateBody> {
   const { changes, local, remote } = input;
   const encoded: Array<ReadonlyArray<string>> = [];
   const unencodable: Array<{ path: ReadonlyArray<string>; reason: string }> = [];
@@ -376,14 +367,10 @@ function encodeApiBody(input: LegacyPushEncoderInput): LegacyPushEncoded<LegacyA
   const extraSearchPathChange = findChange(changes, ["api", "extra_search_path"]);
   const maxRowsChange = findChange(changes, ["api", "max_rows"]);
 
-  // Whether the Data API is currently disabled and staying that way: `enabled`
-  // itself is not a routed change, and its resolved (remote-preferred) value
-  // is `false`. Every OTHER api.* change is then meaningless to send — there
-  // is no live Data API for the platform to apply it to — so each routes to
-  // `unencodable` instead of either silently riding along inside the `""`
-  // disable sentinel (a schemas-only change would otherwise be swallowed by
-  // it) or being sent on its own to an endpoint that ignores it while
-  // disabled.
+  // Whether the Data API is currently disabled and staying that way: `enabled` itself is not a
+  // routed change, and its resolved (remote-preferred) value is `false`. Every other api.*
+  // change is then meaningless to send, so each routes to `unencodable` instead of either riding
+  // along inside the `""` disable sentinel or being sent to an endpoint that ignores it.
   const apiDisabled =
     enabledChange === undefined &&
     asBoolean(resolveLeaf(changes, ["api", "enabled"], remote, local).value) === false;
@@ -447,7 +434,7 @@ function encodeApiBody(input: LegacyPushEncoderInput): LegacyPushEncoded<LegacyA
     }
   }
 
-  const body: LegacyApiUpdateBody = {
+  const body: ApiUpdateBody = {
     ...(dbSchema !== undefined ? { db_schema: dbSchema } : {}),
     ...(dbExtraSearchPath !== undefined ? { db_extra_search_path: dbExtraSearchPath } : {}),
     ...(maxRows !== undefined ? { max_rows: maxRows } : {}),
@@ -457,20 +444,16 @@ function encodeApiBody(input: LegacyPushEncoderInput): LegacyPushEncoded<LegacyA
 
   return {
     body: hasBody ? body : undefined,
-    encoded: [...encoded].sort(legacyComparePaths),
+    encoded: [...encoded].sort(comparePaths),
     unencodable: sortByPath(unencodable),
     extras: [],
     forced: sortByPath(forced),
   };
 }
 
-export const legacyEncodeApiBody = withExhaustiveness(encodeApiBody);
+export const encodeApiBody = withExhaustiveness(encodeApiBodyImpl);
 
-// --- db.settings ---------------------------------------------------------
-
-function encodeDbSettingsBody(
-  input: LegacyPushEncoderInput,
-): LegacyPushEncoded<LegacyDbSettingsUpdateBody> {
+function encodeDbSettingsBodyImpl(input: PushEncoderInput): PushEncoded<DbSettingsUpdateBody> {
   const { changes } = input;
   const body: Record<string, string | number | boolean> = {};
   const encoded: Array<ReadonlyArray<string>> = [];
@@ -498,20 +481,18 @@ function encodeDbSettingsBody(
 
   return {
     body: Object.keys(body).length > 0 ? body : undefined,
-    encoded: [...encoded].sort(legacyComparePaths),
+    encoded: [...encoded].sort(comparePaths),
     unencodable: sortByPath(unencodable),
     extras: [],
     forced: [],
   };
 }
 
-export const legacyEncodeDbSettingsBody = withExhaustiveness(encodeDbSettingsBody);
+export const encodeDbSettingsBody = withExhaustiveness(encodeDbSettingsBodyImpl);
 
-// --- db.network_restrictions -----------------------------------------------
-
-function encodeNetworkRestrictionsBody(
-  input: LegacyPushEncoderInput,
-): LegacyPushEncoded<LegacyNetworkRestrictionsUpdateBody> {
+function encodeNetworkRestrictionsBodyImpl(
+  input: PushEncoderInput,
+): PushEncoded<NetworkRestrictionsUpdateBody> {
   const { changes, local, remote } = input;
   const relevant = changesUnderPrefix(changes, ["db", "network_restrictions"]);
   if (relevant.length === 0) {
@@ -552,22 +533,18 @@ function encodeNetworkRestrictionsBody(
 
   return {
     body: { dbAllowedCidrs: allowedCidrs, dbAllowedCidrsV6: allowedCidrsV6 },
-    encoded: relevant.map((change) => change.path).sort(legacyComparePaths),
+    encoded: relevant.map((change) => change.path).sort(comparePaths),
     unencodable: [],
     extras: [],
     forced: sortByPath(forced),
   };
 }
 
-export const legacyEncodeNetworkRestrictionsBody = withExhaustiveness(
-  encodeNetworkRestrictionsBody,
-);
+export const encodeNetworkRestrictionsBody = withExhaustiveness(encodeNetworkRestrictionsBodyImpl);
 
-// --- db.ssl_enforcement -----------------------------------------------------
-
-function encodeSslEnforcementBody(
-  input: LegacyPushEncoderInput,
-): LegacyPushEncoded<LegacySslEnforcementUpdateBody> {
+function encodeSslEnforcementBodyImpl(
+  input: PushEncoderInput,
+): PushEncoded<SslEnforcementUpdateBody> {
   const { changes } = input;
   const change = findChange(changes, ["db", "ssl_enforcement", "enabled"]);
   if (change === undefined) {
@@ -592,26 +569,22 @@ function encodeSslEnforcementBody(
   };
 }
 
-export const legacyEncodeSslEnforcementBody = withExhaustiveness(encodeSslEnforcementBody);
+export const encodeSslEnforcementBody = withExhaustiveness(encodeSslEnforcementBodyImpl);
 
-// --- storage -----------------------------------------------------------------
-
-interface LegacyStorageIcebergCatalogBody {
+interface StorageIcebergCatalogBody {
   readonly enabled: boolean;
   readonly maxNamespaces: number;
   readonly maxTables: number;
   readonly maxCatalogs: number;
 }
 
-interface LegacyStorageVectorBucketsBody {
+interface StorageVectorBucketsBody {
   readonly enabled: boolean;
   readonly maxBuckets: number;
   readonly maxIndexes: number;
 }
 
-function encodeStorageBody(
-  input: LegacyStorageEncoderInput,
-): LegacyPushEncoded<LegacyStorageUpdateBody> {
+function encodeStorageBodyImpl(input: StorageEncoderInput): PushEncoded<StorageUpdateBody> {
   const { changes, local, remote, config } = input;
   const encoded: Array<ReadonlyArray<string>> = [];
   const unencodable: Array<{ path: ReadonlyArray<string>; reason: string }> = [];
@@ -664,7 +637,7 @@ function encodeStorageBody(
     }
   }
 
-  let icebergCatalog: LegacyStorageIcebergCatalogBody | undefined;
+  let icebergCatalog: StorageIcebergCatalogBody | undefined;
   const analyticsChanges = changesUnderPrefix(changes, ["storage", "analytics"]);
   if (analyticsChanges.length > 0) {
     const analyticsPaths = analyticsChanges.map((change) => change.path);
@@ -719,7 +692,7 @@ function encodeStorageBody(
     }
   }
 
-  let vectorBuckets: LegacyStorageVectorBucketsBody | undefined;
+  let vectorBuckets: StorageVectorBucketsBody | undefined;
   const vectorChanges = changesUnderPrefix(changes, ["storage", "vector"]);
   if (vectorChanges.length > 0) {
     const vectorPaths = vectorChanges.map((change) => change.path);
@@ -760,14 +733,14 @@ function encodeStorageBody(
     }
   }
 
-  const features: NonNullable<LegacyStorageUpdateBody["features"]> = {
+  const features: NonNullable<StorageUpdateBody["features"]> = {
     ...(imageTransformation !== undefined ? { imageTransformation } : {}),
     ...(s3Protocol !== undefined ? { s3Protocol } : {}),
     ...(icebergCatalog !== undefined ? { icebergCatalog } : {}),
     ...(vectorBuckets !== undefined ? { vectorBuckets } : {}),
   };
   const hasFeatures = Object.keys(features).length > 0;
-  const body: LegacyStorageUpdateBody = {
+  const body: StorageUpdateBody = {
     ...(fileSizeLimit !== undefined ? { fileSizeLimit } : {}),
     ...(hasFeatures ? { features } : {}),
   };
@@ -775,16 +748,14 @@ function encodeStorageBody(
 
   return {
     body: hasBody ? body : undefined,
-    encoded: [...encoded].sort(legacyComparePaths),
+    encoded: [...encoded].sort(comparePaths),
     unencodable: sortByPath(unencodable),
     extras: [],
     forced: sortByPath(forced),
   };
 }
 
-export const legacyEncodeStorageBody = withExhaustiveness(encodeStorageBody);
-
-// --- auth ----------------------------------------------------------------
+export const encodeStorageBody = withExhaustiveness(encodeStorageBodyImpl);
 
 /** `undefined` on a non-string or an unparseable duration — never `0`, so an invalid
  *  declared value routes to `unencodable` (via `REASON_INVALID_DURATION`) instead of
@@ -793,7 +764,7 @@ function durationToSeconds(value: unknown): number | undefined {
   const raw = asString(value);
   if (raw === undefined) return undefined;
   try {
-    return Math.floor(legacyParseDuration(raw) / 1_000_000_000);
+    return Math.floor(parseDuration(raw) / 1_000_000_000);
   } catch {
     return undefined;
   }
@@ -804,7 +775,7 @@ function durationToHours(value: unknown): number | undefined {
   const raw = asString(value);
   if (raw === undefined) return undefined;
   try {
-    return legacyParseDuration(raw) / 3_600_000_000_000;
+    return parseDuration(raw) / 3_600_000_000_000;
   } catch {
     return undefined;
   }
@@ -831,14 +802,14 @@ function encodeSmtpContainer(
   changes: ReadonlyArray<ConfigChange>,
   remote: ProjectConfig,
   local: ProjectConfig,
-  secret: LegacyPushSecretDecision | undefined,
+  secret: PushSecretDecision | undefined,
   forced: Array<{ path: ReadonlyArray<string>; value: unknown }>,
   unencodable: Array<{ path: ReadonlyArray<string>; reason: string }>,
   containerChanges: ReadonlyArray<ConfigChange>,
   secretsEncoded: Array<ReadonlyArray<string>>,
 ): Record<string, unknown> | undefined {
   const containerPath = ["auth", "email", "smtp"];
-  const enabled = legacyContainerEnabled(local, containerPath);
+  const enabled = containerEnabled(local, containerPath);
   if (enabled === undefined) {
     for (const path of unencodableTargets(containerChanges, secret)) {
       unencodable.push({ path, reason: REASON_CONTAINER_STATE_UNKNOWN });
@@ -859,10 +830,9 @@ function encodeSmtpContainer(
     }
     return undefined;
   }
-  // A companion that DID resolve but to the wrong runtime type (never
-  // expected from a schema-typed `ProjectConfig`, but `remote` is untyped
-  // JSON off the wire) must never be silently coerced to `""`/`"0"` below —
-  // it makes the whole group unencodable instead.
+  // A companion that resolved but to the wrong runtime type (never expected from a schema-typed
+  // `ProjectConfig`, but `remote` is untyped JSON off the wire) must never be silently coerced
+  // to `""`/`"0"` below — it makes the whole group unencodable instead.
   if (
     typeof hostR.value !== "string" ||
     typeof portR.value !== "number" ||
@@ -899,12 +869,12 @@ function encodeCaptchaContainer(
   changes: ReadonlyArray<ConfigChange>,
   remote: ProjectConfig,
   local: ProjectConfig,
-  secret: LegacyPushSecretDecision | undefined,
+  secret: PushSecretDecision | undefined,
   forced: Array<{ path: ReadonlyArray<string>; value: unknown }>,
   secretsEncoded: Array<ReadonlyArray<string>>,
 ): Record<string, unknown> | undefined {
   const containerPath = ["auth", "captcha"];
-  const enabled = legacyContainerEnabled(local, containerPath);
+  const enabled = containerEnabled(local, containerPath);
   if (enabled === undefined) {
     return undefined;
   }
@@ -930,14 +900,14 @@ function encodeHookContainer(
   changes: ReadonlyArray<ConfigChange>,
   remote: ProjectConfig,
   local: ProjectConfig,
-  secret: LegacyPushSecretDecision | undefined,
+  secret: PushSecretDecision | undefined,
   forced: Array<{ path: ReadonlyArray<string>; value: unknown }>,
   unencodable: Array<{ path: ReadonlyArray<string>; reason: string }>,
   containerChanges: ReadonlyArray<ConfigChange>,
   secretsEncoded: Array<ReadonlyArray<string>>,
 ): Record<string, unknown> | undefined {
   const containerPath = ["auth", "hook", name];
-  const enabled = legacyContainerEnabled(local, containerPath);
+  const enabled = containerEnabled(local, containerPath);
   if (enabled === undefined) {
     for (const path of unencodableTargets(containerChanges, secret)) {
       unencodable.push({ path, reason: REASON_CONTAINER_STATE_UNKNOWN });
@@ -969,7 +939,7 @@ function encodeExternalProviderContainer(
   changes: ReadonlyArray<ConfigChange>,
   remote: ProjectConfig,
   local: ProjectConfig,
-  secret: LegacyPushSecretDecision | undefined,
+  secret: PushSecretDecision | undefined,
   forced: Array<{ path: ReadonlyArray<string>; value: unknown }>,
   unencodable: Array<{ path: ReadonlyArray<string>; reason: string }>,
   containerChanges: ReadonlyArray<ConfigChange>,
@@ -977,7 +947,7 @@ function encodeExternalProviderContainer(
 ): Record<string, unknown> | undefined {
   const containerPath = ["auth", "external", id];
   const key = `external_${id}`;
-  const enabled = legacyContainerEnabled(local, containerPath);
+  const enabled = containerEnabled(local, containerPath);
   if (enabled === undefined) {
     for (const path of unencodableTargets(containerChanges, secret)) {
       unencodable.push({ path, reason: REASON_CONTAINER_STATE_UNKNOWN });
@@ -992,13 +962,13 @@ function encodeExternalProviderContainer(
   // `additional_client_ids` sibling into this on the pull side; the push
   // body has no such key, so nothing here splits it back apart).
   const clientIdR = resolveLeaf(changes, [...containerPath, "client_id"], remote, local);
-  const urlR = LEGACY_PROVIDERS_WITH_URL.includes(id)
+  const urlR = PROVIDERS_WITH_URL.includes(id)
     ? resolveLeaf(changes, [...containerPath, "url"], remote, local)
     : undefined;
-  const emailOptionalR = LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL.includes(id)
+  const emailOptionalR = PROVIDERS_WITH_EMAIL_OPTIONAL.includes(id)
     ? resolveLeaf(changes, [...containerPath, "email_optional"], remote, local)
     : undefined;
-  const skipNonceCheckR = LEGACY_PROVIDERS_WITH_SKIP_NONCE_CHECK.includes(id)
+  const skipNonceCheckR = PROVIDERS_WITH_SKIP_NONCE_CHECK.includes(id)
     ? resolveLeaf(changes, [...containerPath, "skip_nonce_check"], remote, local)
     : undefined;
   const required = [clientIdR, urlR, emailOptionalR, skipNonceCheckR].filter(
@@ -1010,9 +980,9 @@ function encodeExternalProviderContainer(
     }
     return undefined;
   }
-  // Each companion resolved to SOME value above — but a wrong runtime type
-  // (client_id/url expect a string, email_optional/skip_nonce_check expect a
-  // boolean) must never be silently coerced to `""`/`false` below.
+  // Each companion resolved to some value above — but a wrong runtime type (client_id/url
+  // expect a string, email_optional/skip_nonce_check expect a boolean) must never be silently
+  // coerced to `""`/`false` below.
   if (
     typeof clientIdR.value !== "string" ||
     (urlR !== undefined && typeof urlR.value !== "string") ||
@@ -1050,7 +1020,7 @@ function encodeActiveSmsProviderBody(
   changes: ReadonlyArray<ConfigChange>,
   remote: ProjectConfig,
   local: ProjectConfig,
-  secrets: ReadonlyArray<LegacyPushSecretDecision>,
+  secrets: ReadonlyArray<PushSecretDecision>,
   forced: Array<{ path: ReadonlyArray<string>; value: unknown }>,
   unencodable: Array<{ path: ReadonlyArray<string>; reason: string }>,
   containerChanges: ReadonlyArray<ConfigChange>,
@@ -1074,11 +1044,10 @@ function encodeActiveSmsProviderBody(
     return asString(resolution.value) ?? "";
   };
   const secretFor = (key: string) => findSecretDecision(secrets, ["auth", "sms", provider, key]);
-  // Collected locally rather than pushed straight to `secretsEncoded`: a
-  // provider's own secret is applied to `body` INSIDE the switch below,
-  // before the `resolutions.some(source === "none")` check that can still
-  // discard the whole body — only merged into the caller's list once that
-  // check has passed (mirrors `forced`, pushed the same way just below).
+  // Collected locally rather than pushed straight to `secretsEncoded`: a provider's own secret
+  // is applied to `body` inside the switch below, before the `resolutions.some(source ===
+  // "none")` check that can still discard the whole body — only merged into the caller's list
+  // once that check has passed (mirrors `forced`, pushed the same way just below).
   const sentSecretPaths: Array<ReadonlyArray<string>> = [];
   const applySecret = (body: Record<string, unknown>, key: string) => {
     const secret = secretFor(key);
@@ -1151,14 +1120,14 @@ function invert(value: unknown): boolean | undefined {
 
 function charClass(value: unknown): string | undefined {
   const raw = asString(value);
-  return raw === undefined ? undefined : legacyPasswordRequirementsToChar(raw);
+  return raw === undefined ? undefined : passwordRequirementsToChar(raw);
 }
 
 function joinCsv(value: unknown): string {
   return (asStringArray(value) ?? []).join(",");
 }
 
-export interface LegacyPushAuthLeafSpec {
+export interface PushAuthLeafSpec {
   readonly configPath: ReadonlyArray<string>;
   readonly apiKey: string;
   readonly transform: (value: unknown) => unknown;
@@ -1168,15 +1137,14 @@ export interface LegacyPushAuthLeafSpec {
 }
 
 /**
- * The auth encoder's flat leaf mappings — declared once here so
- * `legacyEncodeAuthBody` and its key-name drift guard
- * (`push.encoders.unit.test.ts`) iterate the SAME source of truth rather than
- * risk disagreeing with each other about an `apiKey`. Every entry not
- * covered here (the smtp/captcha/hook/external-provider/sms-provider
- * containers, the email template/notification loops) builds its `apiKey`
- * from a string template instead of a static path — see those functions.
+ * The auth encoder's flat leaf mappings — declared once here so `encodeAuthBody` and its
+ * key-name drift guard (`push.encoders.unit.test.ts`) iterate the same source of truth rather
+ * than risk disagreeing with each other about an `apiKey`. Every entry not covered here (the
+ * smtp/captcha/hook/external-provider/sms-provider containers, the email template/notification
+ * loops) builds its `apiKey` from a string template instead of a static path — see those
+ * functions.
  */
-export const LEGACY_PUSH_AUTH_LEAF_MAP: ReadonlyArray<LegacyPushAuthLeafSpec> = [
+export const PUSH_AUTH_LEAF_MAP: ReadonlyArray<PushAuthLeafSpec> = [
   // core scalars
   { configPath: ["auth", "site_url"], apiKey: "site_url", transform: asString },
   {
@@ -1401,23 +1369,22 @@ export const LEGACY_PUSH_AUTH_LEAF_MAP: ReadonlyArray<LegacyPushAuthLeafSpec> = 
   },
 ];
 
-function encodeAuthBody(
-  input: LegacyAuthEncoderInput,
-): LegacyPushEncoded<Readonly<Record<string, unknown>>> {
+function encodeAuthBodyImpl(
+  input: AuthEncoderInput,
+): PushEncoded<Readonly<Record<string, unknown>>> {
   const { changes, local, remote, secrets, emailContent, remoteAuthAttributes, now } = input;
   const body: Record<string, unknown> = {};
   const encoded: Array<ReadonlyArray<string>> = [];
   const unencodable: Array<{ path: ReadonlyArray<string>; reason: string }> = [];
   const extras: Array<{ path: ReadonlyArray<string>; label: "content" }> = [];
   const forced: Array<{ path: ReadonlyArray<string>; value: unknown }> = [];
-  // Secret paths a container actually placed a plaintext for — NOT every
-  // `send` decision: a container dropped as `unencodable` never reaches the
-  // point where its own secret gets assigned to `body`, so this can be a
-  // strict subset of `secrets.filter(status === "send")`.
+  // Secret paths a container actually placed a plaintext for, not every `send` decision: a
+  // container dropped as `unencodable` never reaches the point where its own secret gets
+  // assigned to `body`, so this can be a strict subset of `secrets.filter(status === "send")`.
   const secretsEncoded: Array<ReadonlyArray<string>> = [];
   const leaf = makeLeafAdder(changes, body, encoded, unencodable);
 
-  for (const spec of LEGACY_PUSH_AUTH_LEAF_MAP) {
+  for (const spec of PUSH_AUTH_LEAF_MAP) {
     leaf(spec.configPath, spec.apiKey, spec.transform, spec.reason);
   }
 
@@ -1442,7 +1409,7 @@ function encodeAuthBody(
   }
 
   // email templates (subjects, leaf) + template content (push-only, extras)
-  for (const name of LEGACY_EMAIL_TEMPLATE_NAMES) {
+  for (const name of EMAIL_TEMPLATE_NAMES) {
     leaf(["auth", "email", "template", name, "subject"], `mailer_subjects_${name}`, asString);
     const content = emailContent.template[name];
     if (content === undefined) {
@@ -1458,7 +1425,7 @@ function encodeAuthBody(
   }
 
   // notifications (enabled + subject, leaf) + notification content (push-only, extras)
-  for (const name of LEGACY_EMAIL_NOTIFICATION_NAMES) {
+  for (const name of EMAIL_NOTIFICATION_NAMES) {
     leaf(
       ["auth", "email", "notification", name, "enabled"],
       `mailer_notifications_${name}_enabled`,
@@ -1532,7 +1499,7 @@ function encodeAuthBody(
   // no "current remote value" for a push-only credential map)
   const testOtpChanges = changesUnderPrefix(changes, ["auth", "sms", "test_otp"]);
   if (testOtpChanges.length > 0) {
-    const record = asStringRecord(legacyValueAtPath(local, ["auth", "sms", "test_otp"]));
+    const record = asStringRecord(valueAtPath(local, ["auth", "sms", "test_otp"]));
     const otpString = record === undefined ? "" : mapRecordToEnvString(record);
     if (otpString.length > 0) {
       body["sms_test_otp"] = otpString;
@@ -1546,19 +1513,17 @@ function encodeAuthBody(
   }
 
   // sms providers (whole — active provider only)
-  const smsProviderChanges = LEGACY_SMS_PROVIDER_NAMES.flatMap((provider) =>
+  const smsProviderChanges = SMS_PROVIDER_NAMES.flatMap((provider) =>
     changesUnderPrefix(changes, ["auth", "sms", provider]),
   );
   const smsProviderSendSecrets = secrets.filter(
     (decision) =>
       decision.status === "send" &&
-      LEGACY_SMS_PROVIDER_NAMES.some((provider) =>
-        legacyIsPrefixOf(["auth", "sms", provider], decision.path),
-      ),
+      SMS_PROVIDER_NAMES.some((provider) => isPrefixOf(["auth", "sms", provider], decision.path)),
   );
   if (smsProviderChanges.length > 0 || smsProviderSendSecrets.length > 0) {
-    const activeProvider = LEGACY_SMS_PROVIDER_NAMES.find(
-      (provider) => legacyContainerEnabled(local, ["auth", "sms", provider]) === true,
+    const activeProvider = SMS_PROVIDER_NAMES.find(
+      (provider) => containerEnabled(local, ["auth", "sms", provider]) === true,
     );
     if (activeProvider === undefined) {
       for (const change of smsProviderChanges) {
@@ -1590,16 +1555,16 @@ function encodeAuthBody(
   const triggeredProviderIds = new Set<string>();
   for (const change of changesUnderPrefix(changes, ["auth", "external"])) {
     const id = change.path[2];
-    if (id !== undefined && LEGACY_EXTERNAL_PROVIDER_IDS.includes(id)) {
+    if (id !== undefined && EXTERNAL_PROVIDER_IDS.includes(id)) {
       triggeredProviderIds.add(id);
     }
   }
-  for (const id of LEGACY_EXTERNAL_PROVIDER_IDS) {
+  for (const id of EXTERNAL_PROVIDER_IDS) {
     if (findSecretDecision(secrets, ["auth", "external", id, "secret"])?.status === "send") {
       triggeredProviderIds.add(id);
     }
   }
-  for (const id of LEGACY_EXTERNAL_PROVIDER_IDS) {
+  for (const id of EXTERNAL_PROVIDER_IDS) {
     if (!triggeredProviderIds.has(id)) {
       continue;
     }
@@ -1624,12 +1589,12 @@ function encodeAuthBody(
 
   return {
     body: Object.keys(body).length > 0 ? body : undefined,
-    encoded: [...encoded].sort(legacyComparePaths),
+    encoded: [...encoded].sort(comparePaths),
     unencodable: sortByPath(unencodable),
     extras: sortByPath(extras),
     forced: sortByPath(forced),
-    secretsEncoded: [...secretsEncoded].sort(legacyComparePaths),
+    secretsEncoded: [...secretsEncoded].sort(comparePaths),
   };
 }
 
-export const legacyEncodeAuthBody = withExhaustiveness(encodeAuthBody);
+export const encodeAuthBody = withExhaustiveness(encodeAuthBodyImpl);

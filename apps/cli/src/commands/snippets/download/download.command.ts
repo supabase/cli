@@ -2,9 +2,9 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacySnippetsDownload } from "./download.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { snippetsDownload } from "./download.handler.ts";
 
 const config = {
   snippetId: Argument.string("snippet-id").pipe(
@@ -15,9 +15,9 @@ const config = {
     Flag.optional,
   ),
 };
-export type LegacySnippetsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type SnippetsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacySnippetsDownloadCommand = Command.make("download", config).pipe(
+export const snippetsDownloadCommand = Command.make("download", config).pipe(
   Command.withDescription("Download contents of the specified SQL snippet."),
   Command.withShortDescription("Download contents of a SQL snippet"),
   Command.withExamples([
@@ -27,12 +27,12 @@ export const legacySnippetsDownloadCommand = Command.make("download", config).pi
     },
   ]),
   Command.withHandler((flags) =>
-    legacySnippetsDownload(flags).pipe(
+    snippetsDownload(flags).pipe(
       // No `safeFlags` — `--project-ref` is not on the telemetry-safe list,
       // so the telemetry payload redacts the value.
-      withLegacyCommandInstrumentation({ flags }),
+      withCommandTelemetry({ flags }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["snippets", "download"])),
+  Command.provide(managementApiRuntimeLayer(["snippets", "download"])),
 );

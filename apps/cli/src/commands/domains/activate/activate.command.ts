@@ -2,9 +2,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyDomainsActivate } from "./activate.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { domainsActivate } from "./activate.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -17,9 +17,9 @@ const config = {
   ),
 } as const;
 
-export type LegacyDomainsActivateFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DomainsActivateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDomainsActivateCommand = Command.make("activate", config).pipe(
+export const domainsActivateCommand = Command.make("activate", config).pipe(
   Command.withDescription(
     "Activates the custom hostname configuration for a project. This reconfigures your Supabase project to respond to requests on your custom hostname. After the custom hostname is activated, your project's auth services will no longer function on the Supabase-provisioned subdomain.",
   ),
@@ -31,10 +31,7 @@ export const legacyDomainsActivateCommand = Command.make("activate", config).pip
     },
   ]),
   Command.withHandler((flags) =>
-    legacyDomainsActivate(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    domainsActivate(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["domains", "activate"])),
+  Command.provide(managementApiRuntimeLayer(["domains", "activate"])),
 );

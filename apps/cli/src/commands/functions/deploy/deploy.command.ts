@@ -4,9 +4,9 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyFunctionsDeploy } from "./deploy.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { functionsDeploy } from "./deploy.handler.ts";
 
 const config = {
   functionNames: Argument.string("Function name").pipe(
@@ -54,9 +54,9 @@ const config = {
   ),
 } as const;
 
-export type LegacyFunctionsDeployFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type FunctionsDeployFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyFunctionsDeployCommand = Command.make("deploy", config).pipe(
+export const functionsDeployCommand = Command.make("deploy", config).pipe(
   Command.withDescription("Deploy a Function to the linked Supabase project."),
   Command.withShortDescription("Deploy a Function to Supabase"),
   Command.withExamples([
@@ -70,14 +70,12 @@ export const legacyFunctionsDeployCommand = Command.make("deploy", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyFunctionsDeploy(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
+    functionsDeploy(flags).pipe(
+      withCommandTelemetry({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
       withJsonErrorHandling,
     ),
   ),
-  // `stdinLayer`: the `--prune` confirmation reads piped stdin via `legacyPromptYesNo`
+  // `stdinLayer`: the `--prune` confirmation reads piped stdin via `promptYesNo`
   // on a non-TTY stdin.
-  Command.provide(
-    Layer.mergeAll(legacyManagementApiRuntimeLayer(["functions", "deploy"]), stdinLayer),
-  ),
+  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["functions", "deploy"]), stdinLayer)),
 );

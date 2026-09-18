@@ -134,13 +134,13 @@ pnpm run test:unit && pnpm run test:integration
 
 Useful source entry points:
 
-| Path              | Purpose                                |
-| ----------------- | -------------------------------------- |
-| `apps/cli`        | TypeScript/Bun CLI package             |
-| `apps/cli-go`     | Go CLI source used by the legacy shell |
-| `packages/stack`  | Local Supabase stack runtime           |
-| `packages/config` | Config schema and generated types      |
-| `packages/api`    | Typed Supabase Management API client   |
+| Path              | Purpose                              |
+| ----------------- | ------------------------------------ |
+| `apps/cli`        | TypeScript/Bun CLI package           |
+| `apps/cli-go`     | Go CLI source used by the CLI        |
+| `packages/stack`  | Local Supabase stack runtime         |
+| `packages/config` | Config schema and generated types    |
+| `packages/api`    | Typed Supabase Management API client |
 
 After a fresh clone, install the reference repositories used for agent and developer inspection:
 

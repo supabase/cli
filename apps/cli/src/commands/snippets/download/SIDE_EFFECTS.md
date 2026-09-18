@@ -2,13 +2,13 @@
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                            |
-| ---------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliSettings.profile` |
-| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                        |
-| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                   |
-| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are unset                               |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                  |
+| Path                                           | Format                    | When                                                                                          |
+| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
+| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are unset                             |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                |
 
 ## Files Written
 
@@ -35,13 +35,13 @@ Only `content.sql` is rendered in text mode. The full payload is exposed via `--
 
 ## Exit Codes
 
-| Code | Condition                                                           |
-| ---- | ------------------------------------------------------------------- |
-| `0`  | success — SQL written to stdout                                     |
-| `1`  | `LegacySnippetsInvalidIdError` — `<snippet-id>` is not a valid UUID |
-| `1`  | `LegacyInvalidProjectRefError` / `LegacyProjectNotLinkedError`      |
-| `1`  | `LegacySnippetsDownloadUnexpectedStatusError` — non-2xx response    |
-| `1`  | `LegacySnippetsDownloadNetworkError` — transport-level failure      |
+| Code | Condition                                                     |
+| ---- | ------------------------------------------------------------- |
+| `0`  | success — SQL written to stdout                               |
+| `1`  | `SnippetsInvalidIdError` — `<snippet-id>` is not a valid UUID |
+| `1`  | `InvalidProjectRefError` / `ProjectRefNotLinkedError`         |
+| `1`  | `SnippetsDownloadUnexpectedStatusError` — non-2xx response    |
+| `1`  | `SnippetsDownloadNetworkError` — transport-level failure      |
 
 ## Telemetry Events Fired
 

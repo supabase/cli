@@ -1,0 +1,157 @@
+import { Effect, Option } from "effect";
+import type { StackRuntimePreference } from "@supabase/stack/effect";
+
+import { NetworkIdFlag } from "./global-flags.ts";
+import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
+import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
+import { DockerRun } from "./docker-run.service.ts";
+import { DockerRunError } from "./docker-run.errors.ts";
+import { getRegistryImageUrl } from "./docker-registry.ts";
+import { BundledPostgresClient, resolveBundledPostgresRuntime } from "./bundled-postgres-client.ts";
+
+/**
+ * Runs a pg_dump/pg_dumpall bash script in a one-shot container, streaming stdout
+ * chunk-by-chunk to `onStdout` and teeing stderr live, and returning the exit code and
+ * captured stderr for the caller to classify (e.g. with `isIPv6ConnectivityError`). Host
+ * networking by default, overridden by `--network-id`, `SUPABASE_NETWORK_ID`, or a project
+ * `supabase/.env` value, in that precedence.
+ *
+ * Shared by `db dump`, `db pull`'s initial-migra schema dump, and `migration squash`'s
+ * before/after/full dumps. Runs a single attempt only; the pooler-fallback decision stays
+ * with the caller.
+ */
+export const streamPgDump = Effect.fnUntraced(function* <E>(params: {
+  /** Resolved Postgres image tag (pre-registry-URL); the helper applies the registry mirror. */
+  readonly image: string;
+  /** The bash pg_dump/pg_dumpall script (`dump{Schema,Data,Role}Script`). */
+  readonly script: string;
+  readonly env: Readonly<Record<string, string>>;
+  /** Receives each stdout chunk in arrival order; its failure aborts the run as `E`. */
+  readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
+  /**
+   * Loaded project `supabase/.env` map, consulted for a `SUPABASE_NETWORK_ID`
+   * value when neither `--network-id` nor the ambient shell env set one. Omitted
+   * (or `{}`) by callers that haven't loaded a project env map.
+   */
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
+  /**
+   * Stack dumps always talk to published credentials. Ignore compose
+   * `SUPABASE_NETWORK_ID` so the tool container never joins `supabase_network_*`.
+   * An explicit `--network-id` still wins.
+   */
+  readonly forceHostNetwork?: boolean;
+}) {
+  const docker = yield* DockerRun;
+  const runtimeInfo = yield* RuntimeInfo;
+  const networkIdFlag = yield* NetworkIdFlag;
+
+  // Dump never falls back to generated `supabase_network_*`; host is the default.
+  const network = dumpNetworkMode(
+    Option.getOrUndefined(networkIdFlag),
+    params.forceHostNetwork === true,
+    params.projectEnvValues ?? {},
+  );
+  const extraHosts = runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
+
+  const image = yield* getRegistryImageUrl(params.image, params.projectEnvValues).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DockerRunError({
+          message: `failed to resolve Docker image registry configuration: ${cause.message}`,
+          reason: "config",
+          daemonDown: false,
+        }),
+    ),
+  );
+
+  return yield* docker.runStream<E>(
+    {
+      image,
+      cmd: ["bash", "-c", params.script, "--"],
+      env: params.env,
+      binds: [],
+      workingDir: Option.none(),
+      securityOpt: [],
+      extraHosts,
+      network,
+      projectEnvValues: params.projectEnvValues,
+    },
+    { onStdout: params.onStdout, teeStderr: true },
+  );
+});
+
+export type PgDumpClient =
+  | { readonly kind: "container" }
+  | {
+      readonly kind: "bundled";
+      readonly command: "pg_dump" | "pg_dumpall";
+      readonly version: string;
+      readonly runtime?: StackRuntimePreference;
+    };
+
+export const pgDumpClientExitMessage = (client: PgDumpClient, exitCode: number): string =>
+  client.kind === "bundled" && client.runtime?.kind === "native"
+    ? `error running ${client.command}: exit ${exitCode}`
+    : `error running container: exit ${exitCode}`;
+
+const dumpNetworkMode = (
+  networkId: string | undefined,
+  forceHostNetwork: boolean,
+  projectEnvValues: Readonly<Record<string, string>>,
+): { readonly _tag: "named"; readonly name: string } | { readonly _tag: "host" } => {
+  if (networkId !== undefined && networkId.length > 0) return { _tag: "named", name: networkId };
+  if (forceHostNetwork) return { _tag: "host" };
+  const envNetworkId = viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues);
+  return envNetworkId.length > 0 ? { _tag: "named", name: envNetworkId } : { _tag: "host" };
+};
+
+const bundledDumpNetwork = (
+  networkId: string | undefined,
+  forceHostNetwork: boolean,
+  projectEnvValues: Readonly<Record<string, string>>,
+): "host" | { readonly name: string } => {
+  const network = dumpNetworkMode(networkId, forceHostNetwork, projectEnvValues);
+  return network._tag === "host" ? "host" : { name: network.name };
+};
+
+/** Compose dump, or catalog `pg_dump`/`pg_dumpall` on the stack backend. */
+export const streamPgDumpWithClient = Effect.fnUntraced(function* <E>(params: {
+  readonly image: string;
+  readonly script: string;
+  readonly env: Readonly<Record<string, string>>;
+  readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
+  readonly client: PgDumpClient;
+  readonly forceHostNetwork?: boolean;
+}) {
+  if (params.client.kind === "bundled") {
+    const bundled = yield* BundledPostgresClient;
+    const runtimeInfo = yield* RuntimeInfo;
+    const networkIdFlag = yield* NetworkIdFlag;
+    const runtime =
+      params.client.runtime ??
+      (yield* resolveBundledPostgresRuntime(undefined, runtimeInfo.platform, runtimeInfo.arch));
+    const extraHosts =
+      runtime.kind === "container" && runtimeInfo.platform === "linux"
+        ? ["host.docker.internal:host-gateway"]
+        : [];
+    return yield* bundled.run({
+      version: params.client.version,
+      runtime,
+      argv: ["bash", "-c", params.script, "--"],
+      env: params.env,
+      network: bundledDumpNetwork(
+        Option.getOrUndefined(networkIdFlag),
+        params.forceHostNetwork === true,
+        params.projectEnvValues ?? {},
+      ),
+      extraHosts,
+      onStdout: params.onStdout,
+      teeStderr: true,
+    });
+  }
+  return yield* streamPgDump({
+    ...params,
+    forceHostNetwork: params.forceHostNetwork === true,
+  });
+});

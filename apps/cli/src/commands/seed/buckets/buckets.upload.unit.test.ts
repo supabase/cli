@@ -1,25 +1,46 @@
+import { BunPath } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { Effect, Path } from "effect";
 
-import { legacyBucketObjectKey } from "./buckets.upload.ts";
+import { bucketObjectKey } from "./buckets.upload.ts";
 
-describe("legacyBucketObjectKey", () => {
+const path = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
+const posixPath = Effect.runSync(Effect.provide(Path.Path, BunPath.layerPosix));
+const win32Path = Effect.runSync(Effect.provide(Path.Path, BunPath.layerWin32));
+
+describe("bucketObjectKey", () => {
   it("maps a single-file objects_path to <bucket>/<basename>", () => {
-    expect(legacyBucketObjectKey("docs", "assets/file.pdf", "assets/file.pdf")).toBe(
+    expect(bucketObjectKey({ path, posixPath }, "docs", "assets/file.pdf", "assets/file.pdf")).toBe(
       "docs/file.pdf",
     );
   });
 
+  it("normalises win32 separators in the remote key", () => {
+    expect(
+      bucketObjectKey(
+        { path: win32Path, posixPath },
+        "docs",
+        "C:\\assets",
+        "C:\\assets\\sub\\b.txt",
+      ),
+    ).toBe("docs/sub/b.txt");
+  });
+
   it("maps a direct child to <bucket>/<name>", () => {
-    expect(legacyBucketObjectKey("docs", "assets", "assets/a.txt")).toBe("docs/a.txt");
+    expect(bucketObjectKey({ path, posixPath }, "docs", "assets", "assets/a.txt")).toBe(
+      "docs/a.txt",
+    );
   });
 
   it("maps a nested file to <bucket>/<relative-posix-path>", () => {
-    expect(legacyBucketObjectKey("docs", "assets", "assets/sub/dir/b.txt")).toBe(
+    expect(bucketObjectKey({ path, posixPath }, "docs", "assets", "assets/sub/dir/b.txt")).toBe(
       "docs/sub/dir/b.txt",
     );
   });
 
   it("normalises a leading ./ in objects_path", () => {
-    expect(legacyBucketObjectKey("docs", "./assets", "assets/a.txt")).toBe("docs/a.txt");
+    expect(bucketObjectKey({ path, posixPath }, "docs", "./assets", "assets/a.txt")).toBe(
+      "docs/a.txt",
+    );
   });
 });

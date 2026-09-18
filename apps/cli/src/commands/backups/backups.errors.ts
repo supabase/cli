@@ -6,7 +6,7 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-export class LegacyBackupListNetworkError extends Data.TaggedError("LegacyBackupListNetworkError")<{
+export class BackupListNetworkError extends Data.TaggedError("BackupListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -17,8 +17,8 @@ export class LegacyBackupListNetworkError extends Data.TaggedError("LegacyBackup
   }
 }
 
-export class LegacyBackupListUnexpectedStatusError extends Data.TaggedError(
-  "LegacyBackupListUnexpectedStatusError",
+export class BackupListUnexpectedStatusError extends Data.TaggedError(
+  "BackupListUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -29,9 +29,7 @@ export class LegacyBackupListUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacyBackupRestoreNetworkError extends Data.TaggedError(
-  "LegacyBackupRestoreNetworkError",
-)<{
+export class BackupRestoreNetworkError extends Data.TaggedError("BackupRestoreNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -42,8 +40,8 @@ export class LegacyBackupRestoreNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyBackupRestoreUnexpectedStatusError extends Data.TaggedError(
-  "LegacyBackupRestoreUnexpectedStatusError",
+export class BackupRestoreUnexpectedStatusError extends Data.TaggedError(
+  "BackupRestoreUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;

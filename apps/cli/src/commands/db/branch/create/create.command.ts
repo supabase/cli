@@ -1,6 +1,6 @@
 import { Argument, Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { legacyDbBranchCreate } from "./create.handler.ts";
+import { dbBranchCreate } from "./create.handler.ts";
 
 const config = {
   branchName: Argument.string("branch name").pipe(
@@ -8,10 +8,10 @@ const config = {
   ),
 } as const;
 
-export type LegacyDbBranchCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbBranchCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbBranchCreateCommand = Command.make("create", config).pipe(
+export const dbBranchCreateCommand = Command.make("create", config).pipe(
   Command.withDescription("Create a branch."),
   Command.withShortDescription("Create a branch"),
-  Command.withHandler((flags) => legacyDbBranchCreate(flags)),
+  Command.withHandler((flags) => dbBranchCreate(flags)),
 );

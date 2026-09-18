@@ -5,9 +5,9 @@ import { PROJECT_REF } from "./env.ts";
 import { testBehaviour } from "./test-context.ts";
 
 /**
- * Write a supabase/config.toml covering every section the Go updater touches.
- * For each section, it'll create a small diff to the recorded test project.
- * Without any diff, no PATCH/POST requests will be sent to the management API.
+ * Writes a supabase/config.toml covering every section `config push`
+ * reconciles, each with a small diff against the recorded test project — a
+ * section without a diff sends no PATCH/POST to the management API.
  */
 function writeConfigToml(dir: string): void {
   mkdirSync(join(dir, "supabase"), { recursive: true });
@@ -55,10 +55,7 @@ enabled = true
   );
 }
 
-/**
- * The CLI will prompt the user y/n for each section that has a diff.
- * The test process runs with stdin closed, so run the commands with the `--yes` flag.
- */
+// `--yes` skips the per-section y/n prompt, since the test process runs with stdin closed.
 describe("config push", () => {
   testBehaviour("reconciles every section against the remote", async ({ run, workspace }) => {
     writeConfigToml(workspace.path);

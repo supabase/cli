@@ -3,13 +3,13 @@ import { Deferred, Effect, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
-  LegacyContainerRestartError,
-  LegacyKongReloadError,
-  legacyRestartContainer,
-  legacyRestartServicesAndReloadKong,
+  ContainerRestartError,
+  KongReloadError,
+  restartContainer,
+  restartServicesAndReloadKong,
 } from "./restart-services.ts";
 
-/** Matches the standing `mockSpawner` shape used across `legacy-docker-*.unit.test.ts` files. */
+/** Matches the standing `mockSpawner` shape used across `docker-*.unit.test.ts` files. */
 function mockSpawner(
   handler: (args: ReadonlyArray<string>) => { exitCode: number; stdout?: string; stderr?: string },
 ) {
@@ -56,10 +56,10 @@ function mockSpawner(
 const HEALTHY_STATE = '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
 const STOPPED_STATE = '{"Running":false,"Status":"exited"}';
 
-describe("legacyRestartContainer", () => {
+describe("restartContainer", () => {
   it.live("spawns `docker restart <id>` and succeeds on exit 0", () => {
     const mock = mockSpawner(() => ({ exitCode: 0 }));
-    return legacyRestartContainer(mock.spawner, "supabase_db_proj").pipe(
+    return restartContainer(mock.spawner, "supabase_db_proj").pipe(
       Effect.map(() => {
         expect(mock.spawned).toEqual([["restart", "supabase_db_proj"]]);
       }),
@@ -71,17 +71,17 @@ describe("legacyRestartContainer", () => {
       exitCode: 1,
       stderr: "Error: No such container: supabase_db_proj\n",
     }));
-    return legacyRestartContainer(mock.spawner, "supabase_db_proj").pipe(
+    return restartContainer(mock.spawner, "supabase_db_proj").pipe(
       Effect.flip,
       Effect.map((error) => {
-        expect(error).toBeInstanceOf(LegacyContainerRestartError);
+        expect(error).toBeInstanceOf(ContainerRestartError);
         expect(error.message).toContain("failed to restart container");
       }),
     );
   });
 });
 
-describe("legacyRestartServicesAndReloadKong", () => {
+describe("restartServicesAndReloadKong", () => {
   const PROJECT_ID = "proj";
   const KONG_ID = "supabase_kong_proj";
 
@@ -91,7 +91,7 @@ describe("legacyRestartServicesAndReloadKong", () => {
         return { exitCode: 0, stdout: HEALTHY_STATE };
       return { exitCode: 0 };
     });
-    return legacyRestartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(
+    return restartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(
       Effect.map(() => {
         const restarted = mock.spawned.filter((args) => args[0] === "restart").map((a) => a[1]);
         expect(restarted).toEqual(
@@ -127,12 +127,9 @@ describe("legacyRestartServicesAndReloadKong", () => {
             restarted.push(args[1] ?? "");
             inFlight++;
             if (inFlight === 4) yield* Deferred.succeed(barrier, undefined);
-            // Every one of the four restarts blocks here until ALL FOUR are in flight
-            // simultaneously (Go's `utils.WaitAll`, a goroutine per service — reset.go:259-271).
-            // If `legacyRestartSatelliteServices` ever regressed to a sequential restart (e.g.
-            // `concurrency: 1`), the second restart would never even be DISPATCHED until the
-            // first resolves, so `inFlight` would never reach 4 and this `await` would hang
-            // forever, timing out the test instead of silently passing.
+            // Each restart blocks here until all four are in flight simultaneously. A
+            // sequential restart would never dispatch the second call until the first resolves,
+            // so `inFlight` would never reach 4 and this await would hang forever.
             yield* Deferred.await(barrier);
           } else if (args[0] === "container" && args[1] === "inspect" && args[2] === KONG_ID) {
             // Kong excluded from the stack — skips the reload, keeping this test focused on
@@ -174,7 +171,7 @@ describe("legacyRestartServicesAndReloadKong", () => {
         }),
       );
 
-      yield* legacyRestartServicesAndReloadKong(spawner, PROJECT_ID);
+      yield* restartServicesAndReloadKong(spawner, PROJECT_ID);
 
       expect(restarted).toEqual(
         expect.arrayContaining([
@@ -196,7 +193,7 @@ describe("legacyRestartServicesAndReloadKong", () => {
         return { exitCode: 0, stdout: HEALTHY_STATE };
       return { exitCode: 0 };
     });
-    return legacyRestartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(Effect.asVoid);
+    return restartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(Effect.asVoid);
   });
 
   it.live("joins multiple satellite-restart failures and never attempts the Kong reload", () => {
@@ -209,7 +206,7 @@ describe("legacyRestartServicesAndReloadKong", () => {
       }
       return { exitCode: 0 };
     });
-    return legacyRestartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(
+    return restartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(
       Effect.flip,
       Effect.map((error) => {
         expect(error.message).toContain("failed to restart supabase_storage_proj");
@@ -226,7 +223,7 @@ describe("legacyRestartServicesAndReloadKong", () => {
       }
       return { exitCode: 0 };
     });
-    return legacyRestartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(
+    return restartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(
       Effect.map(() => {
         expect(mock.spawned.some((args) => args[0] === "exec")).toBe(false);
       }),
@@ -240,7 +237,7 @@ describe("legacyRestartServicesAndReloadKong", () => {
       }
       return { exitCode: 0 };
     });
-    return legacyRestartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(
+    return restartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(
       Effect.map(() => {
         expect(mock.spawned.some((args) => args[0] === "exec")).toBe(false);
       }),
@@ -254,11 +251,11 @@ describe("legacyRestartServicesAndReloadKong", () => {
       }
       return { exitCode: 0 };
     });
-    return legacyRestartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(
+    return restartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(
       Effect.flip,
       Effect.map((error) => {
-        expect(error).toBeInstanceOf(LegacyKongReloadError);
-        if (!(error instanceof LegacyKongReloadError)) return;
+        expect(error).toBeInstanceOf(KongReloadError);
+        if (!(error instanceof KongReloadError)) return;
         expect(error.message).toContain("failed to inspect kong");
         expect(error.suggestion).toContain(
           "Local services restarted, but API routes may return 502",
@@ -279,19 +276,18 @@ describe("legacyRestartServicesAndReloadKong", () => {
       }
       return { exitCode: 0 };
     });
-    return legacyRestartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(
+    return restartServicesAndReloadKong(mock.spawner, PROJECT_ID).pipe(
       Effect.flip,
       Effect.map((error) => {
-        expect(error).toBeInstanceOf(LegacyKongReloadError);
-        if (!(error instanceof LegacyKongReloadError)) return;
-        // Byte-matches Go: `DockerExecOnceWithStream` sets a fixed `error executing command`
-        // for a non-zero exec exit code (`utils/docker.go:646-648`) — not the exit code itself.
+        expect(error).toBeInstanceOf(KongReloadError);
+        if (!(error instanceof KongReloadError)) return;
+        // A non-zero exec exit code surfaces as the fixed `error executing command` text, not the
+        // exit code itself.
         expect(error.message).toContain("failed to reload kong: error executing command");
         expect(error.message).toContain("nginx: [error] invalid config");
         expect(error.suggestion).toContain(`docker restart ${KONG_ID}`);
-        // Pins the `--nginx-conf` flag (reset.go:269, reset_test.go:512) — a bare
-        // `kong reload` regenerates nginx.conf from Kong's default template and
-        // drops the custom `email_templates` server, reintroducing #6059.
+        // A bare `kong reload` regenerates nginx.conf from Kong's default template and drops the
+        // custom `email_templates` server, so the `--nginx-conf` flag is required.
         expect(mock.spawned).toContainEqual([
           "exec",
           KONG_ID,

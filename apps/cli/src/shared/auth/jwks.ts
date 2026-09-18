@@ -1,12 +1,18 @@
+import { Data, Effect, Schema } from "effect";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import {
+  actionability,
+  ErrorActionabilityId,
+  type CliErrorActionabilityDeclaration,
+} from "../telemetry/error-actionability.ts";
+
 const remoteJwksTimeoutMs = 10_000;
 
 /**
- * Structural JWK shape shared by both shells' own JWK types
- * (`command-internal/legacy-go-jwt.ts`'s `LegacyJwk` and `shared/functions/serve.ts`'s
- * `SigningKeyJwk`) so either can be passed to {@link toPublicJwk} without conversion. Defined
- * locally rather than importing `LegacyJwk` because `shared/` cannot import from `legacy/` (see
- * `apps/cli/CLAUDE.md`'s isolation rules) — both existing types already satisfy this shape
- * structurally, so no explicit relationship is needed.
+ * Structural JWK shape shared by the two in-tree JWK types (`command-internal/go-jwt.ts`'s
+ * `Jwk` and `shared/functions/serve.ts`'s `SigningKeyJwk`), so either can be passed to
+ * {@link toPublicJwk} without conversion. Defined locally since `shared/` cannot import from
+ * the command tree.
  */
 export interface JwkLike {
   readonly kty: string;
@@ -23,12 +29,10 @@ export interface JwkLike {
 }
 
 /**
- * Filters `key_ops` down to `"verify"` entries, returning `undefined` (never an empty array) when
- * none remain — matches Go's `encoding/json` `omitempty` on a slice field, which drops the field
- * entirely for a zero-length slice (`apps/cli-go/pkg/config/auth.go:92,126-130`): `ToPublicJWK`
- * only ever appends to a nil slice, so Go can emit an absent field or a non-empty array, never
- * `"key_ops":[]`. `key.key_ops?.filter(...)` alone doesn't reproduce this: it only returns
- * `undefined` when `key.key_ops` itself is `undefined`, not when filtering empties it out.
+ * Filters `key_ops` down to `"verify"` entries, returning `undefined` — never `[]` — when none
+ * remain, so the published JWK omits the field instead of serializing an empty array. A plain
+ * `.filter(...)` doesn't do this: it only returns `undefined` when `key_ops` itself was already
+ * `undefined`.
  */
 function publicKeyOps(
   keyOps: ReadonlyArray<string> | undefined,
@@ -38,12 +42,11 @@ function publicKeyOps(
 }
 
 /**
- * Go's `(j JWK) ToPublicJWK()` (`apps/cli-go/pkg/config/auth.go:111-145`): strips private key
- * material (`d`/`p`/`q`/`dp`/`dq`/`qi`) from a signing key before it's published in a JWKS, and
- * filters `key_ops` down to `"verify"` entries only (Go never republishes `"sign"`). Field order
- * in the returned object matches Go's `JWK` struct declaration order (`kty, kid, use, key_ops,
- * alg, ext, n, e` for RSA / `..., crv, x, y` for EC), since both Go's `encoding/json` and JS
- * `JSON.stringify` serialize object keys in insertion/declaration order.
+ * Strips private key material (`d`/`p`/`q`/`dp`/`dq`/`qi`) from a signing key before it's
+ * published in a JWKS, and filters `key_ops` down to `"verify"` entries only. Field order in
+ * the returned object is fixed (`kty, kid, use, key_ops, alg, ext, n, e` for RSA / `..., crv,
+ * x, y` for EC) since `JSON.stringify` serializes keys in declaration order and that order is
+ * part of the published output's byte contract.
  */
 export function toPublicJwk(key: JwkLike): JwkLike {
   if (key.kty === "RSA") {
@@ -74,10 +77,9 @@ export function toPublicJwk(key: JwkLike): JwkLike {
 
 /**
  * One `[auth.third_party.<provider>]` section, structurally matching `@supabase/config`'s
- * `CliConfig["auth"]["third_party"]` — both `shared/functions/serve.ts`'s
- * `PlainServeAuthConfig["third_party"]` (itself typed as `CliConfig["auth"]["third_party"]`)
- * and `command-internal/legacy-local-config-values.ts`'s env-override-resolved third-party object
- * satisfy this shape without conversion.
+ * `CliConfig["auth"]["third_party"]` so both `shared/functions/serve.ts`'s resolved auth
+ * config and `command-internal/local-config-values.ts`'s env-override-resolved object satisfy
+ * this shape without conversion.
  */
 export interface ThirdPartyProvidersLike {
   readonly firebase: { readonly enabled: boolean; readonly project_id?: string };
@@ -98,11 +100,10 @@ export interface ThirdPartyProvidersLike {
 const clerkDomainPattern = /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/;
 
 /**
- * Go's `(tpa *thirdParty) validate()` + `(tpa *thirdParty) IssuerURL()`
- * (`apps/cli-go/pkg/config/config.go:1635-1707`): rejects more than one enabled provider,
- * validates the enabled provider's required field(s), then builds its OIDC issuer URL. Throws a
- * plain `Error` with Go's exact message text on a validation failure; returns `undefined` when no
- * provider is enabled.
+ * Rejects more than one enabled third-party provider, validates the enabled provider's
+ * required field(s), then builds its OIDC issuer URL. Throws a plain `Error` with the
+ * established message text on a validation failure; returns `undefined` when no provider is
+ * enabled.
  */
 export function resolveThirdPartyIssuerUrl(
   thirdParty: ThirdPartyProvidersLike,
@@ -182,18 +183,11 @@ export function resolveThirdPartyIssuerUrl(
 }
 
 /**
- * Go's `(tpa *thirdParty) IssuerURL()` ALONE (`apps/cli-go/pkg/config/config.go:1685-1707`, each
- * provider's own unconditional `issuerURL()` at `config.go:1556-1636`) — no validation at all. Go's
- * `Auth.ThirdParty.validate()` (the "at most one enabled" + required-field checks
- * {@link resolveThirdPartyIssuerUrl} above performs) only runs inside `Config.Validate`'s `if
- * c.Auth.Enabled` block (`config.go:1087-1153`), but `ResolveJWKS`/`IssuerURL()` is called
- * unconditionally (formerly `internal/start/start.go:274`, deleted as unreachable in CLI-1966;
- * last present at commit a253ccba2) regardless of `auth.enabled`. So when auth is
- * disabled, only this unchecked, fixed-priority string builder applies: the first enabled
- * provider (firebase, auth0, aws_cognito, clerk, workos, in that order) wins, with no "more than
- * one enabled" rejection and no required-field check — a missing required field for the winning
- * provider just produces a URL with an empty segment, matching Go's own unchecked string
- * interpolation (`fmt.Sprintf` never errors on an empty string argument).
+ * Builds the OIDC issuer URL for whichever third-party provider is enabled, with no
+ * validation: the first enabled provider (firebase, auth0, aws_cognito, clerk, workos, in that
+ * order) wins, and a missing required field produces a URL with an empty segment rather than
+ * throwing. Used where {@link resolveThirdPartyIssuerUrl}'s "at most one enabled" and
+ * required-field checks don't apply.
  */
 export function thirdPartyIssuerUrlUnchecked(
   thirdParty: ThirdPartyProvidersLike,
@@ -218,44 +212,77 @@ export function thirdPartyIssuerUrlUnchecked(
   return undefined;
 }
 
-/**
- * Go's OIDC-discovery + remote-JWKS fetch inside `(a *auth) ResolveJWKS`
- * (`apps/cli-go/pkg/config/config.go:1730-1774`): resolves `<issuerUrl>/.well-known/
- * openid-configuration`'s `jwks_uri`, then fetches that URI's `keys` array. Throws/rejects on any
- * failure rather than swallowing it — Go's `start` treats a failure here as a hard,
- * command-failing error (formerly `internal/start/start.go:274-277`, deleted as unreachable in
- * CLI-1966; last present at commit a253ccba2); `shared/functions/serve.ts`'s own
- * caller-side leniency (continuing with zero remote keys) is a `functions serve`-only choice made
- * at the call site, not part of this function's contract.
- */
-export async function resolveRemoteJwks(issuerUrl: string): Promise<ReadonlyArray<unknown>> {
-  const discoveryResponse = await fetch(`${issuerUrl}/.well-known/openid-configuration`, {
-    signal: AbortSignal.timeout(remoteJwksTimeoutMs),
-  });
-  if (!discoveryResponse.ok) {
-    throw new Error(`Failed to fetch ${issuerUrl}/.well-known/openid-configuration`);
+/** Failure to discover or retrieve a provider's public signing keys. */
+class RemoteJwksError extends Data.TaggedError("RemoteJwksError")<{
+  readonly message: string;
+  readonly reason: "network" | "response" | "timeout";
+  readonly cause?: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.reason === "response" ? actionability.apiStatus : actionability.externalNetwork;
   }
-
-  const discovery = (await discoveryResponse.json()) as { jwks_uri?: string };
-  if (typeof discovery.jwks_uri !== "string" || discovery.jwks_uri.length === 0) {
-    throw new Error(
-      `auth.third_party: OIDC configuration at URL "${issuerUrl}/.well-known/openid-configuration" does not expose a jwks_uri property`,
-    );
-  }
-
-  const jwksResponse = await fetch(discovery.jwks_uri, {
-    signal: AbortSignal.timeout(remoteJwksTimeoutMs),
-  });
-  if (!jwksResponse.ok) {
-    throw new Error(`Failed to fetch ${discovery.jwks_uri}`);
-  }
-
-  const jwks = (await jwksResponse.json()) as { keys?: ReadonlyArray<unknown> };
-  if (!Array.isArray(jwks.keys) || jwks.keys.length === 0) {
-    throw new Error(
-      `auth.third_party: JWKS at URL "${discovery.jwks_uri}" as discovered from "${issuerUrl}/.well-known/openid-configuration" does not contain any JWK keys`,
-    );
-  }
-
-  return jwks.keys;
 }
+
+const discoverySchema = Schema.Struct({ jwks_uri: Schema.NonEmptyString });
+const jwksSchema = Schema.Struct({ keys: Schema.NonEmptyArray(Schema.Unknown) });
+
+const readRemoteDocument = Effect.fnUntraced(function* <A>(
+  url: string,
+  schema: Schema.Decoder<A>,
+  invalidMessage: string,
+) {
+  return yield* Effect.gen(function* () {
+    const client = HttpClient.withScope(yield* HttpClient.HttpClient);
+    const response = yield* client.get(url).pipe(
+      Effect.mapError(
+        (cause) =>
+          new RemoteJwksError({
+            message: `Failed to fetch ${url}`,
+            reason: "network",
+            cause,
+          }),
+      ),
+    );
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new RemoteJwksError({ message: `Failed to fetch ${url}`, reason: "response" });
+    }
+    return yield* HttpClientResponse.schemaBodyJson(schema)(response).pipe(
+      Effect.mapError(
+        (cause) =>
+          new RemoteJwksError({
+            message: invalidMessage,
+            reason: "response",
+            cause,
+          }),
+      ),
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.timeoutOrElse({
+      duration: remoteJwksTimeoutMs,
+      orElse: () =>
+        Effect.fail(
+          new RemoteJwksError({
+            message: `Timed out fetching ${url}`,
+            reason: "timeout",
+          }),
+        ),
+    }),
+  );
+});
+
+/** Resolves remote signing keys through OIDC discovery, bounding each complete response read. */
+export const resolveRemoteJwks = Effect.fnUntraced(function* (issuerUrl: string) {
+  const discoveryUrl = `${issuerUrl}/.well-known/openid-configuration`;
+  const discovery = yield* readRemoteDocument(
+    discoveryUrl,
+    discoverySchema,
+    `auth.third_party: OIDC configuration at URL "${discoveryUrl}" does not expose a jwks_uri property`,
+  );
+  const jwks = yield* readRemoteDocument(
+    discovery.jwks_uri,
+    jwksSchema,
+    `auth.third_party: JWKS at URL "${discovery.jwks_uri}" as discovered from "${discoveryUrl}" does not contain any JWK keys`,
+  );
+  return jwks.keys;
+});

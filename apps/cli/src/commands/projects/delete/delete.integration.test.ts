@@ -1,32 +1,30 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
-  type LegacyApiResponse,
-  type LegacyHttpMethod,
-  LEGACY_VALID_REF,
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { LegacyYesFlag } from "../../../shared/legacy/global-flags.ts";
-import { legacyProjectsDelete } from "./delete.handler.ts";
+  type ApiResponse,
+  type HttpMethod,
+  VALID_REF,
+  buildTestRuntime,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+  withEnvVar,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { projectsDelete } from "./delete.handler.ts";
 
 const OTHER_REF = "qrstuvwxyzabcdefghij";
 
-const DELETED = { id: 1, ref: LEGACY_VALID_REF, name: "alpha" };
+const DELETED = { id: 1, ref: VALID_REF, name: "alpha" };
 
 const SAMPLE_PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
-  id: LEGACY_VALID_REF,
-  ref: LEGACY_VALID_REF,
+  id: VALID_REF,
+  ref: VALID_REF,
   organization_id: "org-123",
   organization_slug: "acme",
   name: "alpha",
@@ -41,7 +39,7 @@ const SAMPLE_PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
   },
 };
 
-const tempRoot = useLegacyTempWorkdir("supabase-projects-delete-int-");
+const tempRoot = useTempWorkdir("supabase-projects-delete-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
@@ -49,7 +47,7 @@ interface SetupOpts {
   readonly yes?: boolean;
   /** Piped stdin lines consumed by the non-TTY confirm read. */
   readonly stdinInput?: string;
-  readonly byMethod?: Partial<Record<LegacyHttpMethod, LegacyApiResponse>>;
+  readonly byMethod?: Partial<Record<HttpMethod, ApiResponse>>;
   readonly network?: "fail";
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly promptSelectResponses?: ReadonlyArray<string>;
@@ -61,11 +59,11 @@ function setup(opts: SetupOpts = {}) {
     promptConfirmResponses: opts.promptConfirmResponses,
     promptSelectResponses: opts.promptSelectResponses,
   });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     network: opts.network,
     byMethod: opts.byMethod ?? { DELETE: { status: 200, body: DELETED } },
   });
-  const cliSettings = mockLegacyCliSettings({
+  const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
     projectId: Option.none(),
   });
@@ -73,10 +71,10 @@ function setup(opts: SetupOpts = {}) {
     stdinIsTty: opts.stdinIsTty ?? false,
     stdoutIsTty: opts.stdinIsTty ?? false,
   });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({
+    buildTestRuntime({
       out,
       api,
       cliSettings,
@@ -85,29 +83,31 @@ function setup(opts: SetupOpts = {}) {
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
     }),
-    Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    Layer.succeed(YesFlag, opts.yes ?? false),
   );
   return { layer, out, api, telemetry, cache };
 }
 
-function writeRefFile(content: string) {
-  const tempDir = join(tempRoot.current, "supabase", ".temp");
-  mkdirSync(tempDir, { recursive: true });
-  writeFileSync(join(tempDir, "project-ref"), content);
-}
+const writeRefFile = Effect.fnUntraced(function* (content: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tempDir = path.join(tempRoot.current, "supabase", ".temp");
+  yield* fs.makeDirectory(tempDir, { recursive: true });
+  yield* fs.writeFileString(path.join(tempDir, "project-ref"), content);
+});
 
 function hasMethod(
   api: { requests: ReadonlyArray<{ method: string }> },
-  method: LegacyHttpMethod,
+  method: HttpMethod,
 ): boolean {
   return api.requests.some((r) => r.method === method);
 }
 
-describe("legacy projects delete integration", () => {
+describe("projects delete integration", () => {
   it.live("deletes a project by positional ref after confirmation", () => {
     const { layer, out, api } = setup({ stdinIsTty: true, promptConfirmResponses: [true] });
     return Effect.gen(function* () {
-      yield* legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) });
+      yield* projectsDelete({ ref: Option.some(VALID_REF) });
       expect(hasMethod(api, "DELETE")).toBe(true);
       expect(out.stdoutText).toContain("Deleted project: alpha");
     }).pipe(Effect.provide(layer));
@@ -116,7 +116,7 @@ describe("legacy projects delete integration", () => {
   it.live("respects --yes and skips the confirmation prompt", () => {
     const { layer, out, api } = setup({ yes: true });
     return Effect.gen(function* () {
-      yield* legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) });
+      yield* projectsDelete({ ref: Option.some(VALID_REF) });
       expect(out.stderrText).toContain("[y/N] y");
       expect(hasMethod(api, "DELETE")).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -125,10 +125,10 @@ describe("legacy projects delete integration", () => {
   it.live("cancels without deleting when the user declines confirmation", () => {
     const { layer, api } = setup({ stdinIsTty: true, promptConfirmResponses: [false] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) }));
+      const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsDeleteCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectsDeleteCancelledError");
       }
       expect(hasMethod(api, "DELETE")).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -137,16 +137,16 @@ describe("legacy projects delete integration", () => {
   it.live("prompts to select a project when no ref is given on a TTY", () => {
     const { layer, api } = setup({
       stdinIsTty: true,
-      promptSelectResponses: [LEGACY_VALID_REF],
+      promptSelectResponses: [VALID_REF],
       byMethod: {
         GET: { status: 200, body: [SAMPLE_PROJECT] },
         DELETE: { status: 200, body: DELETED },
       },
     });
     return Effect.gen(function* () {
-      yield* legacyProjectsDelete({ ref: Option.none() });
+      yield* projectsDelete({ ref: Option.none() });
       expect(api.requests.find((r) => r.method === "DELETE")?.url).toContain(
-        `/v1/projects/${LEGACY_VALID_REF}`,
+        `/v1/projects/${VALID_REF}`,
       );
     }).pipe(Effect.provide(layer));
   });
@@ -154,12 +154,11 @@ describe("legacy projects delete integration", () => {
   it.live("fails when no ref is given on a non-TTY", () => {
     const { layer, cache } = setup({ stdinIsTty: false });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.none() }));
+      const exit = yield* Effect.exit(projectsDelete({ ref: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsDeleteRefRequiredError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectsDeleteRefRequiredError");
       }
-      // No ref resolved → no linked-project cache write.
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -167,13 +166,11 @@ describe("legacy projects delete integration", () => {
   it.live("cancels on a non-TTY when a ref is provided but --yes is unset", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, yes: false });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) }));
+      const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsDeleteCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectsDeleteCancelledError");
       }
-      // Established non-TTY behavior: still prints the label and echoes the
-      // (empty) scanned line before the No default cancels.
       expect(out.stderrText).toContain("Do you want to delete project ");
       expect(out.stderrText).toContain("? This action is irreversible. [y/N] \n");
       expect(hasMethod(api, "DELETE")).toBe(false);
@@ -181,40 +178,44 @@ describe("legacy projects delete integration", () => {
   });
 
   it.live("SUPABASE_YES=1 in the environment auto-confirms with the [y/N] y echo", () => {
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
     const { layer, out, api } = setup({ yes: false });
-    return Effect.gen(function* () {
-      yield* legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) });
-      // Established `--yes` branch bytes.
-      expect(out.stderrText).toContain("Do you want to delete project ");
-      expect(out.stderrText).toContain("? This action is irreversible. [y/N] y\n");
-      expect(hasMethod(api, "DELETE")).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
+    return withEnvVar(
+      "SUPABASE_YES",
+      "1",
+      Effect.gen(function* () {
+        yield* projectsDelete({ ref: Option.some(VALID_REF) });
+        expect(out.stderrText).toContain("Do you want to delete project ");
+        expect(out.stderrText).toContain("? This action is irreversible. [y/N] y\n");
+        expect(hasMethod(api, "DELETE")).toBe(true);
+      }).pipe(Effect.provide(layer)),
     );
   });
 
   it.live("non-TTY with piped `y` confirms like Go", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "y\n" });
     return Effect.gen(function* () {
-      yield* legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) });
-      // The piped answer is echoed to stderr, matching the non-TTY prompt.
+      yield* projectsDelete({ ref: Option.some(VALID_REF) });
       expect(out.stderrText).toContain("[y/N] y\n");
       expect(hasMethod(api, "DELETE")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
+  for (const format of ["json", "stream-json"] as const) {
+    it.live(`${format} does not authorize deletion from piped y`, () => {
+      const { layer, out, api } = setup({ format, stdinIsTty: false, stdinInput: "y\n" });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(hasMethod(api, "DELETE")).toBe(false);
+        expect(out.stderrText).not.toContain("[y/N]");
+      }).pipe(Effect.provide(layer));
+    });
+  }
+
   it.live("non-TTY with piped `n` declines like Go", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "n\n" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) }));
+      const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(out.stderrText).toContain("[y/N] n\n");
       expect(hasMethod(api, "DELETE")).toBe(false);
@@ -224,7 +225,7 @@ describe("legacy projects delete integration", () => {
   it.live("emits a result for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", yes: true });
     return Effect.gen(function* () {
-      yield* legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) });
+      yield* projectsDelete({ ref: Option.some(VALID_REF) });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.message).toBe("Deleted project");
     }).pipe(Effect.provide(layer));
@@ -233,41 +234,49 @@ describe("legacy projects delete integration", () => {
   it.live("fails on an invalid project-ref format", () => {
     const { layer } = setup({ yes: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.some("BADREF") }));
+      const exit = yield* Effect.exit(projectsDelete({ ref: Option.some("BADREF") }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+        expect(Cause.pretty(exit.cause)).toContain("InvalidProjectRefError");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("removes the linked supabase/.temp dir when the deleted ref matches", () => {
-    writeRefFile(LEGACY_VALID_REF);
     const { layer } = setup({ yes: true });
     return Effect.gen(function* () {
-      yield* legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) });
-      expect(existsSync(join(tempRoot.current, "supabase", ".temp"))).toBe(false);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeRefFile(VALID_REF);
+      yield* projectsDelete({ ref: Option.some(VALID_REF) });
+      const tempDirExists = yield* fs.exists(path.join(tempRoot.current, "supabase", ".temp"));
+      expect(tempDirExists).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("leaves the linked dir intact when the deleted ref differs", () => {
-    writeRefFile(OTHER_REF);
     const { layer } = setup({ yes: true });
     return Effect.gen(function* () {
-      yield* legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) });
-      expect(existsSync(join(tempRoot.current, "supabase", ".temp", "project-ref"))).toBe(true);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeRefFile(OTHER_REF);
+      yield* projectsDelete({ ref: Option.some(VALID_REF) });
+      const refFileExists = yield* fs.exists(
+        path.join(tempRoot.current, "supabase", ".temp", "project-ref"),
+      );
+      expect(refFileExists).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("maps HTTP 404 to project-does-not-exist", () => {
     const { layer } = setup({ yes: true, byMethod: { DELETE: { status: 404, body: {} } } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) }));
+      const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyProjectsDeleteNotFoundError");
-        expect(json).toContain(`Project does not exist:${LEGACY_VALID_REF}`);
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectsDeleteNotFoundError");
+        expect(causeText).toContain(`Project does not exist:${VALID_REF}`);
       }
     }).pipe(Effect.provide(layer));
   });
@@ -275,25 +284,25 @@ describe("legacy projects delete integration", () => {
   it.live("maps HTTP 503 to delete-failed", () => {
     const { layer } = setup({ yes: true, byMethod: { DELETE: { status: 503, body: {} } } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) }));
+      const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyProjectsDeleteUnexpectedStatusError");
-        expect(json).toContain(`Failed to delete project ${LEGACY_VALID_REF}`);
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectsDeleteUnexpectedStatusError");
+        expect(causeText).toContain(`Failed to delete project ${VALID_REF}`);
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyProjectsDeleteNetworkError on transport failure", () => {
+  it.live("fails with ProjectsDeleteNetworkError on transport failure", () => {
     const { layer } = setup({ yes: true, network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) }));
+      const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyProjectsDeleteNetworkError");
-        expect(json).toContain("failed to delete project");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectsDeleteNetworkError");
+        expect(causeText).toContain("failed to delete project");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -301,7 +310,7 @@ describe("legacy projects delete integration", () => {
   it.live("emits a success event for --output-format json", () => {
     const { layer, out } = setup({ format: "json", yes: true });
     return Effect.gen(function* () {
-      yield* legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) });
+      yield* projectsDelete({ ref: Option.some(VALID_REF) });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.message).toBe("Deleted project");
       expect(success?.data).toMatchObject({ name: "alpha" });
@@ -311,7 +320,7 @@ describe("legacy projects delete integration", () => {
   it.live("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setup({ yes: true });
     return Effect.gen(function* () {
-      yield* legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) });
+      yield* projectsDelete({ ref: Option.some(VALID_REF) });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -320,7 +329,7 @@ describe("legacy projects delete integration", () => {
   it.live("flushes telemetry even when the delete fails", () => {
     const { layer, telemetry } = setup({ yes: true, network: "fail" });
     return Effect.gen(function* () {
-      yield* Effect.exit(legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) }));
+      yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });

@@ -41,7 +41,7 @@ None.
 
 ## Output
 
-### Legacy Output
+### Text output
 
 On success:
 
@@ -51,7 +51,7 @@ Finished supabase init.
 
 In interactive mode (`-i`/`--interactive`), may prompt for IDE settings preferences.
 
-Success is emitted as raw text even when the legacy shell is invoked with non-text output modes.
+Success is emitted as raw text even when the CLI is invoked with non-text output modes.
 
 When `supabase/config.toml` already exists and `--force` is not set (stderr; the platform check selects the exact per-OS path separator and errno text):
 

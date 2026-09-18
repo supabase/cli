@@ -1,56 +1,56 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
-import { describe, expect, test } from "vitest";
-import { runSupabase } from "../../../tests/helpers/cli.ts";
+import { runSupabaseEffect } from "../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 const TEST_PROJECT_REF = "abcdefghijklmnopqrst";
 
-describe("supabase unlink (legacy)", () => {
+describe("supabase unlink", () => {
   // Golden path: with a seeded `supabase/.temp/project-ref`, a real subprocess
   // removes the temp dir and prints the Finished line. No network is involved.
-  test(
+  it.live(
     "removes supabase/.temp and prints Finished when linked",
-    { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const projectDir = mkdtempSync(join(tmpdir(), "sb-unlink-e2e-"));
-      try {
-        mkdirSync(join(projectDir, "supabase", ".temp"), { recursive: true });
-        writeFileSync(join(projectDir, "supabase", ".temp", "project-ref"), TEST_PROJECT_REF);
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const projectDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-unlink-e2e-linked-",
+        });
+        const tempDir = path.join(projectDir, "supabase", ".temp");
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        yield* fs.writeFileString(path.join(tempDir, "project-ref"), TEST_PROJECT_REF);
 
-        const { exitCode, stdout, stderr } = await runSupabase(["unlink"], {
-          entrypoint: "legacy",
+        const { exitCode, stdout, stderr } = yield* runSupabaseEffect(["unlink"], {
           cwd: projectDir,
         });
 
         expect(exitCode).toBe(0);
         expect(stdout).toContain("Finished supabase unlink.");
         expect(stderr).toContain(`Unlinking project: ${TEST_PROJECT_REF}`);
-        expect(existsSync(join(projectDir, "supabase", ".temp"))).toBe(false);
-      } finally {
-        rmSync(projectDir, { recursive: true, force: true });
-      }
-    },
+        const tempDirExists = yield* fs.exists(tempDir);
+        expect(tempDirExists).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    E2E_TIMEOUT_MS,
   );
 
   // The not-linked path exits non-zero with the `ErrNotLinked` message.
-  test(
+  it.live(
     "without a linked project exits 1 with the not-linked message",
-    { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const projectDir = mkdtempSync(join(tmpdir(), "sb-unlink-e2e-"));
-      try {
-        const { exitCode, stdout, stderr } = await runSupabase(["unlink"], {
-          entrypoint: "legacy",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const projectDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-unlink-e2e-not-linked-",
+        });
+        const { exitCode, stdout, stderr } = yield* runSupabaseEffect(["unlink"], {
           cwd: projectDir,
         });
         expect(exitCode).toBe(1);
         expect(`${stdout}${stderr}`).toContain("Cannot find project ref");
-      } finally {
-        rmSync(projectDir, { recursive: true, force: true });
-      }
-    },
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    E2E_TIMEOUT_MS,
   );
 });

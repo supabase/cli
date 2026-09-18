@@ -1,22 +1,21 @@
 import { type V1GetASnippetOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  buildTestRuntime,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacySnippetsDownload } from "./download.handler.ts";
+import { snippetsDownload } from "./download.handler.ts";
 
 const VALID_ID = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
-// Raw 32-hex form of VALID_ID, uppercase — a form `uuid.Parse` accepts
-// (google/uuid v1.6.0) that the old handler rejected before this fix.
+// Raw 32-hex form of VALID_ID, uppercase.
 const UPPER_HEX32_ID = "0B0D48F6878B419088D72CA33ED800BC";
 const INVALID_ID = "not-a-uuid"; // length 10 → "invalid UUID length: 10"
 const TOO_LONG_ID = "0b0d48f6-878b-4190-88d7-2ca33ed800bc-extra"; // length 42 (3 ungrouped: 32, 36, 38, 41)
@@ -40,10 +39,9 @@ const SNIPPET_RESPONSE: SnippetResponse = {
   content: { schema_version: "1.0.0", sql: SQL },
 };
 
-// `goOutput` is intentionally absent: the download handler does not consume
-// `LegacyOutputFlag` at all — it always prints the raw SQL unconditionally.
-// Threading a value through here would suggest a behaviour difference that
-// does not exist.
+// `goOutput` is absent: the download handler doesn't consume `OutputFlag` at
+// all — always prints raw SQL. Threading a value through would suggest a
+// behavior difference that doesn't exist.
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   status?: number;
@@ -51,18 +49,18 @@ interface SetupOpts {
   response?: SnippetResponse;
 }
 
-const tempRoot = useLegacyTempWorkdir("supabase-snippets-download-int-");
+const tempRoot = useTempWorkdir("supabase-snippets-download-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
-  const api = mockLegacyPlatformApi({
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: opts.response ?? SNIPPET_RESPONSE },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -72,26 +70,33 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
-describe("legacy snippets download integration", () => {
+function stringLeaves(value: unknown): Array<string> {
+  if (typeof value === "string") return [value];
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).flatMap(stringLeaves);
+  }
+  return [];
+}
+
+describe("snippets download integration", () => {
   it.live("prints raw SQL with a trailing newline in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacySnippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
       expect(out.stdoutText).toBe(`${SQL}\n`);
     }).pipe(Effect.provide(layer));
   });
 
-  // `--output` is ignored entirely: no read of `LegacyOutputFlag`, no
-  // branching. This regression guards against a future refactor that adds
-  // branch-on-goOutput logic by mistake — if the flag is consumed, this
-  // assertion will diverge.
+  // `--output` is ignored entirely: no read of `OutputFlag`, no branching.
+  // Guards against a future refactor adding branch-on-goOutput logic by
+  // mistake — if the flag is consumed, this assertion diverges.
   it.live("text mode is unaffected by any Go `--output` value (Go parity)", () => {
     const out = mockOutput({ format: "text" });
-    const telemetry = mockLegacyTelemetryStateTracked();
-    const cache = mockLegacyLinkedProjectCacheTracked();
-    const api = mockLegacyPlatformApi({ response: { status: 200, body: SNIPPET_RESPONSE } });
-    const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-    const layer = buildLegacyTestRuntime({
+    const telemetry = mockTelemetryStateTracked();
+    const cache = mockLinkedProjectCacheTracked();
+    const api = mockCommandPlatformApi({ response: { status: 200, body: SNIPPET_RESPONSE } });
+    const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+    const layer = buildTestRuntime({
       out,
       api,
       cliSettings,
@@ -100,7 +105,7 @@ describe("legacy snippets download integration", () => {
       goOutput: Option.some("json"),
     });
     return Effect.gen(function* () {
-      yield* legacySnippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
       expect(out.stdoutText).toBe(`${SQL}\n`);
     }).pipe(Effect.provide(layer));
   });
@@ -108,7 +113,7 @@ describe("legacy snippets download integration", () => {
   it.live("emits a success event with the full response under --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacySnippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       const data = success?.data as SnippetResponse | undefined;
@@ -121,7 +126,7 @@ describe("legacy snippets download integration", () => {
   it.live("emits a result event with the full response under --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
-      yield* legacySnippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       const data = success?.data as SnippetResponse | undefined;
@@ -135,18 +140,15 @@ describe("legacy snippets download integration", () => {
       const { layer, api, telemetry, cache } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySnippetsDownload({ snippetId: INVALID_ID, projectRef: Option.none() }),
+          snippetsDownload({ snippetId: INVALID_ID, projectRef: Option.none() }),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySnippetsInvalidIdError");
-          // `uuid.Parse` returns `invalid UUID length: 10` for "not-a-uuid"
-          // (length 10), wrapped as `invalid snippet ID: %w`.
-          expect(dump).toContain("invalid snippet ID: invalid UUID length: 10");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("SnippetsInvalidIdError");
+          expect(causeText).toContain("invalid snippet ID: invalid UUID length: 10");
         }
         expect(api.requests).toHaveLength(0);
-        // Telemetry flush and linked-project caching still fire on this error path.
         expect(telemetry.flushed).toBe(true);
         expect(cache.cached).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -157,12 +159,12 @@ describe("legacy snippets download integration", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySnippetsDownload({ snippetId: TOO_LONG_ID, projectRef: Option.none() }),
+        snippetsDownload({ snippetId: TOO_LONG_ID, projectRef: Option.none() }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("invalid snippet ID: invalid UUID length: 42");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("invalid snippet ID: invalid UUID length: 42");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -171,14 +173,21 @@ describe("legacy snippets download integration", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySnippetsDownload({ snippetId: WRONG_FORMAT_ID, projectRef: Option.none() }),
+        snippetsDownload({ snippetId: WRONG_FORMAT_ID, projectRef: Option.none() }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("invalid snippet ID: invalid UUID format");
-        // The offending value must NOT be embedded in the error message.
-        expect(dump).not.toContain(WRONG_FORMAT_ID);
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("invalid snippet ID: invalid UUID format");
+        // The offending value must not be embedded anywhere in the failure. The rendered
+        // cause covers the message; `message` is a non-enumerable own prop, so the value
+        // scan below covers payload fields only. Keep both assertions.
+        expect(causeText).not.toContain(WRONG_FORMAT_ID);
+        const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+        // Guard against a vacuous pass: the failure must be a typed error, not a defect
+        // or interruption, for the value scan below to mean anything.
+        expect(failure).toBeDefined();
+        expect(stringLeaves(failure).some((leaf) => leaf.includes(WRONG_FORMAT_ID))).toBe(false);
       }
     }).pipe(Effect.provide(layer));
   });
@@ -186,7 +195,7 @@ describe("legacy snippets download integration", () => {
   it.live("calls GET /v1/snippets/{id} with the validated UUID and no project_ref query", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySnippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.method).toBe("GET");
       expect(api.requests[0]?.url).toContain(`/v1/snippets/${VALID_ID}`);
@@ -199,7 +208,7 @@ describe("legacy snippets download integration", () => {
     () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
-        yield* legacySnippetsDownload({ snippetId: UPPER_HEX32_ID, projectRef: Option.none() });
+        yield* snippetsDownload({ snippetId: UPPER_HEX32_ID, projectRef: Option.none() });
         expect(api.requests).toHaveLength(1);
         expect(api.requests[0]?.url).toContain(`/v1/snippets/${VALID_ID}`);
       }).pipe(Effect.provide(layer));
@@ -210,39 +219,39 @@ describe("legacy snippets download integration", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, cache } = setup();
     return Effect.gen(function* () {
-      yield* legacySnippetsDownload({ snippetId: VALID_ID, projectRef: Option.some(flagRef) });
+      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.some(flagRef) });
       // The download endpoint itself takes only the snippet ID, but the
       // resolved project ref still flows into the linked-project cache write.
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacySnippetsDownloadUnexpectedStatusError on HTTP 503", () => {
+  it.live("fails with SnippetsDownloadUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySnippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }),
+        snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySnippetsDownloadUnexpectedStatusError");
-        expect(dump).toContain("unexpected download snippet status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SnippetsDownloadUnexpectedStatusError");
+        expect(causeText).toContain("unexpected download snippet status 503");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacySnippetsDownloadNetworkError on transport failure", () => {
+  it.live("fails with SnippetsDownloadNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySnippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }),
+        snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySnippetsDownloadNetworkError");
-        expect(dump).toContain("failed to download snippet");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SnippetsDownloadNetworkError");
+        expect(causeText).toContain("failed to download snippet");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -250,7 +259,7 @@ describe("legacy snippets download integration", () => {
   it.live("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
-      yield* legacySnippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -259,9 +268,7 @@ describe("legacy snippets download integration", () => {
   it.live("flushes telemetry and writes linked-project cache even on API failure", () => {
     const { layer, telemetry, cache } = setup({ status: 500 });
     return Effect.gen(function* () {
-      yield* Effect.exit(
-        legacySnippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }),
-      );
+      yield* Effect.exit(snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }));
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -270,7 +277,7 @@ describe("legacy snippets download integration", () => {
   it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
-      yield* legacySnippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }).pipe(
+      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }).pipe(
         withJsonErrorHandling,
       );
       expect(out.messages.some((m) => m.type === "fail")).toBe(true);

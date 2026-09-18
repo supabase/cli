@@ -1,25 +1,22 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { badArgument } from "effect/PlatformError";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyCredentialsTracked,
-  mockLegacyPlatformApiService,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../tests/helpers/legacy-mocks.ts";
-import { legacyUnlink } from "./unlink.handler.ts";
+  VALID_REF,
+  buildTestRuntime,
+  mockCommandSettings,
+  mockCommandCredentialsTracked,
+  mockCommandPlatformApiService,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../tests/helpers/command-mocks.ts";
+import { unlink } from "./unlink.handler.ts";
 
-const tempRoot = useLegacyTempWorkdir("supabase-unlink-int-");
+const tempRoot = useTempWorkdir("supabase-unlink-int-");
 
 const noopHttpClient = Layer.succeed(
   HttpClient.HttpClient,
@@ -32,9 +29,8 @@ interface SetupOpts {
   removeFails?: boolean;
 }
 
-// Wraps the real Bun FileSystem but forces `remove` to fail, so the
-// temp-dir-removal error branch can be exercised deterministically (cross-platform,
-// independent of filesystem permissions).
+// Wraps the real Bun FileSystem but forces `remove` to fail, so the temp-dir-removal
+// error branch is exercised deterministically, independent of filesystem permissions.
 const failingRemoveFsLayer = Layer.effect(
   FileSystem.FileSystem,
   Effect.gen(function* () {
@@ -53,22 +49,33 @@ const failingRemoveFsLayer = Layer.effect(
   }),
 ).pipe(Layer.provide(BunServices.layer));
 
-function seedProjectRef(workdir: string, ref: string) {
-  mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-  writeFileSync(join(workdir, "supabase", ".temp", "project-ref"), ref);
-}
+const seedProjectRef = (workdir: string, ref: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDir = path.join(workdir, "supabase", ".temp");
+    yield* fs.makeDirectory(tempDir, { recursive: true });
+    yield* fs.writeFileString(path.join(tempDir, "project-ref"), ref);
+  });
+
+const tempDirExists = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* fs.exists(path.join(workdir, "supabase", ".temp"));
+  });
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const credentials = mockLegacyCredentialsTracked({ deleteFails: opts.deleteFails });
-  const apiMock = mockLegacyPlatformApiService({ v1: {} });
-  const cliSettings = mockLegacyCliSettings({
+  const telemetry = mockTelemetryStateTracked();
+  const credentials = mockCommandCredentialsTracked({ deleteFails: opts.deleteFails });
+  const apiMock = mockCommandPlatformApiService({ v1: {} });
+  const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
     projectId: Option.none(),
   });
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({
+    buildTestRuntime({
       out,
       api: { layer: apiMock.layer, httpClientLayer: noopHttpClient },
       cliSettings,
@@ -81,46 +88,47 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, telemetry, credentials, workdir: tempRoot.current };
 }
 
-describe("legacy unlink integration", () => {
+describe("unlink integration", () => {
   it.live("unlinks: removes the temp dir, deletes the keyring entry, prints Finished", () => {
     const { layer, out, credentials, workdir } = setup();
-    seedProjectRef(workdir, LEGACY_VALID_REF);
     return Effect.gen(function* () {
-      yield* legacyUnlink();
-      expect(existsSync(join(workdir, "supabase", ".temp"))).toBe(false);
-      expect(credentials.deletedRefs).toEqual([LEGACY_VALID_REF]);
+      yield* seedProjectRef(workdir, VALID_REF);
+      yield* unlink();
+      const stillExists = yield* tempDirExists(workdir);
+      expect(stillExists).toBe(false);
+      expect(credentials.deletedRefs).toEqual([VALID_REF]);
       expect(out.stdoutText).toContain("Finished supabase unlink.");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("writes 'Unlinking project: <ref>' to stderr", () => {
     const { layer, out, workdir } = setup();
-    seedProjectRef(workdir, LEGACY_VALID_REF);
     return Effect.gen(function* () {
-      yield* legacyUnlink();
-      expect(out.stderrText).toContain(`Unlinking project: ${LEGACY_VALID_REF}`);
+      yield* seedProjectRef(workdir, VALID_REF);
+      yield* unlink();
+      expect(out.stderrText).toContain(`Unlinking project: ${VALID_REF}`);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("succeeds when no credential is stored (keyring not-found ignored)", () => {
-    // The tracked credentials mock returns `true`; a real not-found returns
-    // `false` without erroring — either way unlink succeeds.
+    // The mock returns true here; a real not-found returns false without erroring —
+    // either way unlink succeeds.
     const { layer, out, workdir } = setup();
-    seedProjectRef(workdir, LEGACY_VALID_REF);
     return Effect.gen(function* () {
-      yield* legacyUnlink();
+      yield* seedProjectRef(workdir, VALID_REF);
+      yield* unlink();
       expect(out.stdoutText).toContain("Finished supabase unlink.");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyProjectNotLinkedError when the project-ref file is absent", () => {
+  it.live("fails with ProjectRefNotLinkedError when the project-ref file is absent", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyUnlink());
+      const exit = yield* Effect.exit(unlink());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyProjectNotLinkedError");
+        const json = Cause.pretty(exit.cause);
+        expect(json).toContain("ProjectRefNotLinkedError");
         expect(json).toContain("Cannot find project ref");
       }
     }).pipe(Effect.provide(layer));
@@ -128,27 +136,27 @@ describe("legacy unlink integration", () => {
 
   it.live("fails when the keyring delete errors (permission denied)", () => {
     const { layer, workdir } = setup({ deleteFails: true });
-    seedProjectRef(workdir, LEGACY_VALID_REF);
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyUnlink());
+      yield* seedProjectRef(workdir, VALID_REF);
+      const exit = yield* Effect.exit(unlink());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyCredentialDeleteError");
+        expect(Cause.pretty(exit.cause)).toContain("CredentialDeleteError");
       }
-      // The temp dir is still removed before the credential delete is attempted.
-      expect(existsSync(join(workdir, "supabase", ".temp"))).toBe(false);
+      const stillExists = yield* tempDirExists(workdir);
+      expect(stillExists).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyUnlinkTempRemovalError when the temp dir cannot be removed", () => {
+  it.live("fails with UnlinkTempRemovalError when the temp dir cannot be removed", () => {
     const { layer, workdir } = setup({ removeFails: true });
-    seedProjectRef(workdir, LEGACY_VALID_REF);
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyUnlink());
+      yield* seedProjectRef(workdir, VALID_REF);
+      const exit = yield* Effect.exit(unlink());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyUnlinkTempRemovalError");
+        const json = Cause.pretty(exit.cause);
+        expect(json).toContain("UnlinkTempRemovalError");
         expect(json).toContain("failed to remove temp directory");
       }
     }).pipe(Effect.provide(layer));
@@ -156,13 +164,12 @@ describe("legacy unlink integration", () => {
 
   it.live("surfaces both messages when temp removal and keyring delete both fail", () => {
     const { layer, workdir } = setup({ removeFails: true, deleteFails: true });
-    seedProjectRef(workdir, LEGACY_VALID_REF);
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyUnlink());
+      yield* seedProjectRef(workdir, VALID_REF);
+      const exit = yield* Effect.exit(unlink());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        // errors.Join parity — both failure messages are surfaced, not just the first.
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("failed to remove temp directory");
         expect(json).toContain("failed to delete project credential");
       }
@@ -171,31 +178,31 @@ describe("legacy unlink integration", () => {
 
   it.live("flushes telemetry via ensuring", () => {
     const { layer, telemetry, workdir } = setup();
-    seedProjectRef(workdir, LEGACY_VALID_REF);
     return Effect.gen(function* () {
-      yield* legacyUnlink();
+      yield* seedProjectRef(workdir, VALID_REF);
+      yield* unlink();
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("json output: emits a structured success and suppresses the Finished line", () => {
     const { layer, out, workdir } = setup({ format: "json" });
-    seedProjectRef(workdir, LEGACY_VALID_REF);
     return Effect.gen(function* () {
-      yield* legacyUnlink();
+      yield* seedProjectRef(workdir, VALID_REF);
+      yield* unlink();
       const success = out.messages.find((m) => m.type === "success");
-      expect(success?.data).toMatchObject({ project_ref: LEGACY_VALID_REF });
+      expect(success?.data).toMatchObject({ project_ref: VALID_REF });
       expect(out.stdoutText).not.toContain("Finished supabase unlink.");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("stream-json output: emits a structured success", () => {
     const { layer, out, workdir } = setup({ format: "stream-json" });
-    seedProjectRef(workdir, LEGACY_VALID_REF);
     return Effect.gen(function* () {
-      yield* legacyUnlink();
+      yield* seedProjectRef(workdir, VALID_REF);
+      yield* unlink();
       const success = out.messages.find((m) => m.type === "success");
-      expect(success?.data).toMatchObject({ project_ref: LEGACY_VALID_REF });
+      expect(success?.data).toMatchObject({ project_ref: VALID_REF });
     }).pipe(Effect.provide(layer));
   });
 });

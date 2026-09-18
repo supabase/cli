@@ -2,9 +2,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyMigrationDbRuntimeLayer } from "../migration.layers.ts";
-import { legacyMigrationList } from "./list.handler.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { migrationDbRuntimeLayer } from "../migration.layers.ts";
+import { migrationList } from "./list.handler.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -33,14 +33,14 @@ const config = {
   ),
 } as const;
 
-export type LegacyMigrationListFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type MigrationListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyMigrationListCommand = Command.make("list", config).pipe(
+export const migrationListCommand = Command.make("list", config).pipe(
   Command.withDescription("List local and remote migrations."),
   Command.withShortDescription("List local and remote migrations"),
   Command.withHandler((flags) =>
-    legacyMigrationList(flags).pipe(
-      withLegacyCommandInstrumentation({
+    migrationList(flags).pipe(
+      withCommandTelemetry({
         flags: {
           "db-url": flags.dbUrl,
           linked: flags.linked,
@@ -49,13 +49,11 @@ export const legacyMigrationListCommand = Command.make("list", config).pipe(
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
+        // `p` maps to the already-redacted `password` flag.
         aliases: { p: "password" },
       }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyMigrationDbRuntimeLayer(["migration", "list"])),
+  Command.provide(migrationDbRuntimeLayer(["migration", "list"])),
 );

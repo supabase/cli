@@ -3,9 +3,9 @@ import { Argument, Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyProjectsDelete } from "./delete.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { projectsDelete } from "./delete.handler.ts";
 
 const config = {
   ref: Argument.string("ref").pipe(
@@ -13,9 +13,9 @@ const config = {
     Argument.optional,
   ),
 };
-export type LegacyProjectsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type ProjectsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyProjectsDeleteCommand = Command.make("delete", config).pipe(
+export const projectsDeleteCommand = Command.make("delete", config).pipe(
   Command.withDescription("Delete a Supabase project."),
   Command.withShortDescription("Delete a project"),
   Command.withExamples([
@@ -25,14 +25,12 @@ export const legacyProjectsDeleteCommand = Command.make("delete", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyProjectsDelete(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: [] }),
+    projectsDelete(flags).pipe(
+      withCommandTelemetry({ flags, safeFlags: [] }),
       withJsonErrorHandling,
     ),
   ),
-  // `stdinLayer`: the delete confirmation reads piped stdin via `legacyPromptYesNo`
+  // `stdinLayer`: the delete confirmation reads piped stdin via `promptYesNo`
   // on a non-TTY stdin.
-  Command.provide(
-    Layer.mergeAll(legacyManagementApiRuntimeLayer(["projects", "delete"]), stdinLayer),
-  ),
+  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["projects", "delete"]), stdinLayer)),
 );

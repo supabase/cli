@@ -1,37 +1,33 @@
-/**
- * Unit tests for push.encoders.ts.
- */
-
 import type { CliConfig, ConfigChange, ProjectConfig } from "@supabase/config";
 import { comparableProjectConfigPaths, getDefaultCliConfig } from "@supabase/config";
 import { AUTH_HOOK_NAMES, projectConfigMappingRows } from "@supabase/config/internal";
 import { describe, expect, it } from "vitest";
 
-import type { LegacyAuthEmailContent } from "./push.auth-email-content.ts";
+import type { AuthEmailContent } from "./push.auth-email-content.ts";
 import {
-  legacyEncodeApiBody,
-  legacyEncodeAuthBody,
-  legacyEncodeDbSettingsBody,
-  legacyEncodeNetworkRestrictionsBody,
-  legacyEncodeSslEnforcementBody,
-  legacyEncodeStorageBody,
-  LEGACY_PUSH_AUTH_LEAF_MAP,
-  type LegacyAuthEncoderInput,
-  type LegacyPushEncoded,
-  type LegacyPushEncoderInput,
-  type LegacyStorageEncoderInput,
+  encodeApiBody,
+  encodeAuthBody,
+  encodeDbSettingsBody,
+  encodeNetworkRestrictionsBody,
+  encodeSslEnforcementBody,
+  encodeStorageBody,
+  PUSH_AUTH_LEAF_MAP,
+  type AuthEncoderInput,
+  type PushEncoded,
+  type PushEncoderInput,
+  type StorageEncoderInput,
 } from "./push.encoders.ts";
-import { legacySamePath } from "./push.paths.ts";
-import { legacyPushResourceForPath, type LegacyPushResource } from "./push.plan.ts";
+import { samePath } from "./push.paths.ts";
+import { pushResourceForPath, type PushResource } from "./push.plan.ts";
 import {
-  LEGACY_EMAIL_NOTIFICATION_NAMES,
-  LEGACY_EMAIL_TEMPLATE_NAMES,
-  LEGACY_EXTERNAL_PROVIDER_IDS,
-  LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL,
-  LEGACY_PROVIDERS_WITH_SKIP_NONCE_CHECK,
-  LEGACY_PROVIDERS_WITH_URL,
+  EMAIL_NOTIFICATION_NAMES,
+  EMAIL_TEMPLATE_NAMES,
+  EXTERNAL_PROVIDER_IDS,
+  PROVIDERS_WITH_EMAIL_OPTIONAL,
+  PROVIDERS_WITH_SKIP_NONCE_CHECK,
+  PROVIDERS_WITH_URL,
 } from "./push.registry-names.ts";
-import type { LegacyPushSecretDecision } from "./push.secrets.ts";
+import type { PushSecretDecision } from "./push.secrets.ts";
 
 function change(
   path: ReadonlyArray<string>,
@@ -41,25 +37,21 @@ function change(
   return { path, class: "update", local, remote, declared: true };
 }
 
-function secretDecision(
-  overrides: Partial<LegacyPushSecretDecision> = {},
-): LegacyPushSecretDecision {
+function secretDecision(overrides: Partial<PushSecretDecision> = {}): PushSecretDecision {
   return { path: [], apiKey: "", status: "unchanged", remoteState: "absent", ...overrides };
 }
 
-const EMPTY_EMAIL_CONTENT: LegacyAuthEmailContent = { template: {}, notification: {} };
+const EMPTY_EMAIL_CONTENT: AuthEmailContent = { template: {}, notification: {} };
 
-function input(overrides: Partial<LegacyPushEncoderInput> = {}): LegacyPushEncoderInput {
+function input(overrides: Partial<PushEncoderInput> = {}): PushEncoderInput {
   return { changes: [], local: {}, remote: {}, ...overrides };
 }
 
-function storageInput(
-  overrides: Partial<LegacyStorageEncoderInput> = {},
-): LegacyStorageEncoderInput {
+function storageInput(overrides: Partial<StorageEncoderInput> = {}): StorageEncoderInput {
   return { changes: [], local: {}, remote: {}, config: getDefaultCliConfig(), ...overrides };
 }
 
-function authInput(overrides: Partial<LegacyAuthEncoderInput> = {}): LegacyAuthEncoderInput {
+function authInput(overrides: Partial<AuthEncoderInput> = {}): AuthEncoderInput {
   return {
     changes: [],
     local: {},
@@ -72,9 +64,9 @@ function authInput(overrides: Partial<LegacyAuthEncoderInput> = {}): LegacyAuthE
   };
 }
 
-describe("legacyEncodeApiBody", () => {
+describe("encodeApiBody", () => {
   it("is up to date (body undefined) when nothing routed to it changed", () => {
-    const result = legacyEncodeApiBody(input());
+    const result = encodeApiBody(input());
     expect(result.body).toBeUndefined();
     expect(result.encoded).toEqual([]);
     expect(result.unencodable).toEqual([]);
@@ -82,28 +74,26 @@ describe("legacyEncodeApiBody", () => {
   });
 
   it("ships only the changed key (max_rows) — sparse body", () => {
-    const result = legacyEncodeApiBody(input({ changes: [change(["api", "max_rows"], 2000)] }));
+    const result = encodeApiBody(input({ changes: [change(["api", "max_rows"], 2000)] }));
     expect(result.body).toEqual({ max_rows: 2000 });
     expect(Object.keys(result.body ?? {})).toEqual(["max_rows"]);
     expect(result.encoded).toEqual([["api", "max_rows"]]);
   });
 
   it("ships max_rows unconditionally, even a value <= 0 (upstream already normalizes that to unmanaged)", () => {
-    const result = legacyEncodeApiBody(input({ changes: [change(["api", "max_rows"], 0)] }));
+    const result = encodeApiBody(input({ changes: [change(["api", "max_rows"], 0)] }));
     expect(result.body).toEqual({ max_rows: 0 });
     expect(result.unencodable).toEqual([]);
   });
 
   it("joins extra_search_path, empty allowed", () => {
-    const result = legacyEncodeApiBody(
-      input({ changes: [change(["api", "extra_search_path"], [])] }),
-    );
+    const result = encodeApiBody(input({ changes: [change(["api", "extra_search_path"], [])] }));
     expect(result.body).toEqual({ db_extra_search_path: "" });
     expect(Object.keys(result.body ?? {})).toEqual(["db_extra_search_path"]);
   });
 
   it("disabling sends db_schema: '' alone", () => {
-    const result = legacyEncodeApiBody(
+    const result = encodeApiBody(
       input({ changes: [change(["api", "enabled"], false)], local: { api: { enabled: false } } }),
     );
     expect(result.body).toEqual({ db_schema: "" });
@@ -112,7 +102,7 @@ describe("legacyEncodeApiBody", () => {
   });
 
   it("enabling joins the local schemas", () => {
-    const result = legacyEncodeApiBody(
+    const result = encodeApiBody(
       input({
         changes: [change(["api", "enabled"], true)],
         local: { api: { enabled: true, schemas: ["public", "graphql_public"] } },
@@ -122,7 +112,7 @@ describe("legacyEncodeApiBody", () => {
   });
 
   it("schemas changing alone joins them", () => {
-    const result = legacyEncodeApiBody(
+    const result = encodeApiBody(
       input({
         changes: [change(["api", "schemas"], ["public", "private"])],
         local: { api: { enabled: true, schemas: ["public", "private"] } },
@@ -132,7 +122,7 @@ describe("legacyEncodeApiBody", () => {
   });
 
   it("enabling with no schemas anywhere is unencodable, with the D5 reason", () => {
-    const result = legacyEncodeApiBody(
+    const result = encodeApiBody(
       input({
         changes: [change(["api", "enabled"], true)],
         local: { api: { enabled: true, schemas: [] } },
@@ -148,21 +138,19 @@ describe("legacyEncodeApiBody", () => {
   });
 
   it("prefers the remote's current enabled state over local's default when only schemas changed", () => {
-    const result = legacyEncodeApiBody(
+    const result = encodeApiBody(
       input({
         changes: [change(["api", "schemas"], ["public", "private"])],
         local: { api: { enabled: false, schemas: ["public", "private"] } },
         remote: { api: { enabled: true, schemas: ["public"] } },
       }),
     );
-    // remote says enabled=true, so schemas ship even though local's own
-    // `enabled` (a schema default the file never declared) says false.
     expect(result.body).toEqual({ db_schema: "public,private" });
     expect(result.forced).toEqual([]);
   });
 
   it("discloses a forced fallback to local when remote reports nothing for the enabled companion", () => {
-    const result = legacyEncodeApiBody(
+    const result = encodeApiBody(
       input({
         changes: [change(["api", "schemas"], ["public", "private"])],
         local: { api: { enabled: true, schemas: ["public", "private"] } },
@@ -174,7 +162,7 @@ describe("legacyEncodeApiBody", () => {
   });
 
   it("routes a schemas-only change to unencodable, without sending the disable sentinel, when the Data API is disabled and enabled itself is not a routed change", () => {
-    const result = legacyEncodeApiBody(
+    const result = encodeApiBody(
       input({
         changes: [change(["api", "schemas"], ["public", "private"])],
         remote: { api: { enabled: false } },
@@ -190,7 +178,7 @@ describe("legacyEncodeApiBody", () => {
   });
 
   it("still applies a schemas change bundled with an api.enabled: true change, even while the Data API is currently disabled", () => {
-    const result = legacyEncodeApiBody(
+    const result = encodeApiBody(
       input({
         changes: [
           change(["api", "enabled"], true),
@@ -205,9 +193,9 @@ describe("legacyEncodeApiBody", () => {
   });
 });
 
-describe("legacyEncodeDbSettingsBody", () => {
+describe("encodeDbSettingsBody", () => {
   it("ships only the changed keys — sparse body", () => {
-    const result = legacyEncodeDbSettingsBody(
+    const result = encodeDbSettingsBody(
       input({
         changes: [
           change(["db", "settings", "shared_buffers"], "256MB"),
@@ -230,14 +218,12 @@ describe("legacyEncodeDbSettingsBody", () => {
   });
 
   it("is up to date when nothing changed", () => {
-    const result = legacyEncodeDbSettingsBody(input());
+    const result = encodeDbSettingsBody(input());
     expect(result.body).toBeUndefined();
   });
 
   it("rejects a change not shaped like db.settings.<key> as unencodable", () => {
-    const result = legacyEncodeDbSettingsBody(
-      input({ changes: [change(["db", "settings"], "256MB")] }),
-    );
+    const result = encodeDbSettingsBody(input({ changes: [change(["db", "settings"], "256MB")] }));
     expect(result.body).toBeUndefined();
     expect(result.unencodable).toEqual([
       {
@@ -249,12 +235,12 @@ describe("legacyEncodeDbSettingsBody", () => {
   });
 });
 
-describe("legacyEncodeNetworkRestrictionsBody", () => {
+describe("encodeNetworkRestrictionsBody", () => {
   it("sends both CIDR arrays together, triggered by either one changing", () => {
     const local: ProjectConfig = {
       db: { network_restrictions: { allowed_cidrs: ["10.0.0.0/8"], allowed_cidrs_v6: ["::/0"] } },
     };
-    const result = legacyEncodeNetworkRestrictionsBody(
+    const result = encodeNetworkRestrictionsBody(
       input({
         changes: [change(["db", "network_restrictions", "allowed_cidrs"], ["10.0.0.0/8"])],
         local,
@@ -276,7 +262,7 @@ describe("legacyEncodeNetworkRestrictionsBody", () => {
     const local: ProjectConfig = {
       db: { network_restrictions: { allowed_cidrs: ["10.0.0.0/8"] } },
     };
-    const result = legacyEncodeNetworkRestrictionsBody(
+    const result = encodeNetworkRestrictionsBody(
       input({
         changes: [change(["db", "network_restrictions", "allowed_cidrs"], ["10.0.0.0/8"])],
         local,
@@ -295,7 +281,7 @@ describe("legacyEncodeNetworkRestrictionsBody", () => {
       db: { network_restrictions: { allowed_cidrs: ["10.0.0.0/8"], allowed_cidrs_v6: ["::/0"] } },
     };
     const remote: ProjectConfig = { db: { network_restrictions: {} } };
-    const result = legacyEncodeNetworkRestrictionsBody(
+    const result = encodeNetworkRestrictionsBody(
       input({
         changes: [change(["db", "network_restrictions", "allowed_cidrs"], ["10.0.0.0/8"])],
         local,
@@ -309,18 +295,17 @@ describe("legacyEncodeNetworkRestrictionsBody", () => {
   });
 
   it("is up to date when nothing changed", () => {
-    const result = legacyEncodeNetworkRestrictionsBody(input());
+    const result = encodeNetworkRestrictionsBody(input());
     expect(result.body).toBeUndefined();
   });
 
   it("routes both CIDR paths to unencodable (REASON_GROUP_INCOMPLETE), not an empty array, when a companion cannot be resolved from remote or local", () => {
-    // Remote and local both lack `allowed_cidrs_v6` entirely — the whole
-    // group is incomplete, so nothing should be substituted with `[]`.
+    // allowed_cidrs_v6 is missing from both remote and local.
     const local: ProjectConfig = {
       db: { network_restrictions: { allowed_cidrs: ["10.0.0.0/8"] } },
     };
     const remote: ProjectConfig = { db: { network_restrictions: {} } };
-    const result = legacyEncodeNetworkRestrictionsBody(
+    const result = encodeNetworkRestrictionsBody(
       input({
         changes: [change(["db", "network_restrictions", "allowed_cidrs"], ["10.0.0.0/8"])],
         local,
@@ -338,9 +323,9 @@ describe("legacyEncodeNetworkRestrictionsBody", () => {
   });
 });
 
-describe("legacyEncodeSslEnforcementBody", () => {
+describe("encodeSslEnforcementBody", () => {
   it("wraps the boolean in requestedConfig.database", () => {
-    const result = legacyEncodeSslEnforcementBody(
+    const result = encodeSslEnforcementBody(
       input({ changes: [change(["db", "ssl_enforcement", "enabled"], true)] }),
     );
     expect(result.body).toEqual({ requestedConfig: { database: true } });
@@ -348,14 +333,14 @@ describe("legacyEncodeSslEnforcementBody", () => {
   });
 
   it("is up to date when nothing changed", () => {
-    const result = legacyEncodeSslEnforcementBody(input());
+    const result = encodeSslEnforcementBody(input());
     expect(result.body).toBeUndefined();
   });
 });
 
-describe("legacyEncodeStorageBody", () => {
+describe("encodeStorageBody", () => {
   it("ships file_size_limit alone with features absent (sparseness proof)", () => {
-    const result = legacyEncodeStorageBody(
+    const result = encodeStorageBody(
       storageInput({ changes: [change(["storage", "file_size_limit"], "100MiB")] }),
     );
     expect(result.body).toEqual({ fileSizeLimit: 104_857_600 });
@@ -364,7 +349,7 @@ describe("legacyEncodeStorageBody", () => {
   });
 
   it("wraps image_transformation/s3_protocol as single-key containers, with fileSizeLimit absent", () => {
-    const result = legacyEncodeStorageBody(
+    const result = encodeStorageBody(
       storageInput({
         changes: [
           change(["storage", "image_transformation", "enabled"], true),
@@ -386,7 +371,7 @@ describe("legacyEncodeStorageBody", () => {
     const local: ProjectConfig = {
       storage: { analytics: { enabled: true, max_namespaces: 5, max_tables: 10, max_catalogs: 2 } },
     };
-    const result = legacyEncodeStorageBody(
+    const result = encodeStorageBody(
       storageInput({ changes: [change(["storage", "analytics", "max_tables"], 10)], local }),
     );
     expect(result.body?.features?.icebergCatalog).toEqual({
@@ -402,7 +387,7 @@ describe("legacyEncodeStorageBody", () => {
     const local: ProjectConfig = {
       storage: { vector: { enabled: true, max_buckets: 10, max_indexes: 5 } },
     };
-    const result = legacyEncodeStorageBody(
+    const result = encodeStorageBody(
       storageInput({ changes: [change(["storage", "vector", "enabled"], true)], local }),
     );
     expect(result.body?.features?.vectorBuckets).toEqual({
@@ -417,7 +402,7 @@ describe("legacyEncodeStorageBody", () => {
     const remote: ProjectConfig = {
       storage: { vector: { enabled: false, max_buckets: 7, max_indexes: 99 } },
     };
-    const result = legacyEncodeStorageBody(
+    const result = encodeStorageBody(
       storageInput({ changes: [change(["storage", "vector", "enabled"], true)], local, remote }),
     );
     expect(result.body?.features?.vectorBuckets).toEqual({
@@ -443,12 +428,10 @@ describe("legacyEncodeStorageBody", () => {
         },
       },
     };
-    // The real pipeline drops a disabled `storage.analytics`'s max_* siblings
-    // from the local projection (`DISABLED_SENTINEL_PRUNES`, leaving only
-    // `{enabled: false}`) — this directly exercises the encoder with that
-    // pruned shape, as a change constructed by hand rather than through the
-    // full diff pipeline.
-    const result = legacyEncodeStorageBody(
+    // The real pipeline drops a disabled storage.analytics's max_* siblings from the local
+    // projection (DISABLED_SENTINEL_PRUNES); this constructs that pruned shape by hand instead
+    // of running the full diff pipeline.
+    const result = encodeStorageBody(
       storageInput({ changes: [change(["storage", "analytics", "enabled"], false)], config }),
     );
     expect(result.body?.features?.icebergCatalog).toEqual({
@@ -473,7 +456,7 @@ describe("legacyEncodeStorageBody", () => {
         vector: { enabled: false, max_buckets: 11, max_indexes: 6, buckets: {} },
       },
     };
-    const result = legacyEncodeStorageBody(
+    const result = encodeStorageBody(
       storageInput({ changes: [change(["storage", "vector", "enabled"], false)], config }),
     );
     expect(result.body?.features?.vectorBuckets).toEqual({
@@ -484,14 +467,14 @@ describe("legacyEncodeStorageBody", () => {
   });
 
   it("is up to date when nothing changed", () => {
-    const result = legacyEncodeStorageBody(storageInput());
+    const result = encodeStorageBody(storageInput());
     expect(result.body).toBeUndefined();
   });
 });
 
-describe("legacyEncodeAuthBody", () => {
+describe("encodeAuthBody", () => {
   it("is up to date (body undefined) when nothing routed to it changed and no secret sends", () => {
-    const result = legacyEncodeAuthBody(authInput());
+    const result = encodeAuthBody(authInput());
     expect(result.body).toBeUndefined();
     expect(result.encoded).toEqual([]);
     expect(result.extras).toEqual([]);
@@ -499,7 +482,7 @@ describe("legacyEncodeAuthBody", () => {
   });
 
   it("joins additional_redirect_urls with a comma, alone", () => {
-    const result = legacyEncodeAuthBody(
+    const result = encodeAuthBody(
       authInput({ changes: [change(["auth", "additional_redirect_urls"], ["a", "b"])] }),
     );
     expect(result.body).toEqual({ uri_allow_list: "a,b" });
@@ -507,21 +490,21 @@ describe("legacyEncodeAuthBody", () => {
   });
 
   it("inverts enable_signup into disable_signup", () => {
-    const result = legacyEncodeAuthBody(
+    const result = encodeAuthBody(
       authInput({ changes: [change(["auth", "enable_signup"], true)] }),
     );
     expect(result.body).toEqual({ disable_signup: false });
   });
 
   it("inverts email.enable_confirmations into mailer_autoconfirm", () => {
-    const result = legacyEncodeAuthBody(
+    const result = encodeAuthBody(
       authInput({ changes: [change(["auth", "email", "enable_confirmations"], true)] }),
     );
     expect(result.body).toEqual({ mailer_autoconfirm: false });
   });
 
   it("maps password_requirements through the character-class table", () => {
-    const result = legacyEncodeAuthBody(
+    const result = encodeAuthBody(
       authInput({ changes: [change(["auth", "password_requirements"], "letters_digits")] }),
     );
     expect(result.body).toEqual({
@@ -531,28 +514,28 @@ describe("legacyEncodeAuthBody", () => {
   });
 
   it("floors mfa.phone.max_frequency to whole seconds", () => {
-    const result = legacyEncodeAuthBody(
+    const result = encodeAuthBody(
       authInput({ changes: [change(["auth", "mfa", "phone", "max_frequency"], "1500ms")] }),
     );
     expect(result.body).toEqual({ mfa_phone_max_frequency: 1 });
   });
 
   it("converts sessions.timebox to fractional hours (not floored)", () => {
-    const result = legacyEncodeAuthBody(
+    const result = encodeAuthBody(
       authInput({ changes: [change(["auth", "sessions", "timebox"], "1h30m")] }),
     );
     expect(result.body).toEqual({ sessions_timebox: 1.5 });
   });
 
   it("floors smtp_max_frequency (email.max_frequency) to whole seconds", () => {
-    const result = legacyEncodeAuthBody(
+    const result = encodeAuthBody(
       authInput({ changes: [change(["auth", "email", "max_frequency"], "1500ms")] }),
     );
     expect(result.body).toEqual({ smtp_max_frequency: 1 });
   });
 
   it("ships only sms_otp_exp for sms.otp_expiry — sparse body", () => {
-    const result = legacyEncodeAuthBody(
+    const result = encodeAuthBody(
       authInput({ changes: [change(["auth", "sms", "otp_expiry"], 120)] }),
     );
     expect(result.body).toEqual({ sms_otp_exp: 120 });
@@ -562,7 +545,7 @@ describe("legacyEncodeAuthBody", () => {
     const REASON = "the declared value is not a valid duration";
 
     it("sessions.timebox: an unparseable string", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({ changes: [change(["auth", "sessions", "timebox"], "not-a-duration")] }),
       );
       expect(result.body).toBeUndefined();
@@ -572,7 +555,7 @@ describe("legacyEncodeAuthBody", () => {
     });
 
     it("mfa.phone.max_frequency: a non-string value", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({ changes: [change(["auth", "mfa", "phone", "max_frequency"], 42)] }),
       );
       expect(result.body).toBeUndefined();
@@ -582,7 +565,7 @@ describe("legacyEncodeAuthBody", () => {
     });
 
     it("smtp_max_frequency (email.max_frequency): an unparseable string", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({ changes: [change(["auth", "email", "max_frequency"], "5 minutes")] }),
       );
       expect(result.body).toBeUndefined();
@@ -592,7 +575,7 @@ describe("legacyEncodeAuthBody", () => {
     });
 
     it("sms_max_frequency (sms.max_frequency): a non-string value", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({ changes: [change(["auth", "sms", "max_frequency"], null)] }),
       );
       expect(result.body).toBeUndefined();
@@ -602,7 +585,7 @@ describe("legacyEncodeAuthBody", () => {
     });
 
     it("sessions.timebox: a digit-less (unit-only) duration, not a silent zero", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({ changes: [change(["auth", "sessions", "timebox"], "s")] }),
       );
       expect(result.body).toBeUndefined();
@@ -615,7 +598,7 @@ describe("legacyEncodeAuthBody", () => {
   describe("smtp container", () => {
     it("disabled → only smtp_host: ''", () => {
       const local: ProjectConfig = { auth: { email: { smtp: { enabled: false } } } };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({ changes: [change(["auth", "email", "smtp", "enabled"], false)], local }),
       );
       expect(result.body).toEqual({ smtp_host: "" });
@@ -636,7 +619,7 @@ describe("legacyEncodeAuthBody", () => {
           },
         },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "email", "smtp", "host"], "smtp.example.com")],
           local,
@@ -680,7 +663,7 @@ describe("legacyEncodeAuthBody", () => {
           },
         },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "email", "smtp", "host"], "smtp.example.com")],
           local,
@@ -712,7 +695,7 @@ describe("legacyEncodeAuthBody", () => {
           },
         },
       };
-      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+      const secrets: ReadonlyArray<PushSecretDecision> = [
         secretDecision({
           path: ["auth", "email", "smtp", "pass"],
           apiKey: "smtp_pass",
@@ -720,7 +703,7 @@ describe("legacyEncodeAuthBody", () => {
           plaintext: "hunter2",
         }),
       ];
-      const result = legacyEncodeAuthBody(authInput({ local, secrets }));
+      const result = encodeAuthBody(authInput({ local, secrets }));
       expect(result.body).toEqual({
         smtp_host: "smtp.example.com",
         smtp_port: "587",
@@ -749,14 +732,14 @@ describe("legacyEncodeAuthBody", () => {
           },
         },
       };
-      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+      const secrets: ReadonlyArray<PushSecretDecision> = [
         secretDecision({
           path: ["auth", "email", "smtp", "pass"],
           apiKey: "smtp_pass",
           status: "unchanged",
         }),
       ];
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({ changes: [change(["auth", "email", "smtp", "host"], "h")], local, secrets }),
       );
       expect(result.body).not.toHaveProperty("smtp_pass");
@@ -764,7 +747,7 @@ describe("legacyEncodeAuthBody", () => {
 
     it("routes the container's changes to unencodable when its enabled state cannot be determined", () => {
       const local: ProjectConfig = { auth: { email: { smtp: {} } } };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({ changes: [change(["auth", "email", "smtp", "host"], "h")], local }),
       );
       expect(result.body).toBeUndefined();
@@ -778,7 +761,7 @@ describe("legacyEncodeAuthBody", () => {
 
     it("routes the whole container to unencodable (REASON_GROUP_INCOMPLETE) when a companion cannot be resolved from remote or local", () => {
       const local: ProjectConfig = { auth: { email: { smtp: { enabled: true, host: "h" } } } };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({ changes: [change(["auth", "email", "smtp", "host"], "h")], local }),
       );
       expect(result.body).toBeUndefined();
@@ -805,7 +788,7 @@ describe("legacyEncodeAuthBody", () => {
           },
         },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "email", "smtp", "port"], "not-a-number")],
           local,
@@ -821,10 +804,8 @@ describe("legacyEncodeAuthBody", () => {
     });
 
     it("a secret-only trigger whose group is incomplete is reported unencodable, not silently dropped", () => {
-      // No ordinary change at all — only the `pass` secret is `send` — and the
-      // group's other companions cannot be resolved from remote or local.
       const local: ProjectConfig = { auth: { email: { smtp: { enabled: true } } } };
-      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+      const secrets: ReadonlyArray<PushSecretDecision> = [
         secretDecision({
           path: ["auth", "email", "smtp", "pass"],
           apiKey: "smtp_pass",
@@ -832,7 +813,7 @@ describe("legacyEncodeAuthBody", () => {
           plaintext: "hunter2",
         }),
       ];
-      const result = legacyEncodeAuthBody(authInput({ local, secrets }));
+      const result = encodeAuthBody(authInput({ local, secrets }));
       expect(result.body).toBeUndefined();
       expect(result.unencodable).toEqual([
         {
@@ -846,7 +827,7 @@ describe("legacyEncodeAuthBody", () => {
 
   describe("captcha container", () => {
     it("disabled → only security_captcha_enabled: false", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "captcha", "enabled"], false)],
           local: { auth: { captcha: { enabled: false } } },
@@ -857,7 +838,7 @@ describe("legacyEncodeAuthBody", () => {
 
     it("enabled → provider ships, secret ships only while status is 'send'", () => {
       const local: ProjectConfig = { auth: { captcha: { enabled: true, provider: "hcaptcha" } } };
-      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+      const secrets: ReadonlyArray<PushSecretDecision> = [
         secretDecision({
           path: ["auth", "captcha", "secret"],
           apiKey: "security_captcha_secret",
@@ -865,7 +846,7 @@ describe("legacyEncodeAuthBody", () => {
           plaintext: "shh",
         }),
       ];
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "captcha", "provider"], "hcaptcha")],
           local,
@@ -882,7 +863,7 @@ describe("legacyEncodeAuthBody", () => {
 
   describe("hook containers", () => {
     it("disabled → only hook_<name>_enabled: false", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "hook", "send_email", "enabled"], false)],
           local: { auth: { hook: { send_email: { enabled: false } } } },
@@ -895,7 +876,7 @@ describe("legacyEncodeAuthBody", () => {
       const local: ProjectConfig = {
         auth: { hook: { send_email: { enabled: true, uri: "https://example.com/hook" } } },
       };
-      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+      const secrets: ReadonlyArray<PushSecretDecision> = [
         secretDecision({
           path: ["auth", "hook", "send_email", "secrets"],
           apiKey: "hook_send_email_secrets",
@@ -903,7 +884,7 @@ describe("legacyEncodeAuthBody", () => {
           plaintext: "v1,whsec_abc",
         }),
       ];
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "hook", "send_email", "uri"], "https://example.com/hook")],
           local,
@@ -918,7 +899,7 @@ describe("legacyEncodeAuthBody", () => {
     });
 
     it("processes every one of the six known hooks independently", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [
             change(["auth", "hook", "before_user_created", "enabled"], false),
@@ -941,7 +922,7 @@ describe("legacyEncodeAuthBody", () => {
     });
 
     it("routes the hook to unencodable (REASON_GROUP_INCOMPLETE) when uri cannot be resolved", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "hook", "send_email", "enabled"], true)],
           local: { auth: { hook: { send_email: { enabled: true } } } },
@@ -959,7 +940,7 @@ describe("legacyEncodeAuthBody", () => {
 
   describe("external provider containers", () => {
     it("disabled → only external_<id>_enabled: false", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "external", "github", "enabled"], false)],
           local: { auth: { external: { github: { enabled: false } } } },
@@ -972,7 +953,7 @@ describe("legacyEncodeAuthBody", () => {
       const local: ProjectConfig = {
         auth: { external: { github: { enabled: true, client_id: "id", email_optional: true } } },
       };
-      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+      const secrets: ReadonlyArray<PushSecretDecision> = [
         secretDecision({
           path: ["auth", "external", "github", "secret"],
           apiKey: "external_github_secret",
@@ -980,7 +961,7 @@ describe("legacyEncodeAuthBody", () => {
           plaintext: "gh-secret",
         }),
       ];
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "external", "github", "client_id"], "id")],
           local,
@@ -1000,7 +981,7 @@ describe("legacyEncodeAuthBody", () => {
       const remote: ProjectConfig = {
         auth: { external: { github: { enabled: true, client_id: "id", email_optional: true } } },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "external", "github", "client_id"], "id")],
           local,
@@ -1019,7 +1000,7 @@ describe("legacyEncodeAuthBody", () => {
           },
         },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({ changes: [change(["auth", "external", "workos", "client_id"], "id")], local }),
       );
       expect(result.body).not.toHaveProperty("external_workos_email_optional");
@@ -1040,7 +1021,7 @@ describe("legacyEncodeAuthBody", () => {
           },
         },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [
             change(["auth", "external", "azure", "enabled"], true),
@@ -1069,7 +1050,7 @@ describe("legacyEncodeAuthBody", () => {
           },
         },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [
             change(["auth", "external", "google", "enabled"], true),
@@ -1090,7 +1071,7 @@ describe("legacyEncodeAuthBody", () => {
           },
         },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "external", "apple", "client_id"], "id-1,id-2")],
           local,
@@ -1104,7 +1085,7 @@ describe("legacyEncodeAuthBody", () => {
       const local: ProjectConfig = {
         auth: { external: { github: { enabled: true, client_id: "id", email_optional: false } } },
       };
-      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+      const secrets: ReadonlyArray<PushSecretDecision> = [
         secretDecision({
           path: ["auth", "external", "github", "secret"],
           apiKey: "external_github_secret",
@@ -1112,7 +1093,7 @@ describe("legacyEncodeAuthBody", () => {
           plaintext: "gh-secret",
         }),
       ];
-      const result = legacyEncodeAuthBody(authInput({ local, secrets }));
+      const result = encodeAuthBody(authInput({ local, secrets }));
       expect(result.body).toEqual({
         external_github_enabled: true,
         external_github_client_id: "id",
@@ -1127,7 +1108,7 @@ describe("legacyEncodeAuthBody", () => {
       const local: ProjectConfig = {
         auth: { external: { github: { enabled: true, email_optional: false } } },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "external", "github", "client_id"], true)],
           local,
@@ -1143,7 +1124,7 @@ describe("legacyEncodeAuthBody", () => {
     });
 
     it("routes the provider to unencodable (REASON_GROUP_INCOMPLETE) when client_id cannot be resolved", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "external", "github", "enabled"], true)],
           local: { auth: { external: { github: { enabled: true } } } },
@@ -1160,7 +1141,7 @@ describe("legacyEncodeAuthBody", () => {
 
     it("a secret-only trigger whose client_id cannot be resolved is reported unencodable, not silently dropped", () => {
       const local: ProjectConfig = { auth: { external: { github: { enabled: true } } } };
-      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+      const secrets: ReadonlyArray<PushSecretDecision> = [
         secretDecision({
           path: ["auth", "external", "github", "secret"],
           apiKey: "external_github_secret",
@@ -1168,7 +1149,7 @@ describe("legacyEncodeAuthBody", () => {
           plaintext: "gh-secret",
         }),
       ];
-      const result = legacyEncodeAuthBody(authInput({ local, secrets }));
+      const result = encodeAuthBody(authInput({ local, secrets }));
       expect(result.body).toBeUndefined();
       expect(result.unencodable).toEqual([
         {
@@ -1182,7 +1163,7 @@ describe("legacyEncodeAuthBody", () => {
 
   describe("dead passkey/webauthn keys", () => {
     it("are never emitted, even when routed changes cover every other auth field", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [
             change(["auth", "site_url"], "https://example.com"),
@@ -1203,7 +1184,7 @@ describe("legacyEncodeAuthBody", () => {
       const local: ProjectConfig = {
         auth: { sms: { test_otp: { "15555550100": "123456", "15555550101": "654321" } } },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "sms", "test_otp", "15555550100"], "123456")],
           local,
@@ -1231,7 +1212,7 @@ describe("legacyEncodeAuthBody", () => {
           },
         },
       };
-      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+      const secrets: ReadonlyArray<PushSecretDecision> = [
         secretDecision({
           path: ["auth", "sms", "twilio", "auth_token"],
           apiKey: "sms_twilio_auth_token",
@@ -1239,7 +1220,7 @@ describe("legacyEncodeAuthBody", () => {
           plaintext: "token",
         }),
       ];
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "sms", "twilio", "account_sid"], "sid")],
           local,
@@ -1269,7 +1250,7 @@ describe("legacyEncodeAuthBody", () => {
           },
         },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "sms", "twilio", "content_sid"], "content")],
           local,
@@ -1289,7 +1270,7 @@ describe("legacyEncodeAuthBody", () => {
           },
         },
       };
-      const verifyResult = legacyEncodeAuthBody(
+      const verifyResult = encodeAuthBody(
         authInput({
           changes: [change(["auth", "sms", "twilio_verify", "account_sid"], "sid")],
           local: verifyLocal,
@@ -1304,10 +1285,6 @@ describe("legacyEncodeAuthBody", () => {
     });
 
     it("keeps encoding twilio when content_sid is unset everywhere (optional companion)", () => {
-      // `content_sid` is an `optionalKey` with no materialized default; a
-      // project that never set it must still be able to push its other
-      // twilio settings instead of the whole provider block becoming
-      // unencodable.
       const local: ProjectConfig = {
         auth: {
           sms: {
@@ -1315,7 +1292,7 @@ describe("legacyEncodeAuthBody", () => {
           },
         },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "sms", "twilio", "account_sid"], "sid-2")],
           local,
@@ -1334,7 +1311,7 @@ describe("legacyEncodeAuthBody", () => {
       const local: ProjectConfig = {
         auth: { sms: { vonage: { enabled: true, from: "from", api_key: "key" } } },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({ changes: [change(["auth", "sms", "vonage", "from"], "from")], local }),
       );
       expect(result.body).toEqual({
@@ -1346,7 +1323,7 @@ describe("legacyEncodeAuthBody", () => {
 
     it("no provider enabled is unencodable, with the D5 reason", () => {
       const local: ProjectConfig = { auth: { sms: { twilio: { enabled: false } } } };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({ changes: [change(["auth", "sms", "twilio", "enabled"], false)], local }),
       );
       expect(result.body).toBeUndefined();
@@ -1363,7 +1340,7 @@ describe("legacyEncodeAuthBody", () => {
       const local: ProjectConfig = {
         auth: { sms: { twilio: { enabled: true, message_service_sid: "svc" } } },
       };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           changes: [change(["auth", "sms", "twilio", "account_sid"], 12345)],
           local,
@@ -1380,7 +1357,7 @@ describe("legacyEncodeAuthBody", () => {
 
     it("routes the active provider to unencodable (REASON_GROUP_INCOMPLETE) when a credential field cannot be resolved", () => {
       const local: ProjectConfig = { auth: { sms: { twilio: { enabled: true } } } };
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({ changes: [change(["auth", "sms", "twilio", "enabled"], true)], local }),
       );
       expect(result.body).toBeUndefined();
@@ -1394,7 +1371,7 @@ describe("legacyEncodeAuthBody", () => {
 
     it("a secret-only trigger with no active provider is reported unencodable, not silently dropped", () => {
       const local: ProjectConfig = { auth: { sms: { twilio: { enabled: false } } } };
-      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+      const secrets: ReadonlyArray<PushSecretDecision> = [
         secretDecision({
           path: ["auth", "sms", "twilio", "auth_token"],
           apiKey: "sms_twilio_auth_token",
@@ -1402,7 +1379,7 @@ describe("legacyEncodeAuthBody", () => {
           plaintext: "token",
         }),
       ];
-      const result = legacyEncodeAuthBody(authInput({ local, secrets }));
+      const result = encodeAuthBody(authInput({ local, secrets }));
       expect(result.body).toBeUndefined();
       expect(result.unencodable).toEqual([
         {
@@ -1415,7 +1392,7 @@ describe("legacyEncodeAuthBody", () => {
 
     it("a secret-only trigger whose active provider's group is incomplete is reported unencodable", () => {
       const local: ProjectConfig = { auth: { sms: { twilio: { enabled: true } } } };
-      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+      const secrets: ReadonlyArray<PushSecretDecision> = [
         secretDecision({
           path: ["auth", "sms", "twilio", "auth_token"],
           apiKey: "sms_twilio_auth_token",
@@ -1423,7 +1400,7 @@ describe("legacyEncodeAuthBody", () => {
           plaintext: "token",
         }),
       ];
-      const result = legacyEncodeAuthBody(authInput({ local, secrets }));
+      const result = encodeAuthBody(authInput({ local, secrets }));
       expect(result.body).toBeUndefined();
       expect(result.unencodable).toEqual([
         {
@@ -1437,7 +1414,7 @@ describe("legacyEncodeAuthBody", () => {
 
   describe("push-only mailer content", () => {
     it("ships template content that differs from the remote key, as an extra rather than an encoded change", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           emailContent: { template: { invite: "<h1>Invite</h1>" }, notification: {} },
           remoteAuthAttributes: { mailer_templates_invite_content: "<p>old</p>" },
@@ -1451,7 +1428,7 @@ describe("legacyEncodeAuthBody", () => {
     });
 
     it("omits template content that already matches the remote key", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           emailContent: { template: { invite: "<h1>Invite</h1>" }, notification: {} },
           remoteAuthAttributes: { mailer_templates_invite_content: "<h1>Invite</h1>" },
@@ -1462,7 +1439,7 @@ describe("legacyEncodeAuthBody", () => {
     });
 
     it("ships notification content only when loaded (enabled), as an extra", () => {
-      const result = legacyEncodeAuthBody(
+      const result = encodeAuthBody(
         authInput({
           emailContent: { template: {}, notification: { password_changed: "<p>Changed</p>" } },
           remoteAuthAttributes: {},
@@ -1482,7 +1459,7 @@ describe("legacyEncodeAuthBody", () => {
   });
 
   it("web3 leaves are independent", () => {
-    const result = legacyEncodeAuthBody(
+    const result = encodeAuthBody(
       authInput({
         changes: [
           change(["auth", "web3", "solana", "enabled"], true),
@@ -1499,29 +1476,24 @@ describe("legacyEncodeAuthBody", () => {
 
 describe("auth encoder key-name drift guard", () => {
   /**
-   * Every `(configPath, apiKey)` pair the auth encoder maps, across the flat
-   * leaf table AND every string-built container (smtp, captcha, hooks,
-   * external providers, sms-provider credentials, email template
-   * subjects, email notification enabled+subject). For each pair, asserts
-   * the apiKey matches the registry's OWN `apiPath` for that configPath
-   * (`@supabase/config/internal`'s `projectConfigMappingRows`) — a guard
-   * against `push.encoders.ts` silently drifting from the registry `config
-   * pull`/`config diff` also read.
+   * Every `(configPath, apiKey)` pair the auth encoder maps, across the flat leaf table and
+   * every string-built container (smtp, captcha, hooks, external providers, sms-provider
+   * credentials, email template subjects, email notification enabled+subject). For each pair,
+   * asserts the apiKey matches the registry's own `apiPath` for that configPath
+   * (`@supabase/config/internal`'s `projectConfigMappingRows`), guarding against
+   * `push.encoders.ts` drifting from the registry `config pull`/`config diff` also read.
    *
-   * The leaf table (`LEGACY_PUSH_AUTH_LEAF_MAP`) is imported, not
-   * re-declared, so this guard tests the actual source of truth the encoder
-   * iterates — a change to that table is exercised here automatically. The
-   * container groups build their `apiKey` from a string template instead
-   * (`smtp_${field}`, `hook_${name}_enabled`, `external_${id}_client_id`,
-   * `sms_${provider}_${key}`, `mailer_subjects_${name}`, …), so their pairs
-   * are enumerated directly against the registry below.
+   * The leaf table (`PUSH_AUTH_LEAF_MAP`) is imported, not re-declared, so this guard tests the
+   * actual source of truth the encoder iterates. The container groups build their `apiKey` from
+   * a string template instead, so their pairs are enumerated directly against the registry
+   * below.
    */
   interface LeafPair {
     readonly configPath: ReadonlyArray<string>;
     readonly apiKey: string;
   }
 
-  const leafPairs: ReadonlyArray<LeafPair> = LEGACY_PUSH_AUTH_LEAF_MAP.map((spec) => ({
+  const leafPairs: ReadonlyArray<LeafPair> = PUSH_AUTH_LEAF_MAP.map((spec) => ({
     configPath: spec.configPath,
     apiKey: spec.apiKey,
   }));
@@ -1548,20 +1520,20 @@ describe("auth encoder key-name drift guard", () => {
   ]);
 
   const providerPairs: ReadonlyArray<LeafPair> = [
-    ...LEGACY_EXTERNAL_PROVIDER_IDS.flatMap((id) => [
+    ...EXTERNAL_PROVIDER_IDS.flatMap((id) => [
       { configPath: ["auth", "external", id, "enabled"], apiKey: `external_${id}_enabled` },
       { configPath: ["auth", "external", id, "client_id"], apiKey: `external_${id}_client_id` },
       { configPath: ["auth", "external", id, "secret"], apiKey: `external_${id}_secret` },
     ]),
-    ...LEGACY_PROVIDERS_WITH_URL.map((id) => ({
+    ...PROVIDERS_WITH_URL.map((id) => ({
       configPath: ["auth", "external", id, "url"],
       apiKey: `external_${id}_url`,
     })),
-    ...LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL.map((id) => ({
+    ...PROVIDERS_WITH_EMAIL_OPTIONAL.map((id) => ({
       configPath: ["auth", "external", id, "email_optional"],
       apiKey: `external_${id}_email_optional`,
     })),
-    ...LEGACY_PROVIDERS_WITH_SKIP_NONCE_CHECK.map((id) => ({
+    ...PROVIDERS_WITH_SKIP_NONCE_CHECK.map((id) => ({
       configPath: ["auth", "external", id, "skip_nonce_check"],
       apiKey: `external_${id}_skip_nonce_check`,
     })),
@@ -1602,23 +1574,21 @@ describe("auth encoder key-name drift guard", () => {
     { configPath: ["auth", "sms", "vonage", "api_secret"], apiKey: "sms_vonage_api_secret" },
   ];
 
-  const templateSubjectPairs: ReadonlyArray<LeafPair> = LEGACY_EMAIL_TEMPLATE_NAMES.map((name) => ({
+  const templateSubjectPairs: ReadonlyArray<LeafPair> = EMAIL_TEMPLATE_NAMES.map((name) => ({
     configPath: ["auth", "email", "template", name, "subject"],
     apiKey: `mailer_subjects_${name}`,
   }));
 
-  const notificationPairs: ReadonlyArray<LeafPair> = LEGACY_EMAIL_NOTIFICATION_NAMES.flatMap(
-    (name) => [
-      {
-        configPath: ["auth", "email", "notification", name, "enabled"],
-        apiKey: `mailer_notifications_${name}_enabled`,
-      },
-      {
-        configPath: ["auth", "email", "notification", name, "subject"],
-        apiKey: `mailer_subjects_${name}_notification`,
-      },
-    ],
-  );
+  const notificationPairs: ReadonlyArray<LeafPair> = EMAIL_NOTIFICATION_NAMES.flatMap((name) => [
+    {
+      configPath: ["auth", "email", "notification", name, "enabled"],
+      apiKey: `mailer_notifications_${name}_enabled`,
+    },
+    {
+      configPath: ["auth", "email", "notification", name, "subject"],
+      apiKey: `mailer_subjects_${name}_notification`,
+    },
+  ]);
 
   const allPairs: ReadonlyArray<LeafPair> = [
     ...leafPairs,
@@ -1640,7 +1610,7 @@ describe("auth encoder key-name drift guard", () => {
     "%s's apiKey matches the registry's own apiPath",
     (_label, pair) => {
       const row = projectConfigMappingRows.find((candidate) =>
-        legacySamePath(candidate.configPath, pair.configPath),
+        samePath(candidate.configPath, pair.configPath),
       );
       expect(row?.apiPath.at(-1)).toBe(pair.apiKey);
     },
@@ -1649,32 +1619,28 @@ describe("auth encoder key-name drift guard", () => {
 
 describe("encoder exhaustiveness drift guard", () => {
   /**
-   * Feeds every {@link comparableProjectConfigPaths} entry that
-   * `legacyPushResourceForPath` routes to a resource (excluding the two
-   * intentionally-unsupported prefixes, covered by `push.plan.unit.test.ts`'s
-   * own drift guard) to that resource's encoder as a single synthetic
-   * `update` change, and asserts the path lands in `encoded`, `unencodable`,
-   * or `extras` — never silently in none of the three. The classification
-   * itself doesn't matter (an incomplete container correctly reports
-   * `unencodable`); what matters is that every encoder's own switch/branch
-   * logic accounts for every path it can ever receive, backstopped by each
-   * encoder's `withExhaustiveness` wrapper (`push.encoders.ts`).
+   * Feeds every {@link comparableProjectConfigPaths} entry that `pushResourceForPath` routes to
+   * a resource (excluding the two intentionally-unsupported prefixes) to that resource's encoder
+   * as a single synthetic `update` change, and asserts the path lands in `encoded`,
+   * `unencodable`, or `extras` — never silently in none of the three. The classification itself
+   * doesn't matter; what matters is that every encoder's own switch/branch logic accounts for
+   * every path it can receive, backstopped by each encoder's `withExhaustiveness` wrapper.
    */
   const ENCODE_BY_RESOURCE: Readonly<
-    Record<LegacyPushResource, (changes: ReadonlyArray<ConfigChange>) => LegacyPushEncoded<unknown>>
+    Record<PushResource, (changes: ReadonlyArray<ConfigChange>) => PushEncoded<unknown>>
   > = {
-    api: (changes) => legacyEncodeApiBody(input({ changes })),
-    "db.settings": (changes) => legacyEncodeDbSettingsBody(input({ changes })),
-    "db.network_restrictions": (changes) => legacyEncodeNetworkRestrictionsBody(input({ changes })),
-    "db.ssl_enforcement": (changes) => legacyEncodeSslEnforcementBody(input({ changes })),
-    storage: (changes) => legacyEncodeStorageBody(storageInput({ changes })),
-    auth: (changes) => legacyEncodeAuthBody(authInput({ changes })),
+    api: (changes) => encodeApiBody(input({ changes })),
+    "db.settings": (changes) => encodeDbSettingsBody(input({ changes })),
+    "db.network_restrictions": (changes) => encodeNetworkRestrictionsBody(input({ changes })),
+    "db.ssl_enforcement": (changes) => encodeSslEnforcementBody(input({ changes })),
+    storage: (changes) => encodeStorageBody(storageInput({ changes })),
+    auth: (changes) => encodeAuthBody(authInput({ changes })),
   };
 
   it("classifies every routable comparable config path as encoded, unencodable, or extras — never neither", () => {
     const uncovered: Array<ReadonlyArray<string>> = [];
     for (const path of comparableProjectConfigPaths) {
-      const resource = legacyPushResourceForPath(path);
+      const resource = pushResourceForPath(path);
       if (resource === "unsupported") {
         continue;
       }
@@ -1684,7 +1650,7 @@ describe("encoder exhaustiveness drift guard", () => {
         ...result.unencodable.map((entry) => entry.path),
         ...result.extras.map((entry) => entry.path),
       ];
-      if (!covered.some((candidate) => legacySamePath(candidate, path))) {
+      if (!covered.some((candidate) => samePath(candidate, path))) {
         uncovered.push(path);
       }
     }

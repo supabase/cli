@@ -2,16 +2,16 @@ import { Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { LegacyCompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
-import { legacyCompletionPowershell } from "./powershell.handler.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { CompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
+import { completionPowershell } from "./powershell.handler.ts";
 
 const config = {
-  noDescriptions: LegacyCompletionNoDescriptionsFlagDef,
+  noDescriptions: CompletionNoDescriptionsFlagDef,
 } as const;
-export type LegacyCompletionPowershellFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type CompletionPowershellFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyCompletionPowershellCommand = Command.make("powershell", config).pipe(
+export const completionPowershellCommand = Command.make("powershell", config).pipe(
   Command.withDescription(
     "Generate the autocompletion script for powershell.\n\n" +
       "To load completions in your current shell session:\n\n" +
@@ -21,10 +21,7 @@ export const legacyCompletionPowershellCommand = Command.make("powershell", conf
   ),
   Command.withShortDescription("Generate the autocompletion script for powershell"),
   Command.withHandler((flags) =>
-    legacyCompletionPowershell(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    completionPowershell(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["completion", "powershell"])),
 );

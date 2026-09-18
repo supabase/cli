@@ -1,8 +1,4 @@
-import {
-  legacyInspectInt,
-  legacyInspectText,
-  type LegacyInspectQuerySpec,
-} from "../legacy-inspect-query.ts";
+import { inspectInt, inspectText, type InspectQuerySpec } from "../inspect-query.ts";
 
 const SQL = `SELECT
   pid,
@@ -20,16 +16,16 @@ ORDER BY
 /**
  * `inspect db long-running-queries` — queries running longer than 5 minutes.
  * Note: unlike locks/blocking/outliers/calls, the `query` column is NOT
- * whitespace-collapsed, so it uses `legacyInspectText`.
+ * whitespace-collapsed, so it uses `inspectText`.
  */
-export const legacyLongRunningQueriesSpec: LegacyInspectQuerySpec = {
+export const longRunningQueriesSpec: InspectQuerySpec = {
   name: "long-running-queries",
   sql: SQL,
   params: () => [],
   headers: ["pid", "Duration", "Query"],
   project: (row) => [
-    legacyInspectInt(row["pid"]),
-    legacyInspectText(row["duration"]),
-    legacyInspectText(row["query"]),
+    inspectInt(row["pid"]),
+    inspectText(row["duration"]),
+    inspectText(row["query"]),
   ],
 };

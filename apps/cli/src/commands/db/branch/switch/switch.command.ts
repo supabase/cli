@@ -1,6 +1,6 @@
 import { Argument, Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { legacyDbBranchSwitch } from "./switch.handler.ts";
+import { dbBranchSwitch } from "./switch.handler.ts";
 
 const config = {
   branchName: Argument.string("branch name").pipe(
@@ -8,10 +8,10 @@ const config = {
   ),
 } as const;
 
-export type LegacyDbBranchSwitchFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbBranchSwitchFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbBranchSwitchCommand = Command.make("switch", config).pipe(
+export const dbBranchSwitchCommand = Command.make("switch", config).pipe(
   Command.withDescription("Switch the active branch."),
   Command.withShortDescription("Switch the active branch"),
-  Command.withHandler((flags) => legacyDbBranchSwitch(flags)),
+  Command.withHandler((flags) => dbBranchSwitch(flags)),
 );
