@@ -3,7 +3,7 @@ import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { quoteSsoString } from "./sso.json.ts";
+import { quoteSsoString } from "./sso.format.ts";
 import {
   SsoMetadataUrlInvalidError,
   SsoMetadataUrlNetworkError,

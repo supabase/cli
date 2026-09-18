@@ -3,6 +3,8 @@ import { Result, Schema } from "effect";
 import { renderGlamourTable } from "../../output/glamour-table.ts";
 import { SsoInvalidUuidError } from "./sso.errors.ts";
 
+export const quoteSsoString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**

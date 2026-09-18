@@ -1,7 +1,7 @@
 import { Effect, FileSystem } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
-import { quoteSsoString } from "./sso.json.ts";
+import { quoteSsoString } from "./sso.format.ts";
 
 export type SsoFileErrorReason =
   | "not_found"

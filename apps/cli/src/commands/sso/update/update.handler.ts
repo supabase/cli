@@ -3,8 +3,6 @@ import { Effect, Option, Redacted, Result, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { quoteSsoString } from "../sso.json.ts";
-
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
@@ -51,7 +49,12 @@ import {
   SsoAccessTokenError,
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
-import { renderSingleProvider, toSsoProviderView, validateUuid } from "../sso.format.ts";
+import {
+  quoteSsoString,
+  renderSingleProvider,
+  toSsoProviderView,
+  validateUuid,
+} from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
 import { SSO_NAME_ID_FORMATS, readAttributeMappingFile, readMetadataFile } from "../sso.saml.ts";
 import type { SsoUpdateFlags } from "./update.command.ts";

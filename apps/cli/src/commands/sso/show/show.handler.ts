@@ -1,7 +1,6 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option, Result } from "effect";
 
-import { quoteSsoString } from "../sso.json.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
@@ -19,7 +18,7 @@ import {
   SsoShowUnexpectedStatusError,
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
-import { renderSingleProvider, validateUuid } from "../sso.format.ts";
+import { quoteSsoString, renderSingleProvider, validateUuid } from "../sso.format.ts";
 import type { SsoShowFlags } from "./show.command.ts";
 
 const mapStatusOrNetwork = mapHttpError({
