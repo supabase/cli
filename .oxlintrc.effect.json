@@ -45,6 +45,7 @@
     "!apps/cli/src/shared/functions/functions-docker.unit.test.ts",
     "!apps/cli/src/shared/functions/serve.ts",
     "!apps/cli/src/shared/functions/serve.unit.test.ts",
+    "!apps/cli/src/shared/runtime/file-watcher.service.ts",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
     "apps/cli/src/shared/compute/stacks/**",
