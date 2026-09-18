@@ -1,6 +1,17 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schedule } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schedule,
+} from "effect";
 
 import {
   mockAnalytics,
@@ -95,6 +106,7 @@ interface SetupOpts {
   readonly dbPassword?: string;
   /** Raw `SUPABASE_WORKDIR` the settings captured; used verbatim, so no prompt fires. */
   readonly workdirEnvValue?: string;
+  readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
 function setup(path: Path.Path, opts: SetupOpts = {}) {
@@ -237,6 +249,9 @@ function setup(path: Path.Path, opts: SetupOpts = {}) {
     Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(CliArgs, { args: [] }),
     debugLoggerLayer.pipe(Layer.provide(Layer.succeed(DebugFlag, opts.debug ?? false))),
+    ConfigProvider.layer(
+      ConfigProvider.fromEnvRecord(opts.env ?? {}, { preserveEmptyStrings: true }),
+    ),
   );
 
   return {
@@ -289,6 +304,46 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live(
+    "scratch scaffolding writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK: "1" } });
+        yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+          Effect.provide(s.layer),
+        );
+        const content = yield* fs.readFileString(path.join(s.workdir, "supabase", "config.toml"));
+        expect(content).toContain("stack = true");
+        expect(content).not.toMatch(/^port = 54321$/m);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "scratch scaffolding fails closed on an invalid SUPABASE_EXPERIMENTAL_STACK before writing config",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK: "yes" } });
+        const exit = yield* Effect.exit(
+          bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+            Effect.provide(s.layer),
+          ),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ExperimentalFeatureFlagError");
+          expect(Cause.pretty(exit.cause)).toContain(
+            "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set",
+          );
+        }
+        expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(false);
+        expect(s.out.stderrText).not.toContain("Created a new project at");
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("downloads a named template matched by argument", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -301,6 +356,20 @@ describe("bootstrap integration", () => {
       expect(s.downloads[0]).toEqual({ url: NEXTJS_TEMPLATE.url, targetDir: s.workdir });
       expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(false);
       expect(s.out.stdoutText).toContain(`Downloading: ${NEXTJS_TEMPLATE.url}`);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("ignores SUPABASE_EXPERIMENTAL_STACK on a downloaded template", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, {
+        samples: [NEXTJS_TEMPLATE],
+        env: { SUPABASE_EXPERIMENTAL_STACK: "yes" },
+      });
+      yield* bootstrap(flags({ template: Option.some("NextJS") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(s.downloads).toHaveLength(1);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
