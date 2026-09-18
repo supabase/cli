@@ -23,8 +23,9 @@ export const parseYesNo = (input: string): boolean | undefined => {
 
 /**
  * Confirm-or-default prompt shared by command handlers and shell-agnostic code alike.
- * `yes` echoes an affirmative answer and returns `true` immediately; non-text output uses
- * the default silently; a real interactive TTY prompts via clack; otherwise (including
+ * `yes` echoes an affirmative answer and returns `true` immediately; non-text output
+ * honors piped answers when prompting is permitted, otherwise using the default silently;
+ * a real interactive text TTY prompts via clack; otherwise (including text callers with
  * `interactive: false`) it reads one line via the shared `Stdin` reader, falling back to
  * the default only when the line is empty or unparseable.
  */
@@ -40,19 +41,23 @@ export const promptYesNo = Effect.fnUntraced(function* (
     yield* output.raw(`${label} [${choices}] y\n`, "stderr");
     return true;
   }
-  if (output.format !== "text") {
+  const tty = yield* Tty;
+  if (output.format !== "text" && (!interactive || tty.stdinIsTty)) {
     return defaultValue;
   }
-  const tty = yield* Tty;
-  // `interactive: false` still prints the label and reads one line instead of silently
-  // returning the default — it uses the same non-TTY read path below.
+  // Text `interactive: false` still prints the label and reads one line instead of
+  // silently returning the default — it uses the same non-TTY read path below.
   if (!interactive || !tty.stdinIsTty) {
     // A parsed piped answer wins; an empty or unparseable line falls back to the default.
-    yield* output.raw(`${label} [${choices}] `, "stderr");
+    if (output.format === "text") {
+      yield* output.raw(`${label} [${choices}] `, "stderr");
+    }
     const stdin = yield* Stdin;
     const line = yield* stdin.readLine(NON_TTY_TIMEOUT_MILLIS);
     const input = Option.getOrElse(line, () => "");
-    yield* output.raw(`${input}\n`, "stderr");
+    if (output.format === "text") {
+      yield* output.raw(`${input}\n`, "stderr");
+    }
     if (input.length > 0) {
       const answer = parseYesNo(input);
       if (answer !== undefined) {

@@ -224,6 +224,7 @@ function setup(opts: {
   readonly yes?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
   readonly promptFail?: boolean;
+  readonly interactive?: boolean;
   /** stdin interactivity; defaults to a TTY so prompt-driven tests reach the confirm. */
   readonly stdinIsTty?: boolean;
   /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
@@ -256,6 +257,7 @@ function setup(opts: {
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm,
     promptConfirmFail: opts.promptFail,
+    interactive: opts.interactive,
   });
   const api = mockCommandPlatformApi({
     handler: (request) => {
@@ -552,7 +554,7 @@ max_rows = 1000
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("defaults to yes on empty non-TTY stdin, echoing the prompt", () => {
+  it.live("skips changes on empty non-TTY stdin, echoing the prompt", () => {
     const { layer, api, out } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       stdinIsTty: false,
@@ -560,9 +562,9 @@ max_rows = 1000
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
-        true,
+        false,
       );
-      expect(out.stderrText).toContain("Do you want to push api config to remote? [Y/n] \n");
+      expect(out.stderrText).toContain("Do you want to push api config to remote? [y/N] \n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -577,7 +579,49 @@ max_rows = 1000
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
         false,
       );
-      expect(out.stderrText).toContain("Do you want to push api config to remote? [Y/n] n");
+      expect(out.stderrText).toContain("Do you want to push api config to remote? [y/N] n");
+    }).pipe(Effect.provide(layer));
+  });
+
+  for (const format of ["json", "stream-json"] as const) {
+    for (const answer of ["n", "y", "", "maybe"] as const) {
+      it.live(`${format} honors piped ${JSON.stringify(answer)} with a safe fallback`, () => {
+        const { layer, api, out } = setup({
+          toml: 'project_id = "test"\n[auth]\nminimum_password_length = 12\n',
+          format,
+          stdinIsTty: false,
+          pipedAnswers: [answer],
+        });
+        return Effect.gen(function* () {
+          yield* configPush({ projectRef: Option.none() });
+          expect(
+            api.requests.some((r) => r.method === "PATCH" && r.url.includes("/config/auth")),
+          ).toBe(answer === "y");
+          expect(out.messages.find((m) => m.type === "success")?.data).toMatchObject({
+            services: expect.arrayContaining([
+              {
+                service: "auth",
+                status: answer === "y" ? "updated" : "skipped",
+                changes: [["auth", "minimum_password_length"]],
+              },
+            ]),
+          });
+          expect(out.stderrText).not.toContain("Do you want to push auth");
+        }).pipe(Effect.provide(layer));
+      });
+    }
+  }
+
+  it.live("non-interactive text output with TTY stdin skips when the prompt is unavailable", () => {
+    const { layer, api, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 2000\n',
+      stdinIsTty: true,
+      interactive: false,
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ projectRef: Option.none() });
+      expect(api.requests.some((r) => r.method === "PATCH")).toBe(false);
+      expect(out.promptConfirmCalls).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
@@ -759,6 +803,7 @@ max_rows = 1000
     const { layer, out } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       format: "json",
+      yes: true,
     });
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
@@ -840,6 +885,7 @@ max_rows = 1000
     const { layer, api, out } = setup({
       toml: `project_id = "test"\n[api]\nschemas = ["public", "graphql_public", "custom_schema"]\n`,
       format: "json",
+      yes: true,
       v2: {
         status: 200,
         body: v2Response({
@@ -1856,6 +1902,7 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
     const { layer, apiMock, out } = setupService({
       toml,
       format: "json",
+      yes: true,
       v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
@@ -2293,6 +2340,7 @@ max_buckets = 99
       const { layer, apiMock, out } = setupService({
         toml,
         format: "json",
+        yes: true,
         v2: {
           status: 200,
           body: v2Response({
@@ -2503,7 +2551,7 @@ secret = "new-secret"
       yield* configPush({ projectRef: Option.none() });
       expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
       expect(out.stderrText).toContain("auth.captcha.secret [secret]");
-      expect(out.stderrText).toContain("Do you want to push auth config to remote? [Y/n] n");
+      expect(out.stderrText).toContain("Do you want to push auth config to remote? [y/N] n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -3257,8 +3305,8 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     () => {
       // `knownBranch` is `{kind: "uuid"}`, the same "explicit target this invocation" shape a
       // branch name target gets, so `push.handler.ts`'s `knownBranch === undefined` gate is never
-      // entered. Per-service prompts (`keep()`) still default to `true` on empty non-TTY stdin,
-      // so the mutation still proceeds.
+      // entered. Per-service prompts (`keep()`) default to `false` on empty non-TTY stdin,
+      // so the mutation is skipped.
       const { layer, out, api } = setup({
         toml: BRANCH_PUSH_TOML,
         yes: false,
@@ -3274,7 +3322,7 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
         expect(out.stderrText).toContain(`Pushing config to branch: ${UUID_TARGET_REF}`);
         expect(out.stderrText).not.toContain("Do you want to push config to branch");
         expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
-          true,
+          false,
         );
       }).pipe(Effect.provide(layer));
     },
