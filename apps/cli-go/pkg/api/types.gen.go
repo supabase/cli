@@ -7692,9 +7692,9 @@ type SnippetResponseOutput struct {
 	Content struct {
 		// Favorite Deprecated: Rely on root-level favorite property instead.
 		// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-		Favorite      *bool  `json:"favorite,omitempty"`
-		SchemaVersion string `json:"schema_version"`
-		Sql           string `json:"sql"`
+		Favorite      *bool   `json:"favorite,omitempty"`
+		SchemaVersion *string `json:"schema_version,omitempty"`
+		Sql           string  `json:"sql"`
 	} `json:"content"`
 	Description nullable.Nullable[string] `json:"description"`
 	Favorite    bool                      `json:"favorite"`
