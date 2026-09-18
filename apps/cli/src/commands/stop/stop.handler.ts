@@ -96,14 +96,12 @@ export const stop = Effect.fn("stop")(function* (flags: StopFlags) {
     // Presence-based (see `all`'s flag doc comment in stop.command.ts): `--project-id x
     // --all=false` must reject too, not just `--all=true`.
     if (Option.isSome(flags.projectId) && Option.isSome(flags.all)) {
-      return yield* Effect.fail(
-        new StopMutuallyExclusiveError({
-          // The group name keeps declaration order,
-          // but the "were all set" list is sorted.
-          message:
-            "if any flags in the group [project-id all] are set none of the others can be; [all project-id] were all set",
-        }),
-      );
+      return yield* new StopMutuallyExclusiveError({
+        // The group name keeps declaration order,
+        // but the "were all set" list is sorted.
+        message:
+          "if any flags in the group [project-id all] are set none of the others can be; [all project-id] were all set",
+      });
     }
 
     const searchProjectIdFilter = yield* resolveSearchProjectIdFilter(flags, cliSettings);

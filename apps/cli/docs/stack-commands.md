@@ -113,12 +113,17 @@ seed on stack credentials.
 `gen types --local` and `inspect db … --local` resolve the project stack through the same
 `--local` database target as `db dump`. They do not start a stack.
 
-`db dump --local`, `db test` / `test db`, and `migration squash` use host `pg_dump` / `pg_prove`
-only when the stack engine is native. Those PATH clients must match the stack Postgres major;
-otherwise install matching client tools or create a new stack that uses a container runtime.
-The Docker/Podman
-engine keeps the one-shot tool container and targets published stack credentials, never
-`PGHOST=db`.
+On the stack backend, `db dump --local`, `migration squash`, and `test db` always run catalog
+`pg_dump` / `pg_dumpall` / `pg_prove` — native stacks prepend `artifact/bin`, and container
+stacks (or platforms with no native artifact: Windows, Intel Mac) run a one-shot of the **same**
+catalog Postgres image. There is no host PATH fallback and stack `--local` never uses
+`PGHOST=db`. Native `--linked` / `--db-url` keep the resolved host; `--local` native rewrites
+loopback to `127.0.0.1`. Missing `pg_prove` fails closed. Install Docker Desktop when a
+no-native-artifact platform cannot spawn the one-shot client.
+
+`db lint --local` talks to the running stack over SQL. Catalog Postgres includes
+`plpgsql_check`, so native and container stacks can `CREATE EXTENSION` inside the
+lint transaction (always rolled back). It does not launch a client binary.
 
 ## Reading stack logs
 

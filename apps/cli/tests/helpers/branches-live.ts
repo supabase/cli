@@ -10,10 +10,10 @@ type BranchCliResult = {
 };
 
 /** The Effect edge used by branch lifecycle helpers. */
-export type BranchCli = (
+export type BranchCli<E = Error> = (
   args: string[],
   options?: BranchCliOptions,
-) => Effect.Effect<BranchCliResult, unknown, never>;
+) => Effect.Effect<BranchCliResult, E, never>;
 
 const COMMAND_TIMEOUT = 20_000;
 const POLL_INTERVAL = "2 seconds";
@@ -54,16 +54,24 @@ class BranchPayloadInvalid extends Data.TaggedError("BranchPayloadInvalid")<{
   }
 }
 
+type BranchError<E> =
+  | E
+  | BranchCommandFailed
+  | BranchNotReady
+  | BranchPollTimedOut
+  | BranchPayloadInvalid
+  | AggregateError;
+
 function boundedStderr(stderr: string): string {
   return stderr.length <= 2_000 ? stderr : stderr.slice(stderr.length - 2_000);
 }
 
-function command(
-  cli: BranchCli,
+function command<E>(
+  cli: BranchCli<E>,
   args: string[],
   phase: string,
   timeout?: number,
-): Effect.Effect<BranchCliResult, unknown, never> {
+): Effect.Effect<BranchCliResult, BranchError<E>, never> {
   const response = timeout === undefined ? cli(args) : cli(args, { exitTimeoutMs: timeout });
   return response.pipe(
     Effect.flatMap((result) =>
@@ -80,11 +88,11 @@ function command(
   );
 }
 
-function poll<A>(
+function poll<A, E>(
   phase: string,
-  effect: Effect.Effect<A, unknown, never>,
+  effect: Effect.Effect<A, BranchError<E>, never>,
   timeout: Duration.Duration,
-): Effect.Effect<A, unknown, never> {
+): Effect.Effect<A, BranchError<E>, never> {
   return Effect.timeoutOrElse(
     Effect.retry(effect, {
       schedule: Schedule.spaced(POLL_INTERVAL),
@@ -121,11 +129,11 @@ function branchRefFromCreate(
 }
 
 /** Creates one named branch and captures its immutable reference before polling readiness. */
-export function createLiveBranchEffect(
-  cli: BranchCli,
+export function createLiveBranchEffect<E>(
+  cli: BranchCli<E>,
   project: LiveProject,
   name: string,
-): Effect.Effect<string, unknown, never> {
+): Effect.Effect<string, BranchError<E>, never> {
   const created = command(
     cli,
     ["branches", "create", name, "--project-ref", project.ref, "--output-format", "json"],
@@ -146,19 +154,19 @@ export function createLiveBranchEffect(
   );
 }
 
-function getBranchReady(
-  cli: BranchCli,
+function getBranchReady<E>(
+  cli: BranchCli<E>,
   project: LiveProject,
   name: string,
-): Effect.Effect<true, unknown, never> {
-  const response: Effect.Effect<BranchCliResult, unknown, never> = cli(
+): Effect.Effect<true, BranchError<E>, never> {
+  const response: Effect.Effect<BranchCliResult, E, never> = cli(
     ["branches", "get", name, "--project-ref", project.ref],
     {
       exitTimeoutMs: COMMAND_TIMEOUT,
     },
   );
   return response.pipe(
-    Effect.flatMap((result): Effect.Effect<true, unknown, never> => {
+    Effect.flatMap((result): Effect.Effect<true, BranchError<E>, never> => {
       if (result.exitCode === 0) return Effect.succeed(true as const);
       if (isNotFound(result))
         return Effect.fail(new BranchNotReady({ phase: `branches get ${name}` }));
@@ -174,11 +182,11 @@ function getBranchReady(
 }
 
 /** Waits until name lookup observes a created or renamed branch. */
-export function awaitLiveBranchEffect(
-  cli: BranchCli,
+export function awaitLiveBranchEffect<E>(
+  cli: BranchCli<E>,
   project: LiveProject,
   name: string,
-): Effect.Effect<true, unknown, never> {
+): Effect.Effect<true, BranchError<E>, never> {
   return poll(
     `branches get ${name}`,
     Effect.suspend(() => getBranchReady(cli, project, name)),
@@ -186,11 +194,11 @@ export function awaitLiveBranchEffect(
   );
 }
 
-function listBranches(
-  cli: BranchCli,
+function listBranches<E>(
+  cli: BranchCli<E>,
   project: LiveProject,
   phase: string,
-): Effect.Effect<ReadonlyArray<Record<string, unknown>>, unknown, never> {
+): Effect.Effect<ReadonlyArray<Record<string, unknown>>, BranchError<E>, never> {
   return command(
     cli,
     ["branches", "list", "--output", "json", "--project-ref", project.ref],
@@ -198,7 +206,7 @@ function listBranches(
     COMMAND_TIMEOUT,
   ).pipe(
     Effect.flatMap(
-      (result): Effect.Effect<ReadonlyArray<Record<string, unknown>>, unknown, never> => {
+      (result): Effect.Effect<ReadonlyArray<Record<string, unknown>>, BranchError<E>, never> => {
         let body: unknown;
         try {
           body = JSON.parse(result.stdout);
@@ -228,11 +236,11 @@ function listBranches(
 }
 
 /** Waits until the list endpoint contains the named branch. */
-export function awaitLiveBranchListedEffect(
-  cli: BranchCli,
+export function awaitLiveBranchListedEffect<E>(
+  cli: BranchCli<E>,
   project: LiveProject,
   name: string,
-): Effect.Effect<true, unknown, never> {
+): Effect.Effect<true, BranchError<E>, never> {
   const read = listBranches(cli, project, `branches list ${name}`).pipe(
     Effect.flatMap((branches) =>
       branches.some((branch) => branch["name"] === name)
@@ -247,20 +255,20 @@ export function awaitLiveBranchListedEffect(
   );
 }
 
-function deleteBranch(
-  cli: BranchCli,
+function deleteBranch<E>(
+  cli: BranchCli<E>,
   project: LiveProject,
   target: string,
   phase: string,
-): Effect.Effect<true, unknown, never> {
-  const response: Effect.Effect<BranchCliResult, unknown, never> = cli(
+): Effect.Effect<true, BranchError<E>, never> {
+  const response: Effect.Effect<BranchCliResult, E, never> = cli(
     ["branches", "delete", target, "--project-ref", project.ref, "--yes"],
     {
       exitTimeoutMs: COMMAND_TIMEOUT,
     },
   );
   return response.pipe(
-    Effect.flatMap((result): Effect.Effect<true, unknown, never> => {
+    Effect.flatMap((result): Effect.Effect<true, BranchError<E>, never> => {
       if (result.exitCode === 0) return Effect.succeed(true as const);
       if (isNotFound(result)) return Effect.fail(new BranchNotReady({ phase }));
       return Effect.fail(
@@ -274,24 +282,24 @@ function deleteBranch(
   );
 }
 
-function branchIsListed(
-  cli: BranchCli,
+function branchIsListed<E>(
+  cli: BranchCli<E>,
   project: LiveProject,
   target: string,
   field: "project_ref" | "name",
-): Effect.Effect<boolean, unknown, never> {
+): Effect.Effect<boolean, BranchError<E>, never> {
   return listBranches(cli, project, "branches list while awaiting branch removal").pipe(
     Effect.map((branches) => branches.some((branch) => branch[field] === target)),
   );
 }
 
-function removeBranchEffect(
-  cli: BranchCli,
+function removeBranchEffect<E>(
+  cli: BranchCli<E>,
   project: LiveProject,
   target: string,
   field: "project_ref" | "name",
   deletionAcknowledged: boolean,
-): Effect.Effect<true, unknown, never> {
+): Effect.Effect<true, BranchError<E>, never> {
   const waitForList = Effect.retry(
     Effect.suspend(() =>
       branchIsListed(cli, project, target, field).pipe(
@@ -323,29 +331,29 @@ function removeBranchEffect(
 }
 
 /** Deletes an owned branch by its unique test name and confirms LIST absence. */
-export function removeLiveBranchByNameEffect(
-  cli: BranchCli,
+export function removeLiveBranchByNameEffect<E>(
+  cli: BranchCli<E>,
   project: LiveProject,
   name: string,
-): Effect.Effect<true, unknown, never> {
+): Effect.Effect<true, BranchError<E>, never> {
   return removeBranchEffect(cli, project, name, "name", false);
 }
 
 /** Confirms deletion using the owned ref, then waits for LIST to omit that ref. */
-export function awaitLiveBranchRemovedEffect(
-  cli: BranchCli,
+export function awaitLiveBranchRemovedEffect<E>(
+  cli: BranchCli<E>,
   project: LiveProject,
   branchRef: string,
   deletionAcknowledged = false,
-): Effect.Effect<true, unknown, never> {
+): Effect.Effect<true, BranchError<E>, never> {
   return removeBranchEffect(cli, project, branchRef, "project_ref", deletionAcknowledged);
 }
 
 /** Waits for LIST to contain only the default project. */
-export function awaitLiveBranchesRemovedEffect(
-  cli: BranchCli,
+export function awaitLiveBranchesRemovedEffect<E>(
+  cli: BranchCli<E>,
   project: LiveProject,
-): Effect.Effect<true, unknown, never> {
+): Effect.Effect<true, BranchError<E>, never> {
   const read = listBranches(cli, project, "branches list while awaiting branch removal").pipe(
     Effect.flatMap((branches) =>
       branches.some((branch) => branch["is_default"] !== true)

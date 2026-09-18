@@ -21,8 +21,11 @@ import {
   mergedConnectionOptions,
   sslConfigsFor,
   sslOptionFor,
+  tlsExplicitlyRequested,
+  toConnectError,
   toExecError,
 } from "./db-connection.sql-pg.layer.ts";
+import type { PgConnInput } from "./db-connection.service.ts";
 
 describe("buildConnectionUrl", () => {
   const base = {
@@ -254,6 +257,38 @@ describe("sslConfigsFor (pgconn fallback list)", () => {
     expect(sslConfigsFor("require", false, undefined, undefined, "db.example.com")).toEqual([
       { rejectUnauthorized: false },
     ]);
+  });
+});
+
+describe("tlsExplicitlyRequested (CLI-2366: --db-url TLS against a local target)", () => {
+  const base: PgConnInput = {
+    host: "127.0.0.1",
+    port: 54322,
+    user: "postgres",
+    password: "postgres",
+    database: "postgres",
+  };
+
+  it("is false when the DSN set neither sslmode nor a root cert", () => {
+    expect(tlsExplicitlyRequested(base)).toBe(false);
+  });
+
+  it("is true for any sslmode, including disable (still resolved by sslConfigsFor)", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "require" })).toBe(true);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "verify-full" })).toBe(true);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "disable" })).toBe(true);
+  });
+
+  it("is true when a root cert (file path or inline PEM) is set", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslrootcert: "/tmp/ca.pem" })).toBe(true);
+    expect(
+      tlsExplicitlyRequested({ ...base, sslrootcertInline: "-----BEGIN CERTIFICATE-----" }),
+    ).toBe(true);
+  });
+
+  it("ignores an empty sslrootcert/sslrootcertInline string", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslrootcert: "" })).toBe(false);
+    expect(tlsExplicitlyRequested({ ...base, sslrootcertInline: "" })).toBe(false);
   });
 });
 
@@ -545,6 +580,31 @@ describe("toExecError (pg server-error extraction)", () => {
     expect(error.code).toBe("ECONNRESET");
     expect(error.detail).toBeUndefined();
     expect(error.position).toBeUndefined();
+  });
+});
+
+describe("toConnectError (ipv6Unreachable classification)", () => {
+  const cfg: PgConnInput = {
+    host: "db.project-ref.supabase.co",
+    port: 5432,
+    user: "postgres",
+    password: "pw",
+    database: "postgres",
+  };
+
+  it.each([
+    ["ENOTFOUND", { code: "ENOTFOUND" }],
+    ["EHOSTUNREACH with an IPv6 address", { code: "EHOSTUNREACH", address: "2600:1f18::1" }],
+    ["EADDRNOTAVAIL with an IPv6 address", { code: "EADDRNOTAVAIL", address: "2600:1f18::1" }],
+    ["ENETUNREACH with an IPv6 address", { code: "ENETUNREACH", address: "2600:1f18::1" }],
+  ])("sets ipv6Unreachable for a %s driver error", (_description, driverError) => {
+    const error = toConnectError(cfg, false, driverError);
+    expect(error.ipv6Unreachable).toBe(true);
+  });
+
+  it("does not set ipv6Unreachable for a refused connection", () => {
+    const error = toConnectError(cfg, false, { code: "ECONNREFUSED" });
+    expect(error.ipv6Unreachable).toBeUndefined();
   });
 });
 

@@ -5,7 +5,7 @@ import type {
   V1GetProjectApiKeysOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -279,9 +279,9 @@ describe("branches get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BranchesPrimaryNotFoundError");
-        expect(json).toContain("primary database not found");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesPrimaryNotFoundError");
+        expect(causeText).toContain("primary database not found");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -292,9 +292,9 @@ describe("branches get integration", () => {
       const exit = yield* Effect.exit(branchesGet({ ...baseFlags, name: Option.some("feat-x") }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BranchesFindUnexpectedStatusError");
-        expect(json).toContain("unexpected find branch status 404");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesFindUnexpectedStatusError");
+        expect(causeText).toContain("unexpected find branch status 404");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -307,9 +307,9 @@ describe("branches get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BranchesGetUnexpectedStatusError");
-        expect(json).toContain("unexpected get branch status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesGetUnexpectedStatusError");
+        expect(causeText).toContain("unexpected get branch status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -322,8 +322,8 @@ describe("branches get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BranchesApiKeysUnexpectedStatusError");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesApiKeysUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });

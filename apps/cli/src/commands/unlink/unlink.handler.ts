@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path, Result } from "effect";
+import { Effect, FileSystem, Path, Predicate, Result } from "effect";
 
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { CredentialDeleteError } from "../../auth/errors.ts";
@@ -25,9 +25,7 @@ export const unlink = Effect.fn("unlink")(function* () {
     // read failure surfaces verbatim.
     const exists = yield* fs.exists(paths.projectRef).pipe(Effect.orElseSucceed(() => false));
     if (!exists) {
-      return yield* Effect.fail(
-        new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
-      );
+      return yield* new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE });
     }
     // No trimming needed: `link` writes the ref with no trailing newline, so the raw
     // bytes round-trip exactly for both the stderr message and the keyring key.
@@ -65,14 +63,13 @@ export const unlink = Effect.fn("unlink")(function* () {
       // Surfaces every collected message, not just the first, while keeping the
       // leading failure's tag (temp removal is attempted before the credential delete).
       if (rest.length === 0) {
-        return yield* Effect.fail(first);
+        return yield* first;
       }
       const message = collected.map((e) => e.message).join("\n");
-      return yield* Effect.fail(
-        first._tag === "UnlinkTempRemovalError"
-          ? new UnlinkTempRemovalError({ message })
-          : new CredentialDeleteError({ message }),
-      );
+      const failure = Predicate.isTagged(first, "UnlinkTempRemovalError")
+        ? new UnlinkTempRemovalError({ message })
+        : new CredentialDeleteError({ message });
+      return yield* failure;
     }
 
     // 3. Print "Finished supabase unlink." in text mode, or a structured success otherwise.
