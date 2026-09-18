@@ -1,10 +1,23 @@
+import { cliConfigProviderLayer } from "../../shared/config/cli-config-provider.layer.ts";
+import { resolveStartContainerEnvValues } from "../../config/command-settings.layer.ts";
 import { generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Fiber, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import {
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Sink,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -439,6 +452,7 @@ function fakeDbSession() {
 }
 
 interface SetupOpts {
+  readonly startContainerEnvValues?: Readonly<Record<string, string>>;
   readonly format?: "text" | "json" | "stream-json";
   /** Piped stdin for the seeding confirmations; `start` must never consume it. */
   readonly stdinInput?: string;
@@ -472,7 +486,10 @@ function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockTelemetryStateTracked();
   const analytics = mockAnalytics();
-  const cliSettings = mockCommandSettings({ workdir });
+  const cliSettings = mockCommandSettings({
+    workdir,
+    startContainerEnvValues: opts.startContainerEnvValues ?? {},
+  });
   const child = mockStartContainerCliSpawner(opts.route ?? defaultRoute(), {
     failSpawn: opts.failSpawn,
     onSecretCopy: opts.onSecretCopy,
@@ -511,6 +528,13 @@ function setup(opts: SetupOpts = {}) {
 
   return { workdir, out, telemetry, analytics, child, dbSession, layer };
 }
+
+const setupWithCapturedEnv = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
+  const startContainerEnvValues = yield* resolveStartContainerEnvValues().pipe(
+    Effect.provide(cliConfigProviderLayer),
+  );
+  return setup({ ...opts, startContainerEnvValues });
+});
 
 /**
  * Maps each of the 13 valid `--exclude` keys to the container-name suffix(es) that key skips,
@@ -3700,6 +3724,117 @@ content_path = "./supabase/templates/custom_notice.html"
         ),
       );
     });
+  });
+
+  describe("raw container environment overrides", () => {
+    const ambient: Readonly<Record<string, string | undefined>> = {
+      KONG_NGINX_WORKER_PROCESSES: "8",
+      VECTOR_ENABLED: "false",
+      VECTOR_BUCKET_PROVIDER: "ambient-provider",
+      VECTOR_STORE_MIGRATIONS_ENABLED: "false",
+      VECTOR_DATABASE_URL: "postgresql://ambient:secret@ambient-db/vector",
+    };
+    const project: Readonly<Record<string, string | undefined>> = {
+      KONG_NGINX_WORKER_PROCESSES: "4",
+      VECTOR_ENABLED: "true",
+      VECTOR_BUCKET_PROVIDER: "project-provider",
+      VECTOR_STORE_MIGRATIONS_ENABLED: "true",
+      VECTOR_DATABASE_URL: "postgresql://project:secret@project-db/vector",
+    };
+    const empty: Readonly<Record<string, string | undefined>> = Object.fromEntries(
+      Object.keys(ambient).map((key) => [key, ""]),
+    );
+    const absent: Readonly<Record<string, string | undefined>> = Object.fromEntries(
+      Object.keys(ambient).map((key) => [key, undefined]),
+    );
+    for (const scenario of [
+      {
+        name: "forwards captured ambient values",
+        snapshot: true,
+        ambient,
+        project: undefined,
+        expected: ambient,
+      },
+      {
+        name: "preserves captured empty ambient values",
+        snapshot: true,
+        ambient: empty,
+        project: undefined,
+        expected: empty,
+      },
+      {
+        name: "preserves shell precedence over project dotenv values",
+        ambient,
+        project,
+        expected: ambient,
+      },
+      {
+        name: "preserves shell precedence over empty project dotenv values",
+        ambient,
+        project: empty,
+        expected: ambient,
+      },
+      {
+        name: "preserves empty shell values over project dotenv values",
+        ambient: empty,
+        project,
+        expected: empty,
+      },
+      {
+        name: "uses project dotenv values when shell values are absent",
+        ambient: absent,
+        project,
+        expected: project,
+      },
+      {
+        name: "preserves empty project dotenv values when shell values are absent",
+        ambient: absent,
+        project: empty,
+        expected: empty,
+      },
+    ]) {
+      it.live(scenario.name, () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { layer, workdir, child } = yield* setupWithCapturedEnv();
+          if (scenario.project !== undefined) {
+            yield* fs.writeFileString(
+              path.join(workdir, "supabase", ".env"),
+              Object.entries(scenario.project)
+                .map(([key, value]) => `${key}=${value}\n`)
+                .join(""),
+            );
+          }
+          const run = start(flags()).pipe(Effect.provide(layer));
+          yield* "snapshot" in scenario
+            ? Object.keys(ambient).reduce((effect, key) => withEnvVar(key, undefined, effect), run)
+            : run;
+          const kong = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+          );
+          const storage = child.spawned.find(
+            (s) =>
+              s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
+          );
+          expect(kong).toBeDefined();
+          expect(storage).toBeDefined();
+          for (const [key, value] of Object.entries(scenario.expected)) {
+            expect(
+              key === "KONG_NGINX_WORKER_PROCESSES" ? kong?.env[key] : storage?.env[key],
+              key,
+            ).toBe(value);
+          }
+        }).pipe(
+          (effect) =>
+            Object.keys(ambient).reduce(
+              (body, key) => withEnvVar(key, scenario.ambient[key], body),
+              effect,
+            ),
+          Effect.provide(BunServices.layer),
+        ),
+      );
+    }
   });
 
   describe("storage migration pin", () => {

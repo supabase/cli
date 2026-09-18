@@ -1,13 +1,9 @@
-/**
- * Returns the env var if set, even to an empty string — unlike
- * `local-config-values.ts`'s `envOverride`, which treats an empty value as
- * unset. Falls back to `def` only when the var is absent. Reads
- * `process.env` directly, bypassing the `SUPABASE_`-prefixed decode-hook chain.
- */
+/** Project values win, including empty strings; defaults apply only to absent values. */
 export function envOrDefault(
   key: string,
   def: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  ambientEnvValues: Readonly<Record<string, string>> = {},
 ): string {
-  return projectEnvValues?.[key] ?? process.env[key] ?? def;
+  return projectEnvValues?.[key] ?? ambientEnvValues[key] ?? def;
 }

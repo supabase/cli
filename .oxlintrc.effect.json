@@ -32,6 +32,7 @@
     "!apps/cli/src/commands/services/**",
     "!apps/cli/src/commands/snippets/**",
     "!apps/cli/src/commands/ssl-enforcement/**",
+    "!apps/cli/src/commands/start/**",
     "!apps/cli/src/commands/status/**",
     "!apps/cli/src/commands/stop/**",
     "!apps/cli/src/commands/storage/**",
@@ -48,6 +49,11 @@
     "!apps/cli/src/shared/runtime/file-watcher.service.ts",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
+    // CLI-2414 follow-ups migrate the handler integration suite and E2E harness.
+    "apps/cli/src/commands/start/start.integration.test.ts",
+    "apps/cli/src/commands/start/start.e2e.test.ts",
+    "apps/cli/src/commands/start/start.lifecycle.e2e.test.ts",
+    "apps/cli/src/commands/start/start.slim-images.e2e.test.ts",
     "apps/cli/src/shared/compute/stacks/**",
     "!apps/cli/tests/helpers/branches-live.ts",
     "!apps/cli/tests/helpers/compute.ts",

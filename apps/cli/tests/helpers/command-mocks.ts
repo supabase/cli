@@ -387,6 +387,7 @@ export function mockLinkedProjectCacheTracked(): {
 // Defaults match the common case (linked project, valid access token, supabase.com API URL).
 // Tests override individual fields when they need to exercise alternative resolution paths.
 export function mockCommandSettings(opts: {
+  readonly startContainerEnvValues?: CommandSettings["Service"]["startContainerEnvValues"];
   readonly workdir: string;
   readonly explicitWorkdir?: boolean;
   readonly workdirEnvValue?: string;
@@ -404,6 +405,7 @@ export function mockCommandSettings(opts: {
   readonly githubToken?: Option.Option<Redacted.Redacted<string>>;
 }): Layer.Layer<CommandSettings> {
   return Layer.succeed(CommandSettings, {
+    startContainerEnvValues: opts.startContainerEnvValues ?? {},
     dbPassword: opts.dbPassword ?? Option.none(),
     githubToken: opts.githubToken ?? Option.none(),
     profile: opts.profile ?? "supabase",
