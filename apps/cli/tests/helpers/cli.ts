@@ -772,13 +772,18 @@ export const runDockerEffect = (
       Stream.runFold(
         Stream.decodeText(stream),
         () => ({ text: "", truncated: false }),
-        (state, chunk) => ({
-          text: (state.text + chunk.slice(-65_536)).slice(-65_536),
-          truncated: state.truncated || state.text.length + chunk.length > 65_536,
-        }),
+        (state, chunk) => {
+          const tail = (state.text + chunk.slice(-65_536)).slice(-65_536);
+          const first = tail.charCodeAt(0);
+          return {
+            // A UTF-16 bound can cut a surrogate pair; discard its orphaned low half.
+            text: first >= 0xdc00 && first <= 0xdfff ? tail.slice(1) : tail,
+            truncated: state.truncated || state.text.length + chunk.length > 65_536,
+          };
+        },
       ).pipe(
         Effect.map(({ text, truncated }) =>
-          truncated ? `[output truncated; showing last 65536 characters]\n${text}` : text,
+          truncated ? `[output truncated; showing at most 65536 UTF-16 code units]\n${text}` : text,
         ),
       );
     const [exitCode, stdout, stderr] = yield* Effect.all(

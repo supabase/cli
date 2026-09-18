@@ -253,12 +253,12 @@ describe("runDockerEffect", () => {
         Effect.gen(function* () {
           const stdoutDone = yield* Deferred.make<void>();
           const stderrDone = yield* Deferred.make<void>();
-          const output = (label: string, done: Deferred.Deferred<void>) =>
+          const output = (label: string, last: string, done: Deferred.Deferred<void>) =>
             Stream.fromIterable([
               "old-".repeat(20_000),
               "discarded-".repeat(10_000),
               label.repeat(65_536),
-              label,
+              last,
             ]).pipe(
               Stream.map((chunk) => encoder.encode(chunk)),
               Stream.tap(() =>
@@ -266,14 +266,15 @@ describe("runDockerEffect", () => {
                   drained++;
                 }),
               ),
+              Stream.flatMap((chunk) => Stream.make(chunk.subarray(0, 1), chunk.subarray(1))),
               Stream.concat(
                 Stream.fromEffect(Deferred.succeed(done, undefined)).pipe(Stream.drain),
               ),
             );
           return ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1),
-            stdout: output("O", stdoutDone),
-            stderr: output("E", stderrDone),
+            stdout: output("O", "O", stdoutDone),
+            stderr: output("😀", "E", stderrDone),
             all: Stream.empty,
             exitCode: Effect.all([Deferred.await(stdoutDone), Deferred.await(stderrDone)], {
               concurrency: "unbounded",
@@ -292,9 +293,9 @@ describe("runDockerEffect", () => {
       );
       for (let i = 0; i < 2; i++) {
         const { stdout, stderr } = yield* run;
-        const marker = "[output truncated; showing last 65536 characters]\n";
+        const marker = "[output truncated; showing at most 65536 UTF-16 code units]\n";
         expect(stdout).toBe(marker + "O".repeat(65_536));
-        expect(stderr).toBe(marker + "E".repeat(65_536));
+        expect(stderr).toBe(marker + "😀".repeat(32_767) + "E");
       }
       expect(drained).toBe(16);
     }),
@@ -308,7 +309,7 @@ describe("runDockerEffect", () => {
         Effect.sync(() => {
           expect(error.stdout).toBe("out");
           expect(error.stderr).toBe(
-            "[output truncated; showing last 65536 characters]\n" + "E".repeat(65_536),
+            "[output truncated; showing at most 65536 UTF-16 code units]\n" + "E".repeat(65_536),
           );
           expect(error.message).toBe(`docker logs test exited 1: ${error.stderr}`);
           return "failed as expected";

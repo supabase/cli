@@ -3664,104 +3664,112 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("raw container environment overrides", () => {
+    const ambient: Readonly<Record<string, string | undefined>> = {
+      KONG_NGINX_WORKER_PROCESSES: "8",
+      VECTOR_ENABLED: "false",
+      VECTOR_BUCKET_PROVIDER: "ambient-provider",
+      VECTOR_STORE_MIGRATIONS_ENABLED: "false",
+      VECTOR_DATABASE_URL: "postgresql://ambient:secret@ambient-db/vector",
+    };
+    const project: Readonly<Record<string, string | undefined>> = {
+      KONG_NGINX_WORKER_PROCESSES: "4",
+      VECTOR_ENABLED: "true",
+      VECTOR_BUCKET_PROVIDER: "project-provider",
+      VECTOR_STORE_MIGRATIONS_ENABLED: "true",
+      VECTOR_DATABASE_URL: "postgresql://project:secret@project-db/vector",
+    };
+    const empty: Readonly<Record<string, string | undefined>> = Object.fromEntries(
+      Object.keys(ambient).map((key) => [key, ""]),
+    );
+    const absent: Readonly<Record<string, string | undefined>> = Object.fromEntries(
+      Object.keys(ambient).map((key) => [key, undefined]),
+    );
     for (const scenario of [
       {
         name: "forwards captured ambient values",
         snapshot: true,
-        ambientKong: "8",
-        ambientVector: "false",
+        ambient,
         project: undefined,
-        kong: "8",
-        vector: "false",
+        expected: ambient,
       },
       {
         name: "preserves captured empty ambient values",
         snapshot: true,
-        ambientKong: "",
-        ambientVector: "",
+        ambient: empty,
         project: undefined,
-        kong: "",
-        vector: "",
+        expected: empty,
       },
       {
         name: "preserves shell precedence over project dotenv values",
-        ambientKong: "8",
-        ambientVector: "false",
-        project: "KONG_NGINX_WORKER_PROCESSES=4\nVECTOR_ENABLED=true\n",
-        kong: "8",
-        vector: "false",
+        ambient,
+        project,
+        expected: ambient,
       },
       {
         name: "preserves shell precedence over empty project dotenv values",
-        ambientKong: "8",
-        ambientVector: "false",
-        project: "KONG_NGINX_WORKER_PROCESSES=\nVECTOR_ENABLED=\n",
-        kong: "8",
-        vector: "false",
+        ambient,
+        project: empty,
+        expected: ambient,
       },
       {
         name: "preserves empty shell values over project dotenv values",
-        ambientKong: "",
-        ambientVector: "",
-        project: "KONG_NGINX_WORKER_PROCESSES=4\nVECTOR_ENABLED=true\n",
-        kong: "",
-        vector: "",
+        ambient: empty,
+        project,
+        expected: empty,
       },
       {
         name: "uses project dotenv values when shell values are absent",
-        ambientKong: undefined,
-        ambientVector: undefined,
-        project: "KONG_NGINX_WORKER_PROCESSES=4\nVECTOR_ENABLED=false\n",
-        kong: "4",
-        vector: "false",
+        ambient: absent,
+        project,
+        expected: project,
       },
       {
         name: "preserves empty project dotenv values when shell values are absent",
-        ambientKong: undefined,
-        ambientVector: undefined,
-        project: "KONG_NGINX_WORKER_PROCESSES=\nVECTOR_ENABLED=\n",
-        kong: "",
-        vector: "",
+        ambient: absent,
+        project: empty,
+        expected: empty,
       },
     ]) {
       it.live(scenario.name, () =>
-        withEnvVar(
-          "KONG_NGINX_WORKER_PROCESSES",
-          scenario.ambientKong,
-          withEnvVar(
-            "VECTOR_ENABLED",
-            scenario.ambientVector,
-            Effect.gen(function* () {
-              const fs = yield* FileSystem.FileSystem;
-              const path = yield* Path.Path;
-              const { layer, workdir, child } = yield* setup();
-              if (scenario.project !== undefined) {
-                yield* fs.writeFileString(path.join(workdir, "supabase", ".env"), scenario.project);
-              }
-              const run = start(flags()).pipe(Effect.provide(layer));
-              yield* "snapshot" in scenario
-                ? withEnvVar(
-                    "KONG_NGINX_WORKER_PROCESSES",
-                    undefined,
-                    withEnvVar("VECTOR_ENABLED", undefined, run),
-                  )
-                : run;
-              const kong = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
-              );
-              const storage = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" &&
-                  containerNameFromCreateArgs(s.args).includes("_storage_"),
-              );
-              expect(kong).toBeDefined();
-              expect(storage).toBeDefined();
-              expect(kong?.env["KONG_NGINX_WORKER_PROCESSES"]).toBe(scenario.kong);
-              expect(storage?.env["VECTOR_ENABLED"]).toBe(scenario.vector);
-            }),
-          ),
-        ).pipe(Effect.provide(BunServices.layer)),
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { layer, workdir, child } = yield* setup();
+          if (scenario.project !== undefined) {
+            yield* fs.writeFileString(
+              path.join(workdir, "supabase", ".env"),
+              Object.entries(scenario.project)
+                .map(([key, value]) => `${key}=${value}\n`)
+                .join(""),
+            );
+          }
+          const run = start(flags()).pipe(Effect.provide(layer));
+          yield* "snapshot" in scenario
+            ? Object.keys(ambient).reduce((effect, key) => withEnvVar(key, undefined, effect), run)
+            : run;
+          const kong = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+          );
+          const storage = child.spawned.find(
+            (s) =>
+              s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
+          );
+          expect(kong).toBeDefined();
+          expect(storage).toBeDefined();
+          for (const [key, value] of Object.entries(scenario.expected)) {
+            expect(
+              key === "KONG_NGINX_WORKER_PROCESSES" ? kong?.env[key] : storage?.env[key],
+              key,
+            ).toBe(value);
+          }
+        }).pipe(
+          (effect) =>
+            Object.keys(ambient).reduce(
+              (body, key) => withEnvVar(key, scenario.ambient[key], body),
+              effect,
+            ),
+          Effect.provide(BunServices.layer),
+        ),
       );
     }
   });
