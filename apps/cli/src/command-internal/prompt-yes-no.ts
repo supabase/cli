@@ -24,7 +24,7 @@ export const parseYesNo = (input: string): boolean | undefined => {
 /**
  * Confirm-or-default prompt shared by command handlers and shell-agnostic code alike.
  * `yes` echoes an affirmative answer and returns `true` immediately; non-text output
- * honors piped answers when prompting is permitted, otherwise using the default silently;
+ * uses the default silently unless the caller opts into machine-mode piped answers;
  * a real interactive text TTY prompts via clack; otherwise (including text callers with
  * `interactive: false`) it reads one line via the shared `Stdin` reader, falling back to
  * the default only when the line is empty or unparseable.
@@ -35,11 +35,15 @@ export const promptYesNo = Effect.fnUntraced(function* (
   label: string,
   defaultValue: boolean,
   interactive = true,
+  options: { readonly readMachineStdin?: boolean } = {},
 ) {
   const choices = defaultValue ? "Y/n" : "y/N";
   if (yes) {
     yield* output.raw(`${label} [${choices}] y\n`, "stderr");
     return true;
+  }
+  if (output.format !== "text" && !options.readMachineStdin) {
+    return defaultValue;
   }
   const tty = yield* Tty;
   if (output.format !== "text" && (!interactive || tty.stdinIsTty)) {
@@ -49,15 +53,11 @@ export const promptYesNo = Effect.fnUntraced(function* (
   // silently returning the default — it uses the same non-TTY read path below.
   if (!interactive || !tty.stdinIsTty) {
     // A parsed piped answer wins; an empty or unparseable line falls back to the default.
-    if (output.format === "text") {
-      yield* output.raw(`${label} [${choices}] `, "stderr");
-    }
+    yield* output.raw(`${label} [${choices}] `, "stderr");
     const stdin = yield* Stdin;
     const line = yield* stdin.readLine(NON_TTY_TIMEOUT_MILLIS);
     const input = Option.getOrElse(line, () => "");
-    if (output.format === "text") {
-      yield* output.raw(`${input}\n`, "stderr");
-    }
+    yield* output.raw(`${input}\n`, "stderr");
     if (input.length > 0) {
       const answer = parseYesNo(input);
       if (answer !== undefined) {

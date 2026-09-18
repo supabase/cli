@@ -257,7 +257,8 @@ function setup(opts: {
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm,
     promptConfirmFail: opts.promptFail,
-    interactive: opts.interactive,
+    interactive:
+      opts.interactive ?? ((opts.format ?? "text") === "text" && (opts.stdinIsTty ?? true)),
   });
   const api = mockCommandPlatformApi({
     handler: (request) => {
@@ -358,7 +359,13 @@ function setup(opts: {
       runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
-      tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
+      tty: mockTty({
+        stdinIsTty: opts.stdinIsTty ?? true,
+        stdoutIsTty:
+          (opts.format ?? "text") === "text" &&
+          (opts.stdinIsTty ?? true) &&
+          (opts.interactive ?? true),
+      }),
       ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
     }),
     mockStdin(
@@ -606,7 +613,9 @@ max_rows = 1000
               },
             ]),
           });
-          expect(out.stderrText).not.toContain("Do you want to push auth");
+          expect(out.stderrText).toContain(
+            `Do you want to push auth config to remote? [y/N] ${answer}\n`,
+          );
         }).pipe(Effect.provide(layer));
       });
     }
@@ -622,6 +631,9 @@ max_rows = 1000
       yield* configPush({ projectRef: Option.none() });
       expect(api.requests.some((r) => r.method === "PATCH")).toBe(false);
       expect(out.promptConfirmCalls).toHaveLength(0);
+      expect(out.stderrText).toContain(
+        "Skipped api: confirmation unavailable with redirected output. Pass --yes",
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -1271,7 +1283,11 @@ function setupService(opts: {
   readonly pipedAnswers?: ReadonlyArray<string>;
 }) {
   writeConfig(opts.toml);
-  const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    promptConfirmResponses: opts.confirm,
+    interactive: (opts.format ?? "text") === "text" && (opts.stdinIsTty ?? true),
+  });
   const apiMock = mockCommandPlatformApiService({
     v1: {
       // Live target-detection probe — defaults to a schema-valid, unnamed project so every
@@ -1299,7 +1315,10 @@ function setupService(opts: {
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
       // Gated-service prompts model an interactive user answering via `confirm`.
-      tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
+      tty: mockTty({
+        stdinIsTty: opts.stdinIsTty ?? true,
+        stdoutIsTty: (opts.format ?? "text") === "text" && (opts.stdinIsTty ?? true),
+      }),
     }),
     mockStdin(
       opts.stdinIsTty ?? true,

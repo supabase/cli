@@ -175,7 +175,7 @@ prints, and the push proceeds immediately. Declining fails the command
 (`ConfigPushCancelledError`, exit `1`) — the rendered text is `context canceled`
 (`Output.fail`'s standard text-mode rendering, no `--debug` hint) — before any further
 network call (not even the cost-matrix fetch). This gate's default is **no**: a non-TTY run with no affirmative piped answer, or
-a machine-mode TTY run, declines (and fails) rather than proceeding,
+a machine-mode TTY run or text run with TTY stdin and redirected stdout, declines (and fails) rather than proceeding,
 unless `--yes`/`SUPABASE_YES` is set. A plain-project target never shows this prompt.
 Then `Comparison scope: <present> (not returned:
 <missing>)` — printed EVERY run, not just when a block is missing (family consistency
@@ -219,7 +219,10 @@ project's current value for it. Secret values never appear in output. Every bloc
 on a blank line. Experimental prints `Enabling webhooks for project: <ref>`. The
 per-service confirmations render `<title> [Y/n] ` in interactive text output and
 `<title> [y/N] ` for piped text input. `--yes` echoes `y` after the applicable
-prompt. Resource declines still exit **0**; only the branch confirmation gate
+prompt. Piped answers also echo the question and answer to stderr in machine modes,
+matching `--yes`; stdout remains structured. With TTY stdin and redirected text stdout,
+no prompt is rendered and a skipped message explains how to approve with `--yes`.
+Resource declines still exit **0**; only the branch confirmation gate
 described above fails.
 
 After the resource loop, up to six `Note:` lines report anything the push couldn't do

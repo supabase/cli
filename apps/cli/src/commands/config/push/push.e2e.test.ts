@@ -42,10 +42,10 @@ describe("supabase config push", () => {
       expect(`${stdout}${stderr}`).toContain("config.toml");
     },
   );
-  test(
-    "agent auto-detection honors piped consent through the built CLI",
+  test.each(["n", "y"] as const)(
+    "agent auto-detection honors piped %s through the built CLI",
     { timeout: E2E_TIMEOUT_MS },
-    async () => {
+    async (answer) => {
       const cwd = mkdtempSync(join(tmpdir(), "supabase-config-push-consent-e2e-"));
       const writes: string[] = [];
       const server = Bun.serve({
@@ -93,7 +93,7 @@ describe("supabase config push", () => {
           ["config", "push", "--project-ref", TEST_PROJECT_REF],
           {
             cwd,
-            stdin: "n\n",
+            stdin: `${answer}\n`,
             env: {
               SUPABASE_PROFILE: profilePath,
               SUPABASE_ACCESS_TOKEN: TEST_TOKEN,
@@ -104,8 +104,8 @@ describe("supabase config push", () => {
           },
         );
         expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
-        expect(writes).toEqual([]);
-        expect(stdout).toContain('"status":"skipped"');
+        expect(writes).toEqual(answer === "y" ? ['{"max_rows":500}'] : []);
+        expect(stdout).toContain(`"status":"${answer === "y" ? "updated" : "skipped"}"`);
         expect(stderr).toContain("api.max_rows [update]");
       } finally {
         await server.stop(true);

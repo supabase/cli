@@ -290,7 +290,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     const confirm = (label: string, defaultValue: boolean) =>
       !yes && tty.stdinIsTty && !output.interactive
         ? Effect.succeed(defaultValue)
-        : promptYesNo(output, yes, label, defaultValue);
+        : promptYesNo(output, yes, label, defaultValue, true, { readMachineStdin: true });
     const target = yield* resolveConfigPushTarget(ref, { knownBranch });
     yield* output.raw(configPushTargetLines(target), "stderr");
     if (target.kind === "branch" && knownBranch === undefined) {
@@ -317,7 +317,14 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
           item === undefined
             ? `Do you want to push ${name} config to remote?`
             : `Enabling ${item.name} will cost you ${item.price}. Keep it enabled?`;
-        return yield* confirm(title, defaultProceed);
+        const confirmed = yield* confirm(title, defaultProceed);
+        if (!confirmed && output.format === "text" && tty.stdinIsTty && !output.interactive) {
+          yield* output.raw(
+            `Skipped ${name}: confirmation unavailable with redirected output. Pass --yes (or set SUPABASE_YES) to approve.\n`,
+            "stderr",
+          );
+        }
+        return confirmed;
       });
 
     // 7. Read the project's effective configuration in one call. No spinner, matching the rest
