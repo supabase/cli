@@ -304,7 +304,7 @@ const dockerNpmEnvNames = ["NPM_CONFIG_REGISTRY"] as const;
 
 function toBundledFileUrl(hostPath: string) {
   const url = new URL("file:///");
-  url.pathname = toDockerPath(hostPath).replaceAll("%", "%25");
+  url.pathname = toDockerPath(hostPath, { resolve }).replaceAll("%", "%25");
   return url.toString();
 }
 
@@ -1243,7 +1243,7 @@ export async function buildDockerBinds(
   const binds: DockerBind[] = [
     {
       hostPath: hostFunctionsDir,
-      containerPath: toDockerPath(hostFunctionsDir),
+      containerPath: toDockerPath(hostFunctionsDir, { resolve }),
       mode: "ro",
       externalScope: false,
     },
@@ -1261,7 +1261,7 @@ export async function buildDockerBinds(
   if (!hostOutputDir.startsWith(hostFunctionsDir)) {
     binds.push({
       hostPath: hostOutputDir,
-      containerPath: toDockerPath(hostOutputDir),
+      containerPath: toDockerPath(hostOutputDir, { resolve }),
       mode: "rw",
       externalScope: false,
     });
@@ -1276,7 +1276,7 @@ export async function buildDockerBinds(
     if (contained) {
       extraBinds.push({
         hostPath,
-        containerPath: toDockerPath(hostPath),
+        containerPath: toDockerPath(hostPath, { resolve }),
         mode: "ro",
         externalScope: false,
       });
@@ -1311,7 +1311,7 @@ export async function buildDockerBinds(
       if (!contained && kind === "scope") {
         const scopeBind: DockerBind = {
           hostPath,
-          containerPath: toDockerPath(target),
+          containerPath: toDockerPath(target, { resolve }),
           mode: "ro",
           externalScope: true,
         };
@@ -1473,18 +1473,18 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     const containerArgs = [
       "bundle",
       "--entrypoint",
-      toDockerPath(config.entrypoint),
+      toDockerPath(config.entrypoint, { resolve }),
       "--output",
-      toDockerPath(outputPath),
+      toDockerPath(outputPath, { resolve }),
     ];
     if (
       config.importMap.length > 0 &&
       !shouldUseDenoJsonDiscovery(config.entrypoint, config.importMap)
     ) {
-      containerArgs.push("--import-map", toDockerPath(config.importMap));
+      containerArgs.push("--import-map", toDockerPath(config.importMap, { resolve }));
     }
     for (const staticFile of config.staticFiles) {
-      containerArgs.push("--static", toDockerPath(staticFile));
+      containerArgs.push("--static", toDockerPath(staticFile, { resolve }));
     }
     if (verbose || process.env["DEBUG"] === "true") {
       containerArgs.push("--verbose");
@@ -1498,7 +1498,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       env,
       // `functionsDir` is `<workdir>/supabase/functions`, same derivation as `deployViaApi`'s
       // own `projectRoot`.
-      workingDir: toDockerPath(resolve(functionsDir, "..", "..")),
+      workingDir: toDockerPath(resolve(functionsDir, "..", ".."), { resolve }),
       containerArgs,
     });
 

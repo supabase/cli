@@ -3,10 +3,8 @@ import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import {
-  FUNCTIONS_SERVE_INSPECT_MODES,
-  serveFileWatcherLayer,
-} from "../../../shared/functions/serve.ts";
+import { FUNCTIONS_SERVE_INSPECT_MODES } from "../../../shared/functions/serve.ts";
+import { fileWatcherLayer } from "../../../shared/runtime/file-watcher.service.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -15,7 +13,7 @@ import { functionsServe } from "./serve.handler.ts";
 
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const functionsServeRuntimeLayer = Layer.mergeAll(
-  serveFileWatcherLayer,
+  fileWatcherLayer,
   httpClientLayer.pipe(Layer.provide(debugLoggerLayer)),
   cliSettings,
   debugLoggerLayer,
