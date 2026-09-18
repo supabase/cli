@@ -6,8 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./effect": "./src/effect.ts",
-    "./testing": "./src/testing.ts",
-    "./internal/supervisor": "./src/internal/supervisor-process.ts"
+    "./tools": "./src/Tools.ts",
+    "./internal/host": "./src/internal/host-process.ts"
   },
   "scripts": {
     "test": "pnpm run test:unit && pnpm run test:integration",

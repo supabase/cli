@@ -59,7 +59,9 @@
       "entry": ["scripts/*.ts"],
     },
     "packages/stack": {
-      // TODO(CLI-2423): knip does not credit the ws import in src/public/whole-stack.e2e.test.ts.
+      // Spawned by NativeProcess through a resolved URL rather than imported as a module.
+      "entry": ["src/runtime/native-launcher.ts"],
+      // Used by the raw WebSocket integration fixture; Knip excludes that test-only import.
       "ignoreDependencies": ["@types/ws", "ws"],
     },
   },
