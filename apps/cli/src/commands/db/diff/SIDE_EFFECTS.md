@@ -126,8 +126,11 @@ migra/pg-delta-engine-specific).
 
 Progress to stderr (`Creating shadow database...`, `Diffing schemas[: <list>]`,
 `Finished supabase db diff on branch <branch>.`, drop-statement warning, and the
-`--file` write warning). A configured `[db.migrations].schema_paths` also warns
-that it no longer changes the migrations baseline. The SQL diff prints to stdout
+`--file` write warning). Local migra diffs warn on stderr when a configured
+`[db.migrations].schema_paths` entry contains a globstar (`**`) path segment,
+recommending a directory entry for recursive SQL-file inclusion. Matching and
+exit behavior remain unchanged. With pg-delta, a configured
+`[db.migrations].schema_paths` warns that it no longer changes the migrations baseline. The SQL diff prints to stdout
 when neither `--file` nor explicit `--output` is set.
 
 Explicit `--from`/`--to` mode returns before normal `--file` handling, so `-f` is

@@ -697,6 +697,81 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect.each(["text", "json", "stream-json"] as const)(
+    "warns about globstar on stderr while preserving local migra matching (%s)",
+    (format) => {
+      const schemas = join(tmp.current, "supabase", "schemas");
+      mkdirSync(join(schemas, "domain", "nested"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        '[db.migrations]\nschema_paths = ["schemas/**/*.sql"]\n',
+      );
+      writeFileSync(join(schemas, "domain", "one.sql"), "create table one ();\n");
+      writeFileSync(join(schemas, "domain", "nested", "two.sql"), "create table two ();\n");
+      const s = setup(tmp.current, { format });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(flags({ useMigra: Option.some(true) }));
+        expect(stderr(s.out)).toContain(
+          'Warning: db.migrations.schema_paths does not support recursive globstar (**). Use a directory path such as "./schemas" to include SQL files recursively.',
+        );
+        expect(stdout(s.out)).not.toContain("globstar");
+        expect(s.shadowExecCalls.join("\n")).toContain("create table one");
+        expect(s.shadowExecCalls.join("\n")).not.toContain("create table two");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("warns about globstar even when no schema files match", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      '[db.migrations]\nschema_paths = ["schemas/**/*.sql"]\n',
+    );
+    const s = setup(tmp.current);
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDiff(flags({ useMigra: Option.some(true) })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(stderr(s.out)).toContain("does not support recursive globstar (**)");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect.each(["pg-delta", "pgadmin", "remote"] as const)(
+    "does not warn about globstar when schema paths are ignored (%s)",
+    (mode) => {
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        '[db.migrations]\nschema_paths = ["schemas/**/*.sql"]\n',
+      );
+      const s = setup(tmp.current, { isLocal: mode !== "remote" });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(
+          flags({
+            usePgDelta: mode === "pg-delta" ? Option.some(true) : Option.none(),
+            usePgAdmin: mode === "pgadmin" ? Option.some(true) : Option.none(),
+          }),
+        );
+        expect(stderr(s.out)).not.toContain("globstar");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("a directory schema path recursively includes SQL without a globstar warning", () => {
+    const schemas = join(tmp.current, "supabase", "schemas", "domain", "nested");
+    mkdirSync(schemas, { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      '[db.migrations]\nschema_paths = ["./schemas"]\n',
+    );
+    writeFileSync(join(schemas, "two.sql"), "create table two ();\n");
+    const s = setup(tmp.current);
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ useMigra: Option.some(true) }));
+      expect(stderr(s.out)).not.toContain("globstar");
+      expect(s.shadowExecCalls.join("\n")).toContain("create table two");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("PG14: provisions a shadow via the SQL-exec init path (no PG15+ one-shot jobs)", () => {
     // This covers the PG14 branch of the `legacySetupDatabase` pipeline, which execs
     // SQL directly via the session instead of the three one-shot `LegacyDockerRun`

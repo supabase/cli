@@ -12,6 +12,8 @@ By default, all schemas in the target database are diffed. Use the `--schema pub
 
 Projects created by a recent `supabase init` default to the pg-delta diff engine (`[experimental.pgdelta] enabled = true` in `config.toml`). Existing projects are unaffected and keep using migra unless they opt in. To fall back to the legacy migra engine, set `enabled = false` under `[experimental.pgdelta]`, or pass `--use-migra` for a single run.
 
+For local diffs using migra, `[db.migrations].schema_paths` accepts files, directories, and glob patterns relative to the `supabase` directory. Globstar (`**`) is not recursive: it behaves like `*` and matches only one path segment. Use `schema_paths = ["./schemas"]` to recursively include SQL files under `supabase/schemas`, or list patterns for each directory depth explicitly. A globstar path segment emits a warning without changing matching behavior. The pg-delta engine ignores `schema_paths` and compares migrations to the live target database.
+
 With the bundled pg-delta engine, diff SQL defaults to uppercase keywords, indent 2, a maximum width of 180, trailing commas, and column/key alignment, matching its declarative export. When `-f` writes migrations, execution-aware transaction semantics are preserved as ordered per-unit files; non-transactional units carry a directive that the CLI apply path honors. Flattened review output retains the rendered SQL and preambles, but not the unit boundaries supplied to a migration runner. Configure overrides with `[experimental.pgdelta] format_options`, or set `format_options = "null"` to emit raw, unformatted statements.
 
 While the diff command is able to capture most schema changes, there are cases where it is known to fail. Currently, this could happen if you schema contains:

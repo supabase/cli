@@ -563,6 +563,19 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       usePgSchema,
       pgDeltaDefault,
     });
+    if (
+      !useDelta &&
+      !usePgAdmin &&
+      resolved.isLocal &&
+      cfg.schemaPathPatterns.some((pattern) =>
+        /(?:^|\/)\*\*(?:\/|$)/u.test(path.sep === "/" ? pattern : pattern.replaceAll("\\", "/")),
+      )
+    ) {
+      yield* output.raw(
+        'Warning: db.migrations.schema_paths does not support recursive globstar (**). Use a directory path such as "./schemas" to include SQL files recursively.\n',
+        "stderr",
+      );
+    }
     // pg-delta ignores schema_paths when building its migrations baseline.
     if (useDelta && cfg.schemaPaths !== undefined && cfg.schemaPaths.length > 0) {
       yield* output.raw(legacySchemaPathsTransitionWarning, "stderr");
