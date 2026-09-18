@@ -326,11 +326,12 @@ const denoFileSystem: FunctionFileSystem = {
       Effect.mapError((cause) => new FunctionFileSystemError({ cause })),
     ),
   readDirectory: (path) =>
-    Stream.fromAsyncIterable(
-      Deno.readDir(path),
-      (cause) => new BootstrapOperationError({ cause }),
+    Stream.suspend(() =>
+      Stream.fromAsyncIterable(
+        Deno.readDir(path),
+        (cause) => new BootstrapOperationError({ cause }),
+      ).pipe(Stream.map((entry) => entry.name)),
     ).pipe(
-      Stream.map((entry) => entry.name),
       Stream.runCollect,
       Effect.mapError((cause) => new FunctionFileSystemError({ cause })),
     ),

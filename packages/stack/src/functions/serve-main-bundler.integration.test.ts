@@ -3,7 +3,7 @@ import { Data, Deferred, Effect, Exit, FileSystem, Path, Schema, Stream } from "
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
+import { bundleServeMainTemplate } from "../../tests/serve-main-bundler.ts";
 
 type ServeOptions = {
   readonly handler: (request: Request) => Promise<Response>;
@@ -23,7 +23,7 @@ describe("stack-owned functions bootstrap", () => {
       yield* fs.makeDirectory(path.join(root, "hello"));
       yield* fs.writeFileString(path.join(root, "hello", "index.ts"), "export default 1");
       const secret = "bootstrap-test-secret";
-      const envRecord = {
+      const envRecord: Record<string, string> = {
         SUPABASE_INTERNAL_FUNCTIONS_ROOT: root,
         SUPABASE_INTERNAL_JWT_SECRET: secret,
         KEEP: "yes",
@@ -47,7 +47,7 @@ describe("stack-owned functions bootstrap", () => {
       const sandbox = {
         Deno: {
           env: {
-            get: (name: string) => envRecord[name as keyof typeof envRecord],
+            get: (name: string) => envRecord[name],
             toObject: () => envRecord,
           },
           lstat: (filename: string) =>
@@ -202,12 +202,12 @@ describe("stack-owned functions bootstrap", () => {
   it.live("starts with malformed optional functions config", () =>
     Effect.gen(function* () {
       const bundled = yield* bundleServeMainTemplate;
-      const envRecord = { SUPABASE_INTERNAL_FUNCTIONS_CONFIG: "{" };
+      const envRecord: Record<string, string> = { SUPABASE_INTERNAL_FUNCTIONS_CONFIG: "{" };
       let serveOptions: ServeOptions | undefined;
       const sandbox = {
         Deno: {
           env: {
-            get: (name: string) => envRecord[name as keyof typeof envRecord],
+            get: (name: string) => envRecord[name],
             toObject: () => envRecord,
           },
           errors: {},
@@ -278,7 +278,7 @@ describe("stack-owned functions bootstrap", () => {
           .sign(privateKey),
       );
       const bundled = yield* bundleServeMainTemplate;
-      const envRecord = {
+      const envRecord: Record<string, string> = {
         SUPABASE_INTERNAL_FUNCTIONS_ROOT: "/functions",
         SUPABASE_INTERNAL_JWT_SECRET: "secret",
         SUPABASE_INTERNAL_FUNCTIONS_CONFIG: '{"hello":{"verifyJWT":true}}',
@@ -289,7 +289,7 @@ describe("stack-owned functions bootstrap", () => {
       const sandbox = {
         Deno: {
           env: {
-            get: (name: string) => envRecord[name as keyof typeof envRecord],
+            get: (name: string) => envRecord[name],
             toObject: () => envRecord,
           },
           errors: {},

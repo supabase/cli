@@ -94,13 +94,13 @@ const relativePath = (base: string, value: string): string =>
   value.length === 0 ? "" : value.startsWith("/") ? value : join(base, value);
 
 /** Resolves one request's persisted override/default against the live functions tree. */
-export const resolveFunctionConfig = (options: {
-  readonly root: string;
-  readonly slug: string;
-  readonly overrides: FunctionOverrides;
-  readonly fs: FunctionFileSystem;
-}): Effect.Effect<FunctionConfig | undefined> =>
-  Effect.gen(function* () {
+export const resolveFunctionConfig = Effect.fn("Functions.resolveFunctionConfig")(
+  function* (options: {
+    readonly root: string;
+    readonly slug: string;
+    readonly overrides: FunctionOverrides;
+    readonly fs: FunctionFileSystem;
+  }) {
     const { root, slug, overrides, fs } = options;
     if (!root.startsWith("/") || !slugPattern.test(slug) || slug === "_shared") return undefined;
     const rootInfo = yield* optionalInfo(fs, root);
@@ -199,7 +199,8 @@ export const resolveFunctionConfig = (options: {
       verifyJWT: override.verifyJWT ?? override.verify_jwt ?? true,
       env: override.env,
     };
-  });
+  },
+);
 
 const packageJsonPathFor = (config: FunctionConfig): string =>
   join(dirname(config.entrypointPath), "package.json");
@@ -221,12 +222,12 @@ export const createWorkerServicePathResolver = (makeTempDirectory: () => string)
 };
 
 /** Checks package discovery without allowing a package.json symlink to leave the root. */
-export const packageJsonContainedFor = (options: {
-  readonly root: string;
-  readonly config: FunctionConfig;
-  readonly fs: FunctionFileSystem;
-}): Effect.Effect<boolean> =>
-  Effect.gen(function* () {
+export const packageJsonContainedFor = Effect.fn("Functions.packageJsonContainedFor")(
+  function* (options: {
+    readonly root: string;
+    readonly config: FunctionConfig;
+    readonly fs: FunctionFileSystem;
+  }) {
     if (!options.root.startsWith("/")) return false;
     const rootInfo = yield* optionalInfo(options.fs, options.root);
     if (rootInfo === undefined || (!rootInfo.isDirectory && !rootInfo.isSymbolicLink)) return false;
@@ -241,4 +242,5 @@ export const packageJsonContainedFor = (options: {
     if (packageInfo === undefined || !packageInfo.isFile || packageInfo.isSymbolicLink)
       return false;
     return yield* safeRealPath(options.fs, canonicalRoot, packagePath);
-  });
+  },
+);
