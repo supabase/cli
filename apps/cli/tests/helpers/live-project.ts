@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { makeApiClient, type OperationOutput } from "@supabase/api/effect";
-import { Cause, Data, Effect, Exit, Schedule } from "effect";
+import { Cause, Data, Effect, Exit, Schedule, Schema } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import { getDomain } from "tldts";
 
@@ -98,6 +98,45 @@ function apiError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
+const DIAGNOSTIC_HEADER_NAMES = [
+  "x-request-id",
+  "x-correlation-id",
+  "cf-ray",
+  "traceparent",
+] as const;
+
+function boundedHeaderValue(value: string | undefined): string | undefined {
+  if (value === undefined || value.length === 0 || !/^[\x20-\x7e]+$/u.test(value)) return undefined;
+  return value.length <= 128 ? value : `${value.slice(0, 125)}...`;
+}
+
+/** Formats management API failures without exposing credentials or response bodies. */
+function liveApiErrorMessage(phase: string, cause: unknown): string {
+  if (Schema.isSchemaError(cause)) {
+    return `${phase} failed: management API response schema validation failed`;
+  }
+  if (!HttpClientError.isHttpClientError(cause)) {
+    return `${phase} failed: management API request failed`;
+  }
+  if (cause.reason._tag !== "StatusCodeError") {
+    return `${phase} failed: management API request failed (${cause.reason._tag})`;
+  }
+
+  const { request, response } = cause.reason;
+  let path = request.url;
+  try {
+    path = new URL(request.url).pathname;
+  } catch {
+    path = "<invalid URL>";
+  }
+  const requestIds = DIAGNOSTIC_HEADER_NAMES.flatMap((name) => {
+    const value = boundedHeaderValue(response.headers[name] ?? request.headers[name]);
+    return value === undefined ? [] : [`${name}=${value}`];
+  });
+  const context = requestIds.length === 0 ? "" : `, ${requestIds.join(", ")}`;
+  return `${phase} failed: ${request.method} ${path} returned HTTP ${response.status}${context} (response body omitted)`;
+}
+
 export function supportedRegion(value: string): Effect.Effect<Region, Error> {
   const region = REGIONS.find((candidate) => candidate === value);
   return region === undefined
@@ -153,7 +192,7 @@ function classifyPollError(phase: string, cause: unknown): LiveTransientPoll | L
     ? new LiveTransientPoll({ phase, cause })
     : new LiveTerminalPoll({
         phase,
-        message: `${phase} failed: ${apiError(cause).message}`,
+        message: liveApiErrorMessage(phase, cause),
         cause,
       });
 }
