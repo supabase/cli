@@ -56,7 +56,7 @@ const writeMarker = (
   fs: FileSystem.FileSystem,
   root: string,
   runtime: "native" | "docker" | "podman",
-  version = "17.6.1.168",
+  version = "17.6.1.173",
 ) =>
   Effect.gen(function* () {
     const marker = yield* Schema.encodeEffect(Marker)({ version, runtime, profile: "supabase" });
@@ -208,7 +208,7 @@ it.live("rejects nonempty targets, incompatible versions, and unsafe members", (
 
       const incompatibleRoot = yield* prepareRoot(fs, "native", "snapshot-version-");
       yield* fs.remove(`${incompatibleRoot}/data/PG_VERSION`);
-      yield* writeMarker(fs, incompatibleRoot, "native", "15.14.1.168");
+      yield* writeMarker(fs, incompatibleRoot, "native", "15.14.1.173");
       const incompatible = yield* makeDatabaseSnapshots({
         instanceRoot: incompatibleRoot,
         runtime: "native",
@@ -301,7 +301,7 @@ it.live("rejects nonempty targets, incompatible versions, and unsafe members", (
         Schema.fromJsonString(SnapshotDescriptor),
       )({
         format: "supabase-database-snapshot-v1",
-        version: "17.6.1.168",
+        version: "17.6.1.173",
         runtime: "docker",
         platform: process.platform,
         arch: process.arch,

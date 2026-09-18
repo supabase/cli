@@ -16,7 +16,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import { prepareNativeArtifact, postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { makeContainerRuntime } from "../runtime/Container.ts";
-import { PostgresTool } from "../Tools.ts";
+import { PostgresTool, type PgProveOptions } from "../Tools.ts";
 
 class ToolError extends Data.TaggedError("ToolError")<{
   readonly message: string;
@@ -29,6 +29,7 @@ export interface ToolInput<E, R> {
   readonly tool: PostgresTool;
   readonly args: ReadonlyArray<string>;
   readonly env: Readonly<Record<string, string>>;
+  readonly pgProve?: PgProveOptions;
   readonly stdin?: Stream.Stream<Uint8Array, E, R>;
   readonly stdout: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
   readonly stderr: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
@@ -90,6 +91,8 @@ const makeToolRunner = (options: {
           const tool = yield* Schema.decodeEffect(PostgresTool)(input.tool).pipe(
             Effect.mapError(failure),
           );
+          if (tool.command !== "pg_prove" && input.pgProve !== undefined)
+            return yield* failure("pgProve options require the pg_prove tool");
           const version = postgresVersion(String(tool.major));
           const jobId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(failure));
           const directory = yield* fs
@@ -110,7 +113,9 @@ const makeToolRunner = (options: {
               const child = yield* spawner.spawn(
                 ChildProcess.make(path.join(artifact.root, "bin", tool.command), input.args, {
                   env: input.env,
-                  cwd: directory,
+                  cwd: input.pgProve?.cwd ?? directory,
+                  // pg_prove exits on SIGTERM before its psql child, leaving that descendant alive.
+                  killSignal: tool.command === "pg_prove" ? "SIGKILL" : undefined,
                   stdin: "pipe",
                   forceKillAfter: "5 seconds",
                 }),
@@ -133,6 +138,8 @@ const makeToolRunner = (options: {
                 env: input.env,
                 args: input.args,
                 entrypoint: tool.command,
+                workingDir: input.pgProve?.workingDir,
+                mounts: input.pgProve?.mounts.map((mount) => ({ ...mount, readOnly: true })),
               })
               .pipe(
                 Effect.catchTag("ContainerLaunchError", (error) =>

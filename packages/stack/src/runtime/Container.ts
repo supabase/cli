@@ -35,6 +35,7 @@ interface ContainerSpec {
     readonly target: string;
     readonly readOnly: boolean;
   }>;
+  readonly workingDir?: string;
   readonly ports?: ReadonlyArray<number>;
 }
 
@@ -202,6 +203,7 @@ export const makeContainerRuntime = (options: {
           "--mount",
           `type=bind,${mountField("src", mount.source)},${mountField("dst", mount.target)}${mount.readOnly ? ",ro" : ""}`,
         ]),
+        ...(spec.workingDir === undefined ? [] : ["--workdir", spec.workingDir]),
         ...(spec.ports ?? []).flatMap((port) => ["--publish", `127.0.0.1::${port}`]),
         ...(spec.entrypoint === undefined ? [] : ["--entrypoint", spec.entrypoint]),
         spec.image,

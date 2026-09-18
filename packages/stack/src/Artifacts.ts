@@ -71,13 +71,13 @@ const definition = (
 const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   database: definition(
     "postgres",
-    "17.6.1.168",
-    "ghcr.io/supabase/cli/postgres:17.6.1.168@sha256:0ad32960ba2cb95167e1be115c6f84b303f39361772eb137c6fdae6cf0093fc3",
+    "17.6.1.173",
+    "ghcr.io/supabase/cli/postgres:17.6.1.173@sha256:1581c433d71a48a81e356a3ed2d4aa5ecfc8fc0465ea98661da7a88023317dcf",
     "bin/supabase-postgres-start",
-    ["bin/supabase-postgres-start", "bin/pg_dump", "bin/pg_dumpall", "bin/psql"],
+    ["bin/supabase-postgres-start", "bin/pg_dump", "bin/pg_dumpall", "bin/pg_prove", "bin/psql"],
     {
-      "15.14.1.168":
-        "ghcr.io/supabase/cli/postgres:15.14.1.168@sha256:da2cae5bba640d819a70718522a6270544f12ab846e64b36d899144de1096899",
+      "15.14.1.173":
+        "ghcr.io/supabase/cli/postgres:15.14.1.173@sha256:b7d210fa3bca26568fa20448e3bec092bd4f8da6a5af5029597639d38e7d896e",
     },
   ),
   rest: definition("postgrest", "v16.2", "ghcr.io/supabase/cli/postgrest:v16.2", "bin/postgrest"),

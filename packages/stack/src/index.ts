@@ -28,6 +28,7 @@ const decodeCreation = (creation: ServiceCreation) =>
 export type { CompositionConfig } from "./Orchestrator.ts";
 export type { Observation } from "./Rpc.ts";
 export type { DatabaseSnapshot } from "./services/DatabaseSnapshot.ts";
+export type { PgProveOptions } from "./effect.ts";
 export type { CreateOptions, OpenOptions, StackLocations } from "./effect.ts";
 
 const clientLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
@@ -81,6 +82,7 @@ type AnyInstance = ServiceInstances[Kind];
 export interface ToolOptions extends CallOptions {
   readonly args?: ReadonlyArray<string>;
   readonly env?: Readonly<Record<string, string>>;
+  readonly pgProve?: StackEffect.PgProveOptions;
   readonly stdin?: AsyncIterable<Uint8Array>;
   readonly stdout: (bytes: Uint8Array) => void | Promise<void>;
   readonly stderr: (bytes: Uint8Array) => void | Promise<void>;
@@ -230,6 +232,7 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
           handle.tools.run(tool, {
             args: options.args,
             env: options.env,
+            pgProve: options.pgProve,
             ...(options.stdin === undefined
               ? {}
               : { stdin: Stream.fromAsyncIterable(options.stdin, sinkError) }),

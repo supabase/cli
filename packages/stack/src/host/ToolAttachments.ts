@@ -1,6 +1,6 @@
 import { Cause, Effect, Fiber, Queue, Ref, Schema, Stream } from "effect";
 import { StackError, ToolEvent as ToolEventSchema } from "../Rpc.ts";
-import type { PostgresTool } from "../Tools.ts";
+import type { PgProveOptions, PostgresTool } from "../Tools.ts";
 import type * as ToolRunner from "./ToolRunner.ts";
 import type { ToolInput } from "./ToolRunner.ts";
 
@@ -11,6 +11,7 @@ export interface ToolAttachmentPayload {
   readonly tool: PostgresTool;
   readonly args: ReadonlyArray<string>;
   readonly env: Readonly<Record<string, string>>;
+  readonly pgProve?: PgProveOptions;
   readonly stdin: boolean;
 }
 
@@ -91,6 +92,7 @@ export const makeToolAttachments = (options: ToolAttachmentOptions) =>
               tool: input.tool,
               args: input.args,
               env: input.env,
+              pgProve: input.pgProve,
               stdin,
               stdout: (bytes) => write({ _tag: "Stdout", bytes }),
               stderr: (bytes) => write({ _tag: "Stderr", bytes }),

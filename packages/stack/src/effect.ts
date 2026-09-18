@@ -17,7 +17,7 @@ import {
 import { ServiceCreation } from "./services/Catalog.ts";
 import type { DatabaseSnapshot } from "./services/DatabaseSnapshot.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import type { PostgresTool } from "./Tools.ts";
+import type { PgProveOptions, PostgresTool } from "./Tools.ts";
 
 export { postgres } from "./Tools.ts";
 export { StackError } from "./Rpc.ts";
@@ -25,6 +25,7 @@ export type { ServiceCreation } from "./services/Catalog.ts";
 export type { CompositionConfig } from "./Orchestrator.ts";
 export type { Observation } from "./Rpc.ts";
 export type { DatabaseSnapshot } from "./services/DatabaseSnapshot.ts";
+export type { PgProveOptions } from "./Tools.ts";
 
 const stateFor = (root: string) => State.Service.pipe(Effect.provide(State.layer({ root })));
 
@@ -93,6 +94,7 @@ type AnyInstance = ServiceInstances[Kind];
 export interface ToolOptions<E, R> {
   readonly args?: ReadonlyArray<string>;
   readonly env?: Readonly<Record<string, string>>;
+  readonly pgProve?: PgProveOptions;
   readonly stdin?: Stream.Stream<Uint8Array, E, R>;
   readonly stdout: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
   readonly stderr: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
@@ -259,6 +261,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
             tool,
             args: options.args ?? [],
             env: options.env ?? {},
+            ...(options.pgProve === undefined ? {} : { pgProve: options.pgProve }),
             stdin: options.stdin !== undefined,
           })
           .pipe(

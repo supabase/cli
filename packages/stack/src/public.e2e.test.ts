@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Schema, Stream } from "effect";
+import { Effect, FileSystem, Layer, Path, Redacted, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import { tmpdir } from "node:os";
@@ -84,6 +84,53 @@ it.live(
       expect(stdoutChunks.map((bytes) => new TextDecoder().decode(bytes)).join("")).toContain(
         "psql (PostgreSQL) 17",
       );
+      const database = yield* stack.services.create({
+        service: "database",
+        config: {
+          version: "17",
+          databasePassword: Redacted.make("public-pgprove-password"),
+          jwtSecret: Redacted.make("public-pgprove-jwt-secret"),
+          jwtExpiry: 3600,
+        },
+        endpoints: { sql: { port: "auto" } },
+      });
+      yield* database.start;
+      yield* database.ready;
+      const databaseCredentials = yield* database.credentials();
+      const databaseUrl = databaseCredentials.databaseUrl;
+      if (databaseUrl === undefined) return yield* Effect.die("Public pgProve URL missing");
+      const pgProveRoot = path.join(root, "public-pgprove-tests");
+      yield* fs.makeDirectory(pgProveRoot, { recursive: true });
+      yield* fs.writeFileString(path.join(pgProveRoot, "main.sql"), "\\ir included.sql\n");
+      yield* fs.writeFileString(path.join(pgProveRoot, "included.sql"), "\\i nested.sql\n");
+      yield* fs.writeFileString(
+        path.join(pgProveRoot, "nested.sql"),
+        "SELECT plan(1);\nSELECT pass('public pgProve');\nSELECT * FROM finish();\n",
+      );
+      const extension = yield* stack.tools.run(postgres.psql({ major: 17 }), {
+        args: ["--dbname", databaseUrl, "-c", "CREATE EXTENSION IF NOT EXISTS pgtap"],
+        stdout: () => Effect.void,
+        stderr: () => Effect.void,
+      });
+      expect(extension.exitCode).toBe(0);
+      const pgProveOutput: Array<Uint8Array> = [];
+      const pgProve = yield* stack.tools.run(postgres.pgProve({ major: 17 }), {
+        args: ["--dbname", databaseUrl, "--ext", ".sql", "main.sql", "--verbose"],
+        pgProve: {
+          mounts: [{ source: pgProveRoot, target: "/tests" }],
+          cwd: pgProveRoot,
+          workingDir: undefined,
+        },
+        stdout: (bytes) => Effect.sync(() => pgProveOutput.push(bytes)),
+        stderr: () => Effect.void,
+      });
+      expect(pgProve.exitCode).toBe(0);
+      expect(pgProveOutput.map((bytes) => new TextDecoder().decode(bytes)).join("")).toContain(
+        "public pgProve",
+      );
+      expect(yield* fs.readFileString(path.join(pgProveRoot, "nested.sql"))).toContain(
+        "public pgProve",
+      );
       const promiseClient = yield* Effect.tryPromise(() => PromiseStack.open(locations));
       yield* Effect.acquireUseRelease(
         Effect.succeed(promiseClient),
@@ -120,6 +167,39 @@ it.live(
             const urls = yield* Effect.tryPromise(() => database.credentials({ from: "runtime" }));
             const databaseUrl = urls.databaseUrl;
             if (databaseUrl === undefined) return yield* Effect.die("Database URL missing");
+            const promiseExtension = yield* Effect.tryPromise(() =>
+              client.tools.run(postgres.psql({ major: 17 }), {
+                args: ["--dbname", databaseUrl, "-c", "CREATE EXTENSION IF NOT EXISTS pgtap"],
+                stdout: () => {},
+                stderr: () => {},
+              }),
+            );
+            expect(promiseExtension.exitCode).toBe(0);
+            const promiseProveOutput: Array<Uint8Array> = [];
+            const promiseProveError: Array<Uint8Array> = [];
+            const promiseProve = yield* Effect.tryPromise(() =>
+              client.tools.run(postgres.pgProve({ major: 17 }), {
+                args: ["--dbname", databaseUrl, "--ext", ".sql", "main.sql", "--verbose"],
+                pgProve: {
+                  mounts: [{ source: pgProveRoot, target: "/tests" }],
+                  cwd: pgProveRoot,
+                  workingDir: undefined,
+                },
+                stdout: (bytes) => {
+                  promiseProveOutput.push(bytes);
+                },
+                stderr: (bytes) => {
+                  promiseProveError.push(bytes);
+                },
+              }),
+            );
+            expect(
+              promiseProve.exitCode,
+              promiseProveError.map((bytes) => new TextDecoder().decode(bytes)).join(""),
+            ).toBe(0);
+            expect(
+              promiseProveOutput.map((bytes) => new TextDecoder().decode(bytes)).join(""),
+            ).toContain("public pgProve");
             const sqlOutput: Array<Uint8Array> = [];
             const sql = yield* Effect.tryPromise(() =>
               client.tools.run(postgres.psql({ major: 17 }), {

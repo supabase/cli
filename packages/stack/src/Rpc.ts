@@ -3,7 +3,7 @@ import { Rpc, RpcGroup } from "effect/unstable/rpc";
 import { ServiceCreation } from "./services/Catalog.ts";
 import { CompositionConfig } from "./Orchestrator.ts";
 import { SnapshotDescriptor } from "./services/DatabaseSnapshot.ts";
-import { PostgresTool } from "./Tools.ts";
+import { PgProveOptions, PostgresTool } from "./Tools.ts";
 
 const Outcome = Schema.Struct({
   id: Schema.String,
@@ -127,6 +127,7 @@ export const StackRpc = RpcGroup.make(
       tool: PostgresTool,
       args: Schema.Array(Schema.String),
       env: Schema.Record(Schema.String, Schema.String),
+      pgProve: Schema.optionalKey(PgProveOptions),
       stdin: Schema.Boolean,
     },
     success: ToolEvent,
