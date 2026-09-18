@@ -1,6 +1,6 @@
 # Stack package architecture
 
-This document defines the accepted target architecture for a greenfield rewrite. The current code does not yet implement it. Existing code is evidence of consumer needs, not a constraint on private APIs, module layout, or internal guarantees. Implement the target directly, update consumers together, and preserve valuable persisted data.
+This document defines the stack package architecture. The package implements the service graph, lifecycle, composition, proxy, tools, and detached owner described here. CLI integration is a separate consumer concern.
 
 ## Core model
 
@@ -48,15 +48,20 @@ Each long-running service is an individually identified instance with its own ex
 
 Keep the implementation Effect V4 from the domain inward. Promise is the outer facade for package consumers and the boundary for foreign APIs; adapt a foreign Promise once at its leaf with typed errors. Host-owned execution fibers own admitted transitions, while callers may cancel only their wait. Use bounded streams and backpressure for tool and log transport.
 
-Organize by cohesive responsibilities when implementation begins. A simple package shape is:
+Organize by cohesive responsibilities. The package shape is:
 
-- `src/` modules: `Service.ts` (shared instance executor), `Orchestrator.ts`, `StackHost.ts`, `Proxy.ts`, `Ports.ts`, `State.ts`, `Tools.ts`, and `Rpc.ts`.
-- `services/`: service definitions, schemas, and recipe behavior.
+- `src/` modules: the instance executor, orchestrator, owner, detached host, networking, persistence, and RPC boundary.
+- `services/`: one definition per service, owning its configuration, endpoints, launch settings, and readiness. `Catalog.ts` validates and dispatches creation; `Recipe.ts` defines their contract and `ProcessRecipe.ts` shares process mechanics.
+- `composition/Supabase.ts`: default Supabase membership, dependency edges, and input wiring.
+- `host/`: endpoint projections, tool execution, and tool attachment transport.
 - `runtime/`: native and container adapters.
+- `Tools.ts`: public finite-tool descriptors.
 - `effect.ts`: Effect-facing composition and services.
 - `index.ts`: Promise-facing public boundary.
 
 This is navigational guidance, not a required file scaffold. Split modules when a responsibility needs it; avoid one folder or interface per operation. Keep service definitions narrow, with graph edges and input wiring in composition. Do not introduce capabilities, projections, recovery journals, reservations, public sleep APIs, or extra lifecycle states to force this shape.
+
+Application services use Effect `Context.Service` and `Layer.effect`; consumers obtain their dependencies from the Effect context. Each owner receives an isolated orchestrator graph. Tools share the host lifetime alongside the owner. Individual executors, recipes, and process handles remain scoped resources because a stack owns multiple independently identified instances.
 
 ## 1. Follow Compose's useful separation
 
@@ -299,6 +304,8 @@ Independent instances still execute concurrently. A shadow startup or snapshot m
 
 Composition and namespace methods select instances and call these same operations. Default composition start first assigns/reuses and binds every configured public listener needed by its selected members, including lazy members, and registers their routes. It then launches eager members and arms lazy routes; it does not select unrelated standalone instances. Successful start returns member observations with their public endpoints; credentials reads render usable connection strings from these assignments without starting lazy backends. It awaits readiness for every launched eager member, including leaves. A failed launch or readiness check makes the operation return an error with per-instance outcomes; a running-but-unhealthy instance remains running, already completed steps are not rolled back, and blocked dependents are not launched. Armed lazy members need not launch unless required by an eager member.
 
+After binding the shared API listener, default composition setup uses the endpoint renderer to populate ordinary configuration values: Studio receives `apiUrl` and `publicApiUrl`, Auth receives `externalApiUrl`, and Functions receives `apiUrl`. These values are saved in each instance's configuration alongside the saved listener assignment; individual starts and normal host reopening consume that configuration. This is concrete default setup code, not declarative input wiring or a public listener-binding API. The endpoint renderer owns the host/runtime reachability rules; custom configurations supply plain URLs through the same inputs. URL values do not imply graph edges.
+
 Composition restart is two passes: stop the selected instances in reverse dependency order, then perform composition start in forward dependency order according to eager/lazy policy. It is not a loop of individual `restart()` calls. If the stop pass fails, report partial results without beginning the start pass. A cancelled composition request abandons steps not yet executing; admitted instance operations settle and already launched instances remain. Readiness does not hold an instance gate or a composition-wide reservation. Explicit empty selection is a no-op; there is no generic rollback engine.
 
 ## 4. Recipes own runtime details
@@ -511,7 +518,7 @@ A composition returns the observations of its members. Remove the separate capab
 
 ### Persist only what normal stop/start needs
 
-Retain stack/instance identity, service configuration and selected versions, composition membership/wiring, credentials, public port assignments, data locations and the service-specific information needed to reopen that data. Keep the data itself across stop. Shared port claims remain necessary for stickiness across parallel stacks. The active host's exclusive lease prevents competing owners; it is not a crash-recovery subsystem.
+Retain stack/instance identity, service configuration and selected versions, composition membership/wiring, credentials, public port assignments and the service-specific information needed to reopen the data. Derive stack and instance data locations from the state root and saved identities rather than persisting duplicate paths. Keep the data itself across stop. Shared port claims remain necessary for stickiness across parallel stacks. The active host's exclusive lease prevents competing owners; it is not a crash-recovery subsystem.
 
 Do not persist health, runtime lifecycle projections, transition progress, command queues, operation results or recovery checkpoints. A disconnected caller can reconnect to the same living host; resuming after host death is not part of the contract. Incomplete operations and leftover resources after a crash may require manual cleanup, without automatic deletion of valuable data.
 
@@ -586,6 +593,17 @@ Mutable files live under the stack namespace; container resources carry equivale
 The StackHost serializes updates to saved instance definitions, composition wiring and resource assignments. Lifecycle, health, active operations, runtime handles and errors remain in the live instance observation. There is no durable lifecycle/operation journal, projected capability state or duplicate stack lifecycle state.
 
 Persistence supports reopening normally stopped instances, not reconstructing interrupted execution after owner loss. Do not infer current runtime state from saved configuration. When the host is absent or unreachable, expose the saved definitions and ports separately from unavailable live observations. Crash recovery, automatic orphan cleanup, resource adoption, interrupted-operation replay and private-format migration machinery are outside scope.
+
+### Durable stack layout
+
+The state root is the stack registry root. Each stack keeps one state document and its owned runtime data together:
+
+```text
+<stateRoot>/<stack-id>/state.json
+<stateRoot>/<stack-id>/data/<instance-id>/...
+```
+
+The artifact cache is independent and shared across stacks. Normal stop preserves the stack directory and service data. Destroy removes the state document and proven-owned, empty parents; caller-owned paths such as Storage uploads remain untouched.
 
 ### Snapshots belong to the database instance
 
@@ -669,6 +687,10 @@ Changing internal and public-to-repository contracts is acceptable when callers 
 | Separate capability/stack lifecycle projections                                  | Observe instance state directly; composition returns its member observations    |
 | Separate whole-stack behavior                                                    | Selection over the same graph operations                                        |
 | Managed-local CLI tool ownership branches                                        | Shared stack job execution                                                      |
+
+Before the package is considered complete or integrated with the final CLI, remove superseded package capability, supervisor, projection and journal implementations together with tests and exports that only served those implementations. The final package has one implementation path and no compatibility facade or parallel lifecycle implementation.
+
+During this replacement, the in-repository CLI may temporarily fail to compile against the new package. Update its consumers in the final integration step before repository-wide acceptance; do not retain old package exports to keep that intermediate state compiling.
 
 Do not replace every existing file with a new abstraction. A recipe is an ordinary module, a graph is ordinary data, a transition is a bounded Effect, and readiness is observation of an owned runtime. No actor framework, event-sourced history, generic workflow engine, or automatic recovery scheduler is needed.
 
