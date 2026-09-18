@@ -910,8 +910,8 @@ describe("a local target's explicit TLS request (CLI-2366: honor --db-url's own 
   );
 
   it.live(
-    "stays plaintext for a local target with sslmode=allow (libpq's plaintext-then-TLS fallback " +
-      "is not implemented by sslConfigsFor)",
+    "connects plaintext for a local target with sslmode=allow, whose first fallback attempt " +
+      "is already plaintext",
     () =>
       Effect.gen(function* () {
         const server = yield* Effect.promise(fakeStartupServer);

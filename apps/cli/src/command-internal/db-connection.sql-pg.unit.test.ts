@@ -219,6 +219,10 @@ describe("sslConfigsFor (pgconn fallback list)", () => {
     ]);
   });
 
+  it("allow keeps its TLS fallback for a target classified local", () => {
+    expect(sslConfigsFor("allow", true, undefined)).toEqual([false, { rejectUnauthorized: false }]);
+  });
+
   it("prefer and unset are TLS only (ConnectByUrl strips the plaintext fallback)", () => {
     expect(sslConfigsFor("prefer", false, undefined)).toEqual([{ rejectUnauthorized: false }]);
     expect(sslConfigsFor(undefined, false, undefined)).toEqual([{ rejectUnauthorized: false }]);
@@ -280,10 +284,7 @@ describe("tlsExplicitlyRequested (CLI-2366: --db-url TLS against a local target)
     expect(tlsExplicitlyRequested({ ...base, sslmode: "verify-full" })).toBe(true);
   });
 
-  it("is false for prefer/allow/disable, whose libpq fallback sslConfigsFor does not implement", () => {
-    // `prefer` and `allow` describe a TLS-then-plaintext (or reverse) fallback that
-    // `sslConfigsFor` never performs, so reading either as a demand would turn a
-    // plaintext-capable local target into a handshake failure (the CLI-2366 regression).
+  it("is false for prefer, allow and disable, none of which name a verification intent", () => {
     expect(tlsExplicitlyRequested({ ...base, sslmode: "prefer" })).toBe(false);
     expect(tlsExplicitlyRequested({ ...base, sslmode: "allow" })).toBe(false);
     expect(tlsExplicitlyRequested({ ...base, sslmode: "disable" })).toBe(false);
@@ -305,6 +306,7 @@ describe("tlsExplicitlyRequested (CLI-2366: --db-url TLS against a local target)
       "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
       (name) => (name === "PGSSLMODE" ? "verify-full" : undefined),
     );
+    expect(conn?.sslmode).toBe("verify-full");
     expect(tlsExplicitlyRequested(conn!)).toBe(true);
   });
 

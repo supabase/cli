@@ -467,7 +467,9 @@ export function sslOptionFor(
  * DoH-resolved IP was substituted; `caCert` promotes `require` to `verify-ca` when set.
  * `isLocal` is the caller's TLS-exemption decision, not the raw target classification: a local
  * target that explicitly set `sslmode`/`sslrootcert` (see {@link tlsExplicitlyRequested}) is not
- * exempt, so the caller passes `false` for it in that case.
+ * exempt, so the caller passes `false` for it in that case. `allow`'s fallback bypasses that
+ * exemption regardless: its first attempt is plaintext, identical to the exempt case, and the
+ * second only helps a local-classified target that actually requires TLS.
  */
 export function sslConfigsFor(
   sslmode: string | undefined,
@@ -477,14 +479,14 @@ export function sslConfigsFor(
   host?: string,
   clientCert?: ClientCert,
 ): Array<boolean | ConnectionOptions | undefined> {
-  if (isLocal) return [false];
   // A unix-socket host always connects in plaintext, regardless of `sslmode`; never send an SSL
   // negotiation over the socket. Independent of `isLocal`, since a socket path isn't the local
   // services hostname.
   if (host !== undefined && isUnixSocketHost(host)) return [false];
-  if (sslmode === "disable") return [false];
   if (sslmode === "allow")
     return [false, sslOptionFor("require", false, servername, caCert, clientCert)];
+  if (isLocal) return [false];
+  if (sslmode === "disable") return [false];
   // `require` plus a root cert behaves like `verify-ca`.
   const effectiveMode = sslmode === "require" && caCert !== undefined ? "verify-ca" : sslmode;
   if (
