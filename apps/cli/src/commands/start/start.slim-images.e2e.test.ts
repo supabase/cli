@@ -122,7 +122,7 @@ const edgeRuntimeFailureDiagnostics = Effect.fnUntraced(function* (name: string)
     Effect.map(({ stdout }) => stdout.trim() || "[]"),
     Effect.catch((error) => Effect.succeed(`<unavailable: ${error.message}>`)),
   );
-  const logs = yield* runDockerEffect(["logs", name]).pipe(
+  const logs = yield* runDockerEffect(["logs", "--tail", "200", name]).pipe(
     Effect.map(({ stdout, stderr }) => `${stdout}${stderr}`.trim() || "<empty>"),
     Effect.catch((error) => Effect.succeed(`<unavailable: ${error.message}>`)),
   );

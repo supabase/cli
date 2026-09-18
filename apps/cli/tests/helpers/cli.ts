@@ -767,12 +767,22 @@ export const runDockerEffect = (
         stderr: "pipe",
       }),
     );
+    // Keep recent diagnostics while draining both pipes completely so the child can exit.
+    const captureTail = <E, R>(stream: Stream.Stream<Uint8Array, E, R>) =>
+      Stream.runFold(
+        Stream.decodeText(stream),
+        () => ({ text: "", truncated: false }),
+        (state, chunk) => ({
+          text: (state.text + chunk.slice(-65_536)).slice(-65_536),
+          truncated: state.truncated || state.text.length + chunk.length > 65_536,
+        }),
+      ).pipe(
+        Effect.map(({ text, truncated }) =>
+          truncated ? `[output truncated; showing last 65536 characters]\n${text}` : text,
+        ),
+      );
     const [exitCode, stdout, stderr] = yield* Effect.all(
-      [
-        child.exitCode,
-        Stream.mkString(Stream.decodeText(child.stdout)),
-        Stream.mkString(Stream.decodeText(child.stderr)),
-      ],
+      [child.exitCode, captureTail(child.stdout), captureTail(child.stderr)],
       { concurrency: "unbounded" },
     );
     if (exitCode !== 0) {

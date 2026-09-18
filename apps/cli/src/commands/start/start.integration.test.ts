@@ -3663,6 +3663,109 @@ content_path = "./supabase/templates/custom_notice.html"
     );
   });
 
+  describe("raw container environment overrides", () => {
+    for (const scenario of [
+      {
+        name: "forwards captured ambient values",
+        snapshot: true,
+        ambientKong: "8",
+        ambientVector: "false",
+        project: undefined,
+        kong: "8",
+        vector: "false",
+      },
+      {
+        name: "preserves captured empty ambient values",
+        snapshot: true,
+        ambientKong: "",
+        ambientVector: "",
+        project: undefined,
+        kong: "",
+        vector: "",
+      },
+      {
+        name: "preserves shell precedence over project dotenv values",
+        ambientKong: "8",
+        ambientVector: "false",
+        project: "KONG_NGINX_WORKER_PROCESSES=4\nVECTOR_ENABLED=true\n",
+        kong: "8",
+        vector: "false",
+      },
+      {
+        name: "preserves shell precedence over empty project dotenv values",
+        ambientKong: "8",
+        ambientVector: "false",
+        project: "KONG_NGINX_WORKER_PROCESSES=\nVECTOR_ENABLED=\n",
+        kong: "8",
+        vector: "false",
+      },
+      {
+        name: "preserves empty shell values over project dotenv values",
+        ambientKong: "",
+        ambientVector: "",
+        project: "KONG_NGINX_WORKER_PROCESSES=4\nVECTOR_ENABLED=true\n",
+        kong: "",
+        vector: "",
+      },
+      {
+        name: "uses project dotenv values when shell values are absent",
+        ambientKong: undefined,
+        ambientVector: undefined,
+        project: "KONG_NGINX_WORKER_PROCESSES=4\nVECTOR_ENABLED=false\n",
+        kong: "4",
+        vector: "false",
+      },
+      {
+        name: "preserves empty project dotenv values when shell values are absent",
+        ambientKong: undefined,
+        ambientVector: undefined,
+        project: "KONG_NGINX_WORKER_PROCESSES=\nVECTOR_ENABLED=\n",
+        kong: "",
+        vector: "",
+      },
+    ]) {
+      it.live(scenario.name, () =>
+        withEnvVar(
+          "KONG_NGINX_WORKER_PROCESSES",
+          scenario.ambientKong,
+          withEnvVar(
+            "VECTOR_ENABLED",
+            scenario.ambientVector,
+            Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              const { layer, workdir, child } = yield* setup();
+              if (scenario.project !== undefined) {
+                yield* fs.writeFileString(path.join(workdir, "supabase", ".env"), scenario.project);
+              }
+              const run = start(flags()).pipe(Effect.provide(layer));
+              yield* "snapshot" in scenario
+                ? withEnvVar(
+                    "KONG_NGINX_WORKER_PROCESSES",
+                    undefined,
+                    withEnvVar("VECTOR_ENABLED", undefined, run),
+                  )
+                : run;
+              const kong = child.spawned.find(
+                (s) =>
+                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+              );
+              const storage = child.spawned.find(
+                (s) =>
+                  s.args[0] === "create" &&
+                  containerNameFromCreateArgs(s.args).includes("_storage_"),
+              );
+              expect(kong).toBeDefined();
+              expect(storage).toBeDefined();
+              expect(kong?.env["KONG_NGINX_WORKER_PROCESSES"]).toBe(scenario.kong);
+              expect(storage?.env["VECTOR_ENABLED"]).toBe(scenario.vector);
+            }),
+          ),
+        ).pipe(Effect.provide(BunServices.layer)),
+      );
+    }
+  });
+
   describe("storage migration pin", () => {
     it.live(
       "threads a linked project's supabase/.temp/storage-migration pin into DB_MIGRATIONS_FREEZE_AT",

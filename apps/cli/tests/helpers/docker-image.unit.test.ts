@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Layer, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { runDockerEffect } from "./cli.ts";
+
 import { ensureImage, RESOLVE_BUDGET_MS, resolveDeadline, resolveImage } from "./docker-image.ts";
 
 /** Matches the standing `mockSpawner` shape in `image-prepull.unit.test.ts`. */
@@ -239,5 +241,80 @@ describe("ensureImage", () => {
     firstSpawnCounts.push(mock.spawned.length);
     await b;
     expect(firstSpawnCounts[0]).toBeLessThanOrEqual(mock.spawned.length);
+  });
+});
+
+describe("runDockerEffect", () => {
+  it.live("bounds both output tails, drains every chunk, and can be evaluated again", () =>
+    Effect.gen(function* () {
+      let drained = 0;
+      const encoder = new TextEncoder();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const stdoutDone = yield* Deferred.make<void>();
+          const stderrDone = yield* Deferred.make<void>();
+          const output = (label: string, done: Deferred.Deferred<void>) =>
+            Stream.fromIterable([
+              "old-".repeat(20_000),
+              "discarded-".repeat(10_000),
+              label.repeat(65_536),
+              label,
+            ]).pipe(
+              Stream.map((chunk) => encoder.encode(chunk)),
+              Stream.tap(() =>
+                Effect.sync(() => {
+                  drained++;
+                }),
+              ),
+              Stream.concat(
+                Stream.fromEffect(Deferred.succeed(done, undefined)).pipe(Stream.drain),
+              ),
+            );
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            stdout: output("O", stdoutDone),
+            stderr: output("E", stderrDone),
+            all: Stream.empty,
+            exitCode: Effect.all([Deferred.await(stdoutDone), Deferred.await(stderrDone)], {
+              concurrency: "unbounded",
+            }).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+      const run = runDockerEffect(["logs", "test"], { timeout: 5_000 }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      for (let i = 0; i < 2; i++) {
+        const { stdout, stderr } = yield* run;
+        const marker = "[output truncated; showing last 65536 characters]\n";
+        expect(stdout).toBe(marker + "O".repeat(65_536));
+        expect(stderr).toBe(marker + "E".repeat(65_536));
+      }
+      expect(drained).toBe(16);
+    }),
+  );
+
+  it.live("retains bounded diagnostics on nonzero exit", () => {
+    const mock = mockSpawner(() => ({ exitCode: 1, stdout: "out", stderr: "E".repeat(100_000) }));
+    return runDockerEffect(["logs", "test"]).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+      Effect.catchTag("DockerCommandError", (error) =>
+        Effect.sync(() => {
+          expect(error.stdout).toBe("out");
+          expect(error.stderr).toBe(
+            "[output truncated; showing last 65536 characters]\n" + "E".repeat(65_536),
+          );
+          expect(error.message).toBe(`docker logs test exited 1: ${error.stderr}`);
+          return "failed as expected";
+        }),
+      ),
+      Effect.map((result) => expect(result).toBe("failed as expected")),
+    );
   });
 });
