@@ -8,8 +8,8 @@ name, or `--stack-id`. With `--all`, it discovers every readable managed stack a
 stop while preserving persistent state and data volumes. `--all` cannot be combined with a named
 stack or `--stack-id`; the command never destroys stacks.
 
-Durable stack state lives under `$SUPABASE_HOME/managed/stacks/<stackId>/`
-(`~/.supabase/managed/stacks/<stackId>/` by default). A stop that does not finish within 60s
+Durable stack state lives under `$SUPABASE_HOME/stacks/<stackId>/`
+(`~/.supabase/stacks/<stackId>/` by default). A stop that does not finish within 60s
 fails with still-running capabilities and reports that the owner stop continues in the background.
 
 ## Files read and written

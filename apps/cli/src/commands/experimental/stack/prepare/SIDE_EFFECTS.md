@@ -12,7 +12,7 @@ any service.
 - `<workdir>/supabase/config.toml`, plus project dotenv files and supported `SUPABASE_*` overrides
   used by the shared stack config loader. The feature gate may inspect `config.json`; it does not
   supply prepare settings.
-- `<SUPABASE_HOME or ~/.supabase>/managed/stacks/<stack-id>/state.json` for an existing stack.
+- `<SUPABASE_HOME or ~/.supabase>/stacks/<stack-id>/state.json` for an existing stack.
 - `<SUPABASE_HOME or ~/.supabase>/profile` and an explicitly selected profile when shared settings
   resolve them.
 - `<SUPABASE_HOME or ~/.supabase>/telemetry.json` for shared telemetry state.
@@ -20,7 +20,7 @@ any service.
 ## Files written
 
 - A managed stack descriptor/state record when the current or named target does not exist.
-- Native runtime artifacts in `<SUPABASE_HOME or ~/.supabase>/managed/stacks/artifacts`; container
+- Native runtime artifacts in `<SUPABASE_HOME or ~/.supabase>/artifacts`; container
   images are stored by the selected container engine.
 - `<SUPABASE_HOME or ~/.supabase>/telemetry.json` after success or failure once the handler starts.
 

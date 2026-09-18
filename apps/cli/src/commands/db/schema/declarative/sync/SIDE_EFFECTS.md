@@ -3,8 +3,8 @@
 Diffs local migrations state against declarative schema files and writes the delta
 as a new timestamped migration.
 
-When `[experimental].stack` is on, shadows are `EphemeralPostgres` clusters under
-`$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/` (`~/.supabase/managed/…` by default).
+When `[experimental].stack` is on, shadows are temporary databases owned by the stack runtime;
+their storage location is internal to the runtime.
 
 Pg-delta runs in-process and uses two scoped shadow databases. Coverage gaps
 warn; `--strict-coverage` makes

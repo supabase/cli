@@ -7,8 +7,7 @@ Pg-delta runs in-process.
 Coverage gaps warn; `--strict-coverage` makes them fatal, and `PGDELTA_DEBUG`
 writes diagnostic JSON under `supabase/.temp/pgdelta/v2/debug/<id>/`.
 When `[experimental].stack` is on, `--local` uses the project stack. Shadow work from the
-sibling commands lives under `$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/`
-(`~/.supabase/managed/…` by default).
+sibling commands uses temporary databases owned by the stack runtime.
 
 `--no-cache` (a flag shared across the `declarative` group) has no effect on
 `generate` — the export connects directly to the target and provisions no

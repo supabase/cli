@@ -255,7 +255,7 @@ describe("stack start (compiled e2e)", () => {
   const cleanup = Effect.gen(function* () {
     let cleanupComplete = stackDestroyed;
     if (!cleanupComplete && home !== undefined) {
-      const candidates = yield* readDirectory(join(home.dir, "managed", "stacks")).pipe(
+      const candidates = yield* readDirectory(join(home.dir, "stacks")).pipe(
         Effect.catchIf(
           (cause) =>
             Predicate.isTagged(cause, "PlatformError") &&
@@ -328,7 +328,7 @@ describe("stack start (compiled e2e)", () => {
           expect(running.databaseUrl).toMatch(
             /^postgresql:\/\/postgres:.+@127\.0\.0\.1:\d+\/postgres$/,
           );
-          const databasePath = join(homeDir.dir, "managed", "stacks", idText, "data", "database");
+          const databasePath = join(homeDir.dir, "stacks", idText, "data", "database");
           yield* access(join(databasePath, "PG_VERSION"));
 
           const logs = yield* runSupabaseEffect(
@@ -564,9 +564,7 @@ describe("stack start (compiled e2e)", () => {
           yield* destroyStack(homeDir.dir, idText);
           stackDestroyed = true;
 
-          const destroyed = yield* Effect.exit(
-            access(join(homeDir.dir, "managed", "stacks", idText)),
-          );
+          const destroyed = yield* Effect.exit(access(join(homeDir.dir, "stacks", idText)));
           expect(Exit.isFailure(destroyed)).toBe(true);
         }),
       ),

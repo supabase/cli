@@ -84,7 +84,7 @@ Without `--env`, the command reads the selected `supabase/config.toml` or
 the shared config loader consults to resolve the target stack's configuration;
 with `--env`, it skips config loading entirely. Either way, it
 reads the target stack's persisted state under
-`<SUPABASE_HOME or ~/.supabase>/managed/stacks/<id>/`, and when a live owner
+`<SUPABASE_HOME or ~/.supabase>/stacks/<id>/`, and when a live owner
 exists, it reads the owner's local RPC endpoint for status and credentials.
 The command calls no API routes and writes no files besides `telemetry.json`.
 It reads the CLI's usual home, workdir, and experimental routing variables,

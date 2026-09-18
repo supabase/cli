@@ -216,7 +216,7 @@ describe("stack e2e cleanup manager", () => {
         captureSnapshot: () => ({
           managedStacksRootExists: true,
           documentFiles: [],
-          stackDirs: ["/tmp/home/managed/stacks/stack-id"],
+          stackDirs: ["/tmp/home/stacks/stack-id"],
           trackedPids: [],
         }),
       }),

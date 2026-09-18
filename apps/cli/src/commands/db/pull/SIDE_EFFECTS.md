@@ -14,8 +14,7 @@ runs the same in-process declarative export (`supabase/schemas` plus
 `--declarative`. `--experimental --declarative` does not print that line:
 `--declarative` already selected the export.
 
-When `[experimental].stack` is on, the shadow is `EphemeralPostgres` under
-`$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/` (`~/.supabase/managed/…` by default). Migra (`--diff-engine migra`) is rejected
+When `[experimental].stack` is on, the shadow is a temporary database owned by the stack runtime. Migra (`--diff-engine migra`) is rejected
 because that shadow is always stack.
 
 Pg-delta runs in-process. Coverage gaps warn; `--strict-coverage` makes them

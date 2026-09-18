@@ -148,12 +148,13 @@ jobs:
         working-directory: packages/stack
         run: >-
           pnpm test:integration
-          src/state/ports.integration.test.ts
-          src/state/registry-lease.integration.test.ts
-          src/state/state-store.integration.test.ts
-          src/supervisor/host-listener.integration.test.ts
-          src/supervisor/ingress.integration.test.ts
-          src/gateway/startup-transports.integration.test.ts
+          src/Ports.integration.test.ts
+          src/State.integration.test.ts
+          src/HostProcess.integration.test.ts
+          src/Network.integration.test.ts
+          src/Proxy.integration.test.ts
+          src/HttpProxy.integration.test.ts
+          --passWithNoTests=false
 
   test-summary:
     if: |
@@ -238,7 +239,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: [native, container]
+        runtime: [native, docker]
     steps:
       - name: Checkout
         uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
@@ -249,9 +250,17 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Run stack end-to-end tests
-        run: pnpm --filter @supabase/stack test:e2e:run
-        env:
-          SUPABASE_STACK_E2E_RUNTIME: ${{ matrix.runtime }}
+        run: >-
+          pnpm --filter @supabase/stack test:e2e:run
+          src/whole-stack.${{ matrix.runtime }}.e2e.test.ts
+          --passWithNoTests=false
+
+      - name: Run public stack end-to-end tests
+        if: matrix.runtime == 'native'
+        run: >-
+          pnpm --filter @supabase/stack test:e2e:run
+          src/public.e2e.test.ts
+          --passWithNoTests=false
 
   # Summary job that gates branch protection. It preserves the original check
   # name and succeeds iff every CLI shard and stack runtime succeeded.

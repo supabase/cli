@@ -5,7 +5,7 @@ configuration or `SUPABASE_EXPERIMENTAL_STACK=1`. It has no top-level alias.
 
 ## Files Read
 
-Reads the selected stack's descriptor and `<SUPABASE_HOME>/managed/stacks/<id>/state.json`,
+Reads the selected stack's descriptor and `<SUPABASE_HOME>/stacks/<id>/state.json`,
 plus owner metadata in `control.json` when present. Restart does not load project
 configuration; it uses the selected stack's saved effective configuration and preparation policy.
 Feature routing and workdir discovery may still read `supabase/config.toml` or

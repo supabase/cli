@@ -13,13 +13,11 @@ values take precedence over values from `supabase/` dotenv files, which take
 precedence over project-root dotenv files. Empty automatic overrides are
 ignored. Explicit `env(NAME)` references remain available for values that are
 not directly overridden.
-The `@supabase/stack` Effect API owns persistent state, the detached
-Supervisor, runtime resources, readiness, and cleanup. The CLI only resolves
+The `@supabase/stack` Effect API owns persistent state, runtime resources, readiness, and cleanup. The CLI only resolves
 the project configuration and renders the resulting status.
 
-Durable stack state lives under `$SUPABASE_HOME/managed/stacks/<stackId>/`
-(`~/.supabase/managed/stacks/<stackId>/` by default). Ephemeral shadows use
-`$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/`.
+Durable stack state lives under `$SUPABASE_HOME/stacks/<stackId>/`
+(`~/.supabase/stacks/<stackId>/` by default).
 
 `SUPABASE_HOME` controls the package's durable stack state through its normal
 runtime composition boundary. The stack owner is deliberately detached from

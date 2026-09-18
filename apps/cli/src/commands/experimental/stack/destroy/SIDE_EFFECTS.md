@@ -11,7 +11,7 @@ The command targets the current project stack by default, or an explicit `--stac
 an explicit `--yes=false` overrides it. It never accepts `--all`.
 
 The stack package reads the selected descriptor and removes resources and state under
-`${SUPABASE_HOME:-~/.supabase}/managed/stacks/<id>`. It owns stopping the Supervisor, removing
+`${SUPABASE_HOME:-~/.supabase}/stacks/<id>`. It owns stopping the Supervisor, removing
 native processes or containers, and deleting persistent stack data. The CLI does not delete paths
 or Docker resources itself and makes no Management API calls. Project files are retained.
 

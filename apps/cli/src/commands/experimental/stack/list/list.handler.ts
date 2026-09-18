@@ -50,7 +50,7 @@ const mapStackError = (error: StackDiscoveryError) =>
     reason: "invalid-config",
     message: error.message,
     suggestion:
-      "Inspect the managed stack registry under $SUPABASE_HOME/managed/stacks or ~/.supabase/managed/stacks.",
+      "Inspect the managed stack registry under $SUPABASE_HOME/stacks or ~/.supabase/stacks.",
     cause: error,
   });
 

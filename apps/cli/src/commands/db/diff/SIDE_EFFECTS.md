@@ -8,8 +8,7 @@ edge-runtime involved). `--use-pg-schema` is the CLI's sole remaining Go
 delegation on this command — a documented keep-in-Go exception (CLI-1960), not a
 pending port.
 
-When `[experimental].stack` is on, the shadow is `EphemeralPostgres` under
-`$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/` (`~/.supabase/managed/…` by default). Migra, pgAdmin, and `--use-pg-schema` are
+When `[experimental].stack` is on, the shadow is a temporary database owned by the stack runtime. Migra, pgAdmin, and `--use-pg-schema` are
 rejected because that shadow is always stack.
 
 Pg-delta runs in-process. Coverage gaps warn, while `--strict-coverage` makes
@@ -45,7 +44,7 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 | `<path>` (from `--output` / `-o`)                                                 | SQL    | explicit `--from/--to` mode with `--output`; flattened review representation, not a portable apply script                                                                                                                                                                                                                                                      |
 | `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                           | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                                                                                                                                                                                                                                                            |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`                     | tar    | cache-enabled COLD shadow provision creates the current key's snapshot (native diff targets + the explicit `--from/--to migrations` shadow; never `--use-pgadmin`/`--use-pg-schema`); a warm hit `touch`es its mtime (LRU); every cache-eligible acquire may delete other keys under LRU keep-3 + 2-day mtime TTL — ~90MB (`SUPABASE_HOME` overrides the root) |
-| `~/.supabase/cache/shadow-baseline/stack-shadow-baseline-<key>.tar`               | tar    | `[experimental].stack` COLD export of an `EphemeralPostgres` cluster; same LRU keep-3 + 2-day TTL, separate glob so keys cannot collide with legacy SQL-template baselines                                                                                                                                                                                     |
+| `~/.supabase/cache/shadow-baseline/stack-shadow-baseline-<key>.tar`               | tar    | `[experimental].stack` COLD export of a temporary shadow database owned by the stack runtime; same LRU keep-3 + 2-day TTL, separate glob so keys cannot collide with legacy SQL-template baselines                                                                                                                                                             |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial`       | tar    | during a cold export — the in-flight temp file, `rename`d into the tar above on success and removed on failure; only a crash/SIGKILL leaves it behind, and later cold exports / warm hits sweep leftovers older than 5 minutes                                                                                                                                 |
 | `~/.supabase/cache/shadow-baseline/stack-shadow-baseline-<key>.tar.<pid>.partial` | tar    | `[experimental].stack` cold export temp file — pid-scoped, `chmod` 0600, `rename`d into the stack tar above; abandoned leftovers older than 5 minutes are swept on later acquires                                                                                                                                                                              |
 | `~/.supabase/<workdir-hash>/linked-project.json`                                  | JSON   | `--linked` (post-run cache)                                                                                                                                                                                                                                                                                                                                    |
@@ -66,7 +65,7 @@ it, and JSON `null` disables formatting without disabling safe compaction.
   no `targetUrlOverride`.
 - When `[experimental].stack` / `SUPABASE_EXPERIMENTAL_STACK=1` is on, `--local` inspects the
   project stack (`findStack` + `status`, database ready) instead of `supabase_db_<projectId>`,
-  and shadows are `@supabase/stack` `EphemeralPostgres` clusters (slim-init baseline, cache
+  and shadows are temporary databases owned by the stack runtime (slim-init baseline, cache
   prefix `stack-shadow-baseline-`). Every stack runtime rejects `--use-migra` / `--use-pgadmin` /
   `--use-pg-schema`.
 - `supabase/migra` container — the migra OOM bash fallback only.

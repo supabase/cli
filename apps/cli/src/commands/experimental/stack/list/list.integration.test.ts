@@ -132,7 +132,7 @@ describe("stack list", () => {
             name: "healthy",
             runtime: { kind: "native" },
           });
-          const registry = path.join(home, "managed", "stacks");
+          const registry = path.join(home, "stacks");
           const corrupt = "b".repeat(64);
           const unsupported = "c".repeat(64);
           const remnant = "d".repeat(64);

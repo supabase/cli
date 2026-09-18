@@ -16,32 +16,28 @@ const realCatalog = await Bun.file(CATALOG_PATH).text();
 
 /** A trimmed catalog carrying both entry shapes the script has to rewrite. */
 const fixture = `const workloadCatalog = {
-  "database:database": native(
+  "database:database": definition(
     "postgres",
     "17.6.1.168",
     "ghcr.io/supabase/cli/postgres:17.6.1.168@sha256:${"9".repeat(64)}",
     "bin/supabase-postgres-start",
     ["bin/supabase-postgres-start"],
     {
-      additionalReleases: {
         "15.14.1.168":
           "ghcr.io/supabase/cli/postgres:15.14.1.168@sha256:${"f".repeat(64)}",
-      },
-      containerAlias: "supabase-database",
     },
   ),
-  "rest:rest": native(
+  "rest:rest": definition(
     "postgrest",
     "v16.2",
     "ghcr.io/supabase/cli/postgrest:v16.2",
     "bin/postgrest",
     ["bin/postgrest"],
-    { containerAlias: "supabase-rest" },
   ),
-  "auth:auth": native("auth", "v2.196.0", "ghcr.io/supabase/cli/auth:v2.196.0", "bin/auth", [
+  "auth:auth": definition("auth", "v2.196.0", "ghcr.io/supabase/cli/auth:v2.196.0", "bin/auth", [
     "bin/auth",
   ]),
-  "studio:studio": native(
+  "studio:studio": definition(
     "studio",
     "2026.09.04-sha-5a67366",
     "ghcr.io/supabase/cli/studio:2026.09.04-sha-5a67366@sha256:${"c".repeat(64)}",
@@ -101,7 +97,7 @@ describe("planCatalogUpdate", () => {
     expect(plan.previousVersion).toBe("v2.196.0");
     expect(plan.target).toBe("default");
     expect(plan.source).toContain(
-      `native("auth", "v2.197.0", "ghcr.io/supabase/cli/auth:v2.197.0@${DIGEST_A}", "bin/auth"`,
+      `definition("auth", "v2.197.0", "ghcr.io/supabase/cli/auth:v2.197.0@${DIGEST_A}", "bin/auth"`,
     );
     expect(plan.source).not.toContain("v2.196.0");
   });
@@ -259,7 +255,7 @@ describe("against the real catalog", () => {
     // Derived from the catalog, so a new workload is covered without editing this.
     const services = [
       ...new Set(
-        [...realCatalog.matchAll(/native\(\s*"([a-z][a-z0-9-]*)",/g)].map(
+        [...realCatalog.matchAll(/definition\(\s*"([a-z][a-z0-9-]*)",/g)].map(
           (match) => match[1] ?? "",
         ),
       ),

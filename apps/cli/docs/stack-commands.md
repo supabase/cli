@@ -88,8 +88,8 @@ precedence over `experimental.stack`; an unset or empty value falls back to the 
 Other values are rejected. The override is applied before reading the project configuration.
 
 When the flag is on, `--local` targets of the `db`, `migration`, `test db`, `gen types`, and
-`inspect` families use the project stack and provision throwaway shadow Postgres through
-`@supabase/stack` (`EphemeralPostgres`). Top-level `supabase pull` uses the same stack shadow
+`inspect` families use the project stack and provision a throwaway shadow database owned by the
+stack runtime. Top-level `supabase pull` uses the same stack shadow
 as `db pull`. Linked and `--db-url` targets stay on the Management API for engine selection.
 A `--db-url` that matches `config.toml` host and port is still rewritten like a published
 stack target for dump's tool container. Compose names (`supabase_db_*`, `supabase_network_*`,

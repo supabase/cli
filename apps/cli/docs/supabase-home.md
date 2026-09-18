@@ -45,7 +45,7 @@ Gitignored checkout metadata lives beside the project:
 checkout-local service-version overrides. Neither file records whether a local stack is running.
 Stack identity does not write repository or Git markers.
 
-### Global managed runtime
+### Global local stack runtime
 
 Managed stack documents and runtime artifacts are shared through the global CLI home:
 
@@ -55,27 +55,22 @@ Managed stack documents and runtime artifacts are shared through the global CLI 
   telemetry.json
   traces/
   bin/
-  managed/
-    stacks/
-      <stack-id>/
-        state.json
-        data/
-        logs/
-        runtime/
-        control.json
+  stacks/
+    <stack-id>/
+      state.json
+      data/
+        <instance-id>/
+  artifacts/
 ```
 
-`state.json` is the single durable managed record. It contains the canonical project root, branch
+`state.json` is the single durable stack record. It contains the canonical project root, branch
 context, and stack name that make up stack identity, together with sticky port intents and
-assignments, the desired lifecycle, the runtime selection, and the materialized stack definition
-(enabled capabilities with their pinned versions, listeners, and security settings). Runtime-only
-service ports are allocated for the
-supervisor run and are not persisted as sticky intents. `control.json` contains runtime owner
-metadata for the deterministic loopback control endpoint; the ownership protocol is the liveness
-authority, and a stale document is reclaimed by a subsequent managed lifecycle operation.
+assignments, the runtime selection, the service definitions, and the composition needed to resume
+the stack. Runtime-only observations and active owner state are kept in memory. Service data lives
+under the stack's `data/<instance-id>/` directories, while downloaded native artifacts are shared
+under `artifacts/`.
 
-There is no project-local `stacks/<name>` directory, `state.json`, daemon socket file, or second
-StateManager metadata format.
+There is no project-local `stacks/<name>` directory or second state format.
 
 ## Service-version inputs
 
