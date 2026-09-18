@@ -76,6 +76,8 @@ and its dependents are disabled together, so excluding `rest` also disables `stu
 the platform trio still fail-closes against the full enabled config.
 Listeners are derived by the runtime from enabled capability routes; route-less listeners are therefore omitted.
 Eager activation never re-enables an excluded capability.
+When an addressed stack is already running, `--eager` or a service policy change is rejected;
+use `supabase stack restart` to apply the requested policy through the package lifecycle.
 
 The command owns only the start request. Once the package reports readiness,
 the detached stack owner remains alive after the CLI process exits. If the CLI

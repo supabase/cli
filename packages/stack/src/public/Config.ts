@@ -19,6 +19,8 @@ import {
 import { PoolerSettingsSchema, type PoolerSettings } from "../model/capabilities/pooler.ts";
 import { ActivationModeSchema, type ActivationMode } from "./Capability.ts";
 import { NetworkPortSchema, PORT_FIELDS, type PortField } from "./Status.ts";
+import { EffectDatabaseInitializationSchema, ServiceRestartPayloadSchema } from "./Service.ts";
+import { ServiceInstanceIdSchema } from "./ServiceInstanceId.ts";
 
 export const PreparationModeSchema = Schema.Literals(["background", "on-demand"] as const);
 type PreparationMode = Schema.Schema.Type<typeof PreparationModeSchema>;
@@ -57,13 +59,17 @@ const retirableCapability = <S extends Schema.Top>(settings: S) =>
     }),
   ]);
 
-export const DatabaseCapabilityConfigSchema = Schema.Struct({
-  // PostgreSQL accepts an exact catalog release or a major selector such as
-  // "15"/"17". Major selectors are resolved to a concrete catalog release by
-  // the compiler, preserving a compatible previous pin when one exists.
-  version: Schema.optionalKey(Schema.String),
-  settings: Schema.optionalKey(DatabaseSettingsSchema),
-});
+export const DatabaseCapabilityConfigSchema = Schema.Union([
+  Schema.Struct({ enabled: Schema.Literal(false) }),
+  Schema.Struct({
+    // PostgreSQL accepts an exact catalog release or a major selector such as
+    // "15"/"17". Major selectors are resolved to a concrete catalog release by
+    // the compiler, preserving a compatible previous pin when one exists.
+    enabled: Schema.optionalKey(Schema.Literal(true)),
+    version: Schema.optionalKey(Schema.String),
+    settings: Schema.optionalKey(DatabaseSettingsSchema),
+  }),
+]);
 export const StackCapabilitiesConfigSchema = Schema.Struct({
   database: Schema.optionalKey(DatabaseCapabilityConfigSchema),
   rest: Schema.optionalKey(retirableCapability(RestSettingsSchema)),
@@ -98,6 +104,7 @@ export const StackSecurityConfigSchema = Schema.Struct({
   jwt: Schema.optionalKey(
     Schema.Struct({
       issuer: Schema.optionalKey(Schema.String),
+      expirySeconds: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)))),
       signing: Schema.optionalKey(JwtSigningSchema),
     }),
   ),
@@ -108,10 +115,31 @@ export const StackConfigSchema = Schema.Struct({
   capabilities: Schema.optionalKey(StackCapabilitiesConfigSchema),
   listeners: Schema.optionalKey(StackListenersConfigSchema),
   security: Schema.optionalKey(StackSecurityConfigSchema),
+  initialization: Schema.optionalKey(
+    Schema.Struct({ database: Schema.optionalKey(EffectDatabaseInitializationSchema) }),
+  ),
 });
 export type StackConfig = Schema.Schema.Type<typeof StackConfigSchema>;
 export type StackCapabilitiesConfig = Schema.Schema.Type<typeof StackCapabilitiesConfigSchema>;
 export type StackSecurityConfig = Schema.Schema.Type<typeof StackSecurityConfigSchema>;
+
+/** Stack restart accepts either a whole-stack candidate or selected instance updates. */
+export const StackRestartPayloadSchema = Schema.Union(
+  [
+    Schema.Struct({
+      config: Schema.optionalKey(StackConfigSchema),
+      services: Schema.optionalKey(Schema.Never),
+      updates: Schema.optionalKey(Schema.Never),
+    }),
+    Schema.Struct({
+      services: Schema.Array(ServiceInstanceIdSchema),
+      updates: Schema.optionalKey(Schema.Array(ServiceRestartPayloadSchema)),
+      config: Schema.optionalKey(Schema.Never),
+    }),
+  ],
+  { mode: "oneOf" },
+);
+export type StackRestartPayload = Schema.Schema.Type<typeof StackRestartPayloadSchema>;
 export {
   DatabaseSettingsSchema,
   RestSettingsSchema,

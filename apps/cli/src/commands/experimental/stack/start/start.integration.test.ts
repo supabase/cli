@@ -19,6 +19,7 @@ import {
   ContainerPullError,
   StackConfigSchema,
   StackIdSchema,
+  ServiceInstanceIdSchema,
   StackRuntimeError,
   StackStateInvalidError,
 } from "@supabase/stack/effect";
@@ -155,11 +156,13 @@ const status = (id: string, runtime: "native" | "container" = "native") =>
         "pooler",
       ] as const
     ).map((name) => ({
+      id: ServiceInstanceIdSchema.make(`${name}-instance`),
       name,
       activation: name === "database" ? ("eager" as const) : ("lazy" as const),
       state: "ready" as const,
     })),
     artifacts: [],
+    instances: [],
   }) satisfies StackStatus;
 
 /** `status()` with the `storage` capability's state overridden. */
@@ -242,10 +245,11 @@ function recordingStackStorageHttpClientGet503() {
   );
   return { layer, requests };
 }
+type Start = (config?: unknown) => Effect.Effect<StackStatus, ApiStackStartError>;
 
 function fakeStack(
   id: string,
-  start: (config?: { readonly config?: unknown }) => Effect.Effect<StackStatus, ApiStackStartError>,
+  start: Start,
   desiredLifecycle: "unconfigured" | "stopped" | "running" = "unconfigured",
 ) {
   // Mirrors a real stack: `.status` reflects the pre-start lifecycle (read by `firstCreate`)
@@ -256,6 +260,7 @@ function fakeStack(
     lifecycle: desiredLifecycle === "unconfigured" ? "unconfigured" : desiredLifecycle,
     desiredLifecycle,
   };
+  let initialConfig: unknown;
   return {
     id: StackIdSchema.make(id),
     status: Effect.suspend(() => Effect.succeed(currentStatus)),
@@ -272,20 +277,37 @@ function fakeStack(
       },
     }),
     prepare: () => Effect.die("prepare not used in start test"),
-    start: (config?: { readonly config?: unknown }) =>
-      start(config).pipe(
+    start: () =>
+      start(initialConfig).pipe(
         Effect.tap((result) =>
           Effect.sync(() => {
-            currentStatus = result;
+            const currentStorage = currentStatus.capabilities.find(
+              (capability) => capability.name === "storage",
+            )?.state;
+            const nextStorage = result.capabilities.find(
+              (capability) => capability.name === "storage",
+            )?.state;
+            if (desiredLifecycle !== "unconfigured" || currentStorage !== nextStorage)
+              currentStatus = result;
           }),
         ),
       ),
-    stop: Effect.void,
-    destroy: Effect.die("destroy not used in start test"),
-    resetDatabase: Effect.die("resetDatabase not used in start test"),
+    services: {
+      create: () => Effect.die("services.create not used in start test"),
+      get: () => Effect.die("services.get not used in start test"),
+      list: Effect.die("services.list not used in start test"),
+    },
+    setInitialConfig: (config: unknown) => {
+      initialConfig = config;
+    },
+    sleep: () => Effect.succeed(status(id)),
+    stop: () => Effect.succeed(status(id)),
+    restart: () => Effect.succeed(status(id)),
+    destroy: () => Effect.void,
     logs: () => Effect.die("logs not used in start test"),
+    followStatus: Stream.empty,
     followLogs: () => Stream.empty,
-  } satisfies EffectStack;
+  } satisfies EffectStack & { readonly setInitialConfig: (config: unknown) => void };
 }
 
 const flags = (
@@ -308,7 +330,7 @@ function handlerLayer(opts: {
     id?: string;
     runtime?: { kind: "native" } | { kind: "container"; engine: "docker" };
   };
-  stack: EffectStack;
+  stack: EffectStack & { readonly setInitialConfig?: (config: unknown) => void };
   onCreate?: (options: unknown) => void;
   onOpen?: () => void;
   /** Overrides the default dying `HttpClient` stub, for tests exercising bucket seeding. */
@@ -326,6 +348,7 @@ function handlerLayer(opts: {
   const apiLayer = Layer.succeed(StackApi, {
     findStack: () => Effect.succeed(Option.none()),
     createStack: (options) => {
+      opts.stack.setInitialConfig?.(options.initialConfig);
       opts.onCreate?.(options);
       return Effect.succeed(opts.stack);
     },
@@ -395,7 +418,7 @@ describe("stack start targeting", () => {
             const stack = fakeStack("c".repeat(64), (input) =>
               Effect.gen(function* () {
                 const stackConfig = yield* Schema.decodeUnknownEffect(StackConfigSchema)(
-                  input?.config,
+                  input,
                 ).pipe(
                   Effect.mapError(
                     (error) => new StackStateInvalidError({ message: error.message }),
@@ -443,7 +466,7 @@ describe("stack start targeting", () => {
           const stack = fakeStack("e".repeat(64), (config) =>
             Effect.gen(function* () {
               startedConfig = config;
-              yield* Schema.decodeUnknownEffect(StackConfigSchema)(config?.config, {
+              yield* Schema.decodeUnknownEffect(StackConfigSchema)(config, {
                 onExcessProperty: "error",
               }).pipe(
                 Effect.mapError((error) => new StackStateInvalidError({ message: error.message })),
@@ -457,11 +480,9 @@ describe("stack start targeting", () => {
           );
           expect(startedConfig).toEqual(
             expect.objectContaining({
-              config: expect.objectContaining({
-                capabilities: expect.objectContaining({
-                  studio: expect.objectContaining({ enabled: false }),
-                  analytics: expect.objectContaining({ enabled: false }),
-                }),
+              capabilities: expect.objectContaining({
+                studio: expect.objectContaining({ enabled: false }),
+                analytics: expect.objectContaining({ enabled: false }),
               }),
             }),
           );
@@ -480,7 +501,7 @@ describe("stack start targeting", () => {
       yield* writeStartMigration(root);
       const catalog = recordingStackCatalogSetup((input) => ({
         kind: input.target.kind,
-        authEnabled: input.target.config.capabilities?.auth?.enabled,
+        authEnabled: input.target.config?.capabilities?.auth?.enabled,
       }));
       const stack = fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64))));
       const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
@@ -595,9 +616,7 @@ describe("stack start targeting", () => {
             ).pipe(Effect.provide(setup.layer));
             expect(startedConfig).toEqual(
               expect.objectContaining({
-                config: expect.objectContaining({
-                  listeners: expect.objectContaining({ api: { port: 55421 } }),
-                }),
+                listeners: expect.objectContaining({ api: { port: 55421 } }),
               }),
             );
           }),
@@ -628,9 +647,7 @@ describe("stack start targeting", () => {
           yield* stackStart(flags({ exclude: ["rest"] })).pipe(Effect.provide(setup.layer));
           expect(startedConfig).toEqual(
             expect.objectContaining({
-              config: expect.objectContaining({
-                listeners: expect.objectContaining({ api: { port: 55421 } }),
-              }),
+              listeners: expect.objectContaining({ api: { port: 55421 } }),
             }),
           );
         }),
@@ -673,9 +690,7 @@ enabled = false
           yield* stackStart(flags({ exclude: ["rest"] })).pipe(Effect.provide(setup.layer));
           expect(startedConfig).toEqual(
             expect.objectContaining({
-              config: expect.objectContaining({
-                listeners: expect.objectContaining({ api: { port: 55421 } }),
-              }),
+              listeners: expect.objectContaining({ api: { port: 55421 } }),
             }),
           );
         }),
@@ -698,7 +713,9 @@ enabled = false
         },
       });
       yield* stackStart(flags({ runtime: "auto" })).pipe(Effect.provide(setup.layer));
-      expect(createOptions).toEqual({ projectRoot: root });
+      expect(createOptions).toEqual(
+        expect.objectContaining({ projectRoot: root, initialConfig: expect.any(Object) }),
+      );
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -722,11 +739,14 @@ enabled = false
       yield* stackStart(flags({ stack: Option.some("feature-docker"), runtime: "docker" })).pipe(
         Effect.provide(setup.layer),
       );
-      expect(createOptions).toEqual({
-        projectRoot: root,
-        name: "feature-docker",
-        runtime: { kind: "container", engine: "docker" },
-      });
+      expect(createOptions).toEqual(
+        expect.objectContaining({
+          projectRoot: root,
+          name: "feature-docker",
+          runtime: { kind: "container", engine: "docker" },
+          initialConfig: expect.any(Object),
+        }),
+      );
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -829,19 +849,20 @@ enabled = false
           exclude: ["studio"],
         }),
       ).pipe(Effect.provide(setup.layer));
-      expect(createOptions).toEqual({
-        projectRoot: root,
-        name: "feature-a",
-        runtime: { kind: "native" },
-      });
-      expect(startConfig).toMatchObject({ config: { preparation: "on-demand" } });
+      expect(createOptions).toEqual(
+        expect.objectContaining({
+          projectRoot: root,
+          name: "feature-a",
+          runtime: { kind: "native" },
+          initialConfig: expect.any(Object),
+        }),
+      );
+      expect(startConfig).toMatchObject({ preparation: "on-demand" });
       expect(startConfig).toEqual(
         expect.objectContaining({
-          config: expect.objectContaining({
-            capabilities: expect.objectContaining({
-              rest: expect.objectContaining({ activation: "eager" }),
-              studio: expect.objectContaining({ enabled: false }),
-            }),
+          capabilities: expect.objectContaining({
+            rest: expect.objectContaining({ activation: "eager" }),
+            studio: expect.objectContaining({ enabled: false }),
           }),
         }),
       );
@@ -905,7 +926,7 @@ enabled = false
         Effect.provide(setup.layer),
       );
       expect(opened).toBe(true);
-      expect(startConfig).toMatchObject({ config: { listeners: { api: { port: 55421 } } } });
+      expect(startConfig).toBeUndefined();
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -918,12 +939,18 @@ enabled = false
         ...fakeStack("c".repeat(64), () =>
           Effect.fail(new ContainerEngineError({ message: "Docker is unavailable" })),
         ),
-        stop: Effect.sync(() => {
-          stopped = true;
-        }),
-        destroy: Effect.sync(() => {
-          destroyed = true;
-        }),
+        stop: () =>
+          Effect.succeed(status("c".repeat(64))).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                stopped = true;
+              }),
+            ),
+          ),
+        destroy: () =>
+          Effect.sync(() => {
+            destroyed = true;
+          }),
       } satisfies EffectStack;
       const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
       const failure = yield* stackStart(flags()).pipe(Effect.flip, Effect.provide(setup.layer));
@@ -948,12 +975,18 @@ enabled = false
       let destroyed = false;
       const stack = {
         ...fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64)))),
-        stop: Effect.sync(() => {
-          stopped = true;
-        }),
-        destroy: Effect.sync(() => {
-          destroyed = true;
-        }),
+        stop: () =>
+          Effect.succeed(status("f".repeat(64))).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                stopped = true;
+              }),
+            ),
+          ),
+        destroy: () =>
+          Effect.sync(() => {
+            destroyed = true;
+          }),
       } satisfies EffectStack;
       const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
       yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
@@ -962,7 +995,7 @@ enabled = false
     });
   });
 
-  it.live("stops a running postgres-only stack before starting the full config", () => {
+  it.live("requires restart before changing a running service policy", () => {
     return Effect.gen(function* () {
       const root = yield* project();
       const events: Array<string> = [];
@@ -984,14 +1017,33 @@ enabled = false
             ...capability,
             state: capability.name === "database" ? ("ready" as const) : ("disabled" as const),
           })),
+          instances: [
+            {
+              id: ServiceInstanceIdSchema.make("r".repeat(64)),
+              service: "rest",
+              name: "rest",
+              enabled: false,
+              intent: "stopped",
+              phase: "stopped",
+              activation: "lazy",
+              endpoints: [],
+            },
+          ],
         }),
-        stop: Effect.sync(() => {
-          events.push("stop");
-        }),
+        stop: () =>
+          Effect.succeed(status(id)).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                events.push("stop");
+              }),
+            ),
+          ),
       } satisfies EffectStack;
       const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
-      expect(events).toEqual(["stop", "start"]);
+      const failure = yield* stackStart(flags()).pipe(Effect.flip, Effect.provide(setup.layer));
+      expect(failure.reason).toBe("lifecycle");
+      expect(failure.suggestion).toContain("stack restart");
+      expect(events).toEqual([]);
     });
   });
 
@@ -1058,7 +1110,7 @@ enabled = false
       const stack = fakeStack("9".repeat(64), (config) => {
         started = true;
         expect(config).toMatchObject({
-          config: { capabilities: { database: { settings: { health_timeout: "2m" } } } },
+          capabilities: { database: { settings: { health_timeout: "2m" } } },
         });
         return Effect.succeed(status("9".repeat(64)));
       });
@@ -1084,12 +1136,18 @@ enabled = false
             return yield* Effect.never.pipe(Effect.as(status("7".repeat(64))));
           }),
         ),
-        stop: Effect.sync(() => {
-          stopped = true;
-        }),
-        destroy: Effect.sync(() => {
-          destroyed = true;
-        }),
+        stop: () =>
+          Effect.succeed(status("7".repeat(64))).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                stopped = true;
+              }),
+            ),
+          ),
+        destroy: () =>
+          Effect.sync(() => {
+            destroyed = true;
+          }),
       } satisfies EffectStack;
       const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
       const fiber = yield* Effect.forkChild(Effect.provide(stackStart(flags()), setup.layer));
@@ -1440,12 +1498,15 @@ describe("stack start bucket seeding", () => {
         ...fakeStack("5".repeat(64), () =>
           Effect.succeed(statusWithStorageState("5".repeat(64), "dormant")),
         ),
-        stop: Effect.sync(() => {
-          stopped = true;
-        }),
-        destroy: Effect.sync(() => {
-          destroyed = true;
-        }),
+        stop: () =>
+          Effect.sync(() => {
+            stopped = true;
+            return status("5".repeat(64));
+          }),
+        destroy: () =>
+          Effect.sync(() => {
+            destroyed = true;
+          }),
       } satisfies EffectStack;
       const setup = handlerLayer({
         root,

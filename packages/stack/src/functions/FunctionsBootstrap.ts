@@ -1,11 +1,13 @@
 import { Crypto, Effect, FileSystem, Path, PlatformError } from "effect";
 import { StackPreparationError } from "../public/Errors.ts";
-import { resolveStackPaths } from "../state/Paths.ts";
+import { resolveServiceInstancePaths, resolveStackPaths } from "../state/Paths.ts";
 import type { StackId } from "../public/StackId.ts";
+import type { ServiceInstanceId } from "../public/ServiceInstanceId.ts";
 
 export interface FunctionsBootstrapOwner {
   /** Publishes the stack-owned Edge Runtime main service for the current session. */
   readonly write: (input: {
+    readonly instanceId: ServiceInstanceId;
     readonly content: string;
   }) => Effect.Effect<string, StackPreparationError>;
   /** Removes only this stack's functions bootstrap root. */
@@ -41,28 +43,40 @@ export const makeFunctionsBootstrapOwner = (
     const stackPaths = yield* resolveStackPaths(options).pipe(
       Effect.mapError((cause) => failure("Unable to resolve functions bootstrap path", { cause })),
     );
-    const root = path.join(stackPaths.runtime, "functions");
+    const root = path.join(stackPaths.runtime, "instances");
 
     const write = (input: {
+      readonly instanceId: ServiceInstanceId;
       readonly content: string;
     }): Effect.Effect<string, StackPreparationError> => {
       if (input.content.includes("\u0000"))
         return Effect.fail(failure("Functions bootstrap contains an invalid character"));
-      const target = path.join(root, "index.ts");
       return Effect.gen(function* () {
+        const instancePaths = yield* resolveServiceInstancePaths(stackPaths, input.instanceId).pipe(
+          Effect.provideService(Path.Path, path),
+          Effect.mapError((cause) =>
+            failure("Unable to resolve functions bootstrap path", { cause }),
+          ),
+        );
+        const instanceRoot = path.join(instancePaths.runtime, "functions");
+        const target = path.join(instanceRoot, "index.ts");
         const token = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError((cause) =>
             failure("Unable to allocate functions bootstrap file", { cause }),
           ),
         );
-        const temporary = path.join(root, `.index.ts.${token}.tmp`);
+        const temporary = path.join(instanceRoot, `.index.ts.${token}.tmp`);
         return yield* Effect.gen(function* () {
           yield* mapFs(
-            root,
+            instanceRoot,
             "create functions bootstrap directory",
-            fs.makeDirectory(root, { recursive: true, mode: 0o700 }),
+            fs.makeDirectory(instanceRoot, { recursive: true, mode: 0o700 }),
           );
-          yield* mapFs(root, "secure functions bootstrap directory", fs.chmod(root, 0o700));
+          yield* mapFs(
+            instanceRoot,
+            "secure functions bootstrap directory",
+            fs.chmod(instanceRoot, 0o700),
+          );
           yield* Effect.scoped(
             Effect.gen(function* () {
               const file = yield* mapFs(

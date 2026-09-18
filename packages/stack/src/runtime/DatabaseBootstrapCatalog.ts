@@ -1,8 +1,9 @@
 import { Effect, Redacted } from "effect";
 import type { DatabaseBootstrapOptions } from "../model/DatabaseBootstrap.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
+import type { PersistedServiceInstance } from "../model/ServiceRegistry.ts";
 import { StackPreparationError } from "../public/Errors.ts";
-import { AUTH_JWT_SECRET_SLOT, DATABASE_INTERNAL_PASSWORD_SLOT } from "../state/SecretStore.ts";
+import { AUTH_JWT_SECRET_SLOT } from "../state/SecretStore.ts";
 
 const missingMaterial = (message: string) => new StackPreparationError({ message });
 
@@ -19,22 +20,27 @@ const secretValue = (state: PersistedStackState, slot: string): string | undefin
  */
 export const databaseBootstrapPlan = (
   state: PersistedStackState,
+  instance: PersistedServiceInstance,
 ): Effect.Effect<DatabaseBootstrapOptions, StackPreparationError> =>
   Effect.gen(function* () {
-    if (state.definition === undefined)
-      return yield* missingMaterial(
-        "A materialized stack definition is required for database bootstrap",
-      );
-
-    const databasePassword = secretValue(state, DATABASE_INTERNAL_PASSWORD_SLOT);
+    if (instance.service !== "database")
+      return yield* missingMaterial("Database bootstrap requires a database instance");
+    const databasePasswordSlot = instance.config.passwordSecretRef;
+    if (databasePasswordSlot === undefined)
+      return yield* missingMaterial("Database instance password secret is unavailable");
+    const databasePassword = secretValue(state, databasePasswordSlot);
     if (databasePassword === undefined)
       return yield* missingMaterial("Managed database password is unavailable for bootstrap");
 
-    const jwtSecret = secretValue(state, AUTH_JWT_SECRET_SLOT);
+    const signing = state.security.jwt?.signing;
+    const jwtSecretSlot =
+      signing?.kind === "symmetric" ? signing.secret.slot : AUTH_JWT_SECRET_SLOT;
+    const jwtSecret = secretValue(state, jwtSecretSlot);
     if (jwtSecret === undefined)
       return yield* missingMaterial("Managed JWT secret is unavailable for database bootstrap");
 
-    const jwtExpiry = state.definition.capabilities.auth.settings.jwt_expiry;
+    const jwtExpiryValue = String(state.security.jwt?.expirySeconds ?? "");
+    const jwtExpiry = Number(jwtExpiryValue);
     if (
       typeof jwtExpiry !== "number" ||
       !Number.isFinite(jwtExpiry) ||

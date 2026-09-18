@@ -636,6 +636,9 @@ importers:
       jose:
         specifier: ^6.2.10
         version: 6.2.10
+      tar-stream:
+        specifier: 3.2.0
+        version: 3.2.0
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'
@@ -646,6 +649,9 @@ importers:
       '@types/bun':
         specifier: 'catalog:'
         version: 1.4.0
+      '@types/tar-stream':
+        specifier: 3.1.4
+        version: 3.1.4
       '@types/ws':
         specifier: 'catalog:'
         version: 8.18.1
@@ -3046,6 +3052,9 @@ packages:
 
   '@types/react@19.2.18':
     resolution: {integrity: sha512-AnzbBERsrLKtk2XSfTbYRLjQPdy116Sty4q+T+Bp3IC4l6jNBvreVPAHmpq9qhXQM7CXZPjLVmGMw9sy+hxQ3w==}
+
+  '@types/tar-stream@3.1.4':
+    resolution: {integrity: sha512-921gW0+g29mCJX0fRvqeHzBlE/XclDaAG0Ousy1LCghsOhvaKacDeRGEVzQP9IPfKn8Vysy7FEXAIxycpc/CMg==}
 
   '@types/unist@2.0.11':
     resolution: {integrity: sha512-CmBKiL6NNo/OqgmMn95Fk9Whlp2mtvIv+KNpQKN2F4SjvrEesubTRWGYSg+BnWZOnlCaSTU1sMpsBOzgbYhnsA==}
@@ -8812,6 +8821,10 @@ snapshots:
   '@types/react@19.2.18':
     dependencies:
       csstype: 3.2.3
+
+  '@types/tar-stream@3.1.4':
+    dependencies:
+      '@types/node': 26.4.1
 
   '@types/unist@2.0.11': {}
 

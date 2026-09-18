@@ -1,132 +1,65 @@
 # `@supabase/stack`
 
-The local Supabase stack runtime. Its public API is a greenfield,
-Effect-native managed runtime; implementation modules are private to the
-package.
+The managed local Supabase runtime, with native and container backends. The package
+accepts typed `StackConfig` inputs independently of the CLI. The CLI owns loading
+`config.toml`, translating flags, and presenting results.
 
-The package runs independently of the CLI and accepts normalized `StackConfig` values;
-it does not load `config.toml`. CLI command wiring, configuration translation, and
-presentation belong to the M5 integration work in separate PRs.
+Supported entrypoints:
 
-The supported entrypoints are:
+- `@supabase/stack`: Promise API.
+- `@supabase/stack/effect`: Effect API with redacted secret inputs and outputs.
+- `@supabase/stack/testing`: isolated test-stack helpers.
 
-- `@supabase/stack` — Promise facade
-- `@supabase/stack/effect` — Effect-native API
-- `@supabase/stack/testing` — test helpers
+The package and its managed state are unreleased. Previous APIs and state formats
+have no compatibility contract.
 
-Stacks are managed identities: closing a handle does not stop a running stack. Creating or opening a
-handle starts nothing, and a stopped stack retains no Supervisor, workload, container, network, or
-listener. Status and retained logs remain available directly from durable state while stopped; a
-later start on the same handle launches a fresh Supervisor.
-With no configuration override, all capabilities and their companion workloads (including
-imgproxy and Vector) are enabled, PostgreSQL is the only eager capability, and every other
-capability is lazy. Starting the stack therefore launches only
-PostgreSQL by default; capabilities configured as eager join its startup dependency closure.
-The remaining lazy capabilities activate through the stack's listeners on demand for the current
-running session.
+## Identities and instances
 
-Lazy REST, Auth, Realtime, Studio, and pooler capabilities stop after 60 seconds without traffic
-by default. Traffic means an active request or stream; idle HTTP keep-alive sockets do not keep a
-service running, while open WebSocket or TCP connections do. Configure a different positive
-timeout, or disable traffic stopping for a capability, with `idleTimeoutSeconds`:
+A stack identity contains a service registry, shared security material, endpoint
+plans, and retained data. Its identity derives from the canonical project root,
+Git branch context, and stack name. Separate worktrees and named stacks are
+independent. Moving a project resolves a new identity.
+
+`createStack` registers default instances from `initialConfig` without starting
+workloads. Opening an existing stack preserves its registry and configuration.
+Defaults are seeded once; destroying a default does not cause it to reappear.
 
 ```ts
-await stack.start({
-  config: {
-    capabilities: {
-      rest: { idleTimeoutSeconds: 120 },
-      realtime: { idleTimeoutSeconds: false },
-    },
-  },
+import { createStack } from "@supabase/stack";
+
+const stack = await createStack({
+  projectRoot: process.cwd(),
+  initialConfig: { preparation: "on-demand" },
 });
-```
 
-To change `idleTimeoutSeconds` on a running stack, call `stop()` and then `start()` with the updated
-configuration.
-
-Stacks saved before idle stopping retain their previous policy: missing timeout values are read as
-`false`. Restarting with the saved definition preserves that policy. To adopt the current defaults,
-stop the stack and start it with the project configuration. Status can report changed effective
-defaults even when the project file is unchanged; a stack still marked running must be stopped
-before those defaults can be applied.
-
-Eager capabilities never auto-stop; an explicit timeout on an eager capability is ignored and its
-effective timeout is `false`. PostgreSQL, Storage, Functions, Mail, and Analytics do not accept
-idle timeout configuration. Studio and its `pg-meta` companion are stopped and started together.
-Dependency protection keeps required dependencies available while a capability is running.
-Stopping preserves listeners and data, and the next request wakes the lazy capability and restarts
-its workloads.
-Retirement cleanup is fail closed: if removal is unproven, the stack remains stopping and new
-activation is rejected. An unproven cleanup marks participating capabilities as failed and fences
-new activation across the stack. This is an operation-level result; the workload ledger tracks
-resources still requiring removal. Unrelated healthy capabilities retain their observations. An
-explicit stop retries the retained ledger. A failed committed destroy remains destroying and
-accepts only a destroy retry; successful cleanup is required before the managed state is removed.
-Status exposes the required recovery operation (`stop` or `destroy`) and its reason in `recovery`.
-Participating capability failure states describe incomplete cleanup, including shared listener
-cleanup; they do not imply that each workload process failed.
-
-The Effect API's `excludeStackCapabilities` helper disables requested optional capabilities and
-their dependents in an in-memory config. Excluding `rest` also disables `studio`; excluding
-`analytics` does not. The database remains required. The project config is unchanged, and runtime listeners are
-created only for enabled capability routes.
-
-Native workloads have a two-minute readiness budget to allow cold starts to load shared libraries;
-container workloads retain a 30-second budget, and PostgreSQL uses its configured `health_timeout`.
-Each readiness probe returns immediately when its endpoint becomes healthy.
-
-Artifact preparation is controlled independently from capability activation through the optional
-top-level `preparation` setting:
-
-```ts
-await stack.start({ config: { preparation: "on-demand" } });
-```
-
-The default `"background"` mode prepares all enabled lazy artifacts after PostgreSQL has started,
-without launching those services. A single Supervisor-owned background operation prepares the
-finite selected workload set concurrently, streams downloads through hashing and decompression,
-is canceled and awaited by `stop()` or `destroy()`, and keeps completed cache entries.
-`"on-demand"` skips that background work for callers that want full lazy preparation. In either
-mode, activating a lazy service prepares its requested dependency closure concurrently, while
-explicit `stack.prepare(...)` remains available as a cache-only warmup. Eager capabilities remain
-independent of this preparation policy. The setting is persisted with the stack definition and
-survives `openStack()` and restart. Changing it for a running stack follows the existing
-stop-before-change configuration rule.
-
-Running status includes an artifacts array for the current session. Each entry identifies a
-workload and capability and reports `queued`, `preparing`, `downloading`, `ready`, or
-`failed`; `failed` includes an error message and can be retried by activating the capability again.
-`preparing` covers validation, verification, and extraction around the transfer. During stopping
-or destroying, status may retain active preparation until teardown clears it. Once stopped, status
-reports an empty array even when completed artifacts remain in the cache.
-
-The Functions inspector can be exposed through its own loopback listener. Set the Edge Runtime
-mode and enable that listener together; the resulting `functionsInspector` endpoint forwards the
-runtime's `/json/list` and WebSocket inspector paths.
-
-```ts
-await stack.start({
+const database = await stack.services.create({
+  service: "database",
+  name: "schema-comparison",
   config: {
-    capabilities: { functions: { settings: { inspector: { mode: "run", main: true } } } },
-    listeners: { functionsInspector: { enabled: true, address: "127.0.0.1", port: 9223 } },
+    version: "17",
+    activation: "eager",
+    endpoints: { sql: { port: "auto" } },
   },
+  initialization: { catalog: { auth: {}, storage: {}, realtime: {} } },
 });
-const inspector = (await stack.status()).endpoints.functionsInspector;
+
+await database.start();
+const credentials = await database.credentials();
+if (credentials === undefined) throw new Error("SQL endpoint is disabled");
+// Use credentials.url for SQL, then explicitly release the owned instance.
+await database.destroy();
 ```
 
-Native runtimes bind a private inspector port on loopback. Container runtimes bind port `9229`
-inside the service and publish that private port to the configured loopback listener. Connect your
-debugger through `inspector.url`; the workload's private inspector port stays local to the stack.
+`stack.services` provides `create`, `get`, and `list`. `get({ id })` and
+`get({ name })` only resolve an existing registration. Names are unique lookup
+metadata; immutable IDs identify resources and dependency targets. Recreating a
+name never revives its old handles or retargets dependents.
 
-Explicit `stack.prepare(...)` accepts a synchronous `onProgress` callback for
-caller-owned preparation. It receives the same phase values, including `ready` when an artifact is
-available while its capability remains dormant. This transfer-local callback is not reconstructed by
-a separate status request.
+Dependent services bind typed dependency slots to existing instance IDs at
+creation. Functions, PostgreSQL, and Mail have no service dependencies. Functions
+can start while PostgreSQL and Auth are absent or stopped.
 
-The package's end-to-end contract is exercised through the same public Stack API in native and
-Docker modes. It begins from the PostgreSQL-only default, progressively activates every service with
-realistic traffic, and verifies stop/start cycles, stable ports, and persistent data. The
-CLI is not involved in these runtime tests.
+## Lifecycle
 
 When `runtime` is omitted for a new stack, the package selects Docker when the Docker client is
 installed and its daemon is reachable, and native otherwise. An installed client with an
@@ -136,11 +69,17 @@ new stack name. The Promise facade does not expose the notice.
 Native is refused when the process runs as uid 0. Existing stacks reuse their persisted runtime
 without probing; native, Docker, and Podman preferences remain explicit when supplied, and an
 explicit Docker runtime does not fall back. Podman is supported only on local Linux hosts.
+Every instance exposes `describe`, `status`, `credentials`, `prepare`, `start`,
+`sleep`, `stop`, `restart`, `destroy`, `logs`, `followLogs`, `followStatus`,
+`exportSnapshot`, and `restoreSnapshot`.
 
-Stack identity is the length-delimited SHA-256 tuple of the canonical project root, Git branch
-context (or `ordinary-workspace` outside Git), and stack name. Separate worktree roots, branches,
-projects in a monorepo, and named stacks therefore receive separate managed state. Identity
-resolution is read-only; moving a project creates a new identity.
+| Operation             | Result                                                                     |
+| --------------------- | -------------------------------------------------------------------------- |
+| `start()`             | Make this instance and its prerequisite closure ready.                     |
+| `sleep()`             | Retain started intent and wake routes while stopping workloads.            |
+| `stop()`              | Fence demand activation and stop workloads; retain configuration and data. |
+| `restart({ config })` | Apply optional replacement runtime settings and make the instance ready.   |
+| `destroy()`           | Remove exact owned runtime resources and data, then remove registration.   |
 
 `createTestStack` gives each test stack a unique temporary project root and identity while sharing
 the managed state root used by ordinary package callers. It uses the same runtime selection as
@@ -151,28 +90,168 @@ coordinate across all default callers. Helper project roots and identities remai
 temporary test stack is excluded from listings scoped to another project root but appears in an
 unfiltered package `listStacks()` result. A failed destroy retains the affected project root and
 managed state for recovery.
+An explicit dependent start authorizes its prerequisite closure. Traffic-driven
+activation cannot reverse a dependency's explicit stopped intent. Stop and restart
+reject running or starting dependents outside the selection. Destroy also rejects
+registered stopped dependents outside its selection.
 
-Callers can warm selected native artifacts or container images with `stack.prepare(...)` while a
-stack is stopped or running; explicit preparation is cache-only and cancellation does not affect
-completed entries.
-Each capability may opt into eager activation in `StackConfig`; omitted settings keep every
-non-PostgreSQL capability lazy. Prepared artifacts are not automatically pruned. `followLogs(...)`
-provides filterable live entries through a stateless client-polled cursor.
+Restart replaces supplied runtime settings rather than merging nested settings.
+Omitted passwords and endpoint bindings retain their saved values. Initialization
+requirements and dependency IDs are creation-time inputs and cannot be replaced
+by restart.
 
-`resetDatabase()` wipes Postgres data only: identity, ports, secrets, logs, and storage volumes
-stay. The database is started and bootstrapped before return. Applying migrations, declarative
-schemas, and seeds remains the caller's responsibility. The runtime bootstrap only reconciles the
-`_realtime` schema owner, closed database role passwords, and JWT settings in one transaction; the
-slim database artifact owns its initialization and migrations.
-
-`createEphemeralPostgres` is a scoped, Supervisor-free Postgres cluster for schema tooling. It uses
-the same catalog artifact and bootstrap as a stack database, is not registered in `listStacks` /
-`discoverStacks`, and destroys its data directory or volume when the Effect scope closes. The
-Promise facade returns a handle with explicit `destroy()`. Callers own migrations and PGDATA
-cache keys. `exportPgData` is valid only while the cluster is stopped; native and container snapshots
-are not interchangeable.
+Stack lifecycle methods accept an optional `{ services: [instanceId, ...] }`.
+An explicit empty selection is a no-op. Selected start and restart make their
+instances ready immediately; omitted selection applies whole-stack eager/lazy
+policy. Whole start includes registered enabled dynamic instances as well as
+defaults, while preserving unrelated already-ready services. Selected destroy
+retains the stack identity; whole destroy removes it after proven cleanup.
 
 `runPostgresClient` prepares that same catalog pin and runs caller argv (`bash -c` dump scripts,
 `pg_prove`, …) without starting Postgres. Native prepends `artifact/bin` to `PATH`; container is a
 one-shot `docker|podman run --rm`. It is not an `EffectStack` method, so linked dump can prepare
 tools without a running stack.
+PostgreSQL defaults to eager activation. Other services default to lazy
+activation. Supported lazy services can retire after idle time; Functions and
+PostgreSQL have no automatic idle timer. Manual sleep still requires a supported
+wake route and rejects active traffic or protected dependency work.
+
+## Ownership and observation
+
+Handles are clients. Closing one, cancelling a request, or exiting the CLI does
+not stop the shared runtime. A supervisor owns admitted lifecycle and snapshot
+operations through settlement. Independent instances execute concurrently;
+shared state transactions do not hold a lock across process startup or archive
+I/O.
+
+`followStatus` observes instance transitions, including pending operations and
+recovery. `followLogs` follows the selected instance across workload replacements.
+The Promise API returns async iterables; the Effect API returns streams. Stop
+preserves retained logs and planned endpoints.
+
+An owner that is retiring may reject a request before admission; the client waits
+for its lease release and resolves a fresh owner once. An uncertain admitted
+mutation is reported without replay. Callers creating resources should retain a
+unique chosen name so they can reconcile an uncertain response through `get`.
+
+Cleanup must be proven before an instance is removed. Failures retain attributable
+recovery evidence. Client crashes may leave discoverable instances that require
+explicit cleanup; there is no implicit age-based collection.
+
+## Endpoints and security
+
+Public HTTP, WebSocket, and SQL traffic uses the managed gateway. Container
+Functions code also receives a tracked SQL route rather than a raw database
+alias. Private endpoints are reserved for runtime-managed dependencies, health
+checks, and setup work.
+
+Creation plans stable client ports. A plan is not a bound socket or a readiness
+promise. Binding an occupied saved port fails with a conflict instead of silently
+changing the endpoint. Status distinguishes planned, listening, and unavailable
+bindings. Individual lifecycle operations preserve unrelated listeners.
+
+Set `endpoints.sql.enabled` to `false` to disable a database's public SQL binding.
+Its `credentials()` then returns `undefined`; managed private consumers can still
+use the database. Root database credentials project only the designated default
+database and are absent when that instance or its enabled SQL binding is absent.
+
+JWT signing material and expiry belong to stack security independently of Auth.
+Each PostgreSQL instance owns its password. Descriptions redact secret settings;
+credential methods are the explicit secret-bearing surface.
+
+Functions inspector settings select `run`, `wait`, or `brk`, with optional `main`.
+The instance's `endpoints.inspector` controls the managed inspector listener.
+Startup-control HTTP and WebSocket endpoints may become available before
+application health so a debugger can release a waiting runtime. Ordinary
+Functions routes remain gated until ready.
+
+`functions_root` is relative to the project root. Per-function entrypoints,
+import maps, and static-file patterns are relative to that function's directory;
+the shared import-map default is relative to `functions_root`. Explicitly
+configured files may live outside the functions tree. Autodiscovery remains
+contained within it. Container startup mounts source files read-only while
+preserving their path relationships, including sibling imports. Restart resolves
+the files again, so CLI watch restarts pick up source and configuration changes.
+
+## Initialization and snapshots
+
+PostgreSQL reconciles managed credentials and settings on every start, including
+wake and restored data. Creation-time catalog requirements run before readiness,
+independently of whether their corresponding live services are enabled. Durable
+completion records are tied to the resolved initialization profile. Data existing
+on disk alone is not evidence that catalog setup completed.
+
+`StackConfig.initialization.database` supplies the designated primary's initial
+requirements. Dynamic databases use `services.create({ initialization })`.
+Use `initialization: { from: database.id }` to copy another database's resolved
+catalog requirements within the same stack. The copy retains its requirements
+after the source is destroyed and does not copy its data or completion receipts.
+Project migrations, roles, seeds, and CLI overlays are outside the runtime
+lifecycle.
+
+Snapshot methods share the instance interface; PostgreSQL is the initial supported
+service. Export requires stopped owned data and an absent destination. Restore
+requires a stopped instance with empty storage and compatible runtime, PostgreSQL
+format, and initialization profile.
+
+Database data has four durable states: `absent` means no owned data is present, `fresh` carries
+the lineage of a successful new initialization, `restored` carries the validated snapshot
+descriptor, and `incomplete` carries the operation ID when storage completeness is unknown.
+Starting absent or incomplete data records incomplete before mutation and promotes it to fresh on
+success. A successful restore records restored; once marked incomplete, a failed restore retains
+that state unless the runtime proves the target empty, in which case it records absent. Existing fresh or restored
+provenance is preserved across ordinary restarts.
+
+```ts
+await database.stop();
+const snapshot = await database.exportSnapshot({ destination: "/tmp/baseline.tar" });
+
+// clone is a separately registered stopped database with matching requirements.
+await clone.restoreSnapshot({ source: "/tmp/baseline.tar" });
+await clone.start();
+```
+
+The snapshot descriptor records actual artifact/runtime identity, format,
+initialization profile, provenance, and lineage. Clones have separate writable
+data and instance IDs while preserving the baseline's lineage. Starting a clone
+reconciles its own configured credentials. Native and container snapshots are
+not interchangeable.
+
+The target remains fenced during storage operations and recovery. Conflicting
+commands fail instead of racing the archive. Publication never exposes a partial
+snapshot. A caller finalizing a shadow waits for pending snapshot settlement
+before destroying it, and reports unproven cleanup rather than hiding it.
+
+## Preparation and testing
+
+`prepare({ services?, config? })` prepares artifacts without changing saved
+configuration, intent, listeners, or workloads. Candidate configuration previews
+default instances; dynamic registrations retain their saved inputs. Startup
+automatically prepares the artifacts it needs. Completed cache entries survive
+operation cancellation.
+
+The Effect API uses reusable Effect values for no-argument operations, including
+`stack.services.list`, and functions for operations with options. Stack lifecycle
+methods are functions because they accept selections. `followStatus` is a Stream
+value; `followLogs(query?)` returns a Stream. The Promise facade uses functions
+throughout.
+
+Internal orchestration and CLI consumers use Effect directly. The package root
+is the Promise facade for non-Effect consumers; internal code never calls it and
+wraps its results back into Effects. Foreign Promise APIs are adapted at their
+leaf boundaries.
+
+`createTestStack` from `@supabase/stack/testing` returns an Effect and owns a unique
+project root while sharing normal managed port coordination. Its
+`setupProject(projectRoot)` callback also returns an Effect. Supply an explicit
+native or container runtime for reproducible tests, and use
+`Effect.acquireUseRelease` with `stack.destroy()` for cleanup. Non-Effect tests
+can import `createTestStack` from the package root and use `await using`; that
+adapter belongs to the same Promise facade as the ordinary stack API.
+Whole-stack destruction removes the test root after successful managed cleanup;
+selected service destruction retains it. A failed destroy retains its root and
+state for recovery. Real runtime tests exercise public handles, managed gateways,
+snapshots, and inspector startup in native and Docker modes.
+
+See [the service-instance decision](../../docs/adr/0025-ephemeral-postgres-for-schema-tooling.md)
+for the CLI shadow ownership and cache boundary.

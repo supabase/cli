@@ -267,7 +267,7 @@ describe("acquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
-  it.live("a warm hit also sweeps abandoned partials left by a killed concurrent writer", () => {
+  it.live("a warm hit retains partials left by concurrent writers", () => {
     const docker = mockDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
@@ -278,18 +278,25 @@ describe("acquireShadowDatabase", () => {
         const path = yield* Path.Path;
         const input = shadowInput(fs, path);
         yield* coldRun(docker, input);
-        // A concurrent writer SIGKILLed mid-export: its partial is older than 5 minutes.
-        const abandoned = path.join(
+        // A stale foreign partial and a fresh in-flight partial are both retained: their mtime
+        // cannot prove that the writer has stopped.
+        const stale = path.join(
           shadowCacheDir(path),
-          "shadow-baseline-0011223344556677.tar.4242.partial",
+          "shadow-baseline-0011223344556677.tar.01234567-89ab-cdef-0123-456789abcdef.partial",
         );
-        yield* fs.writeFileString(abandoned, "stale");
+        const fresh = path.join(
+          shadowCacheDir(path),
+          "shadow-baseline-fedcba9876543210.tar.fedcba98-7654-3210-fedc-ba9876543210.partial",
+        );
+        yield* fs.writeFileString(stale, "stale");
+        yield* fs.writeFileString(fresh, "in-flight");
         const sixMinutesAgo = new Date(Date.now() - 6 * 60 * 1000);
-        yield* fs.utimes(abandoned, sixMinutesAgo, sixMinutesAgo);
+        yield* fs.utimes(stale, sixMinutesAgo, sixMinutesAgo);
 
         const warm = yield* acquireShadowDatabase(docker.spawner, input);
         expect(warm.baselinePresent).toBe(true);
-        expect(yield* fs.exists(abandoned)).toBe(false);
+        expect(yield* fs.exists(stale)).toBe(true);
+        expect(yield* fs.exists(fresh)).toBe(true);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
@@ -578,7 +585,7 @@ describe("acquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
-  it.live("a cold export sweeps abandoned partial temp files but never fresh ones", () => {
+  it.live("a cold export retains foreign partial temp files", () => {
     const docker = mockDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
@@ -589,18 +596,25 @@ describe("acquireShadowDatabase", () => {
         const path = yield* Path.Path;
         const tempDir = shadowCacheDir(path);
         yield* fs.makeDirectory(tempDir, { recursive: true });
-        // A SIGKILLed export leftover (older than 5 minutes) and a live writer's fresh temp file.
-        const abandoned = path.join(tempDir, "shadow-baseline-0123456789abcdef.tar.99999.partial");
-        const live = path.join(tempDir, "shadow-baseline-fedcba9876543210.tar.88888.partial");
-        yield* fs.writeFileString(abandoned, "stale");
-        yield* fs.writeFileString(live, "in-flight");
+        // A stale foreign partial and a fresh in-flight partial are both retained: their mtime
+        // cannot prove that the writer has stopped.
+        const stale = path.join(
+          tempDir,
+          "shadow-baseline-0123456789abcdef.tar.01234567-89ab-cdef-0123-456789abcdef.partial",
+        );
+        const fresh = path.join(
+          tempDir,
+          "shadow-baseline-fedcba9876543210.tar.fedcba98-7654-3210-fedc-ba9876543210.partial",
+        );
+        yield* fs.writeFileString(stale, "stale");
+        yield* fs.writeFileString(fresh, "in-flight");
         const sixMinutesAgo = new Date(Date.now() - 6 * 60 * 1000);
-        yield* fs.utimes(abandoned, sixMinutesAgo, sixMinutesAgo);
+        yield* fs.utimes(stale, sixMinutesAgo, sixMinutesAgo);
 
         yield* coldRun(docker, shadowInput(fs, path));
 
-        expect(yield* fs.exists(abandoned)).toBe(false);
-        expect(yield* fs.exists(live)).toBe(true);
+        expect(yield* fs.exists(stale)).toBe(true);
+        expect(yield* fs.exists(fresh)).toBe(true);
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));

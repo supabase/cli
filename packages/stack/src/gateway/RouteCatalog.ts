@@ -187,7 +187,7 @@ const realtimeWebsocketRoute = (material?: GatewayApiMaterial): GatewayProxyRout
 const apiRoutes = (
   capability: CapabilityName,
   material?: GatewayApiMaterial,
-): ReadonlyArray<GatewayRoute> => {
+): ReadonlyArray<GatewayProxyRoute> => {
   switch (capability) {
     case "rest":
       return [
@@ -247,13 +247,16 @@ const apiRoutes = (
       ];
     case "functions":
       return [
-        prefixRoute(
-          capability,
-          "/functions/v1",
-          stripPrefix("/functions/v1"),
-          undefined,
-          material === undefined ? undefined : authorizationTransform(material, "sb-api-key"),
-        ),
+        {
+          ...prefixRoute(
+            capability,
+            "/functions/v1",
+            stripPrefix("/functions/v1"),
+            undefined,
+            material === undefined ? undefined : authorizationTransform(material, "sb-api-key"),
+          ),
+          binding: "primary",
+        },
       ];
     case "analytics":
       return [
@@ -290,20 +293,24 @@ export const routeCatalogFor = (
     target.set(field, current);
   };
   for (const route of plan.routes) {
+    const withInstance = (candidate: GatewayProxyRoute): GatewayProxyRoute => ({
+      ...candidate,
+      instanceId: route.instanceId,
+    });
     if (route.listener === "api" && route.protocol === "http")
-      append(http, route.listener, apiRoutes(route.capability, material));
+      append(http, route.listener, apiRoutes(route.capability, material).map(withInstance));
     else if (route.listener === "studio" && route.protocol === "http")
-      append(http, route.listener, [directRoute(route.capability)]);
+      append(http, route.listener, [withInstance(directRoute(route.capability))]);
     else if (route.listener === "mailUi" && route.protocol === "http")
-      append(http, route.listener, [directRoute(route.capability, "ui")]);
+      append(http, route.listener, [withInstance(directRoute(route.capability, "ui"))]);
     else if (route.listener === "functionsInspector" && route.protocol === "http")
-      append(http, route.listener, [directRoute(route.capability, "inspector")]);
+      append(http, route.listener, [withInstance(directRoute(route.capability, "inspector"))]);
     else if (route.listener === "database" && route.protocol === "tcp")
-      append(tcp, route.listener, [directRoute(route.capability, "primary")]);
+      append(tcp, route.listener, [withInstance(directRoute(route.capability, "primary"))]);
     else if (route.listener === "pooler" && route.protocol === "tcp")
-      append(tcp, route.listener, [directRoute(route.capability, "primary")]);
+      append(tcp, route.listener, [withInstance(directRoute(route.capability, "primary"))]);
     else if (route.listener === "smtp" && route.protocol === "tcp")
-      append(tcp, route.listener, [directRoute(route.capability, "smtp")]);
+      append(tcp, route.listener, [withInstance(directRoute(route.capability, "smtp"))]);
     else if (route.listener === "pop3" && route.protocol === "tcp")
       append(tcp, route.listener, [directRoute(route.capability, "pop3")]);
   }

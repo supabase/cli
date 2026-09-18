@@ -1,4 +1,4 @@
-import { Cause, Deferred, Effect, Exit, Fiber, Ref, Scope, Semaphore, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Scope, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ExitCode } from "effect/unstable/process/ChildProcessSpawner";
 import type * as ChildProcessSpawnerService from "effect/unstable/process/ChildProcessSpawner";
@@ -11,8 +11,10 @@ import {
   type RuntimeCleanupRequest,
   type ObservedWorkload,
   type RuntimeDriver,
+  type RuntimeStartOptions,
   type RuntimeWorkloadKey,
 } from "./RuntimeDriver.ts";
+import { makeRuntimeCoordination } from "./RuntimeCoordination.ts";
 import {
   NativeProcessError,
   spawnNativeProcess,
@@ -58,7 +60,7 @@ export interface NativeRuntimeOptions {
   ) => Effect.Effect<void, RuntimeDriverError>;
   readonly logStore?: LogStore;
   /** Wipes native PGDATA after the database workload has been stopped and removed. */
-  readonly wipeDatabaseData?: Effect.Effect<void, RuntimeDriverError>;
+  readonly wipeDatabaseData?: (key: RuntimeWorkloadKey) => Effect.Effect<void, RuntimeDriverError>;
   readonly knownSecrets?: Effect.Effect<ReadonlyArray<string>>;
 }
 
@@ -82,25 +84,29 @@ interface Resource {
   readonly tail: ProcessOutputTail;
   readonly result: Deferred.Deferred<ObservedWorkload, RuntimeDriverError>;
   readonly failure: Deferred.Deferred<never, RuntimeDriverError>;
+  readonly startOptions: RuntimeStartOptions;
   stopRequested: boolean;
   process?: NativeProcess;
   startFiber?: Fiber.Fiber<unknown, unknown>;
 }
 
 const resourceKey = (key: RuntimeWorkloadKey): string =>
-  JSON.stringify([key.stackId, key.workloadId]);
+  JSON.stringify([key.stackId, key.instanceId, key.workloadId]);
 
 const sameKey = (left: RuntimeWorkloadKey, right: RuntimeWorkloadKey): boolean =>
-  left.stackId === right.stackId && left.workloadId === right.workloadId;
+  left.stackId === right.stackId &&
+  left.instanceId === right.instanceId &&
+  left.workloadId === right.workloadId;
 
 const driverError = (
-  key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
+  key: Pick<RuntimeWorkloadKey, "stackId" | "instanceId" | "workloadId">,
   message: string,
   cause?: unknown,
 ): RuntimeDriverError =>
   new RuntimeDriverError({
     message: withLeftoverPersistentDataGuidance(message),
     stackId: key.stackId,
+    instanceId: key.instanceId,
     workloadId: key.workloadId,
     ...(cause === undefined ? {} : { cause }),
   });
@@ -163,7 +169,7 @@ export const makeNativeRuntime = (
     const childSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const parentScope = yield* Scope.Scope;
     const runtimeScope = yield* Scope.fork(parentScope, "parallel");
-    const registration = yield* Semaphore.make(1);
+    const coordination = yield* makeRuntimeCoordination;
     const resources = new Map<string, Resource>();
 
     const knownSecrets = options.knownSecrets ?? Effect.succeed<ReadonlyArray<string>>([]);
@@ -410,6 +416,7 @@ export const makeNativeRuntime = (
           const exitCode = Fiber.join(exitFiber);
           yield* Effect.forkIn(watchProcess(resource, process, exitCode), resource.scope);
           const outputFiber = yield* attachLogs(resource, process);
+          if (resource.startOptions.onStarted !== undefined) yield* resource.startOptions.onStarted;
           const readiness = options.waitForReadiness;
           const mainExit = exitCode.pipe(
             Effect.flatMap((code) =>
@@ -478,6 +485,7 @@ export const makeNativeRuntime = (
     const start = (
       key: RuntimeWorkloadKey,
       workload: PlannedWorkload,
+      startOptions: RuntimeStartOptions = {},
     ): Effect.Effect<ObservedWorkload, RuntimeDriverError> => {
       if (nativeRuntimeBlockedForUid())
         return Effect.fail(driverError(key, NATIVE_ROOT_UNSUPPORTED_MESSAGE));
@@ -486,13 +494,13 @@ export const makeNativeRuntime = (
           new RuntimeDriverError({
             message: "Native runtime cannot start a container artifact",
             stackId: key.stackId,
+            instanceId: key.instanceId,
             workloadId: key.workloadId,
           }),
         );
       return Effect.flatMap(
-        // The permit serializes registration only; process readiness and log following continue
-        // after it is released, while stop/remove/cleanup hold it for their full operation.
-        registration.withPermit(
+        coordination.withKey(
+          key,
           Effect.gen(function* () {
             const id = resourceKey(key);
             const existing = resources.get(id);
@@ -512,6 +520,7 @@ export const makeNativeRuntime = (
               state,
               result,
               failure,
+              startOptions,
               output: {
                 stdout: { decoder: new TextDecoder(), remainder: "" },
                 stderr: { decoder: new TextDecoder(), remainder: "" },
@@ -519,9 +528,17 @@ export const makeNativeRuntime = (
               tail: makeProcessOutputTail(),
               stopRequested: false,
             };
-            resources.set(id, resource);
-            resource.startFiber = yield* Effect.forkIn(runStart(resource), runtimeScope);
-            return resource;
+            const committed = yield* coordination.withMapCommit(
+              key.stackId,
+              Effect.gen(function* () {
+                resources.set(id, resource);
+                resource.startFiber = yield* Effect.forkIn(runStart(resource), runtimeScope);
+                return resource;
+              }),
+            );
+            if (Option.isNone(committed))
+              return yield* driverError(key, "Native runtime cleanup is in progress");
+            return committed.value;
           }),
         ),
         (resource) => Deferred.await(resource.result),
@@ -584,7 +601,8 @@ export const makeNativeRuntime = (
       });
 
     const stop = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
-      registration.withPermit(
+      coordination.withKey(
+        key,
         Effect.gen(function* () {
           const resource = resources.get(resourceKey(key));
           if (resource === undefined) return;
@@ -595,7 +613,8 @@ export const makeNativeRuntime = (
       );
 
     const remove = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
-      registration.withPermit(
+      coordination.withKey(
+        key,
         Effect.gen(function* () {
           const resource = resources.get(resourceKey(key));
           if (resource === undefined) return;
@@ -608,7 +627,8 @@ export const makeNativeRuntime = (
     const cleanupRuntime = (
       request: RuntimeCleanupRequest,
     ): Effect.Effect<void, RuntimeDriverError> =>
-      registration.withPermit(
+      coordination.withStackCleanup(
+        request.stackId,
         Effect.gen(function* () {
           let cleanupCause: Cause.Cause<RuntimeDriverError> = Cause.empty;
           const attempt = <A>(effect: Effect.Effect<A, RuntimeDriverError>) =>
@@ -620,19 +640,20 @@ export const makeNativeRuntime = (
             (resource) => resource.key.stackId === request.stackId,
           );
           for (const resource of owned) {
-            yield* attempt(stopResource(resource));
-            yield* attempt(removeResource(resource));
+            yield* attempt(coordination.withKey(resource.key, stopResource(resource)));
+            yield* attempt(coordination.withKey(resource.key, removeResource(resource)));
           }
           if (cleanupCause.reasons.length > 0) return yield* Effect.failCause(cleanupCause);
         }),
       );
 
-    const wipePersistentData = (
-      key: RuntimeWorkloadKey,
-    ): Effect.Effect<void, RuntimeDriverError> =>
-      key.workloadId === "database:database" && options.wipeDatabaseData !== undefined
-        ? options.wipeDatabaseData
-        : Effect.void;
+    const wipePersistentData = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
+      coordination.withKey(
+        key,
+        key.workloadId.endsWith(":database") && options.wipeDatabaseData !== undefined
+          ? options.wipeDatabaseData(key)
+          : Effect.void,
+      );
 
     return {
       observe,

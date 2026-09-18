@@ -1,4 +1,4 @@
-import { NodeServices, NodeSocket } from "@effect/platform-node";
+import { NodeServices, NodeSocket, NodeSocketServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -11,16 +11,21 @@ import {
   Option,
   Path,
   PlatformError,
+  Predicate,
   Redacted,
   Ref,
   Scope,
+  Stream,
 } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
+import type { RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import * as Socket from "effect/unstable/socket/Socket";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import { CAPABILITY_NAMES } from "../public/Capability.ts";
-import type { StackStatus } from "../public/Status.ts";
+import type { StackStatus, ServiceStatus } from "../public/Status.ts";
+import type { ServiceDescriptor } from "../public/Service.ts";
+import { ServiceInstanceIdSchema } from "../public/ServiceInstanceId.ts";
 import type { ControlEndpoint } from "../state/Ownership.ts";
 import {
   makeControlClient,
@@ -43,11 +48,13 @@ import {
   MaintenanceProtocolError,
 } from "./MaintenanceProtocol.ts";
 import { STACK_RPC_RELEASE, type StackRpcError, type StackRpcHandlers } from "./StackRpc.ts";
+import { unconfiguredServiceRpcHandlers } from "./test-helpers.ts";
 
 interface ServerOverrides {
   readonly rpcHandlers?: Partial<StackRpcHandlers>;
   readonly maintenanceHandlers?: Partial<MaintenanceHandlers>;
   readonly onShutdownReady?: Effect.Effect<void>;
+  readonly onRpcPreface?: NonNullable<ControlServerOptions["onRpcPreface"]>;
 }
 
 interface ServerSetup {
@@ -124,14 +131,18 @@ const withServer = <A, E, R>(
         endpoints: {},
         versions: {},
         capabilities: CAPABILITY_NAMES.map((name) => ({
+          id: ServiceInstanceIdSchema.make(`${name}-instance`),
           name,
           activation: "eager",
           state: "stopped",
         })),
         artifacts: [],
+        instances: [],
       };
       const defaultRpcHandlers: StackRpcHandlers = {
+        ...unconfiguredServiceRpcHandlers,
         status: () => Effect.succeed(status),
+        followStatus: () => Stream.never,
         credentials: () =>
           Effect.succeed({
             database: {
@@ -146,8 +157,10 @@ const withServer = <A, E, R>(
             },
           }),
         start: () => Effect.succeed(status),
+        sleep: () => Effect.succeed(status),
+        stop: () => Effect.succeed(status),
+        restart: () => Effect.succeed(status),
         destroy: () => Effect.void,
-        resetDatabase: () => Effect.succeed(status),
         logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
       };
       const defaultMaintenanceHandlers: MaintenanceHandlers = {
@@ -180,6 +193,7 @@ const withServer = <A, E, R>(
         maintenanceHandlers: { ...defaultMaintenanceHandlers, ...custom.maintenanceHandlers },
         rpcHandlers: { ...defaultRpcHandlers, ...custom.rpcHandlers },
         onShutdownReady: custom.onShutdownReady,
+        ...(custom.onRpcPreface === undefined ? {} : { onRpcPreface: custom.onRpcPreface }),
       };
       yield* startControlServer(options);
       const rebind = Effect.scoped(startControlServer(options)).pipe(
@@ -225,6 +239,7 @@ const sendRawAndReadFrame = (
 const sendRawSequenceAndReadFrame = (
   endpoint: ControlEndpoint,
   chunks: ReadonlyArray<Uint8Array>,
+  skipRpcAdmissionAck = false,
 ): Effect.Effect<JsonValue, MaintenanceProtocolError, Scope.Scope> =>
   Effect.gen(function* () {
     const socket = yield* NodeSocket.makeNet({
@@ -233,12 +248,17 @@ const sendRawSequenceAndReadFrame = (
     const write = yield* socket.writer;
     const decoder = new FrameDecoder();
     const response = yield* Deferred.make<Uint8Array>();
+    let awaitingRpcAdmissionAck = skipRpcAdmissionAck;
     const read = socket
       .runRaw((chunk) =>
         decoder.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk).pipe(
           Effect.flatMap((frames) =>
             Effect.forEach(frames, (frame) =>
-              Deferred.succeed(response, frame).pipe(Effect.asVoid),
+              awaitingRpcAdmissionAck
+                ? Effect.sync(() => {
+                    awaitingRpcAdmissionAck = false;
+                  })
+                : Deferred.succeed(response, frame).pipe(Effect.asVoid),
             ),
           ),
           Effect.asVoid,
@@ -279,6 +299,74 @@ const makeDestroyRequestFrame = (): Effect.Effect<Uint8Array, MaintenanceProtoco
   });
 
 describe("control transport", () => {
+  it.live("waits for the admission acknowledgement after the preface write", () =>
+    withServer(
+      ({
+        endpoint,
+        stackId,
+        ownerSessionId,
+        completionStarted,
+        completionRelease,
+      }): Effect.Effect<void, RpcClientError, Scope.Scope> =>
+        Effect.gen(function* () {
+          const client = makeControlClient(endpoint, { stackId, ownerSessionId });
+          const rpcFiber = yield* Effect.forkChild(client.rpc);
+          const resolved = yield* Deferred.make<void>();
+          yield* Effect.forkChild(
+            Fiber.join(rpcFiber).pipe(Effect.andThen(Deferred.succeed(resolved, undefined))),
+          );
+          yield* Deferred.await(completionStarted);
+          expect(Option.isNone(yield* Deferred.poll(resolved))).toBe(true);
+          yield* Deferred.succeed(completionRelease, undefined);
+          yield* Deferred.await(resolved);
+        }),
+      ({ completionStarted, completionRelease }) => ({
+        onRpcPreface: () =>
+          Deferred.succeed(completionStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(completionRelease)),
+            Effect.map(() => ({ release: Effect.void })),
+          ),
+      }),
+    ),
+  );
+
+  it.live("fails RPC acquisition when the owner closes gracefully before admission", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-control-" });
+        const endpoint: ControlEndpoint = { kind: "unix", path: path.join(root, "control.sock") };
+        const server = yield* NodeSocketServer.make({ path: endpoint.path });
+        yield* Effect.forkScoped(
+          server.run((socket) =>
+            socket
+              .runRaw(() =>
+                Effect.gen(function* () {
+                  const write = yield* socket.writer;
+                  yield* write(new Socket.CloseEvent(1000));
+                }),
+              )
+              .pipe(Effect.ignore),
+          ),
+        );
+        const result = yield* Effect.exit(
+          makeControlClient(endpoint, {
+            stackId: deriveStackId(testIdentity).toString(),
+            ownerSessionId: "00000000-0000-4000-8000-000000000000",
+          }).rpc.pipe(Effect.timeout("1 second")),
+        );
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const failure = Cause.findErrorOption(result.cause);
+          expect(
+            Option.isSome(failure) && Predicate.isTagged(failure.value, "RpcClientError"),
+          ).toBe(true);
+        }
+      }),
+    ),
+  );
+
   it.live("rejects a symlinked control directory", () =>
     Effect.gen(function* () {
       const result = yield* withServer(() => Effect.void, undefined, {
@@ -417,6 +505,7 @@ describe("control transport", () => {
         }),
       ({ completion }) => ({
         rpcHandlers: {
+          ...unconfiguredServiceRpcHandlers,
           start: () =>
             Effect.fail({
               tag: "StackPreparationError",
@@ -434,7 +523,7 @@ describe("control transport", () => {
         Effect.gen(function* () {
           const client = makeControlClient(endpoint, { stackId, ownerSessionId });
           const rpc = yield* client.rpc;
-          yield* rpc.destroy(undefined);
+          yield* rpc.destroy({});
           yield* Deferred.await(completion).pipe(
             Effect.timeoutOrElse({
               duration: 5_500,
@@ -462,9 +551,11 @@ describe("control transport", () => {
             ownerSessionId,
           });
           const frame = yield* makeDestroyRequestFrame();
-          const response = yield* sendRawSequenceAndReadFrame(endpoint, [
-            concatBytes(preface, frame),
-          ]);
+          const response = yield* sendRawSequenceAndReadFrame(
+            endpoint,
+            [concatBytes(preface, frame)],
+            true,
+          );
           expect(response).toMatchObject({ _tag: "Exit", requestId: "1" });
           yield* Deferred.await(completionStarted).pipe(
             Effect.timeoutOrElse({
@@ -509,9 +600,11 @@ describe("control transport", () => {
             ownerSessionId,
           });
           const frame = yield* makeDestroyRequestFrame();
-          const response = yield* sendRawSequenceAndReadFrame(endpoint, [
-            concatBytes(preface, frame),
-          ]);
+          const response = yield* sendRawSequenceAndReadFrame(
+            endpoint,
+            [concatBytes(preface, frame)],
+            true,
+          );
           expect(response).toMatchObject({
             _tag: "Exit",
             requestId: "1",
@@ -526,6 +619,7 @@ describe("control transport", () => {
         }),
       ({ completion }) => ({
         rpcHandlers: {
+          ...unconfiguredServiceRpcHandlers,
           destroy: () => Effect.die(new Error("injected destroy defect")),
         },
         onShutdownReady: Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
@@ -547,6 +641,93 @@ describe("control transport", () => {
     ),
   );
 
+  it.live("round-trips a status observation stream", () =>
+    withServer(
+      ({ endpoint, stackId, ownerSessionId }) =>
+        Effect.gen(function* () {
+          const client = makeControlClient(endpoint, { stackId, ownerSessionId });
+          const rpc = yield* client.rpc;
+          const observed = yield* Stream.runCollect(rpc.followStatus(undefined));
+          expect(observed.map(({ lifecycle }) => lifecycle)).toEqual(["stopped", "running"]);
+        }),
+      ({ status }) => ({
+        rpcHandlers: {
+          ...unconfiguredServiceRpcHandlers,
+          followStatus: () =>
+            Stream.fromIterable([
+              status,
+              { ...status, lifecycle: "running", desiredLifecycle: "running" },
+            ]),
+        },
+      }),
+    ),
+  );
+
+  it.live("round-trips registered service lifecycle operations", () =>
+    withServer(
+      ({ endpoint, stackId, ownerSessionId }) =>
+        Effect.gen(function* () {
+          const client = makeControlClient(endpoint, { stackId, ownerSessionId });
+          const rpc = yield* client.rpc;
+          const created = yield* rpc.servicesCreate({
+            service: "database",
+            name: "shadow",
+            config: { enabled: true },
+          });
+          expect(created).toMatchObject({ service: "database", name: "shadow" });
+          const started = yield* rpc.serviceStart({ id: "database-shadow" as never });
+          expect(started).toMatchObject({ phase: "ready", intent: "started" });
+          const stopped = yield* rpc.serviceStop({ id: "database-shadow" as never });
+          expect(stopped).toMatchObject({ phase: "stopped", intent: "stopped" });
+          yield* rpc.serviceDestroy({ id: "database-shadow" as never });
+        }),
+      () => {
+        const shadowId = ServiceInstanceIdSchema.make("database-shadow");
+        const descriptor = {
+          id: shadowId,
+          service: "database",
+          name: "shadow",
+          enabled: true,
+          config: {
+            enabled: true,
+            activation: "eager",
+            idleTimeoutSeconds: false,
+            version: "test",
+            settings: {},
+          },
+          dependencies: {},
+          snapshotSupport: "supported",
+          endpoints: {},
+          data: { origin: "absent" },
+        } satisfies ServiceDescriptor<"database">;
+        const status = (intent: "started" | "stopped", phase: "ready" | "stopped") =>
+          ({
+            id: shadowId,
+            service: "database",
+            name: "shadow",
+            enabled: true,
+            intent,
+            phase,
+            activation: "eager",
+            endpoints: [],
+          }) satisfies ServiceStatus;
+        return {
+          rpcHandlers: {
+            servicesCreate: () => Effect.succeed(descriptor),
+            servicesGet: () => Effect.succeed(descriptor),
+            servicesList: () => Effect.succeed([descriptor]),
+            serviceStatus: () => Effect.succeed(status("stopped", "stopped")),
+            serviceFollowStatus: () => Stream.fromIterable([status("stopped", "stopped")]),
+            serviceStart: () => Effect.succeed(status("started", "ready")),
+            serviceSleep: () => Effect.succeed(status("started", "stopped")),
+            serviceStop: () => Effect.succeed(status("stopped", "stopped")),
+            serviceDestroy: () => Effect.void,
+          },
+        };
+      },
+    ),
+  );
+
   it.live("round-trips artifact preparation state alongside dormant capabilities", () =>
     withServer(
       ({ endpoint, stackId, ownerSessionId }) =>
@@ -556,7 +737,12 @@ describe("control transport", () => {
           const observed = yield* rpc.status(undefined);
           expect(observed.capabilities.find(({ name }) => name === "rest")?.state).toBe("dormant");
           expect(observed.artifacts).toEqual([
-            { workloadId: "rest:rest", capability: "rest", state: "downloading" },
+            {
+              workloadId: "rest:rest",
+              instanceId: "rest-instance",
+              capability: "rest",
+              state: "downloading",
+            },
           ]);
           expect(observed.recovery).toEqual({
             operation: "stop",
@@ -565,6 +751,7 @@ describe("control transport", () => {
         }),
       ({ status }) => ({
         rpcHandlers: {
+          ...unconfiguredServiceRpcHandlers,
           status: () =>
             Effect.succeed({
               ...status,
@@ -573,7 +760,14 @@ describe("control transport", () => {
               capabilities: status.capabilities.map((capability) =>
                 capability.name === "rest" ? { ...capability, state: "dormant" } : capability,
               ),
-              artifacts: [{ workloadId: "rest:rest", capability: "rest", state: "downloading" }],
+              artifacts: [
+                {
+                  workloadId: "rest:rest",
+                  instanceId: ServiceInstanceIdSchema.make("rest-instance"),
+                  capability: "rest",
+                  state: "downloading",
+                },
+              ],
               recovery: { operation: "stop", message: "injected cleanup diagnostic" },
             }),
         },
@@ -593,6 +787,7 @@ describe("control transport", () => {
         }),
       () => ({
         rpcHandlers: {
+          ...unconfiguredServiceRpcHandlers,
           logs: () =>
             Effect.succeed({
               entries: [

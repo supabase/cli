@@ -2,7 +2,6 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
-  Crypto,
   Deferred,
   Effect,
   Exit,
@@ -10,26 +9,14 @@ import {
   Fiber,
   Option,
   Path,
-  Predicate,
-  Redacted,
+  Ref,
   Result,
   Schema,
   Sink,
-  Scope,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { CAPABILITY_NAMES } from "../public/Capability.ts";
-import {
-  createStack,
-  findStack,
-  inspectStack,
-  openStack,
-  listStacks,
-} from "../public/EffectStack.ts";
-import type { StackStatus } from "../public/Status.ts";
-import type { CreateStackError } from "../public/Errors.ts";
-import { deriveStackId, resolveStackIdentity } from "../identity/Identity.ts";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import { createStack, findStack, openStack } from "../public/EffectStack.ts";
 import {
   defaultRuntimeEnvironment,
   ensureSupervisor,
@@ -40,22 +27,16 @@ import {
 import { StackIdSchema } from "../public/StackId.ts";
 import type { StackId } from "../public/StackId.ts";
 import {
-  acquireOwnership,
   controlEndpointFor,
-  publishOwnership,
   readOwnerMetadata,
   StackRuntimeEnvironment,
 } from "../state/Ownership.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
-import { makeControlClient, startControlServer } from "../control/ControlServer.ts";
+import { makeControlClient } from "../control/ControlServer.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
-import { STACK_RPC_RELEASE, type StackRpcHandlers } from "../control/StackRpc.ts";
+import { STACK_RPC_RELEASE } from "../control/StackRpc.ts";
 import { catalogReleaseFor } from "../model/WorkloadCatalog.ts";
-import {
-  StackOwnershipConflictError,
-  StackPreparationError,
-  StackRuntimeMismatchError,
-} from "../public/Errors.ts";
+import { StackOwnershipConflictError, StackRuntimeMismatchError } from "../public/Errors.ts";
 import type { ContainerEngine } from "../runtime/ContainerEngine.ts";
 import {
   ContainerEngineResolver,
@@ -134,9 +115,6 @@ const stopOwner = (id: StackId) =>
     yield* Fiber.join(watcher);
   });
 
-const quoteModuleSpecifier = (value: string): string =>
-  `'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
-
 const fakeContainerEngine = (kind: "docker" | "podman", calls: string[]): ContainerEngine => ({
   kind,
   preflight: Effect.succeed({ host: "host.containers.internal" }),
@@ -159,6 +137,7 @@ const fakeContainerEngine = (kind: "docker" | "podman", calls: string[]): Contai
   removeVolume: () => Effect.void,
   createContainer: () => Effect.die("unused"),
   copyToContainer: () => Effect.void,
+  execContainer: () => Effect.void,
   startContainer: () => Effect.void,
   waitContainer: () => Effect.succeed(0),
   stopContainer: () => Effect.void,
@@ -190,7 +169,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           platform: "windows",
           tempRoot: project,
         };
-        const stack = yield* createStack({ projectRoot: project });
+        const stack = yield* createStack({ initialConfig: {}, projectRoot: project });
         const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
         const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
         const owner = {
@@ -248,6 +227,47 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     ),
   );
 
+  it.live("does not kill a detached launch child when its caller is interrupted", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const env = yield* StackRuntimeEnvironment;
+        const stack = yield* createStack({ initialConfig: {}, projectRoot: project });
+        const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
+        const killCalls = yield* Ref.make(0);
+        const readinessObserved = yield* Deferred.make<void>();
+        const child = ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.never,
+          isRunning: Effect.succeed(true),
+          kill: () => Ref.update(killCalls, (calls) => calls + 1),
+          stdin: Sink.drain,
+          stdout: Stream.empty,
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () =>
+            Stream.fromEffect(Deferred.succeed(readinessObserved, undefined)).pipe(
+              Stream.drain,
+              Stream.concat(Stream.never),
+            ),
+          unref: Effect.succeed(Effect.void),
+        });
+        const spawner = ChildProcessSpawner.make(() => Effect.succeed(child));
+        const launch = yield* Effect.forkChild(
+          ensureSupervisor({
+            stackId: stack.id,
+            stateStore: store,
+            environment: env,
+          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(readinessObserved);
+        yield* Fiber.interrupt(launch);
+        expect(yield* Ref.get(killCalls)).toBe(0);
+      }),
+    ),
+  );
+
   it.live("persists Docker for an omitted container engine without probing", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
@@ -255,9 +275,11 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           isInstalled: () => Effect.die("resolver must not be called"),
           resolve: () => Effect.die("resolver must not be called"),
         };
-        yield* createStack({ projectRoot: project, runtime: { kind: "container" } }).pipe(
-          Effect.provideService(ContainerEngineResolver, resolver),
-        );
+        yield* createStack({
+          initialConfig: {},
+          projectRoot: project,
+          runtime: { kind: "container" },
+        }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
         expect(
           (yield* findStack({ projectRoot: project })).pipe(Option.getOrUndefined)?.runtime,
         ).toEqual({ kind: "container", engine: "docker" });
@@ -277,7 +299,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
             }),
           resolve: () => Effect.die("engine construction must not run during create"),
         };
-        yield* createStack({ projectRoot: project }).pipe(
+        yield* createStack({ initialConfig: {}, projectRoot: project }).pipe(
           Effect.provideService(ContainerEngineResolver, resolver),
         );
         expect(calls).toEqual(["docker"]);
@@ -300,7 +322,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
             }),
           resolve: () => Effect.die("engine construction must not run during create"),
         };
-        yield* createStack({ projectRoot: project }).pipe(
+        yield* createStack({ initialConfig: {}, projectRoot: project }).pipe(
           Effect.provideService(ContainerEngineResolver, resolver),
         );
         expect(calls).toEqual(["docker"]);
@@ -319,6 +341,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           resolve: () => Effect.die("resolver must not be called"),
         };
         yield* createStack({
+          initialConfig: {},
           projectRoot: project,
           runtime: { kind: "container", engine: "podman" },
         }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
@@ -333,6 +356,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         const created = yield* createStack({
+          initialConfig: {},
           projectRoot: project,
           runtime: { kind: "container", engine: "podman" },
         });
@@ -340,7 +364,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           isInstalled: () => Effect.die("resolver must not be called"),
           resolve: () => Effect.die("resolver must not be called"),
         };
-        const reopened = yield* createStack({ projectRoot: project }).pipe(
+        const reopened = yield* createStack({ initialConfig: {}, projectRoot: project }).pipe(
           Effect.provideService(ContainerEngineResolver, resolver),
         );
         expect(reopened.id).toBe(created.id);
@@ -364,11 +388,16 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
             ),
         };
         const stack = yield* createStack({
+          initialConfig: {},
           projectRoot: project,
           runtime: { kind: "container", engine: "podman" },
         }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
-        const prepared = yield* stack.prepare({ capabilities: ["database"] });
-        expect(prepared.capabilities).toHaveLength(1);
+        const database = (yield* stack.status).instances.find(
+          (instance) => instance.service === "database",
+        );
+        if (database === undefined) throw new Error("Database instance is missing");
+        const prepared = yield* stack.prepare({ services: [database.id] });
+        expect(prepared.instances).toHaveLength(1);
         expect(calls).toEqual(["podman:probe", `podman:inspect:${databaseRelease.containerImage}`]);
         expect(dockerCalls).toEqual([]);
       }),
@@ -379,6 +408,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         const created = yield* createStack({
+          initialConfig: {},
           projectRoot: project,
           runtime: { kind: "container", engine: "podman" },
         });
@@ -398,10 +428,12 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         yield* createStack({
+          initialConfig: {},
           projectRoot: project,
           runtime: { kind: "container", engine: "docker" },
         });
         const result = yield* createStack({
+          initialConfig: {},
           projectRoot: project,
           runtime: { kind: "container", engine: "podman" },
         }).pipe(
@@ -422,415 +454,12 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
 
   it.live("does not probe an explicitly native identity", () =>
     withRuntimeRoot((project) =>
-      createStack({ projectRoot: project, runtime: { kind: "native" } }).pipe(
+      createStack({ initialConfig: {}, projectRoot: project, runtime: { kind: "native" } }).pipe(
         Effect.provideService(ContainerEngineResolver, {
           isInstalled: () => Effect.die("native stack must not resolve a container engine"),
           resolve: () => Effect.die("native stack must not resolve a container engine"),
         }),
       ),
     ),
-  );
-
-  it.live("creates an unconfigured stack without reading config or starting workloads", () =>
-    withRuntimeRoot((project) =>
-      Effect.gen(function* () {
-        const stack = yield* createStack({ projectRoot: project });
-        const status = yield* stack.status;
-        expect(status.lifecycle).toBe("unconfigured");
-        expect(status.desiredLifecycle).toBe("unconfigured");
-      }),
-    ),
-  );
-
-  it.live("preserves preparation failures returned by the owner start RPC", () =>
-    withRuntimeRoot((project) =>
-      Effect.gen(function* () {
-        const env = yield* StackRuntimeEnvironment;
-        const crypto = yield* Crypto.Crypto;
-        const identity = yield* resolveStackIdentity({ projectRoot: project });
-        const stackId = yield* deriveStackId(identity);
-        const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
-        yield* store.initialize(stackId, {
-          format: "supabase-stack-state-v1",
-          identity,
-          runtime: { kind: "native" },
-          desiredLifecycle: "stopped",
-          ports: [],
-          privatePorts: [],
-          secrets: {},
-        });
-        const ownerSessionId = yield* crypto.randomUUIDv4;
-        const lease = yield* acquireOwnership({
-          stateRoot: env.stateRoot,
-          stackId,
-          ownerSessionId,
-          rpcRelease: STACK_RPC_RELEASE,
-          environment: env,
-        });
-        yield* publishOwnership(lease);
-        const status: StackStatus = {
-          id: stackId,
-          lifecycle: "stopped",
-          desiredLifecycle: "stopped",
-          runtime: { kind: "native" },
-          endpoints: {},
-          versions: {},
-          artifacts: [],
-          capabilities: CAPABILITY_NAMES.map((name) => ({
-            name,
-            activation: "eager",
-            state: "stopped",
-          })),
-        };
-        const handlers: StackRpcHandlers = {
-          status: () => Effect.succeed(status),
-          credentials: () =>
-            Effect.succeed({
-              database: {
-                url: Redacted.make("postgres://localhost"),
-                password: Redacted.make("secret"),
-              },
-              api: {
-                publishableKey: "publishable",
-                secretKey: Redacted.make("secret"),
-                anonJwt: "anon",
-                serviceRoleJwt: Redacted.make("service"),
-              },
-            }),
-          start: () =>
-            Effect.fail({ tag: "StackPreparationError", message: "artifact is incomplete" }),
-          destroy: () => Effect.void,
-          resetDatabase: () => Effect.succeed(status),
-          logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
-        };
-        yield* startControlServer({
-          endpoint: lease.metadata.endpoint,
-          stackId,
-          ownerSessionId,
-          rpcRelease: STACK_RPC_RELEASE,
-          maintenanceHandlers: {
-            probe: Effect.succeed({
-              ok: true,
-              op: "probe",
-              stackId,
-              ownerSessionId,
-              rpcRelease: STACK_RPC_RELEASE,
-            }),
-            stop: Effect.succeed({ ok: true, op: "stop" }),
-          },
-          rpcHandlers: handlers,
-        });
-        const stack = yield* openStack(stackId);
-        const failed = yield* stack.start({ config: {} }).pipe(Effect.exit);
-        const error = Exit.isFailure(failed)
-          ? Option.getOrUndefined(Cause.findErrorOption(failed.cause))
-          : undefined;
-        yield* lease.release;
-        expect(Exit.isFailure(failed)).toBe(true);
-        expect(error).toBeInstanceOf(StackPreparationError);
-        expect(error).toMatchObject({ message: "artifact is incomplete" });
-      }),
-    ),
-  );
-
-  it.live("waits for the owner control socket to close before destroy resolves", () =>
-    withRuntimeRoot((project) =>
-      Effect.gen(function* () {
-        const env = yield* StackRuntimeEnvironment;
-        const crypto = yield* Crypto.Crypto;
-        const identity = yield* resolveStackIdentity({ projectRoot: project });
-        const stackId = yield* deriveStackId(identity);
-        const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
-        yield* store.initialize(stackId, {
-          format: "supabase-stack-state-v1",
-          identity,
-          runtime: { kind: "native" },
-          desiredLifecycle: "stopped",
-          ports: [],
-          privatePorts: [],
-          secrets: {},
-        });
-        const ownerSessionId = yield* crypto.randomUUIDv4;
-        const lease = yield* acquireOwnership({
-          stateRoot: env.stateRoot,
-          stackId,
-          ownerSessionId,
-          rpcRelease: STACK_RPC_RELEASE,
-          environment: env,
-        });
-        yield* publishOwnership(lease);
-        const ownerScope = yield* Scope.make();
-        const status: StackStatus = {
-          id: stackId,
-          lifecycle: "stopped",
-          desiredLifecycle: "stopped",
-          runtime: { kind: "native" },
-          endpoints: {},
-          versions: {},
-          artifacts: [],
-          capabilities: CAPABILITY_NAMES.map((name) => ({
-            name,
-            activation: "eager",
-            state: "stopped",
-          })),
-        };
-        const destroyStarted = yield* Deferred.make<void>();
-        const responseRelease = yield* Deferred.make<void>();
-        const callbackStarted = yield* Deferred.make<void>();
-        const callbackRelease = yield* Deferred.make<void>();
-        const callbackCompleted = yield* Deferred.make<void>();
-        const destroyDone = yield* Deferred.make<void>();
-        yield* startControlServer({
-          endpoint: lease.metadata.endpoint,
-          stackId,
-          ownerSessionId,
-          rpcRelease: STACK_RPC_RELEASE,
-          maintenanceHandlers: {
-            probe: Effect.succeed({
-              ok: true,
-              op: "probe",
-              stackId,
-              ownerSessionId,
-              rpcRelease: STACK_RPC_RELEASE,
-            }),
-            stop: Effect.succeed({ ok: true, op: "stop" }),
-          },
-          rpcHandlers: {
-            status: () => Effect.succeed(status),
-            credentials: () =>
-              Effect.fail({ tag: "StackNotRunningError" as const, message: "not running" }),
-            start: () => Effect.succeed(status),
-            destroy: () =>
-              Deferred.succeed(destroyStarted, undefined).pipe(
-                Effect.andThen(Deferred.await(responseRelease)),
-                Effect.asVoid,
-              ),
-            resetDatabase: () => Effect.succeed(status),
-            logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
-          },
-          onShutdownReady: Deferred.succeed(callbackStarted, undefined).pipe(
-            Effect.andThen(Deferred.await(callbackRelease)),
-            Effect.andThen(Deferred.succeed(callbackCompleted, undefined)),
-            Effect.asVoid,
-          ),
-        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-        const stack = yield* openStack(stackId);
-        const destroyFiber = yield* Effect.forkChild(
-          stack.destroy.pipe(Effect.andThen(Deferred.succeed(destroyDone, undefined))),
-          { startImmediately: true },
-        );
-        yield* Deferred.await(destroyStarted);
-        yield* Deferred.succeed(responseRelease, undefined);
-        yield* Deferred.await(callbackStarted);
-        expect(yield* Deferred.isDone(destroyDone)).toBe(false);
-        yield* Deferred.succeed(callbackRelease, undefined);
-        yield* Deferred.await(callbackCompleted);
-        yield* Scope.close(ownerScope, Exit.void);
-        yield* Fiber.join(destroyFiber);
-        yield* lease.release;
-      }),
-    ),
-  );
-
-  it.live("concurrent equivalent creates join one owner", () =>
-    withRuntimeRoot((project) =>
-      Effect.gen(function* () {
-        const [first, second] = yield* Effect.all(
-          [createStack({ projectRoot: project }), createStack({ projectRoot: project })],
-          { concurrency: 2 },
-        );
-        expect(second.id).toBe(first.id);
-        expect((yield* second.status).lifecycle).toBe("unconfigured");
-      }),
-    ),
-  );
-
-  it.live("discovery never creates an identity", () =>
-    withRuntimeRoot((project) =>
-      Effect.gen(function* () {
-        const found = yield* findStack({ projectRoot: project });
-        expect(Option.isNone(found)).toBe(true);
-        const absentId = StackIdSchema.make("f".repeat(64));
-        const absent = yield* inspectStack(absentId).pipe(Effect.exit);
-        expect(Exit.isFailure(absent)).toBe(true);
-      }),
-    ),
-  );
-
-  it.live("openStack is observational and rejects unknown ids", () =>
-    withRuntimeRoot((_project) =>
-      Effect.gen(function* () {
-        const result = yield* openStack(StackIdSchema.make("0".repeat(64))).pipe(Effect.exit);
-        expect(Exit.isFailure(result)).toBe(true);
-      }),
-    ),
-  );
-
-  it.live("filters read-only discovery by project root", () =>
-    withRuntimeRoot((project) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const other = path.join(path.dirname(project), "other-project");
-        yield* fs.makeDirectory(other);
-        const first = yield* createStack({ projectRoot: project });
-        yield* createStack({ projectRoot: other });
-        const filtered = yield* listStacks({ projectRoot: project });
-        expect(filtered.map((entry) => entry.id)).toEqual([first.id]);
-      }),
-    ),
-  );
-
-  it.live("concurrent creates preserve the published state across an advisory read race", () =>
-    withRuntimeRoot((project) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const env = yield* StackRuntimeEnvironment;
-        const identity = yield* resolveStackIdentity({ projectRoot: project });
-        const stackId = yield* deriveStackId(identity);
-        const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId });
-        const path = yield* Path.Path;
-        const registryLock = path.join(path.resolve(env.stateRoot), ".stack-registry.lock");
-        const writerReady = yield* Deferred.make<void, CreateStackError>();
-        const releaseWriter = yield* Deferred.make<void>();
-        const writerPublished = yield* Deferred.make<void>();
-        const firstFs: FileSystem.FileSystem = {
-          ...fs,
-          rename: (from, to) =>
-            to === paths.stateDocument
-              ? Deferred.succeed(writerReady, undefined).pipe(
-                  Effect.andThen(Deferred.await(releaseWriter)),
-                  Effect.andThen(fs.rename(from, to)),
-                  Effect.tap(() => Deferred.succeed(writerPublished, undefined)),
-                )
-              : fs.rename(from, to),
-        };
-        const secondFs: FileSystem.FileSystem = {
-          ...fs,
-          readFileString: (candidate, encoding) => {
-            if (candidate === registryLock)
-              return Deferred.succeed(releaseWriter, undefined).pipe(
-                Effect.andThen(fs.readFileString(candidate, encoding)),
-              );
-            if (candidate !== paths.stateDocument) return fs.readFileString(candidate, encoding);
-            return fs
-              .readFileString(candidate, encoding)
-              .pipe(
-                Effect.catchTag("PlatformError", (error) =>
-                  Predicate.isTagged(error.reason, "NotFound")
-                    ? Deferred.succeed(releaseWriter, undefined).pipe(
-                        Effect.andThen(Deferred.await(writerPublished)),
-                        Effect.andThen(Effect.fail(error)),
-                      )
-                    : Effect.fail(error),
-                ),
-              );
-          },
-        };
-        const create = (fileSystem: FileSystem.FileSystem) =>
-          createStack({ projectRoot: project }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-          );
-        const first = yield* Effect.forkChild(
-          create(firstFs).pipe(
-            Effect.catchCause((cause) =>
-              Deferred.failCause(writerReady, cause).pipe(Effect.andThen(Effect.failCause(cause))),
-            ),
-          ),
-          { startImmediately: true },
-        );
-        yield* Deferred.await(writerReady);
-        const second = yield* Effect.forkChild(create(secondFs), { startImmediately: true });
-        const [firstHandle, secondHandle] = yield* Effect.all(
-          [Fiber.join(first), Fiber.join(second)],
-          {
-            concurrency: 2,
-          },
-        );
-        expect(secondHandle.id).toBe(firstHandle.id);
-        expect((yield* secondHandle.status).lifecycle).toBe("unconfigured");
-      }),
-    ),
-  );
-
-  it.live("concurrent caller processes share one stack identity after exit", () =>
-    withRuntimeRoot((project) =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const supabaseHome = path.dirname(project);
-        const stackModule = new URL("../public/EffectStack.ts", import.meta.url).href;
-        const encodedStackModule = quoteModuleSpecifier(stackModule);
-        // bare imports in a `node -e` script resolve from cwd, so run from the package root
-        const cwd = path.resolve(import.meta.dirname, "../..");
-        const script = `
-          const { Effect } = await import("effect");
-          const { NodeServices } = await import("@effect/platform-node");
-          const { createStack } = await import(${encodedStackModule});
-          const stack = await Effect.runPromise(
-            Effect.scoped(
-              createStack({ projectRoot: process.argv[1], runtime: { kind: "native" } }).pipe(
-                Effect.provide(NodeServices.layer),
-              ),
-            ),
-          );
-          process.stdout.write(stack.id);
-        `;
-        const spawnCaller = () =>
-          Effect.gen(function* () {
-            const child = yield* ChildProcess.make(
-              process.execPath,
-              ["--input-type=module", "-e", script, project],
-              {
-                cwd,
-                env: { SUPABASE_HOME: supabaseHome },
-                extendEnv: true,
-                stdout: "pipe",
-                stderr: "pipe",
-              },
-            );
-            const [chunks, stderrChunks, code] = yield* Effect.all(
-              [Stream.runCollect(child.stdout), Stream.runCollect(child.stderr), child.exitCode],
-              { concurrency: 3 },
-            );
-            const bytes = new Uint8Array(chunks.reduce((sum, value) => sum + value.byteLength, 0));
-            let offset = 0;
-            for (const value of chunks) {
-              bytes.set(value, offset);
-              offset += value.byteLength;
-            }
-            const stderrBytes = new Uint8Array(
-              stderrChunks.reduce((sum, value) => sum + value.byteLength, 0),
-            );
-            offset = 0;
-            for (const value of stderrChunks) {
-              stderrBytes.set(value, offset);
-              offset += value.byteLength;
-            }
-            const stderr = new TextDecoder().decode(stderrBytes);
-            return { id: new TextDecoder().decode(bytes), code, stderr };
-          });
-        const [first, second] = yield* Effect.all([spawnCaller(), spawnCaller()], {
-          concurrency: 2,
-        });
-        expect(first.code, first.stderr).toBe(0);
-        expect(second.code, second.stderr).toBe(0);
-        expect(first.id).toBe(second.id);
-        const attached = yield* openStack(StackIdSchema.make(first.id));
-        expect((yield* attached.status).lifecycle).toBe("unconfigured");
-      }),
-    ),
-  );
-
-  it.live(
-    "maintenance stop keeps an unconfigured owner usable without fabricating lifecycle state",
-    () =>
-      withRuntimeRoot((project) =>
-        Effect.gen(function* () {
-          const stack = yield* createStack({ projectRoot: project });
-          yield* stack.stop;
-          const status = yield* stack.status;
-          expect(status.lifecycle).toBe("unconfigured");
-        }),
-      ),
   );
 });

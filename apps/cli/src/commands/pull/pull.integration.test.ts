@@ -57,6 +57,7 @@ import { DbPullMigrationConflictError } from "../../command-internal/db-pull-run
 import { BundledPostgresClient } from "../../command-internal/bundled-postgres-client.ts";
 import { DockerRun } from "../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScript } from "../../command-internal/edge-runtime-script.service.ts";
+import { stackApiLayer } from "../../command-internal/stack-api.ts";
 import { MigrationFetchWriteError } from "../migration/fetch/fetch.errors.ts";
 import { PgDeltaSslProbe } from "../../command-internal/pgdelta-ssl-probe.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -642,6 +643,9 @@ function setup(opts: SetupOpts = {}) {
     opts.dbHistoryUpdateFails ?? false,
   );
   const pgDelta = makePgDeltaEngine(opts.diffOutcome ?? (() => ({ changes: false })));
+  const stackApi = stackApiLayer.pipe(
+    Layer.provide(Layer.mergeAll(BunServices.layer, spawner.layer)),
+  );
 
   const cliSettings = mockCommandSettings({
     workdir: opts.workdir ?? tempRoot.current,
@@ -667,6 +671,7 @@ function setup(opts: SetupOpts = {}) {
     capturingStdio?.layer ?? Stdio.layerTest({ args: Effect.succeed(["pull"]) }),
     dbConfig.layer,
     pgDelta.layer,
+    stackApi,
     Layer.succeed(EdgeRuntimeScript, {
       run: () => Effect.die("migra edge runtime unused — every db step forces pg-delta"),
     }),

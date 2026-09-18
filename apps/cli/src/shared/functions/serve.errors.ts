@@ -105,3 +105,12 @@ export class ServeLocalDbInspectError extends Data.TaggedError("ServeLocalDbInsp
     return this.daemonDown ? SUGGEST_DOCKER_INSTALL : undefined;
   }
 }
+
+export class FunctionsServeError extends Data.TaggedError("FunctionsServeError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.unknown;
+  }
+}

@@ -8,20 +8,23 @@ import {
   FileSystem,
   Option,
   Predicate,
+  Queue,
   Schema,
   Scope,
   Semaphore,
+  Stream,
 } from "effect";
 import { NodeSocket, NodeSocketServer } from "@effect/platform-node";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- Effect FileSystem exposes stat but no no-follow lstat; this security check must reject symlinked control directories.
 import { lstat } from "node:fs/promises";
 import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
+import { RpcClientDefect, RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import * as RpcServer from "effect/unstable/rpc/RpcServer";
 import * as Socket from "effect/unstable/socket/Socket";
 import * as SocketServer from "effect/unstable/socket/SocketServer";
 import type { ControlEndpoint } from "../state/Ownership.ts";
+import { isStackError, type StackError } from "../public/Errors.ts";
 import {
   decodeFrame,
   encodeFrame,
@@ -61,12 +64,19 @@ export interface MaintenanceHandlers {
   readonly stop: Effect.Effect<MaintenanceResponse>;
 }
 
+/** Keeps the owner admitted from a validated RPC preface through its first request. */
+export interface RpcPrefaceLease {
+  readonly release: Effect.Effect<void>;
+}
+
 export interface ControlServerOptions extends ControlIdentity {
   readonly endpoint: ControlEndpoint;
   readonly rpcRelease?: string;
   readonly maintenanceHandlers: MaintenanceHandlers;
   /** Re-evaluates owner shutdown after a lifecycle response or disconnect. */
   readonly onShutdownReady?: Effect.Effect<void>;
+  /** Acquires an owner admission witness before acknowledging an RPC preface. */
+  readonly onRpcPreface?: () => Effect.Effect<RpcPrefaceLease, StackError>;
   readonly rpcHandlers: StackRpcHandlers;
 }
 
@@ -81,6 +91,16 @@ const controlDirectory = (endpoint: ControlEndpoint): string => {
   const path = endpointPath(endpoint);
   const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return separator < 0 ? path : path.slice(0, separator);
+};
+
+const RpcMessageTagSchema = Schema.fromJsonString(Schema.Struct({ _tag: Schema.String }));
+
+const rpcMessageTag = (chunk: Uint8Array | string): Effect.Effect<string | undefined> => {
+  const text = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+  return Schema.decodeEffect(RpcMessageTagSchema)(text).pipe(
+    Effect.map(({ _tag }) => _tag),
+    Effect.orElseSucceed(() => undefined),
+  );
 };
 
 const controlServerError = (cause: unknown): SocketServer.SocketServerError =>
@@ -139,6 +159,25 @@ const isResponseConnectionFailure = (cause: Cause.Cause<Socket.SocketError>): bo
       Predicate.isTagged(error.reason, "SocketCloseError"),
   });
 
+const rpcPrefaceFailure = (error: StackError): JsonValue => ({
+  kind: "rpc-retiring",
+  stackId: "stackId" in error && typeof error.stackId === "string" ? error.stackId : "",
+  ownerSessionId:
+    "ownerSessionId" in error && typeof error.ownerSessionId === "string"
+      ? error.ownerSessionId
+      : "",
+  error: {
+    tag: error._tag,
+    message: error.message,
+    ...(isStackError(error) && "stackId" in error && typeof error.stackId === "string"
+      ? { stackId: error.stackId }
+      : {}),
+    ...(isStackError(error) && "ownerSessionId" in error && typeof error.ownerSessionId === "string"
+      ? { ownerSessionId: error.ownerSessionId }
+      : {}),
+  },
+});
+
 /** Wrap one accepted socket. This is the only reader for the connection. */
 const demuxSocket = (
   socket: Socket.Socket,
@@ -151,6 +190,10 @@ const demuxSocket = (
     chunk: Uint8Array | string | Socket.CloseEvent,
   ) => Effect.Effect<void, Socket.SocketError>;
   let connectionWriter: Writer | undefined;
+  let phase: "preface" | "maintenance" | "rpc" = "preface";
+  let firstRpcRequestSeen = false;
+  let rpcPrefaceLease: RpcPrefaceLease | undefined;
+  let releaseRpcPreface: (notify: boolean) => Effect.Effect<void> = () => Effect.void;
 
   const runRaw = <A, E, R>(
     handler: (_: Uint8Array) => Effect.Effect<A, E, R> | void,
@@ -163,8 +206,20 @@ const demuxSocket = (
         const decoder = new FrameDecoder();
         const prefaceReady = yield* Deferred.make<void>();
         let preface = new Uint8Array(0);
-        let phase: "preface" | "maintenance" | "rpc" = "preface";
         let closed = false;
+        phase = "preface";
+        firstRpcRequestSeen = false;
+        rpcPrefaceLease = undefined;
+
+        releaseRpcPreface = (notify: boolean) =>
+          Effect.suspend(() => {
+            const lease = rpcPrefaceLease;
+            rpcPrefaceLease = undefined;
+            if (lease === undefined) return Effect.void;
+            return lease.release.pipe(
+              Effect.andThen(notify ? (options.onShutdownReady ?? Effect.void) : Effect.void),
+            );
+          });
 
         const markPrefaceReady = Deferred.succeed(prefaceReady, undefined).pipe(Effect.asVoid);
         const close = Effect.suspend(() => {
@@ -176,6 +231,10 @@ const demuxSocket = (
                 Effect.flatMap((write) => write(new Socket.CloseEvent(1000))),
               ),
             ),
+            // A client may disconnect before sending its first RPC frame. Release the
+            // preface witness as soon as the close is flushed so owner retirement does not
+            // wait for socket reader cleanup.
+            Effect.andThen(releaseRpcPreface(true)),
           );
         });
 
@@ -314,6 +373,11 @@ const demuxSocket = (
                   );
                 }
               } else {
+                const tag = yield* rpcMessageTag(frame.slice(4));
+                if (tag === "Request") {
+                  if (!firstRpcRequestSeen) yield* markPrefaceReady;
+                  firstRpcRequestSeen = true;
+                }
                 const returned = handler(frame.slice(4));
                 if (Effect.isEffect(returned)) yield* returned;
               }
@@ -371,7 +435,35 @@ const demuxSocket = (
                 yield* close;
                 return;
               }
-              if (phase === "rpc") yield* markPrefaceReady;
+              if (phase === "rpc") {
+                if (options.onRpcPreface !== undefined) {
+                  const admitted = yield* Effect.exit(options.onRpcPreface());
+                  if (Exit.isFailure(admitted)) {
+                    const error = Cause.squash(admitted.cause);
+                    yield* sendJson(
+                      isStackError(error)
+                        ? rpcPrefaceFailure(error)
+                        : {
+                            kind: "rpc-retiring",
+                            stackId: options.stackId,
+                            ownerSessionId: options.ownerSessionId,
+                            error: {
+                              tag: "StackStateInvalidError",
+                              message: "RPC admission failed",
+                            },
+                          },
+                    );
+                    yield* close;
+                    return;
+                  }
+                  rpcPrefaceLease = admitted.value;
+                }
+                yield* sendJson({
+                  kind: "rpc-ready",
+                  stackId: options.stackId,
+                  ownerSessionId: options.ownerSessionId,
+                });
+              }
               const remainder = combined.slice(decoded.value.consumed);
               if (remainder.byteLength > 0) yield* processFrames(remainder);
               return;
@@ -395,7 +487,9 @@ const demuxSocket = (
             }),
           ),
         );
-        yield* socket.runRaw(processChunk, { onOpen });
+        yield* socket
+          .runRaw(processChunk, { onOpen })
+          .pipe(Effect.ensuring(releaseRpcPreface(true)));
         yield* Fiber.interrupt(prefaceDeadline);
       }),
     ).pipe(
@@ -416,17 +510,24 @@ const demuxSocket = (
           }),
         );
       }
-      return Socket.isCloseEvent(chunk)
-        ? write(chunk)
-        : encodeRawFrame(chunk).pipe(
-            Effect.mapError(
-              (error) =>
-                new Socket.SocketError({
-                  reason: new Socket.SocketWriteError({ cause: new Error(error.message) }),
-                }),
-            ),
-            Effect.flatMap(write),
-          );
+      if (Socket.isCloseEvent(chunk)) return write(chunk);
+      return encodeRawFrame(chunk).pipe(
+        Effect.mapError(
+          (error) =>
+            new Socket.SocketError({
+              reason: new Socket.SocketWriteError({ cause: new Error(error.message) }),
+            }),
+        ),
+        Effect.flatMap(write),
+        Effect.andThen(rpcMessageTag(chunk)),
+        Effect.flatMap((tag) => {
+          const response =
+            phase === "rpc" &&
+            firstRpcRequestSeen &&
+            (tag === "Exit" || tag === "Chunk" || tag === "Defect");
+          return response ? releaseRpcPreface(false) : Effect.void;
+        }),
+      );
     }),
   });
 };
@@ -500,7 +601,6 @@ export const startControlServer = (
       Effect.provideService(SocketServer.SocketServer, server),
       Effect.provideService(RpcSerialization.RpcSerialization, RpcSerialization.json),
     );
-    const isCompletionRequest = (tag: string): boolean => tag === "start" || tag === "destroy";
     const completionRequests = new Set<string>();
     const startShutdown = (completion: Effect.Effect<void>) =>
       Effect.uninterruptible(
@@ -510,9 +610,22 @@ export const startControlServer = (
       ...protocol,
       run: (handler) =>
         protocol.run((clientId, request) => {
-          if (Predicate.isTagged(request, "Request") && isCompletionRequest(request.tag))
-            completionRequests.add(`${clientId}:${String(request.id)}`);
-          return handler(clientId, request);
+          if (!Predicate.isTagged(request, "Request")) return handler(clientId, request);
+          const key = `${clientId}:${String(request.id)}`;
+          completionRequests.add(key);
+          return handler(clientId, request).pipe(
+            Effect.onExit((exit) =>
+              Effect.gen(function* () {
+                const disconnected =
+                  !(yield* protocol.clientIds).has(clientId) ||
+                  (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+                if (!completionRequests.has(key) || !disconnected) return;
+                completionRequests.delete(key);
+                if (options.onShutdownReady !== undefined)
+                  yield* startShutdown(options.onShutdownReady);
+              }),
+            ),
+          );
         }),
       send: (clientId, response, transferables) =>
         Predicate.isTagged(response, "Exit") &&
@@ -544,23 +657,21 @@ export const startControlServer = (
     } satisfies ControlServer;
   });
 
-/** Client-side framed socket; writer emits the RPC preface exactly once. */
+/** Client-side framed socket backed by the already-admitted control connection. */
 const makeControlRpcSocket = (
-  socket: Socket.Socket,
-  options: {
-    readonly rpcRelease?: string;
-    readonly stackId: string;
-    readonly ownerSessionId: string;
-  },
+  incoming: Queue.Dequeue<Uint8Array | string, Socket.SocketError>,
+  write: (
+    chunk: Uint8Array | string | Socket.CloseEvent,
+  ) => Effect.Effect<void, Socket.SocketError>,
 ): Socket.Socket => {
-  let prefaced = false;
   return Socket.make({
     runRaw: (handler, options) =>
       Effect.scoped(
         Effect.gen(function* () {
           const decoder = new FrameDecoder();
-          yield* socket.runRaw(
-            (chunk) =>
+          yield* options?.onOpen ?? Effect.void;
+          yield* Stream.fromQueue(incoming).pipe(
+            Stream.runForEach((chunk) =>
               decoder.push(toBytes(chunk), RPC_MAX_FRAME_BYTES).pipe(
                 Effect.mapError(
                   (error) =>
@@ -577,45 +688,48 @@ const makeControlRpcSocket = (
                   ).pipe(Effect.asVoid),
                 ),
               ),
-            options,
+            ),
           );
         }),
       ),
-    writer: Effect.map(
-      socket.writer,
-      (write) => (chunk: Uint8Array | string | Socket.CloseEvent) =>
-        Effect.gen(function* () {
-          if (Socket.isCloseEvent(chunk)) {
-            yield* write(chunk);
-            return;
-          }
-          const encodedFrame = yield* encodeRawFrame(chunk).pipe(
-            Effect.mapError(
-              (error) =>
-                new Socket.SocketError({
-                  reason: new Socket.SocketWriteError({ cause: new Error(error.message) }),
-                }),
-            ),
-          );
-          if (!prefaced) {
-            prefaced = true;
-            const preface = encodePreface({
-              kind: "rpc",
-              release: options.rpcRelease ?? STACK_RPC_RELEASE,
-              stackId: options.stackId,
-              ownerSessionId: options.ownerSessionId,
-            });
-            const combined = new Uint8Array(preface.byteLength + encodedFrame.byteLength);
-            combined.set(preface);
-            combined.set(encodedFrame, preface.byteLength);
-            yield* write(combined);
-            return;
-          }
-          yield* write(encodedFrame);
-        }),
+    writer: Effect.succeed((chunk: Uint8Array | string | Socket.CloseEvent) =>
+      Effect.gen(function* () {
+        if (Socket.isCloseEvent(chunk)) {
+          yield* write(chunk);
+          return;
+        }
+        const encodedFrame = yield* encodeRawFrame(chunk).pipe(
+          Effect.mapError(
+            (error) =>
+              new Socket.SocketError({
+                reason: new Socket.SocketWriteError({ cause: new Error(error.message) }),
+              }),
+          ),
+        );
+        yield* write(encodedFrame);
+      }),
     ),
   });
 };
+
+const isRpcAdmissionAck = (
+  value: JsonValue,
+  expected: { readonly stackId: string; readonly ownerSessionId: string },
+): value is JsonValue & {
+  readonly kind: "rpc-ready" | "rpc-retiring";
+  readonly stackId: string;
+  readonly ownerSessionId: string;
+} => {
+  if (!isJsonRecord(value)) return false;
+  return (
+    (value.kind === "rpc-ready" || value.kind === "rpc-retiring") &&
+    value.stackId === expected.stackId &&
+    value.ownerSessionId === expected.ownerSessionId
+  );
+};
+
+const isJsonRecord = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 export interface ControlClientOptions extends ControlIdentity {
   readonly rpcRelease?: string;
@@ -624,8 +738,6 @@ export interface ControlClientOptions extends ControlIdentity {
 export interface ControlClient {
   readonly probe: Effect.Effect<MaintenanceResponse, Socket.SocketError | MaintenanceProtocolError>;
   readonly stop: Effect.Effect<MaintenanceResponse, Socket.SocketError | MaintenanceProtocolError>;
-  /** Connects with an RPC preface and completes when the owner closes the socket. */
-  readonly awaitClose: (onOpen?: Effect.Effect<void>) => Effect.Effect<void, Socket.SocketError>;
   readonly rpc: Effect.Effect<StackRpcClient, RpcClientError, Scope.Scope>;
 }
 
@@ -742,48 +854,137 @@ export const makeControlClient = (
   return {
     probe,
     stop,
-    awaitClose: (onOpen = Effect.void) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const socket = yield* NodeSocket.makeNet({
-            path: endpointPath(endpoint),
-            openTimeout: MAINTENANCE_REQUEST_DEADLINE_MS,
-          });
-          const write = yield* socket.writer;
-          const prefaceFailure = yield* Deferred.make<never, Socket.SocketError>();
-          const read = socket.runRaw(() => Effect.void, {
-            onOpen: write(
-              encodePreface({
-                kind: "rpc",
-                release: options.rpcRelease ?? STACK_RPC_RELEASE,
-                stackId: options.stackId,
-                ownerSessionId: options.ownerSessionId,
-              }),
-            ).pipe(
-              Effect.matchEffect({
-                onFailure: (error) => Deferred.fail(prefaceFailure, error).pipe(Effect.asVoid),
-                onSuccess: () => onOpen,
-              }),
-            ),
-          });
-          return yield* Effect.raceFirst(read, Deferred.await(prefaceFailure)).pipe(
-            Effect.catchFilter(
-              Socket.SocketCloseError.filterClean((code) => code === 1000),
-              () => Effect.void,
-            ),
-          );
-        }),
-      ),
     rpc: Effect.gen(function* () {
       const socket = yield* NodeSocket.makeNet({
         path: endpointPath(endpoint),
         openTimeout: MAINTENANCE_REQUEST_DEADLINE_MS,
       });
-      const controlSocket = makeControlRpcSocket(socket, {
-        rpcRelease: options.rpcRelease,
+      const incoming = yield* Queue.unbounded<Uint8Array | string, Socket.SocketError>();
+      const opened = yield* Deferred.make<void, RpcClientError>();
+      const write = yield* socket.writer;
+      const frameDecoder = new FrameDecoder();
+      let awaitingAdmission = true;
+      const enqueue = (chunk: Uint8Array | string): Effect.Effect<void> =>
+        Effect.gen(function* () {
+          const frames = yield* frameDecoder.push(toBytes(chunk), RPC_MAX_FRAME_BYTES).pipe(
+            Effect.matchEffect({
+              onFailure: (error) =>
+                Deferred.fail(
+                  opened,
+                  new RpcClientError({
+                    reason: new RpcClientDefect({
+                      message: `Invalid RPC admission response: ${error.message}`,
+                      cause: error,
+                    }),
+                  }),
+                ).pipe(Effect.as([])),
+              onSuccess: Effect.succeed,
+            }),
+          );
+          for (const frame of frames) {
+            if (awaitingAdmission) {
+              awaitingAdmission = false;
+              const decoded = yield* Effect.exit(decodeFrame(frame));
+              if (Exit.isFailure(decoded)) {
+                yield* Deferred.fail(
+                  opened,
+                  new RpcClientError({
+                    reason: new RpcClientDefect({
+                      message: "RPC admission acknowledgement is invalid",
+                      cause: Cause.squash(decoded.cause),
+                    }),
+                  }),
+                );
+                return;
+              }
+              if (
+                !isRpcAdmissionAck(decoded.value, {
+                  stackId: options.stackId,
+                  ownerSessionId: options.ownerSessionId,
+                })
+              ) {
+                yield* Deferred.fail(
+                  opened,
+                  new RpcClientError({
+                    reason: new RpcClientDefect({
+                      message: "RPC admission acknowledgement is missing",
+                      cause: decoded.value,
+                    }),
+                  }),
+                );
+                return;
+              }
+              if (decoded.value.kind === "rpc-retiring") {
+                yield* Deferred.fail(
+                  opened,
+                  new RpcClientError({
+                    reason: new RpcClientDefect({
+                      message: "Stack owner is retiring before RPC admission",
+                      cause: decoded.value,
+                    }),
+                  }),
+                );
+                return;
+              }
+              yield* Deferred.succeed(opened, undefined);
+              continue;
+            }
+            yield* Queue.offer(incoming, frame).pipe(Effect.asVoid);
+          }
+        });
+      const preface = encodePreface({
+        kind: "rpc",
+        release: options.rpcRelease ?? STACK_RPC_RELEASE,
         stackId: options.stackId,
         ownerSessionId: options.ownerSessionId,
       });
+      const open = write(preface).pipe(
+        Effect.matchCauseEffect({
+          onFailure: (cause) =>
+            Deferred.failCause(
+              opened,
+              Cause.map(cause, (error) => new RpcClientError({ reason: error.reason })),
+            ).pipe(Effect.asVoid),
+          onSuccess: () => Effect.void,
+        }),
+      );
+      const reader: Effect.Effect<void, never, Scope.Scope> = socket
+        .runRaw(enqueue, {
+          onOpen: open,
+        })
+        .pipe(
+          Effect.matchCauseEffect({
+            onFailure: (cause) =>
+              Deferred.failCause(
+                opened,
+                Cause.map(cause, (error) => new RpcClientError({ reason: error.reason })),
+              ).pipe(Effect.andThen(Queue.failCause(incoming, cause)), Effect.asVoid),
+            onSuccess: () =>
+              Deferred.fail(
+                opened,
+                new RpcClientError({
+                  reason: new RpcClientDefect({
+                    message: "Control connection closed before RPC admission",
+                    cause: new Error("Control socket closed before admission"),
+                  }),
+                }),
+              ).pipe(
+                Effect.asVoid,
+                Effect.andThen(
+                  Queue.fail(
+                    incoming,
+                    new Socket.SocketError({
+                      reason: new Socket.SocketCloseError({ code: 1000 }),
+                    }),
+                  ),
+                ),
+                Effect.asVoid,
+              ),
+          }),
+        );
+      yield* Effect.forkScoped(reader);
+      yield* Deferred.await(opened);
+      const controlSocket = makeControlRpcSocket(incoming, write);
       const protocol = yield* RpcClient.makeProtocolSocket().pipe(
         Effect.provideService(Socket.Socket, controlSocket),
         Effect.provideService(RpcSerialization.RpcSerialization, RpcSerialization.json),

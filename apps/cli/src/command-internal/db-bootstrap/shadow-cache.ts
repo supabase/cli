@@ -148,7 +148,7 @@ export interface ShadowCacheKeyInputs {
  * PG<=14 setup SQL is excluded because that major is cache-ineligible.
  */
 let shadowBaselineEmbeddedDigestMemo: string | undefined;
-export const shadowBaselineEmbeddedDigest = (): string =>
+const shadowBaselineEmbeddedDigest = (): string =>
   (shadowBaselineEmbeddedDigestMemo ??= createHash("sha256")
     .update(
       [
@@ -355,7 +355,7 @@ export function shadowBaselineTarFileName(key: string): string {
 
 /**
  * Whether `fileName` is a published baseline snapshot (`shadow-baseline-<key>.tar`). Checks the
- * exact prefix and suffix, so partials (`…tar.<pid>.partial`) are never eviction candidates.
+ * exact prefix and suffix, so partials (`…tar.<uuid>.partial`) are never eviction candidates.
  */
 export function isShadowBaselineTar(fileName: string): boolean {
   return (
@@ -416,42 +416,12 @@ const forgetShadowBaselineTar = (
 
 /**
  * Whether `fileName` is one of {@link exportPgDataTar}'s in-flight temp files
- * (`shadow-baseline-<key>.tar.<pid>.partial`). A name-only check; whether it's abandoned is an
- * mtime question the sweep answers separately, so a live writer's temp file is never a candidate.
+ * (`shadow-baseline-<key>.tar.<uuid>.partial`). A name-only check for diagnostics; active and
+ * abandoned partials are retained because mtime cannot prove that a long export has settled.
  */
 export function isShadowBaselinePartial(fileName: string): boolean {
-  return /^shadow-baseline-[0-9a-f]{16}\.tar\.\d+\.partial$/u.test(fileName);
+  return /^shadow-baseline-[0-9a-f]{16}\.tar\.[0-9a-f-]+\.partial$/u.test(fileName);
 }
-
-/** A partial older than 5 minutes is abandoned; a live export finishes in seconds. */
-const SHADOW_PARTIAL_ABANDON_MS = 5 * 60 * 1000;
-
-/**
- * Removes abandoned `.partial` temp files (see {@link isShadowBaselinePartial}) left behind by a
- * crashed cold export — later runs use their own pid, and the retention sweep ignores `.partial`
- * names, so nothing else ever cleans these up. Best-effort throughout.
- */
-const sweepAbandonedShadowBaselinePartials = <E>(input: ShadowSetupInput<E>): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const cacheDir = shadowBaselineCacheDir(input.path);
-    const entries = yield* input.fs
-      .readDirectory(cacheDir)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-    const now = yield* Clock.currentTimeMillis;
-    yield* Effect.forEach(
-      entries.filter(isShadowBaselinePartial),
-      (entry) =>
-        Effect.gen(function* () {
-          const filePath = input.path.join(cacheDir, entry);
-          const info = yield* input.fs.stat(filePath);
-          const mtime = Option.getOrUndefined(info.mtime);
-          if (mtime !== undefined && now - mtime.getTime() > SHADOW_PARTIAL_ABANDON_MS) {
-            yield* forgetShadowBaselineTar(input.fs, filePath);
-          }
-        }).pipe(Effect.orElseSucceed(() => undefined)),
-      { discard: true },
-    );
-  });
 
 /**
  * Applies the global-cache LRU + TTL retention rule (see {@link shadowBaselineTarsToEvict}).
@@ -540,8 +510,8 @@ const awaitShadowReady = <E>(
 
 /**
  * Serializes same-process cold exports. Two shadows provisioned concurrently in one process with
- * an equal key would race on the same `<tar>.<pid>.partial` temp path, since `exportPgDataTar`
- * scopes that name by pid alone; cross-process writers are unaffected (distinct pids).
+ * an equal key would otherwise race on a shared temp path; `exportPgDataTar` gives every invocation
+ * its own UUID-scoped path while this mutex still serializes publication of equal keys.
  */
 const shadowExportMutex = Semaphore.makeUnsafe(1);
 
@@ -574,7 +544,6 @@ const writeShadowBaselineTar = <E>(
             shadowCacheUnavailable(`failed to create ${cacheDir}: ${cause.message}`),
           ),
         );
-      yield* sweepAbandonedShadowBaselinePartials(input);
       yield* exportPgDataTar(spawner, containerId, input.fs, tarPath).pipe(
         Effect.mapError((cause: PgDataSnapshotUnavailable) => shadowCacheUnavailable(cause.reason)),
       );
@@ -901,9 +870,8 @@ export const acquireShadowDatabase = <E>(
     if (!cached)
       return yield* coldCachedShadow(spawner, input, key, tarPath, keyInputs.value.rolesSql, true);
 
-    // Warm hits refresh mtime and sweep leftovers the cold path would otherwise never see again.
+    // Warm hits refresh mtime before applying published-tar retention.
     yield* touchShadowBaselineTar(input.fs, tarPath);
-    yield* sweepAbandonedShadowBaselinePartials(input);
     yield* sweepShadowBaselineRetention(input, input.path.basename(tarPath));
 
     return yield* warmShadow(spawner, input, key, tarPath).pipe(

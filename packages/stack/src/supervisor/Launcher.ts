@@ -2,6 +2,7 @@ import {
   Cause,
   Config,
   Crypto,
+  Data,
   Effect,
   Exit,
   FileSystem,
@@ -22,7 +23,8 @@ import { resolveStackPaths } from "../state/Paths.ts";
 import { StackIdSchema, type StackId } from "../public/StackId.ts";
 import {
   readOwnerMetadata,
-  StackRuntimeEnvironment,
+  ownerLockExists,
+  waitForOwnerRelease,
   type OwnerMetadata,
   type StackRuntimeEnvironmentValue,
 } from "../state/Ownership.ts";
@@ -81,14 +83,6 @@ export const defaultRuntimeEnvironment: Effect.Effect<StackRuntimeEnvironmentVal
   },
 );
 
-/** Injected `StackRuntimeEnvironment` when present, otherwise the process default. */
-export const resolveRuntimeEnvironment: Effect.Effect<StackRuntimeEnvironmentValue> =
-  Effect.serviceOption(StackRuntimeEnvironment).pipe(
-    Effect.flatMap((configured) =>
-      Option.isSome(configured) ? Effect.succeed(configured.value) : defaultRuntimeEnvironment,
-    ),
-  );
-
 type ReadinessResult =
   | { readonly kind: "ready"; readonly stackId: StackId; readonly ownerSessionId: string }
   | { readonly kind: "ownership-conflict"; readonly message: string }
@@ -106,6 +100,10 @@ export interface EnsureSupervisorResult {
 }
 
 const mapFailure = (message: string) => new StackStateInvalidError({ message });
+class PreAdmissionOwnerLoss extends Data.TaggedError("PreAdmissionOwnerLoss")<{
+  readonly stackId: StackId;
+  readonly ownerSessionId: string;
+}> {}
 const SUPERVISOR_READINESS_TIMEOUT_MS = 30_000;
 const SUPERVISOR_REREAD_INTERVAL_MS = 25;
 const SUPERVISOR_READINESS_REREAD_TIMES = Math.floor(
@@ -161,8 +159,11 @@ const validateCompatibleOwner = (
   metadata: OwnerMetadata,
 ): Effect.Effect<
   void,
-  StackOwnershipConflictError | StackStateInvalidError | StackUpgradeRequiredError,
-  Scope.Scope
+  | StackOwnershipConflictError
+  | StackStateInvalidError
+  | StackUpgradeRequiredError
+  | PreAdmissionOwnerLoss,
+  Scope.Scope | FileSystem.FileSystem | Path.Path
 > =>
   Effect.gen(function* () {
     const probeExit = yield* makeControlClient(metadata.endpoint, {
@@ -171,8 +172,15 @@ const validateCompatibleOwner = (
     }).probe.pipe(Effect.exit);
     if (Exit.isFailure(probeExit)) {
       const failure = Cause.findErrorOption(probeExit.cause);
-      if (Option.isSome(failure) && isMaintenanceTransportFailure(failure.value))
+      if (Option.isSome(failure) && isMaintenanceTransportFailure(failure.value)) {
+        const leaseHeld = yield* ownerLockExists(options.environment.stateRoot, options.stackId);
+        if (leaseHeld)
+          return yield* new PreAdmissionOwnerLoss({
+            stackId: options.stackId,
+            ownerSessionId: metadata.ownerSessionId,
+          });
         return yield* mapFailure("Unable to probe existing Supervisor: transport unavailable");
+      }
       return yield* new StackOwnershipConflictError({
         message: "Existing Supervisor probe failed",
         stackId: options.stackId,
@@ -243,7 +251,10 @@ const launchAndAwait = (
   paths: { readonly stackRoot: string },
 ): Effect.Effect<
   EnsureSupervisorResult,
-  StackOwnershipConflictError | StackStateInvalidError | StackUpgradeRequiredError,
+  | StackOwnershipConflictError
+  | StackStateInvalidError
+  | StackUpgradeRequiredError
+  | PreAdmissionOwnerLoss,
   FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.gen(function* () {
@@ -303,17 +314,18 @@ const launchAndAwait = (
         return yield* mapFailure("Supervisor readiness metadata identity mismatch");
       return { kind: "ready", metadata } satisfies ChildResult;
     }).pipe(Effect.catchTag("PlatformError", (error) => Effect.fail(mapFailure(error.message))));
-    const terminateLaunch: Effect.Effect<void> = Effect.all([
-      Effect.ignore(child.kill()),
-      Fiber.interrupt(ownerFiber),
-    ]).pipe(Effect.asVoid);
+    // The detached child owns its startup resources. Closing this caller's readiness
+    // observation can race ownership publication, so it must never kill the child after
+    // another client could have joined the owner. The child handles readiness-channel
+    // failure at its own ownership boundary.
+    const stopWatchingLaunch = Fiber.interrupt(ownerFiber);
     const childResult = yield* readiness.pipe(
       Effect.timeoutOrElse({
         duration: SUPERVISOR_READINESS_TIMEOUT_MS,
         orElse: () => Effect.fail(mapFailure("Supervisor did not publish readiness in time")),
       }),
-      Effect.tapError(() => terminateLaunch),
-      Effect.onInterrupt(() => terminateLaunch),
+      Effect.tapError(() => stopWatchingLaunch),
+      Effect.onInterrupt(() => stopWatchingLaunch),
     );
     if (childResult.kind === "ownership-conflict") {
       const current = yield* readOwnerMetadata(
@@ -337,7 +349,7 @@ const launchAndAwait = (
           }),
         );
       }
-      return yield* Fiber.join(ownerFiber).pipe(
+      const owner = yield* Fiber.join(ownerFiber).pipe(
         Effect.timeoutOrElse({
           duration: 5_000,
           orElse: () =>
@@ -352,12 +364,12 @@ const launchAndAwait = (
               ),
             ),
         }),
-        Effect.map((owner) => ({ owner, launched: false }) satisfies EnsureSupervisorResult),
       );
+      yield* validateCompatibleOwner(options, owner);
+      return { owner, launched: false } satisfies EnsureSupervisorResult;
     }
     yield* Fiber.interrupt(ownerFiber);
     if (childResult.kind === "failed") {
-      yield* terminateLaunch;
       return yield* mapFailure(childResult.message);
     }
     return {
@@ -407,7 +419,10 @@ export const ensureSupervisor = (
         // A published document with an unavailable control endpoint may be a
         // crashed owner. Let the child arbitrate through the OS-held lease;
         // malformed metadata remains fail-closed in readOwnerMetadata.
-        Effect.catchTag("StackStateInvalidError", () => Effect.succeed(false)),
+        Effect.catchTags({
+          StackStateInvalidError: () => Effect.succeed(false),
+          PreAdmissionOwnerLoss: () => Effect.succeed(false),
+        }),
       );
       if (compatible) return { owner: existing, launched: false } satisfies EnsureSupervisorResult;
     }
@@ -441,7 +456,58 @@ export const ensureSupervisor = (
           mapFailure(`Unable to prepare owner runtime directory: ${error.message}`),
         ),
       );
-    const owner = yield* launchAndAwait(options, payload, { stackRoot: paths.stackRoot });
-    if (!owner.launched) yield* validateCompatibleOwner(options, owner.owner);
-    return owner;
+    const launch = () => launchAndAwait(options, payload, { stackRoot: paths.stackRoot });
+    const launchAfterHandoff = (
+      loss: PreAdmissionOwnerLoss,
+    ): Effect.Effect<
+      EnsureSupervisorResult,
+      StackOwnershipConflictError | StackStateInvalidError | StackUpgradeRequiredError,
+      FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
+    > =>
+      waitForOwnerRelease(
+        options.environment.stateRoot,
+        options.stackId,
+        options.environment,
+        loss.ownerSessionId,
+      ).pipe(
+        Effect.andThen(
+          launch().pipe(
+            Effect.catchTag("PreAdmissionOwnerLoss", () =>
+              Effect.fail(
+                new StackOwnershipConflictError({
+                  message: "Supervisor handoff did not settle before relaunch",
+                  stackId: options.stackId,
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+    const launchWithHandoff: Effect.Effect<
+      EnsureSupervisorResult,
+      StackOwnershipConflictError | StackStateInvalidError | StackUpgradeRequiredError,
+      FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
+    > = launch().pipe(Effect.catchTag("PreAdmissionOwnerLoss", launchAfterHandoff));
+    return yield* launchWithHandoff.pipe(
+      Effect.catchTag("StackOwnershipConflictError", (conflict) =>
+        Effect.gen(function* () {
+          const current = yield* readOwnerMetadata(
+            options.environment.stateRoot,
+            options.stackId,
+            options.environment,
+          );
+          const leaseHeld = yield* ownerLockExists(options.environment.stateRoot, options.stackId);
+          // A missing document with no lease is a completed pre-admission handoff;
+          // the failed child did not issue an RPC and may safely arbitrate again.
+          if (!leaseHeld) return current === undefined ? yield* launchWithHandoff : yield* conflict;
+          yield* waitForOwnerRelease(
+            options.environment.stateRoot,
+            options.stackId,
+            options.environment,
+            current?.ownerSessionId,
+          );
+          return yield* launchWithHandoff;
+        }),
+      ),
+    );
   });

@@ -1,54 +1,58 @@
 import { Schema } from "effect";
-import type * as Redacted from "effect/Redacted";
 
-const EffectDatabaseCredentialsSchema = Schema.Struct({
-  url: Schema.RedactedFromValue(Schema.String),
-  password: Schema.RedactedFromValue(Schema.String),
+export const DatabaseCredentialsSchema = Schema.Struct({
+  url: Schema.String,
+  password: Schema.String,
 });
+export type DatabaseCredentials = Schema.Schema.Type<typeof DatabaseCredentialsSchema>;
 
-const EffectApiCredentialsSchema = Schema.Struct({
+export const ApiCredentialsSchema = Schema.Struct({
   publishableKey: Schema.String,
-  secretKey: Schema.RedactedFromValue(Schema.String),
+  secretKey: Schema.String,
   anonJwt: Schema.String,
-  serviceRoleJwt: Schema.RedactedFromValue(Schema.String),
+  serviceRoleJwt: Schema.String,
 });
+export type ApiCredentials = Schema.Schema.Type<typeof ApiCredentialsSchema>;
 
-const EffectStorageCredentialsSchema = Schema.Struct({
+export const StorageCredentialsSchema = Schema.Struct({
   endpoint: Schema.String,
   region: Schema.String,
   accessKeyId: Schema.String,
-  secretAccessKey: Schema.RedactedFromValue(Schema.String),
+  secretAccessKey: Schema.String,
 });
+export type StorageCredentials = Schema.Schema.Type<typeof StorageCredentialsSchema>;
+
+export const EmptyServiceCredentialsSchema = Schema.Struct({ kind: Schema.Literal("none") });
+export type EmptyServiceCredentials = Schema.Schema.Type<typeof EmptyServiceCredentialsSchema>;
 
 export const EffectStackCredentialsSchema = Schema.Struct({
-  database: EffectDatabaseCredentialsSchema,
-  api: Schema.optionalKey(EffectApiCredentialsSchema),
-  storage: Schema.optionalKey(EffectStorageCredentialsSchema),
+  database: Schema.optionalKey(
+    Schema.Struct({
+      url: Schema.Redacted(Schema.String),
+      password: Schema.Redacted(Schema.String),
+    }),
+  ),
+  api: Schema.optionalKey(
+    Schema.Struct({
+      publishableKey: Schema.String,
+      secretKey: Schema.Redacted(Schema.String),
+      anonJwt: Schema.String,
+      serviceRoleJwt: Schema.Redacted(Schema.String),
+    }),
+  ),
+  storage: Schema.optionalKey(
+    Schema.Struct({
+      endpoint: Schema.String,
+      region: Schema.String,
+      accessKeyId: Schema.String,
+      secretAccessKey: Schema.Redacted(Schema.String),
+    }),
+  ),
 });
-export interface EffectStackCredentials {
-  readonly database: {
-    readonly url: Redacted.Redacted<string>;
-    readonly password: Redacted.Redacted<string>;
-  };
-  readonly api?: {
-    readonly publishableKey: string;
-    readonly secretKey: Redacted.Redacted<string>;
-    readonly anonJwt: string;
-    readonly serviceRoleJwt: Redacted.Redacted<string>;
-  };
-  readonly storage?: {
-    readonly endpoint: string;
-    readonly region: string;
-    readonly accessKeyId: string;
-    readonly secretAccessKey: Redacted.Redacted<string>;
-  };
-}
+export type EffectStackCredentials = Schema.Schema.Type<typeof EffectStackCredentialsSchema>;
 
 export const PromiseStackCredentialsSchema = Schema.Struct({
-  database: Schema.Struct({
-    url: Schema.String,
-    password: Schema.String,
-  }),
+  database: Schema.optionalKey(Schema.Struct({ url: Schema.String, password: Schema.String })),
   api: Schema.optionalKey(
     Schema.Struct({
       publishableKey: Schema.String,

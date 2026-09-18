@@ -10,6 +10,7 @@ import {
   InvalidProjectRootError,
   StackIdSchema,
   StackNotFoundError,
+  ServiceInstanceIdSchema,
   type CapabilityState,
   type EffectStack,
   type StackLifecycle,
@@ -165,12 +166,14 @@ export function buildStorageStackApi(
                   },
             versions: {},
             capabilities: CAPABILITY_NAMES.map((name) => ({
+              id: ServiceInstanceIdSchema.make(`${name}-instance`),
               name,
               activation: name === "database" ? ("eager" as const) : ("lazy" as const),
               state: name === "storage" ? storageState : ("ready" as const),
               error: name === "storage" ? options.storageError : undefined,
             })),
             artifacts: [],
+            instances: [],
           }),
     credentials: Effect.succeed({
       database: {
@@ -189,9 +192,16 @@ export function buildStorageStackApi(
     }),
     prepare: unusedFn,
     start: unusedFn,
-    stop: unused,
-    destroy: unused,
-    resetDatabase: unused,
+    services: {
+      create: () => unused,
+      get: () => unused,
+      list: unused,
+    },
+    followStatus: Stream.empty,
+    sleep: () => unused,
+    restart: () => unused,
+    stop: () => unused,
+    destroy: () => unused,
     logs: unusedFn,
     followLogs: () => Stream.empty,
   };

@@ -20,6 +20,7 @@ import {
   StackNotFoundError,
   StackNotRunningError,
   StackIdSchema,
+  ServiceInstanceIdSchema,
   StackStateFormatUnsupportedError,
   type EffectStack,
   type StackInspection,
@@ -73,11 +74,24 @@ const makeStatus = (
   },
   versions: {},
   capabilities: capabilityNames.map((name) => ({
+    id: ServiceInstanceIdSchema.make(`${name}-instance`),
     name,
     activation: "lazy" as const,
     state: "dormant" as const,
   })),
   artifacts: [],
+  instances: [
+    {
+      id: ServiceInstanceIdSchema.make("9".repeat(64)),
+      service: "database",
+      name: "primary",
+      enabled: true,
+      intent: "started",
+      phase: "dormant",
+      activation: "lazy",
+      endpoints: [],
+    },
+  ],
 });
 
 const runStatus = (options: {
@@ -168,11 +182,18 @@ const runStatus = (options: {
                     : {}),
                 }),
           prepare: () => Effect.die("unused"),
+          services: {
+            create: () => Effect.die("services.create not used"),
+            get: () => Effect.die("services.get not used"),
+            list: Effect.succeed([]),
+          },
           start: () => Effect.die("unused"),
-          stop: Effect.die("unused"),
-          destroy: Effect.die("unused"),
-          resetDatabase: Effect.die("unused"),
+          sleep: () => Effect.die("sleep not used"),
+          stop: () => Effect.die("stop not used"),
+          restart: () => Effect.die("restart not used"),
+          destroy: () => Effect.die("destroy not used"),
           logs: () => Effect.die("unused"),
+          followStatus: Stream.empty,
           followLogs: () => Stream.empty,
         } satisfies EffectStack),
       inspectStack: (_stackId, inspectOptions) => {
@@ -226,6 +247,8 @@ describe("stack status", () => {
                 expect(run.inspectInputs[0]).toEqual({ config: expect.any(Object) });
                 expect(run.out.stdoutText).toContain("Runtime: native");
                 expect(run.out.stdoutText).toContain("Readiness: dormant");
+                expect(run.out.stdoutText).toContain("primary");
+                expect(run.out.stdoutText).toContain("9".repeat(64));
                 expect(run.out.stdoutText).toContain("http://127.0.0.1:54321");
                 expect(run.out.stdoutText).toContain("definition.listeners.api.port");
                 expect(run.out.stdoutText).not.toContain("candidate-secret");
@@ -234,6 +257,27 @@ describe("stack status", () => {
           ),
       );
     },
+  );
+
+  it.effect("includes registered instance identity in the JSON status payload", () =>
+    withRunStatus({ status: makeStatus(id), outputFormat: "json" }, (run) =>
+      run.effect.pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const success = run.out.messages.find((message) => message.type === "success");
+            expect(success?.data).toMatchObject({
+              instances: [
+                expect.objectContaining({
+                  id: "9".repeat(64),
+                  name: "primary",
+                  service: "database",
+                }),
+              ],
+            });
+          }),
+        ),
+      ),
+    ),
   );
 
   it.effect("forwards a named stack target with the settings project root", () => {

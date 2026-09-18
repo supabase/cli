@@ -38,7 +38,6 @@ const passthrough = (slot: string, value: string): SecretCandidate => ({
 const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 const compilerManagedSlots = [
-  "secret:database.internal.password",
   "secret:auth.settings.publishable_key",
   "secret:auth.settings.secret_key",
   "secret:auth.settings.jwt_secret",

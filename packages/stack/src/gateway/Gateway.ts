@@ -2,6 +2,7 @@ import { Data, Effect, Exit } from "effect";
 import { GatewayActivationError } from "../public/Errors.ts";
 import type { CapabilityName } from "../public/Capability.ts";
 import type { PortField } from "../public/Status.ts";
+import type { ServiceInstanceId } from "../public/ServiceInstanceId.ts";
 import { makeHttpGateway, type HttpGateway, type HttpGatewayOptions } from "./HttpGateway.ts";
 import { makeTcpGateway, type TcpGateway, type TcpGatewayOptions } from "./TcpGateway.ts";
 import type { GatewayActivity } from "./ActivityTracker.ts";
@@ -14,6 +15,8 @@ export interface BackendEndpoint {
 
 export interface ActivationResult {
   readonly capability: CapabilityName;
+  /** Concrete instance selected for this activation when a service has multiple registrations. */
+  readonly instanceId?: ServiceInstanceId;
   readonly endpoint: BackendEndpoint;
 }
 
@@ -54,6 +57,8 @@ export type GatewayHeaderTransform = (
 
 export interface GatewayProxyRoute {
   readonly capability: CapabilityName;
+  /** Concrete service instance selected for this route, when applicable. */
+  readonly instanceId?: ServiceInstanceId;
   /** Workload binding selected when a capability exposes multiple endpoints. */
   readonly binding?: string;
   readonly match: (request: GatewayRouteRequest) => boolean;
@@ -87,15 +92,15 @@ export type GatewayRoute = GatewayProxyRoute | GatewayLocalRoute;
 export const isGatewayProxyRoute = (route: GatewayRoute): route is GatewayProxyRoute =>
   route.capability !== undefined;
 
-type GatewayHttpKey = PortField | "api:internal";
+type GatewayHttpKey = string;
 
 export interface StackGateway {
-  readonly http: ReadonlyMap<GatewayHttpKey, HttpGateway>;
-  readonly tcp: ReadonlyMap<PortField, TcpGateway>;
+  readonly http: ReadonlyMap<string, HttpGateway>;
+  readonly tcp: ReadonlyMap<string, TcpGateway>;
   readonly close: Effect.Effect<void>;
 }
 
-export interface HttpGatewayListenerOptions {
+interface HttpGatewayListenerOptions {
   readonly field: PortField;
   /** Optional internal map key when multiple listeners serve one logical field. */
   readonly key?: GatewayHttpKey;
@@ -104,6 +109,7 @@ export interface HttpGatewayListenerOptions {
 
 interface TcpGatewayListenerOptions {
   readonly field: PortField;
+  readonly key?: string;
   readonly options: Omit<TcpGatewayOptions, "activate">;
 }
 
@@ -123,7 +129,7 @@ export const makeGateway = (
 ): Effect.Effect<StackGateway, GatewayActivationError, import("effect/Scope").Scope> =>
   Effect.gen(function* () {
     const http = new Map<GatewayHttpKey, HttpGateway>();
-    const tcp = new Map<PortField, TcpGateway>();
+    const tcp = new Map<string, TcpGateway>();
     const closeValues = (values: Iterable<{ readonly close: Effect.Effect<void> }>) =>
       Effect.forEach(values, (gateway) => gateway.close.pipe(Effect.exit), {
         concurrency: "unbounded",
@@ -151,10 +157,11 @@ export const makeGateway = (
       http.set(key, acquired.value);
     }
     for (const entry of options.tcp ?? []) {
-      if (tcp.has(entry.field) || http.has(entry.field)) {
+      const key = entry.key ?? entry.field;
+      if (tcp.has(key) || http.has(key)) {
         yield* closeValues([...http.values(), ...tcp.values()]);
         return yield* new GatewayActivationError({
-          message: `Duplicate gateway listener ${entry.field}`,
+          message: `Duplicate gateway listener ${key}`,
         });
       }
       const acquired = yield* Effect.exit(
@@ -168,7 +175,7 @@ export const makeGateway = (
         yield* closeValues([...http.values(), ...tcp.values()]);
         return yield* Effect.failCause(acquired.cause);
       }
-      tcp.set(entry.field, acquired.value);
+      tcp.set(key, acquired.value);
     }
     const closeOperation = closeValues([...http.values(), ...tcp.values()]);
     const close = yield* Effect.cached(closeOperation);

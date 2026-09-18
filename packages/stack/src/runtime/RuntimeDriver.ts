@@ -1,11 +1,13 @@
 import { Data, Effect } from "effect";
 import type { StackId } from "../public/StackId.ts";
+import type { ServiceInstanceId } from "../public/ServiceInstanceId.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { ReadinessTarget } from "./ReadinessProbe.ts";
 
 /** The exact identity used when touching a private runtime resource. */
 export interface RuntimeWorkloadKey {
   readonly stackId: StackId;
+  readonly instanceId: ServiceInstanceId;
   readonly workloadId: string;
 }
 
@@ -24,6 +26,11 @@ export interface ObservedWorkload extends RuntimeWorkloadKey {
   readonly error?: string;
 }
 
+/** Work performed once by the winning start operation after live bindings exist. */
+export interface RuntimeStartOptions {
+  readonly onStarted?: Effect.Effect<void, RuntimeDriverError>;
+}
+
 export interface RuntimeDriver {
   /** Enumerates only private resources owned by this exact stack identity. */
   readonly observe: (
@@ -36,6 +43,7 @@ export interface RuntimeDriver {
   readonly start: (
     key: RuntimeWorkloadKey,
     workload: PlannedWorkload,
+    options?: RuntimeStartOptions,
   ) => Effect.Effect<ObservedWorkload, RuntimeDriverError>;
   /** Stops one exact resource; no other stack may be touched. */
   readonly stop: (key: RuntimeWorkloadKey) => Effect.Effect<void, RuntimeDriverError>;
@@ -56,6 +64,7 @@ export interface RuntimeDriver {
 export class RuntimeDriverError extends Data.TaggedError("RuntimeDriverError")<{
   readonly message: string;
   readonly stackId?: StackId;
+  readonly instanceId?: ServiceInstanceId;
   readonly workloadId?: string;
   /** Private endpoint used by readiness failures, when applicable. */
   readonly target?: ReadinessTarget;

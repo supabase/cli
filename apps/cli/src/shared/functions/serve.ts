@@ -13,53 +13,26 @@ import {
   resolveCliConfigSubtree,
   resolveCliConfigValue,
 } from "@supabase/config/internal";
-import {
-  defaultJwtSecret,
-  defaultPublishableKey,
-  defaultSecretKey,
-  edgeRuntimeNofileUlimit,
-} from "../stack-constants.ts";
-import {
-  createHmac,
-  createPrivateKey,
-  sign as signJwtBytes,
-  type JsonWebKeyInput,
-} from "node:crypto";
-import { existsSync, watch } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { edgeRuntimeNofileUlimit } from "../stack-constants.ts";
 import { styleText } from "node:util";
 import {
-  Cause,
+  Config,
   Deferred,
   Duration,
   Effect,
-  Exit,
+  FileSystem,
   Layer,
+  Match,
   Option,
-  Queue,
+  Path,
   Redacted,
-  Result,
+  Ref,
   Schema,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import {
-  describeContainerCliFailure,
-  isContainerNotFoundMessage,
-  spawnContainerCli,
-} from "../../command-internal/container-cli.ts";
-import { inspectContainerState } from "../../command-internal/docker-lifecycle.ts";
-import { isDockerDaemonUnreachable } from "../../command-internal/docker-suggest.ts";
 import { parseDotEnv } from "../../command-internal/dotenv.ts";
-import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
-import {
-  resolveRemoteJwks,
-  resolveThirdPartyIssuerUrl,
-  thirdPartyIssuerUrlUnchecked,
-  toPublicJwk,
-} from "../auth/jwks.ts";
 import { Output } from "../output/output.service.ts";
+import type { EffectServiceConfig, EffectServiceInstance } from "@supabase/stack/effect";
 import {
   FileWatcher,
   FileWatcherError,
@@ -85,42 +58,23 @@ import {
   ensureDockerNetwork,
   localDockerId,
   normalizeProjectId,
-  resolveDockerNetworkMode,
-  resolveEdgeRuntimeVersion,
-  resolveFunctionsDockerImage,
   runChildProcess,
   toDockerPath,
 } from "./functions-docker.ts";
 import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
-import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
-import {
-  DockerLogsStreamError,
-  EdgeRuntimeContainerCrashedError,
-  EdgeRuntimeLogStreamLostError,
-  ServeLocalDbInspectError,
-  ServeLocalDbNotRunningError,
-} from "./serve.errors.ts";
+import { StackApi } from "../../command-internal/stack-api.ts";
+import { loadStackConfig } from "../../command-internal/stack-config.ts";
+import { FunctionsServeError } from "./serve.errors.ts";
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const defaultCliConfig = decodeCliConfig({});
 
 const dockerRuntimeServerPort = 8081;
 const dockerRuntimeInspectorPort = 8083;
 // Unix timestamp (~2032-11-30) used as the `exp` claim of the local-dev
 // default JWTs (anon/service_role tokens).
-const defaultJwtExpiry = 1983812996;
-const defaultSigningKey = {
-  kty: "EC",
-  kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
-  use: "sig",
-  key_ops: ["verify"],
-  alg: "ES256",
-  ext: true,
-  crv: "P-256",
-  x: "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
-  y: "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
-} as const;
-const functionsDirName = join("supabase", "functions");
-const fallbackEnvFilePath = join("supabase", "functions", ".env");
+const functionsDirName = "supabase/functions";
+const fallbackEnvFilePath = "supabase/functions/.env";
 const ignoredDirNames = new Set([
   ".git",
   "node_modules",
@@ -129,26 +83,20 @@ const ignoredDirNames = new Set([
   ".DS_Store",
   "vendor",
 ]);
-const dockerLogRetryDelay = Duration.millis(400);
-const dockerLogDiagnosticTailLength = 4_096;
 // On Windows, `CTRL_C_EVENT` reaches every console-attached process, so the CLI's own shutdown
 // signal and a child spawn/stream failure can land microseconds apart — this is their tie-break.
-const shutdownSignalGracePeriod = Duration.millis(50);
 // Exit codes a supervisor uses to tear a container down (`supabase stop`, CI cancellation),
 // not a self-raised crash signal; 137 is excluded because it gets its own OOM-kill retry.
-const externalTerminationExitCodes = new Set([
-  129, // SIGHUP
-  130, // SIGINT
-  131, // SIGQUIT
-  143, // SIGTERM
-]);
 // Consecutive re-attaches to `docker logs -f` without forwarding a new line before giving up on
 // the stream and failing loudly instead of flooding replayed history forever.
-const containerLogReattachCap = 5;
 const defaultSupabaseEnv = "development";
 const serveMainDir = "/root";
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 let cachedFunctionsServeMainTemplate: string | undefined;
+
+const functionsServeError = (message: string, cause?: unknown) =>
+  new FunctionsServeError({ message, cause });
+
 const watchIgnoreGlobs = [
   "**/.git/**",
   "**/node_modules/**",
@@ -198,20 +146,9 @@ export interface FunctionsServeDependencies {
 }
 
 /** @see {@link FunctionsServeDependencies.timers} */
-export interface FunctionsServeTimers {
+interface FunctionsServeTimers {
   readonly shutdownSignalGracePeriod?: Duration.Duration;
   readonly dockerLogRetryDelay?: Duration.Duration;
-}
-
-interface PlainServeAuthConfig {
-  readonly enabled: boolean;
-  readonly signing_keys_path?: string;
-  readonly publishable_key?: string;
-  readonly secret_key?: string;
-  readonly jwt_secret?: string;
-  readonly anon_key?: string;
-  readonly service_role_key?: string;
-  readonly third_party: CliConfig["auth"]["third_party"];
 }
 
 export interface PlainServeEdgeRuntimeConfig {
@@ -224,7 +161,6 @@ export interface PlainServeEdgeRuntimeConfig {
 interface ServeResolvedConfig {
   readonly projectId: string;
   readonly apiPort: number;
-  readonly auth: PlainServeAuthConfig;
   readonly edgeRuntime: PlainServeEdgeRuntimeConfig;
   readonly configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
   readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
@@ -257,9 +193,7 @@ export interface StartedRuntime {
 /**
  * Every already-resolved secret/key {@link startEdgeRuntimeContainer} needs.
  * Exported so a caller outside this module (`start`'s own edge-runtime
- * bring-up) can build this from values it already resolved, instead of
- * {@link resolveLocalAuthArtifacts} re-reading `config.toml`/signing keys
- * independently and risking different secrets than the rest of that stack.
+ * bring-up) can build this from values it already resolved.
  */
 export interface ServeAuthArtifacts {
   readonly publishableKey: string;
@@ -300,10 +234,7 @@ export interface StartEdgeRuntimeContainerInput {
   readonly config: ServeEdgeRuntimeContainerConfig;
   readonly authArtifacts: ServeAuthArtifacts;
   /**
-   * `SUPABASE_DB_URL`. Not hardcoded in the shared core: standalone
-   * `functions serve` always uses the `db` network alias (matching
-   * {@link defaultServeDbUrl} below), while `start`'s direct call uses the
-   * `db` container's own sanitized name and `config.db.password` instead.
+   * `SUPABASE_DB_URL`. The caller supplies the database endpoint.
    * Every caller must supply its own value; this module does not choose one.
    */
   readonly dbUrl: string;
@@ -326,52 +257,40 @@ export interface StartEdgeRuntimeContainerInput {
   readonly projectEnvValues?: Readonly<Record<string, string>>;
 }
 
-type SigningKeyJwk = JsonWebKeyInput["key"] & {
-  readonly kty: "EC" | "RSA";
-  readonly kid?: string;
-  readonly use?: string;
-  readonly ext?: boolean;
-  readonly n?: string;
-  readonly e?: string;
-  readonly crv?: string;
-  readonly x?: string;
-  readonly y?: string;
-  readonly alg?: "ES256" | "RS256";
-  readonly key_ops?: ReadonlyArray<string>;
-};
-
 declare const SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 
-export const serveFileWatcherLayer = Layer.sync(FileWatcher, () =>
-  FileWatcher.of({
-    watch: (root, options) =>
-      Stream.callback<ReadonlyArray<FileWatchEvent>, FileWatcherError>((queue) =>
-        Effect.acquireRelease(
-          Effect.sync(() => {
-            const recursive = options?.recursive ?? true;
-            const watcher = watch(root, { recursive }, (eventType, filename) => {
-              const pathname =
-                filename === null || filename === undefined || filename.length === 0
-                  ? root
-                  : resolve(root, filename.toString());
-              // `fs.watch` only distinguishes "rename" (create/delete/rename)
-              // from "change" (write); an existence check on "rename"
-              // disambiguates create vs delete, "change" always means update.
-              const type: FileWatchEvent["type"] =
-                eventType === "rename" ? (existsSync(pathname) ? "create" : "delete") : "update";
-              Queue.offerUnsafe(queue, [{ path: pathname, type }]);
-            });
-            watcher.on("error", (cause) => {
-              Queue.failCauseUnsafe(queue, Cause.fail(new FileWatcherError({ path: root, cause })));
-            });
-            return watcher;
+export const serveFileWatcherLayer = Layer.effect(
+  FileWatcher,
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return FileWatcher.of({
+      watch: (root, options) =>
+        fs.watch(root, { recursive: options?.recursive ?? true }).pipe(
+          Stream.mapEffect((event) => {
+            const pathname = path.isAbsolute(event.path)
+              ? event.path
+              : path.resolve(root, event.path);
+            return Match.value(event).pipe(
+              Match.tag("Update", () =>
+                Effect.succeed([{ path: pathname, type: "update" } satisfies FileWatchEvent]),
+              ),
+              Match.tag("Create", "Remove", () =>
+                fs.exists(pathname).pipe(
+                  Effect.map((exists) => [
+                    {
+                      path: pathname,
+                      type: exists ? "create" : "delete",
+                    } satisfies FileWatchEvent,
+                  ]),
+                ),
+              ),
+              Match.exhaustive,
+            );
           }),
-          (watcher) =>
-            Effect.sync(() => {
-              watcher.close();
-            }),
+          Stream.mapError((cause) => new FileWatcherError({ path: root, cause })),
         ),
-      ),
+    });
   }),
 );
 
@@ -386,68 +305,32 @@ export const serveFileWatcherLayer = Layer.sync(FileWatcher, () =>
  * so the shipped binary never bundles at runtime. Running from source
  * bundles on demand.
  */
-function getFunctionsServeMainTemplate(): Promise<string> {
-  if (cachedFunctionsServeMainTemplate !== undefined) {
-    return Promise.resolve(cachedFunctionsServeMainTemplate);
-  }
-  if (typeof SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string") {
-    cachedFunctionsServeMainTemplate = SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE;
-    return Promise.resolve(cachedFunctionsServeMainTemplate);
-  }
-  // Bundler (and its esbuild dependency) is imported lazily and only here,
-  // so it's never loaded by shipped binaries, which always take the define
-  // branch above.
-  return import("./serve-main-bundler.ts")
-    .then(({ bundleServeMainTemplate }) => bundleServeMainTemplate())
-    .then((bundled) => {
-      cachedFunctionsServeMainTemplate = bundled;
-      return bundled;
-    });
-}
+const getFunctionsServeMainTemplate = Effect.suspend(() =>
+  Effect.gen(function* () {
+    if (cachedFunctionsServeMainTemplate !== undefined) {
+      return cachedFunctionsServeMainTemplate;
+    }
+    if (typeof SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string") {
+      cachedFunctionsServeMainTemplate = SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE;
+      return cachedFunctionsServeMainTemplate;
+    }
+    // Bundler (and its esbuild dependency) is imported lazily and only here,
+    // so it's never loaded by shipped binaries, which always take the define
+    // branch above.
+    const { bundleServeMainTemplate } = yield* Effect.tryPromise(
+      () => import("./serve-main-bundler.ts"),
+    );
+    const bundled = yield* bundleServeMainTemplate;
+    cachedFunctionsServeMainTemplate = bundled;
+    return bundled;
+  }),
+);
 
-function reveal(value: string | Redacted.Redacted<string> | undefined): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  return Redacted.isRedacted(value) ? Redacted.value(value) : value;
-}
-
-function toPlainAuthConfig(
-  auth: CliConfig["auth"] | ResolvedCliConfigValue<CliConfig["auth"]>,
-): PlainServeAuthConfig {
-  return {
-    enabled: auth.enabled,
-    signing_keys_path: reveal(auth.signing_keys_path),
-    publishable_key: reveal(auth.publishable_key),
-    secret_key: reveal(auth.secret_key),
-    jwt_secret: reveal(auth.jwt_secret),
-    anon_key: reveal(auth.anon_key),
-    service_role_key: reveal(auth.service_role_key),
-    third_party: {
-      firebase: {
-        enabled: auth.third_party.firebase.enabled,
-        project_id: reveal(auth.third_party.firebase.project_id),
-      },
-      auth0: {
-        enabled: auth.third_party.auth0.enabled,
-        tenant: reveal(auth.third_party.auth0.tenant),
-        tenant_region: reveal(auth.third_party.auth0.tenant_region),
-      },
-      aws_cognito: {
-        enabled: auth.third_party.aws_cognito.enabled,
-        user_pool_id: reveal(auth.third_party.aws_cognito.user_pool_id),
-        user_pool_region: reveal(auth.third_party.aws_cognito.user_pool_region),
-      },
-      clerk: {
-        enabled: auth.third_party.clerk.enabled,
-        domain: reveal(auth.third_party.clerk.domain),
-      },
-      workos: {
-        enabled: auth.third_party.workos.enabled,
-        issuer_url: reveal(auth.third_party.workos.issuer_url),
-      },
-    },
-  };
+function reveal(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (!Redacted.isRedacted(value)) return undefined;
+  const revealed = Redacted.value(value);
+  return typeof revealed === "string" ? revealed : undefined;
 }
 
 /**
@@ -498,220 +381,13 @@ export function toPlainFunctionRecord(
   );
 }
 
-function normalizeEnvPath(flagCwd: string, pathname: string) {
-  return isAbsolute(pathname) ? pathname : resolve(flagCwd, pathname);
-}
-
-function encodeBase64Url(input: string) {
-  return Buffer.from(input).toString("base64url");
-}
-
-function toJsonWebKey(signingKey: SigningKeyJwk): JsonWebKeyInput["key"] {
-  return {
-    ...signingKey,
-    ...(signingKey.key_ops === undefined ? {} : { key_ops: [...signingKey.key_ops] }),
-  };
-}
-
-function jwtPayload(role: string, exp: number) {
-  return JSON.stringify({ iss: "supabase-demo", role, exp });
-}
-
-function generateSymmetricJwt(secret: string, role: string) {
-  const header = encodeBase64Url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-  const payload = encodeBase64Url(jwtPayload(role, defaultJwtExpiry));
-  const data = `${header}.${payload}`;
-  const signature = createHmac("sha256", secret).update(data).digest("base64url");
-  return `${data}.${signature}`;
-}
-
-function generateAsymmetricJwt(signingKey: SigningKeyJwk, role: string) {
-  const algorithm = signingKey.alg;
-  if (algorithm !== "ES256" && algorithm !== "RS256") {
-    throw new Error(`unsupported algorithm: ${String(algorithm)}`);
-  }
-
-  const header = {
-    alg: algorithm,
-    typ: "JWT",
-    ...(signingKey.kid === undefined ? {} : { kid: signingKey.kid }),
-  };
-  const payload = {
-    iss: "supabase-demo",
-    role,
-    exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365 * 10,
-  };
-  const encodedHeader = encodeBase64Url(JSON.stringify(header));
-  const encodedPayload = encodeBase64Url(JSON.stringify(payload));
-  const data = `${encodedHeader}.${encodedPayload}`;
-  const key = createPrivateKey({
-    key: toJsonWebKey(signingKey),
-    format: "jwk",
-  });
-  const signature = signJwtBytes("sha256", Buffer.from(data), {
-    key,
-    ...(algorithm === "ES256" ? { dsaEncoding: "ieee-p1363" as const } : {}),
-  }).toString("base64url");
-  return `${data}.${signature}`;
-}
-
-async function readSigningKeys(pathname: string): Promise<ReadonlyArray<SigningKeyJwk>> {
-  const decoded = JSON.parse(await readFile(pathname, "utf8"));
-  if (!Array.isArray(decoded)) {
-    throw new Error("expected a JSON array");
-  }
-  return decoded as ReadonlyArray<SigningKeyJwk>;
-}
-
-/**
- * {@link resolveLocalAuthArtifacts}'s return shape — everything
- * {@link finalizeAuthArtifacts} needs to assemble the final
- * {@link ServeAuthArtifacts} once the remote-JWKS fetch is allowed to run
- * (i.e. after the DB assertion — see {@link startEdgeRuntime}).
- */
-interface ServeLocalAuthArtifacts {
-  readonly publishableKey: string;
-  readonly secretKey: string;
-  readonly jwtSecret: string;
-  readonly anonKey: string;
-  readonly serviceRoleKey: string;
-  /** Third-party issuer to fetch remote JWKS from, if one is configured. */
-  readonly issuerUrl: string | undefined;
-  /** Local JWKS entries (signing keys / oct fallback), appended after any remote keys. */
-  readonly localKeys: ReadonlyArray<unknown>;
-}
-
-/**
- * Config-load-time auth resolution: signing-keys read, the `auth.jwt_secret`
- * ≥16-chars check, and anon/service-role key generation. Does not fetch
- * remote JWKS — that half lives in {@link finalizeAuthArtifacts}, run after
- * the DB assertion, so a config error here still surfaces before a
- * docker-down error.
- */
-const resolveLocalAuthArtifacts = Effect.fnUntraced(function* (
-  auth: PlainServeAuthConfig,
-  configPath: string | undefined,
-) {
-  const signingKeysPath =
-    auth.signing_keys_path === undefined || auth.signing_keys_path.length === 0
-      ? ""
-      : isAbsolute(auth.signing_keys_path)
-        ? auth.signing_keys_path
-        : resolve(
-            dirname(configPath ?? join(process.cwd(), "supabase", "config.toml")),
-            auth.signing_keys_path,
-          );
-
-  const signingKeys = yield* Effect.tryPromise({
-    try: async () => (signingKeysPath.length === 0 ? [] : await readSigningKeys(signingKeysPath)),
-    catch: (cause) => {
-      if (cause instanceof SyntaxError) {
-        return new Error(`failed to decode signing keys: ${cause.message}`);
-      }
-      return new Error(
-        `failed to read signing keys: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
-    },
-  });
-
-  const jwtSecret =
-    auth.jwt_secret === undefined || auth.jwt_secret.length === 0
-      ? defaultJwtSecret
-      : auth.jwt_secret;
-  if (jwtSecret.length < 16) {
-    return yield* Effect.fail(
-      new Error("Invalid config for auth.jwt_secret. Must be at least 16 characters"),
-    );
-  }
-
-  const anonKey =
-    auth.anon_key === undefined || auth.anon_key.length === 0
-      ? signingKeys.length > 0
-        ? generateAsymmetricJwt(signingKeys[0]!, "anon")
-        : generateSymmetricJwt(jwtSecret, "anon")
-      : auth.anon_key;
-  const serviceRoleKey =
-    auth.service_role_key === undefined || auth.service_role_key.length === 0
-      ? signingKeys.length > 0
-        ? generateAsymmetricJwt(signingKeys[0]!, "service_role")
-        : generateSymmetricJwt(jwtSecret, "service_role")
-      : auth.service_role_key;
-  const shouldUseJwtSecretFallback = signingKeysPath.length === 0;
-
-  // A malformed/multi-enabled third-party config must not throw when auth is
-  // disabled, so this uses the unchecked, no-throw issuer-URL-only builder
-  // instead of the validating one in that case.
-  const issuerUrl = auth.enabled
-    ? resolveThirdPartyIssuerUrl(auth.third_party)
-    : thirdPartyIssuerUrlUnchecked(auth.third_party);
-  const localKeys: unknown[] = [];
-  localKeys.push(
-    ...(signingKeys.length > 0
-      ? signingKeys.map(toPublicJwk)
-      : shouldUseJwtSecretFallback
-        ? [defaultSigningKey]
-        : []),
-  );
-  if (shouldUseJwtSecretFallback) {
-    localKeys.push({
-      kty: "oct",
-      k: Buffer.from(jwtSecret).toString("base64url"),
-    });
-  }
-
-  return {
-    publishableKey:
-      auth.publishable_key === undefined || auth.publishable_key.length === 0
-        ? defaultPublishableKey
-        : auth.publishable_key,
-    secretKey:
-      auth.secret_key === undefined || auth.secret_key.length === 0
-        ? defaultSecretKey
-        : auth.secret_key,
-    jwtSecret,
-    anonKey,
-    serviceRoleKey,
-    issuerUrl,
-    localKeys,
-  } satisfies ServeLocalAuthArtifacts;
-});
-
-/**
- * The post-assertion half of auth resolution: fetches the third-party
- * provider's remote JWKS (error discarded on failure) and assembles the
- * final key set with remote keys first, then local keys. Kept separate from
- * {@link resolveLocalAuthArtifacts} so `startEdgeRuntime` can run it strictly
- * after the DB assertion — with Docker down, no external JWKS request is made.
- */
-const finalizeAuthArtifacts = Effect.fnUntraced(function* (local: ServeLocalAuthArtifacts) {
-  const keys: unknown[] = [];
-  if (local.issuerUrl !== undefined) {
-    const issuerUrl = local.issuerUrl;
-    const remoteJwks = yield* resolveRemoteJwks(issuerUrl).pipe(
-      Effect.catchTag("RemoteJwksError", () => Effect.succeed<ReadonlyArray<unknown>>([])),
-    );
-    keys.push(...remoteJwks);
-  }
-  keys.push(...local.localKeys);
-
-  return {
-    publishableKey: local.publishableKey,
-    secretKey: local.secretKey,
-    jwtSecret: local.jwtSecret,
-    anonKey: local.anonKey,
-    serviceRoleKey: local.serviceRoleKey,
-    jwks: yield* Schema.encodeEffect(
-      Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.Unknown) })),
-    )({ keys }),
-  } satisfies ServeAuthArtifacts;
-});
-
 const resolveServeConfig = Effect.fnUntraced(function* (
   projectRoot: string,
   projectIdOverride: Option.Option<string>,
   goViperCompat: boolean,
   goConfigCompat: FunctionsGoConfigCompat | undefined,
 ) {
+  const path = yield* Path.Path;
   // Keeps `.env` discovery, config load, and functions-manifest inference
   // from resolving three different roots: the CLI's `search: false` must
   // match `loadFunctionsCliConfig`'s own options exactly (see below).
@@ -744,12 +420,6 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   });
   const baseConfig = loadedConfig?.config ?? defaultCliConfig;
 
-  const auth =
-    projectEnv === null
-      ? toPlainAuthConfig(baseConfig.auth)
-      : toPlainAuthConfig(
-          yield* resolveCliConfigSubtree(baseConfig.auth, projectEnv, "auth", { goViperCompat }),
-        );
   const edgeRuntime =
     projectEnv === null
       ? toPlainEdgeRuntimeConfig(baseConfig.edge_runtime)
@@ -788,7 +458,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
           }),
         ) ?? "");
   const rawProjectId = Option.getOrElse(projectIdOverride, () => configProjectId).trim();
-  const fallbackProjectId = basename(resolve(projectRoot));
+  const fallbackProjectId = path.basename(path.resolve(projectRoot));
 
   // A second, independent config/dotenv load, run before any Docker check so
   // an invalid config fails here too; its `search`/`tomlOnly` must match the
@@ -808,7 +478,6 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   return {
     projectId: normalizeProjectId(rawProjectId.length > 0 ? rawProjectId : fallbackProjectId),
     apiPort,
-    auth,
     edgeRuntime:
       goContext === undefined
         ? edgeRuntime
@@ -857,23 +526,21 @@ export function buildFunctionsServeInspectArgs(
 }
 
 const readDotEnvFile = Effect.fnUntraced(function* (pathname: string, optional: boolean) {
-  const contents = yield* Effect.tryPromise({
-    try: () =>
-      readFile(pathname, "utf8").then(
-        (value) => value,
-        (error) => {
-          if (optional && error instanceof Error && "code" in error && error.code === "ENOENT") {
-            return undefined;
-          }
-          throw error;
-        },
+  const fs = yield* FileSystem.FileSystem;
+  const contents = yield* fs
+    .readFileString(pathname)
+    .pipe(
+      Effect.catchTag("PlatformError", (cause) =>
+        cause.reason._tag === "NotFound" && optional
+          ? Effect.map(Effect.void, () => undefined)
+          : Effect.fail(
+              functionsServeError(
+                `failed to load environment file: ${pathname}: ${cause.message}`,
+                cause,
+              ),
+            ),
       ),
-    catch: (cause) =>
-      new Error(
-        `failed to load environment file: ${pathname}${cause instanceof Error ? ` (${cause.message})` : ""}`,
-        { cause },
-      ),
-  });
+    );
   if (contents === undefined) {
     return {};
   }
@@ -902,9 +569,10 @@ const parseCustomEnvFile = Effect.fnUntraced(function* (
   flagCwd: string,
   configSecrets: Readonly<Record<string, string>>,
 ) {
+  const path = yield* Path.Path;
   const envFilePath = Option.match(envFileFlag, {
-    onNone: () => join(projectRoot, fallbackEnvFilePath),
-    onSome: (pathname) => normalizeEnvPath(flagCwd, pathname),
+    onNone: () => path.join(projectRoot, fallbackEnvFilePath),
+    onSome: (pathname) => (path.isAbsolute(pathname) ? pathname : path.resolve(flagCwd, pathname)),
   });
   const parsed = yield* readDotEnvFile(envFilePath, Option.isNone(envFileFlag));
   const filtered = yield* filterCustomEnv({ ...configSecrets, ...parsed });
@@ -916,14 +584,17 @@ const parseFunctionEnvFile = Effect.fnUntraced(function* (pathname: string) {
 });
 
 function toFunctionContainerConfig(
+  path: Path.Path,
   workdir: string,
   config: ResolvedDeployFunctionConfig,
   envFile: Readonly<Record<string, string>>,
 ): ServeFunctionContainerConfig {
   const toContainerPath = (pathname: string) => {
-    const resolvedPath = resolve(pathname);
-    const relativePath = relative(workdir, resolvedPath);
-    return relativePath.length === 0 ? basename(resolvedPath) : relativePath.replaceAll("\\", "/");
+    const resolvedPath = path.resolve(pathname);
+    const relativePath = path.relative(workdir, resolvedPath);
+    return relativePath.length === 0
+      ? path.basename(resolvedPath)
+      : relativePath.replaceAll("\\", "/");
   };
 
   return {
@@ -948,7 +619,12 @@ function splitEnvEntry(entry: string) {
     : ([entry.slice(0, separatorIndex), entry.slice(separatorIndex + 1)] as const);
 }
 
-async function writeDockerEnvFile(env: Readonly<Record<string, string>>, dir: string) {
+const writeDockerEnvFile = Effect.fnUntraced(function* (
+  env: Readonly<Record<string, string>>,
+  dir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const pathApi = yield* Path.Path;
   const entries = Object.entries(env);
   if (entries.length === 0) {
     return undefined;
@@ -959,12 +635,12 @@ async function writeDockerEnvFile(env: Readonly<Record<string, string>>, dir: st
   // process (e.g. `functions serve`'s watch-mode restart loop) is removed
   // first — otherwise leftover files from a shrinking env set would survive
   // alongside the fresh write.
-  await rm(dir, { recursive: true, force: true });
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const path = join(dir, "docker.env");
+  yield* fs.remove(dir, { recursive: true, force: true });
+  yield* fs.makeDirectory(dir, { recursive: true, mode: 0o700 });
+  const path = pathApi.join(dir, "docker.env");
   // The file holds the JWT secret, anon/service-role keys, and JWKS, so keep it
   // owner-only rather than relying on the process umask.
-  await writeFile(
+  yield* fs.writeFileString(
     path,
     entries
       .map(([name, value]) => `${name}=${value.replaceAll("\r", "\\r").replaceAll("\n", "\\n")}`)
@@ -973,52 +649,55 @@ async function writeDockerEnvFile(env: Readonly<Record<string, string>>, dir: st
   );
 
   return { path };
-}
+});
 
-async function writeDockerMultilineEnvScript(
+const writeDockerMultilineEnvScript = Effect.fnUntraced(function* (
   env: ReadonlyArray<readonly [string, string]>,
   containerDir: string,
   dir: string,
 ) {
+  const fs = yield* FileSystem.FileSystem;
+  const pathApi = yield* Path.Path;
   // Self-healing — see the matching comment in `writeDockerEnvFile`. Runs
   // unconditionally, before the length check, so a stale directory from an
   // earlier invocation that needed multiline secrets is still reclaimed.
-  await rm(dir, { recursive: true, force: true });
+  yield* fs.remove(dir, { recursive: true, force: true });
 
   if (env.length === 0) {
     return undefined;
   }
 
-  await mkdir(dir, { recursive: true, mode: 0o700 });
+  yield* fs.makeDirectory(dir, { recursive: true, mode: 0o700 });
   const scriptName = "multiline-env.sh";
-  const path = join(dir, scriptName);
-  const envDir = join(containerDir, "values");
-  const hostEnvDir = join(dir, "values");
+  const path = pathApi.join(dir, scriptName);
+  const envDir = pathApi.join(containerDir, "values");
+  const hostEnvDir = pathApi.join(dir, "values");
   // Names are validated by `validateDockerMultilineEnvNames` before this runs.
   const script = env
     .map(([name], index) => {
       const valueFile = `env-${index}`;
-      const valuePath = join(envDir, valueFile).replaceAll("\\", "/");
+      const valuePath = pathApi.join(envDir, valueFile).replaceAll("\\", "/");
       return `${name}="$(cat ${valuePath}; printf x)"
 export ${name}="\${${name}%x}"`;
     })
     .join("\n");
-  await mkdir(hostEnvDir, { recursive: true, mode: 0o700 });
+  yield* fs.makeDirectory(hostEnvDir, { recursive: true, mode: 0o700 });
   // The value files hold secret env values, so keep them owner-only.
-  await Promise.all(
-    env.map(([, value], index) =>
-      writeFile(join(hostEnvDir, `env-${index}`), value, { mode: 0o600 }),
-    ),
+  yield* Effect.forEach(
+    env,
+    ([, value], index) =>
+      fs.writeFileString(pathApi.join(hostEnvDir, `env-${index}`), value, { mode: 0o600 }),
+    { concurrency: "unbounded", discard: true },
   );
-  await writeFile(path, script, { mode: 0o600 });
+  yield* fs.writeFileString(path, script, { mode: 0o600 });
 
   return {
     // `Z`: private SELinux relabel of this CLI-staged dir (supabase/cli#5989);
     // single-consumer bind, no-op without SELinux.
     bind: `${dir}:${containerDir}:ro,Z`,
-    scriptPath: join(containerDir, scriptName).replaceAll("\\", "/"),
+    scriptPath: pathApi.join(containerDir, scriptName).replaceAll("\\", "/"),
   };
-}
+});
 
 function partitionDockerEnvEntries(env: Readonly<Record<string, string>>) {
   const singleLine: Record<string, string> = {};
@@ -1049,7 +728,7 @@ function loadDefaultEnvFilenames(env: string) {
 
 function sanitizeDotEnvParseError(path: string, cause: unknown) {
   if (!(cause instanceof Error)) {
-    return new Error(`failed to parse environment file: ${path}`);
+    return functionsServeError(`failed to parse environment file: ${path}`, cause);
   }
   const message = cause.message;
   if (message.startsWith('unexpected character "')) {
@@ -1060,22 +739,27 @@ function sanitizeDotEnvParseError(path: string, cause: unknown) {
       const charEnd = message.indexOf('"', charStart);
       if (charEnd !== -1) {
         const char = message.slice(charStart, charEnd);
-        return new Error(
+        return functionsServeError(
           `failed to parse environment file: ${path} (unexpected character '${char}' in variable name)`,
+          cause,
         );
       }
     }
-    return new Error(
+    return functionsServeError(
       `failed to parse environment file: ${path} (unexpected character in variable name)`,
+      cause,
     );
   }
   if (message.startsWith("unterminated quoted value")) {
-    return new Error(`failed to parse environment file: ${path} (unterminated quoted value)`);
+    return functionsServeError(
+      `failed to parse environment file: ${path} (unterminated quoted value)`,
+      cause,
+    );
   }
   if (message.includes("\n")) {
-    return new Error(`failed to parse environment file: ${path} (syntax error)`);
+    return functionsServeError(`failed to parse environment file: ${path} (syntax error)`, cause);
   }
-  return new Error(`failed to load ${path}: ${message}`);
+  return functionsServeError(`failed to load ${path}: ${message}`, cause);
 }
 
 function ambientProjectEnv() {
@@ -1090,6 +774,7 @@ const loadServeCliProjectEnvironment = Effect.fnUntraced(function* (
   projectRoot: string,
   options: { readonly search: boolean },
 ) {
+  const path = yield* Path.Path;
   const paths = yield* findCliProjectPaths(projectRoot, { search: options.search });
   if (paths === null) {
     return null;
@@ -1100,24 +785,21 @@ const loadServeCliProjectEnvironment = Effect.fnUntraced(function* (
     Object.keys(values).map((key) => [key, "ambient"]),
   );
   const loadedPaths: string[] = [];
-  const env = process.env["SUPABASE_ENV"] || defaultSupabaseEnv;
+  const env = yield* Config.string("SUPABASE_ENV").pipe(Config.withDefault(defaultSupabaseEnv));
 
   for (const dir of [paths.supabaseDir, paths.projectRoot]) {
     for (const filename of loadDefaultEnvFilenames(env)) {
-      const envPath = join(dir, filename);
-      const contents = yield* Effect.tryPromise({
-        try: () =>
-          readFile(envPath, "utf8").then(
-            (value) => value,
-            (error) => {
-              if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-                return undefined;
-              }
-              throw error;
-            },
+      const envPath = path.join(dir, filename);
+      const fs = yield* FileSystem.FileSystem;
+      const contents = yield* fs
+        .readFileString(envPath)
+        .pipe(
+          Effect.catchTag("PlatformError", (cause) =>
+            cause.reason._tag === "NotFound"
+              ? Effect.map(Effect.void, () => undefined)
+              : Effect.fail(functionsServeError("failed to load environment file", cause)),
           ),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      });
+        );
       if (contents === undefined) {
         continue;
       }
@@ -1157,23 +839,23 @@ function hasBindUnder(binds: Iterable<DockerBind>, containerPath: string): boole
   return false;
 }
 
-async function buildWatchSpecs(
-  binds: ReadonlyArray<DockerBind>,
-): Promise<ReadonlyArray<WatchSpec>> {
+const buildWatchSpecs = Effect.fnUntraced(function* (binds: ReadonlyArray<DockerBind>) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const specs = new Map<string, WatchSpec>();
 
   for (const bind of binds) {
     const hostPath = bind.hostPath;
-    if (!isAbsolute(hostPath)) {
+    if (!path.isAbsolute(hostPath)) {
       continue;
     }
 
-    try {
-      const info = await stat(hostPath);
-      if (info.isDirectory()) {
+    const info = yield* fs.stat(hostPath).pipe(Effect.catchTag("PlatformError", () => Effect.void));
+    if (info !== undefined) {
+      if (info.type === "Directory") {
         specs.set(hostPath, { root: hostPath, recursive: true });
       } else {
-        const root = dirname(hostPath);
+        const root = path.dirname(hostPath);
         const existing = specs.get(root);
         if (existing !== undefined && existing.matchPaths === undefined) {
           continue;
@@ -1182,13 +864,11 @@ async function buildWatchSpecs(
         matchPaths.add(hostPath);
         specs.set(root, { root, recursive: false, matchPaths });
       }
-    } catch {
-      continue;
     }
   }
 
   return [...specs.values()];
-}
+});
 
 function shouldIgnoreEvent(pathname: string) {
   const normalized = pathname.replaceAll("\\", "/");
@@ -1264,262 +944,6 @@ const waitForRestartSignal = Effect.fnUntraced(function* (watchSpecs: ReadonlyAr
   });
 });
 
-function forwardByteStream(
-  stream: Stream.Stream<Uint8Array, unknown>,
-  write: (text: string, stream: "stdout" | "stderr") => Effect.Effect<void>,
-  streamName: "stdout" | "stderr",
-) {
-  const decoder = new TextDecoder();
-  return Stream.runForEach(stream, (chunk) =>
-    write(decoder.decode(chunk, { stream: true }), streamName),
-  ).pipe(Effect.andThen(write(decoder.decode(), streamName)));
-}
-
-function appendDiagnosticTail(existing: string, text: string) {
-  const combined = existing + text;
-  return combined.length <= dockerLogDiagnosticTailLength
-    ? combined
-    : combined.slice(combined.length - dockerLogDiagnosticTailLength);
-}
-
-/**
- * Extracts the RFC3339 timestamp leading the last complete line in `buffer` (docker's
- * `--timestamps` prefixes every line with one), returning the still-incomplete tail to prepend
- * to the next chunk.
- */
-function consumeCompleteLines(buffer: string): {
-  readonly timestamp: string | undefined;
-  readonly remainder: string;
-} {
-  const lastNewline = buffer.lastIndexOf("\n");
-  if (lastNewline === -1) {
-    return { timestamp: undefined, remainder: buffer };
-  }
-  const remainder = buffer.slice(lastNewline + 1);
-  const completedLines = buffer
-    .slice(0, lastNewline)
-    .split("\n")
-    .filter((line) => line.length > 0);
-  const lastLine = completedLines.at(-1);
-  const timestamp = lastLine === undefined ? undefined : /^\S+/u.exec(lastLine)?.[0];
-  return { timestamp, remainder };
-}
-
-/** Why `streamContainerLogs` stopped following the container without failing. */
-type ContainerLogsEndReason =
-  | { readonly _tag: "containerExited" }
-  | { readonly _tag: "supervisorTerminated"; readonly exitCode: number }
-  | { readonly _tag: "containerGone" };
-
-type Spawner = ChildProcessSpawner.ChildProcessSpawner["Service"];
-
-/**
- * One `docker logs -f --timestamps` attach, scoped so its handle's finalizer runs when this
- * attempt ends instead of accumulating for the whole `functions serve` session.
- */
-function attachToContainerLogsOnce(
-  spawner: Spawner,
-  output: Output["Service"],
-  containerId: string,
-  since: string | undefined,
-) {
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const args = [
-        "logs",
-        "-f",
-        "--timestamps",
-        ...(since === undefined ? [] : ["--since", since]),
-        containerId,
-      ];
-      const child = yield* spawnContainerCli(spawner, args, {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        extendEnv: true,
-      });
-
-      let stderrText = "";
-      let lineBuffer = "";
-      let lastTimestamp: string | undefined;
-      const [exitCode] = yield* Effect.all(
-        [
-          child.exitCode.pipe(Effect.map(Number)),
-          forwardByteStream(
-            child.stdout,
-            (text, streamName) => {
-              lineBuffer += text;
-              const parsed = consumeCompleteLines(lineBuffer);
-              lineBuffer = parsed.remainder;
-              if (parsed.timestamp !== undefined) lastTimestamp = parsed.timestamp;
-              return output.raw(text, streamName);
-            },
-            "stdout",
-          ),
-          forwardByteStream(
-            child.stderr,
-            (text, streamName) => {
-              stderrText = appendDiagnosticTail(stderrText, text);
-              return output.raw(text, streamName);
-            },
-            "stderr",
-          ),
-        ],
-        { concurrency: "unbounded" },
-      );
-
-      return { exitCode, stderrText, lastTimestamp };
-    }),
-  );
-}
-
-const streamContainerLogs = Effect.fnUntraced(function* (
-  containerId: string,
-  retryDelay: Duration.Duration,
-) {
-  const output = yield* Output;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-
-  let sinceTimestamp: string | undefined;
-  let consecutiveReattaches = 0;
-
-  const reattach = Effect.suspend(() => {
-    consecutiveReattaches += 1;
-    if (consecutiveReattaches > containerLogReattachCap) {
-      return Effect.fail(
-        new EdgeRuntimeLogStreamLostError({
-          message: `lost the Edge Runtime log stream ${containerLogReattachCap} times; container ${containerId} is still running`,
-          containerId,
-        }),
-      );
-    }
-    return Effect.sleep(retryDelay);
-  });
-
-  for (;;) {
-    const attempt = yield* attachToContainerLogsOnce(spawner, output, containerId, sinceTimestamp);
-    if (attempt.lastTimestamp !== undefined) {
-      if (attempt.lastTimestamp !== sinceTimestamp) consecutiveReattaches = 0;
-      sinceTimestamp = attempt.lastTimestamp;
-    }
-
-    if (attempt.exitCode === 0) {
-      // `docker logs -f` exiting 0 doesn't necessarily mean the container stopped — the daemon
-      // can close the stream while it keeps running — so inspect the container to find out why.
-      const inspected = yield* inspectContainerState(spawner, containerId).pipe(Effect.result);
-      if (Result.isFailure(inspected)) {
-        if (isContainerNotFoundMessage(inspected.failure.message)) {
-          return { _tag: "containerGone" } satisfies ContainerLogsEndReason;
-        }
-        return yield* Effect.fail(inspected.failure);
-      }
-      const state = inspected.success;
-      if (state.running) {
-        yield* reattach;
-        continue;
-      }
-      if (externalTerminationExitCodes.has(state.exitCode)) {
-        return {
-          _tag: "supervisorTerminated",
-          exitCode: state.exitCode,
-        } satisfies ContainerLogsEndReason;
-      }
-      if (state.exitCode === 0) {
-        return { _tag: "containerExited" } satisfies ContainerLogsEndReason;
-      }
-      if (state.exitCode === 137) {
-        yield* reattach;
-        continue;
-      }
-      return yield* Effect.fail(
-        new EdgeRuntimeContainerCrashedError({
-          message: `error running container ${containerId}: exit ${state.exitCode}`,
-          containerId,
-          exitCode: state.exitCode,
-        }),
-      );
-    }
-
-    // The `docker logs -f` process itself errored. A follow-up inspect distinguishes a container
-    // that no longer exists (end of session) from one still running (transient — re-attach) from
-    // anything else (a real, fatal stream failure), and sources `daemonDown` from docker's own
-    // inspect failure instead of the container's own stderr text.
-    const trimmedStderr = attempt.stderrText.trim();
-    const inspected = yield* inspectContainerState(spawner, containerId).pipe(Effect.result);
-    if (Result.isFailure(inspected)) {
-      if (isContainerNotFoundMessage(inspected.failure.message)) {
-        return { _tag: "containerGone" } satisfies ContainerLogsEndReason;
-      }
-      return yield* Effect.fail(
-        new DockerLogsStreamError({
-          message:
-            trimmedStderr.length > 0
-              ? trimmedStderr
-              : `docker logs exited with ${attempt.exitCode}`,
-          containerId,
-          exitCode: attempt.exitCode,
-          stderr: trimmedStderr,
-          daemonDown: inspected.failure.daemonDown === true,
-        }),
-      );
-    }
-    if (inspected.success.running) {
-      yield* reattach;
-      continue;
-    }
-    return yield* Effect.fail(
-      new DockerLogsStreamError({
-        message:
-          trimmedStderr.length > 0 ? trimmedStderr : `docker logs exited with ${attempt.exitCode}`,
-        containerId,
-        exitCode: attempt.exitCode,
-        stderr: trimmedStderr,
-        daemonDown: false,
-      }),
-    );
-  }
-});
-
-const assertLocalDbRunning = Effect.fnUntraced(function* (projectId: string) {
-  const dbId = localDockerId("db", projectId);
-  // A spawn failure (neither `docker` nor `podman` on PATH) must keep its
-  // cause: blanking stderr here would demote it to a bare "failed to inspect
-  // service" with no install guidance.
-  const result = yield* runChildProcess("docker", ["container", "inspect", dbId], {
-    stdout: "ignore",
-    stderr: "pipe",
-  }).pipe(
-    Effect.catch((cause) =>
-      Effect.succeed({ exitCode: 1, stdout: "", stderr: describeContainerCliFailure(cause) }),
-    ),
-  );
-
-  if (result.exitCode === 0) {
-    return;
-  }
-
-  if (result.stderr.includes("No such container") || result.stderr.includes("No such object")) {
-    return yield* Effect.fail(
-      new ServeLocalDbNotRunningError({ message: "supabase start is not running." }),
-    );
-  }
-
-  const message =
-    result.stderr.trim().length > 0
-      ? `failed to inspect service: ${result.stderr.trim()}`
-      : "failed to inspect service";
-  return yield* Effect.fail(
-    new ServeLocalDbInspectError({ message, daemonDown: isDockerDaemonUnreachable(result.stderr) }),
-  );
-});
-
-const bestEffortRemoveContainer = Effect.fnUntraced(function* (containerId: string) {
-  yield* runChildProcess("docker", ["container", "rm", "-f", "-v", containerId], {
-    stdout: "ignore",
-    stderr: "ignore",
-  }).pipe(Effect.ignore);
-});
-
 // One step of Edge Runtime's create → cp → start bring-up. Only the cp step
 // passes a `messagePrefix`, since its raw stderr is uninterpretable alone.
 const runEdgeRuntimeDockerStep = Effect.fnUntraced(function* (
@@ -1530,7 +954,11 @@ const runEdgeRuntimeDockerStep = Effect.fnUntraced(function* (
     stdin: opts.stdin,
     stdout: "pipe",
     stderr: "pipe",
-  });
+  }).pipe(
+    Effect.mapError((cause) =>
+      functionsServeError("failed to run Edge Runtime Docker step", cause),
+    ),
+  );
   if (result.exitCode !== 0) {
     const detail = result.stderr.trim() || result.stdout.trim();
     const message =
@@ -1539,27 +967,14 @@ const runEdgeRuntimeDockerStep = Effect.fnUntraced(function* (
         : detail.length > 0
           ? `${opts.messagePrefix}: ${detail}`
           : opts.messagePrefix;
-    return yield* Effect.fail(new Error(message));
+    return yield* functionsServeError(message);
   }
 });
 
-const reloadKong = Effect.fnUntraced(function* (projectId: string) {
-  const output = yield* Output;
-  const kongId = localDockerId("kong", projectId);
-  // Needs the `--nginx-conf` flag pointing at the custom template
-  // `kong.service.ts` wrote, or reload re-renders from Kong's default
-  // template and drops the `email_templates` server (supabase/cli#6059).
-  const result = yield* runChildProcess(
-    "docker",
-    ["exec", kongId, "kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"],
-    { stdout: "ignore", stderr: "pipe" },
-  ).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
-
-  if (result.exitCode !== 0) {
-    const suffix = result.stderr.trim().length > 0 ? ` ${result.stderr.trim()}` : "";
-    yield* output.raw(`Warning: failed to reload Kong:${suffix}\n`, "stderr");
-  }
-});
+type ContainerLogsEndReason =
+  | { readonly _tag: "containerExited" }
+  | { readonly _tag: "supervisorTerminated"; readonly exitCode: number }
+  | { readonly _tag: "containerGone" };
 
 const writeStoppedServingMessage = Effect.fnUntraced(function* () {
   const output = yield* Output;
@@ -1645,6 +1060,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
     projectEnvValues?: Readonly<Record<string, string>>,
   ) {
     const output = yield* Output;
+    const path = yield* Path.Path;
     const functionConfigs = yield* resolveServeFunctionConfigs(
       projectRoot,
       supabaseDir,
@@ -1654,7 +1070,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
       flagCwd,
     );
 
-    const functionsDir = join(projectRoot, functionsDirName);
+    const functionsDir = path.join(projectRoot, functionsDirName);
     const binds = new Set<string>();
     const bitbucketCloneDirDefined = Option.isSome(yield* bitbucketCloneDir(projectEnvValues));
 
@@ -1665,24 +1081,23 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
       }
 
       const bindWarnings: string[] = [];
-      for (const bind of yield* Effect.promise(() =>
-        buildDockerBinds(projectId, functionsDir, functionsDir, fnConfig, {
-          bitbucketCloneDirDefined,
-          additionalModuleRoots: [flagCwd],
-          skipMissingImportMapTargets: true,
-          onWarning: async (message) => {
-            bindWarnings.push(message);
-          },
-        }),
-      )) {
+      for (const bind of yield* buildDockerBinds(projectId, functionsDir, functionsDir, fnConfig, {
+        bitbucketCloneDirDefined,
+        additionalModuleRoots: [flagCwd],
+        skipMissingImportMapTargets: true,
+        onWarning: (message) => {
+          bindWarnings.push(message);
+          return Effect.void;
+        },
+      })) {
         binds.add(formatDockerBind(bind));
       }
       const missingSourceWarning = bindWarnings.find((warning) =>
         warning.includes("failed to read file:"),
       );
       if (missingSourceWarning !== undefined) {
-        return yield* Effect.fail(
-          new Error(missingSourceWarning.trimStart().replace(/^WARN:\s*/, "")),
+        return yield* functionsServeError(
+          missingSourceWarning.trimStart().replace(/^WARN:\s*/, ""),
         );
       }
     }
@@ -1693,19 +1108,20 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
 
 /**
  * The reusable "bring up one Edge Runtime container" core, called both by
- * standalone `functions serve` (via `startEdgeRuntime` below) and directly
+ * the start command and directly
  * by `start`'s own bring-up.
  *
  * Deliberately excludes config-loading (the caller resolves
  * {@link StartEdgeRuntimeContainerInput.config}/`authArtifacts` itself and
  * passes in already-resolved values), file-watching, and log streaming
  * (`serveFunctions`'s own loop still owns those for the standalone command).
- * Also excludes the Kong reload, which only happens in `startEdgeRuntime`
- * below, after this core succeeds.
+ * Also excludes the Kong reload, which is owned by the start command.
  */
 export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeContainer")(
   function* (input: StartEdgeRuntimeContainerInput) {
     const output = yield* Output;
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
     const projectId = input.config.projectId;
     const containerId = localDockerId("edge_runtime", projectId);
     const networkMode = input.networkId;
@@ -1713,14 +1129,23 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     // (wired into both `stop` and a failed-`start` rollback) reclaims this
     // same tree keyed by container name, so these secret env artifacts don't
     // leak on host disk indefinitely after the container is torn down.
-    const stagingDir = join(input.projectRoot, "supabase", ".temp", "start-secrets", containerId);
+    const stagingDir = path.join(
+      input.projectRoot,
+      "supabase",
+      ".temp",
+      "start-secrets",
+      containerId,
+    );
     // A single directory-wide `rm` (not per-file cleanup closures) covers the
     // whole staging-write window below, including a mid-write failure
     // between two `writeDocker*` calls, not just the final docker steps.
-    const removeRuntimeArtifacts = Effect.tryPromise({
-      try: () => rm(stagingDir, { recursive: true, force: true }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    });
+    const removeRuntimeArtifacts = fs
+      .remove(stagingDir, { recursive: true, force: true })
+      .pipe(
+        Effect.mapError((cause) =>
+          functionsServeError("failed to clean up Edge Runtime artifacts", cause),
+        ),
+      );
     const bestEffortCleanupRuntimeArtifacts = removeRuntimeArtifacts.pipe(
       Effect.tapError((error) =>
         output.warn(`Failed to clean up Edge Runtime artifacts: ${error.message}`),
@@ -1737,7 +1162,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       input.flagCwd,
     );
 
-    const functionsDir = join(input.projectRoot, functionsDirName);
+    const functionsDir = path.join(input.projectRoot, functionsDirName);
     const bitbucketCloneDirDefined = Option.isSome(
       yield* bitbucketCloneDir(input.projectEnvValues),
     );
@@ -1752,16 +1177,15 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       }
 
       const bindWarnings: string[] = [];
-      for (const bind of yield* Effect.promise(() =>
-        buildDockerBinds(projectId, functionsDir, functionsDir, config, {
-          bitbucketCloneDirDefined,
-          additionalModuleRoots: [input.flagCwd],
-          skipMissingImportMapTargets: true,
-          onWarning: async (message) => {
-            bindWarnings.push(message);
-          },
-        }),
-      )) {
+      for (const bind of yield* buildDockerBinds(projectId, functionsDir, functionsDir, config, {
+        bitbucketCloneDirDefined,
+        additionalModuleRoots: [input.flagCwd],
+        skipMissingImportMapTargets: true,
+        onWarning: (message) => {
+          bindWarnings.push(message);
+          return Effect.void;
+        },
+      })) {
         const key = formatDockerBind(bind);
         functionBinds.set(key, bind);
         if (!bind.externalScope) {
@@ -1772,8 +1196,8 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         warning.includes("failed to read file:"),
       );
       if (missingSourceWarning !== undefined) {
-        return yield* Effect.fail(
-          new Error(missingSourceWarning.trimStart().replace(/^WARN:\s*/, "")),
+        return yield* functionsServeError(
+          missingSourceWarning.trimStart().replace(/^WARN:\s*/, ""),
         );
       }
       for (const warning of bindWarnings) {
@@ -1787,9 +1211,10 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       }
       const functionEnv =
         input.discoverFunctionEnvFiles && Option.isNone(input.envFile)
-          ? yield* parseFunctionEnvFile(join(functionsDir, config.slug, ".env"))
+          ? yield* parseFunctionEnvFile(path.join(functionsDir, config.slug, ".env"))
           : {};
       functionsConfig[config.slug] = toFunctionContainerConfig(
+        path,
         input.projectRoot,
         config,
         functionEnv,
@@ -1803,12 +1228,20 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     // still exists through its covering parent.
     const binds = pruneRedundantDockerBinds(aggregatedBinds);
 
-    yield* ensureDockerNamedVolume(
+    const runtimeVolumePreparation = ensureDockerNamedVolume(
       edgeRuntimeCacheVolume(projectId).name,
       projectId,
       input.projectEnvValues,
+    ).pipe(
+      Effect.mapError((cause) =>
+        functionsServeError("failed to prepare Edge Runtime volume", cause),
+      ),
     );
-    yield* ensureDockerNetwork(networkMode, projectId);
+    yield* runtimeVolumePreparation;
+    const networkPreparation = ensureDockerNetwork(networkMode, projectId).pipe(
+      Effect.mapError((cause) => functionsServeError("failed to prepare Docker network", cause)),
+    );
+    yield* networkPreparation;
 
     const env = [
       ...(yield* parseCustomEnvFile(
@@ -1826,7 +1259,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       `SUPABASE_INTERNAL_JWT_SECRET=${input.authArtifacts.jwtSecret}`,
       `SUPABASE_JWKS=${input.authArtifacts.jwks}`,
       `SUPABASE_INTERNAL_HOST_PORT=${input.config.apiPort}`,
-      `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${JSON.stringify(functionsConfig)}`,
+      `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${encodeJson(functionsConfig)}`,
       ...(input.debug ? ["SUPABASE_INTERNAL_DEBUG=true"] : []),
     ];
     if (input.inspectMode !== undefined) {
@@ -1841,22 +1274,18 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     return yield* Effect.gen(function* () {
       yield* Effect.try({
         try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+        catch: (cause) => functionsServeError("invalid multiline environment variable name", cause),
       });
-      const dockerEnvFile = yield* Effect.tryPromise({
-        try: () => writeDockerEnvFile(singleLineDockerEnv, join(stagingDir, "env")),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      });
+      const dockerEnvFile = yield* writeDockerEnvFile(
+        singleLineDockerEnv,
+        path.join(stagingDir, "env"),
+      );
       const multilineEnvDir = "/root/.supabase/multiline-env";
-      const dockerMultilineEnvScript = yield* Effect.tryPromise({
-        try: () =>
-          writeDockerMultilineEnvScript(
-            multilineDockerEnv,
-            multilineEnvDir,
-            join(stagingDir, "multiline-env"),
-          ),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      });
+      const dockerMultilineEnvScript = yield* writeDockerMultilineEnvScript(
+        multilineDockerEnv,
+        multilineEnvDir,
+        path.join(stagingDir, "multiline-env"),
+      );
 
       const labels = dockerProjectLabels(projectId);
       const serveMainFile = `${serveMainDir}/index.ts`;
@@ -1869,14 +1298,17 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         ...buildFunctionsServeInspectArgs(input.inspectMode, input.inspectMain),
         ...(input.debug ? ["--verbose"] : []),
       ];
-      const serveMainTemplate = yield* Effect.promise(() => getFunctionsServeMainTemplate());
+      const serveMainTemplate = yield* getFunctionsServeMainTemplate;
       // Streamed in via `docker cp` between create and start: embedding the template in the
       // `sh -c` argv hits Windows ENAMETOOLONG (#5711), and a single-file host bind mounts as
       // an empty directory on daemons that cannot see this host's filesystem (#6254, #4190).
-      const serveMainArchive = yield* Effect.tryPromise({
-        try: () => containerArchiveBytes({ [serveMainFile]: serveMainTemplate }),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      });
+      const serveMainArchive = yield* containerArchiveBytes({
+        [serveMainFile]: serveMainTemplate,
+      }).pipe(
+        Effect.mapError((cause) =>
+          functionsServeError("failed to prepare Edge Runtime bootstrap", cause),
+        ),
+      );
       const containerProjectRoot = toDockerPath(input.projectRoot);
       const nofile = edgeRuntimeNofileUlimit(input.platform);
       if (nofile.clampWarning !== undefined) {
@@ -1931,248 +1363,436 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       return {
         containerId,
         cleanup: removeRuntimeArtifacts.pipe(Effect.orDie),
-        watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...watchableBinds.values()])),
+        watchSpecs: yield* buildWatchSpecs([...watchableBinds.values()]),
       } satisfies StartedRuntime;
     }).pipe(Effect.onError(() => bestEffortCleanupRuntimeArtifacts));
   },
 );
 
-/**
- * `SUPABASE_DB_URL` for standalone `functions serve`: always the `db`
- * network alias with the fixed default password, since Deno can't resolve
- * `_` in a container name. Not the same value `start`'s own bring-up uses —
- * see {@link StartEdgeRuntimeContainerInput.dbUrl}'s doc comment.
- */
-const defaultServeDbUrl = "postgresql://postgres:postgres@db:5432/postgres";
-
-/**
- * Resolves `functions serve`'s own config/secrets/image independently on
- * every (re)start, then delegates the actual bring-up to
- * {@link startEdgeRuntimeContainer}. Once that succeeds, this wrapper — and
- * only this wrapper — reloads Kong so its routing table picks up the
- * freshly (re)started container.
- */
-const startEdgeRuntime = Effect.fnUntraced(function* (input: {
-  readonly flags: FunctionsServeFlags;
-  readonly dependencies: FunctionsServeDependencies;
-  readonly debug: boolean;
-  readonly networkId: Option.Option<string>;
-  readonly inspectMode: FunctionsServeInspectMode | undefined;
-}) {
-  const output = yield* Output;
-  // No docker precheck here: config resolution runs first, then
-  // `assertLocalDbRunning` below surfaces a down daemon as "failed to
-  // inspect service: ..." with the install hint as a suggestion. The
-  // remote-JWKS fetch is likewise held until after that assertion
-  // (`finalizeAuthArtifacts` below), so a down daemon never waits on
-  // external OIDC/JWKS requests first.
-  const resolved = yield* resolveServeConfig(
-    input.dependencies.projectRoot,
-    input.dependencies.projectIdOverride,
-    input.dependencies.goViperCompat,
-    input.dependencies.goConfigCompat,
+const managedFunctionsConfig = (
+  config: import("@supabase/stack/effect").StackConfig,
+  functions: ReadonlyArray<ResolvedDeployFunctionConfig>,
+  inspectMode: FunctionsServeInspectMode | undefined,
+  inspectMain: boolean,
+  globalEnv: Readonly<Record<string, string>>,
+  functionEnv: Readonly<Record<string, Readonly<Record<string, string>>>>,
+): EffectServiceConfig<"functions"> => {
+  const capability = config.capabilities?.functions;
+  const settings = capability?.enabled === false ? undefined : capability?.settings;
+  const edgeRuntime = settings?.edge_runtime;
+  const configuredSecrets = Object.fromEntries(
+    Object.entries(edgeRuntime?.secrets ?? {}).flatMap(([name, value]) => {
+      const plain = reveal(value);
+      return plain === undefined ? [] : [[name, plain] as const];
+    }),
   );
-  const projectId = resolved.projectId;
-  const containerId = localDockerId("edge_runtime", projectId);
-  let ownsRuntime = false;
-  let startedRuntime: StartedRuntime | undefined;
-  return yield* Effect.gen(function* () {
-    // `SUPABASE_NETWORK_ID` is CLI-only, like `resolved.projectEnvValues`
-    // (`undefined` for library callers).
-    const networkMode = resolveDockerNetworkMode({
-      explicit: Option.getOrUndefined(input.networkId),
-      envOverride:
-        resolved.projectEnvValues === undefined
-          ? undefined
-          : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", resolved.projectEnvValues),
-      projectId,
-    });
-    const localAuthArtifacts = yield* resolveLocalAuthArtifacts(resolved.auth, resolved.configPath);
-    const edgeRuntimeVersionOverride = yield* resolveEdgeRuntimeVersionPin(
-      input.dependencies.supabaseDir,
-    );
-    const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
-      resolved.edgeRuntime.deno_version,
-      edgeRuntimeVersionOverride,
-    );
-
-    yield* assertLocalDbRunning(projectId);
-    yield* bestEffortRemoveContainer(containerId);
-
-    // Printed here, not in the shared `startEdgeRuntimeContainer` core,
-    // since `start`'s own bring-up (which calls that core directly) doesn't
-    // print it.
-    yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
-
-    // Finalized here, not inside `startEdgeRuntimeContainer`, to keep the
-    // shared core's caller-supplies-artifacts contract intact for `start`'s
-    // bring-up, which resolves its own JWKS.
-    const authArtifacts = yield* finalizeAuthArtifacts(localAuthArtifacts);
-
-    // Resolved here, not earlier: an unreachable-daemon check on the image
-    // resolver would hijack the down-daemon message `assertLocalDbRunning`
-    // is responsible for. Known gap: parsing env-file/function config after
-    // this resolve means a broken `--env-file` now surfaces after a slow
-    // `docker pull` on cold cache instead of immediately — left open since
-    // fixing it risks `start`'s shared, more critical bring-up path.
-    const image = yield* resolveFunctionsDockerImage(
-      edgeRuntimeImage(edgeRuntimeVersion),
-      resolved.projectEnvValues,
-    );
-
-    startedRuntime = yield* startEdgeRuntimeContainer({
-      onContainerCreated: () => {
-        ownsRuntime = true;
+  const inspector =
+    inspectMode === undefined ? undefined : { enabled: true as const, port: "auto" as const };
+  return {
+    enabled: true,
+    activation: "eager",
+    ...(capability !== undefined && capability.enabled !== false && capability.version !== undefined
+      ? { version: capability.version }
+      : {}),
+    settings: {
+      ...settings,
+      edge_runtime: {
+        ...edgeRuntime,
+        secrets: Object.fromEntries(
+          Object.entries({ ...configuredSecrets, ...globalEnv }).map(([name, value]) => [
+            name,
+            Redacted.make(value),
+          ]),
+        ),
       },
-      config: {
-        projectId,
-        apiPort: resolved.apiPort,
-        edgeRuntimePolicy: resolved.edgeRuntime.policy,
-        edgeRuntimeInspectorPort: resolved.edgeRuntime.inspector_port,
-        edgeRuntimeSecrets: resolved.edgeRuntime.secrets,
-        configDeclaredFunctions: resolved.configDeclaredFunctions,
-        configFunctions: resolved.configFunctions,
-        rawConfigFunctions: resolved.rawConfigFunctions,
+      functions: Object.fromEntries(
+        functions.map((entry) => [
+          entry.slug,
+          {
+            enabled: entry.enabled,
+            verify_jwt: entry.verifyJwt,
+            import_map: entry.importMap,
+            entrypoint: entry.entrypoint,
+            static_files: [...entry.staticFiles],
+            env: Object.fromEntries(
+              Object.entries({ ...functionEnv[entry.slug], ...entry.env }).map(([key, value]) => [
+                key,
+                Redacted.make(value),
+              ]),
+            ),
+          },
+        ]),
+      ),
+      ...(inspectMode === undefined && !inspectMain
+        ? {}
+        : { inspector: { mode: inspectMode, main: inspectMain } }),
+    },
+    ...(inspector === undefined ? {} : { endpoints: { inspector } }),
+  };
+};
+
+const managedFunctionEnvironment = Effect.fnUntraced(function* (
+  config: import("@supabase/stack/effect").StackConfig,
+  functions: ReadonlyArray<ResolvedDeployFunctionConfig>,
+  flags: FunctionsServeFlags,
+  dependencies: FunctionsServeDependencies,
+) {
+  const path = yield* Path.Path;
+  const capability = config.capabilities?.functions;
+  const settings = capability?.enabled === false ? undefined : capability?.settings;
+  const configuredSecrets = Object.fromEntries(
+    Object.entries(settings?.edge_runtime?.secrets ?? {}).flatMap(([name, value]) => {
+      const plain = reveal(value);
+      return plain === undefined ? [] : [[name, plain] as const];
+    }),
+  );
+  const globalEntries = yield* parseCustomEnvFile(
+    flags.envFile,
+    dependencies.projectRoot,
+    dependencies.flagCwd,
+    configuredSecrets,
+  );
+  const globalEnv = Object.fromEntries(globalEntries.map(splitEnvEntry));
+  const functionEnv: Record<string, Readonly<Record<string, string>>> = {};
+  if (Option.isNone(flags.envFile)) {
+    const functionsDir = path.join(dependencies.projectRoot, functionsDirName);
+    for (const entry of functions) {
+      functionEnv[entry.slug] = {
+        ...globalEnv,
+        ...(yield* parseFunctionEnvFile(path.join(functionsDir, entry.slug, ".env"))),
+      };
+    }
+  }
+  return { globalEnv, functionEnv };
+});
+
+const managedFunctionsWatchSpecs = Effect.fnUntraced(function* (
+  resolved: ServeResolvedConfig,
+  flags: FunctionsServeFlags,
+  dependencies: FunctionsServeDependencies,
+) {
+  const output = yield* Output;
+  const path = yield* Path.Path;
+  const functionConfigs = yield* resolveServeFunctionConfigs(
+    dependencies.projectRoot,
+    dependencies.supabaseDir,
+    resolved,
+    flags.importMap,
+    flags.noVerifyJwt,
+    dependencies.flagCwd,
+  );
+  const functionsDir = path.join(dependencies.projectRoot, functionsDirName);
+  const binds: DockerBind[] = [];
+  const emittedScopeWarnings = new Set<string>();
+  const bitbucketCloneDirDefined = Option.isSome(
+    yield* bitbucketCloneDir(resolved.projectEnvValues),
+  );
+  for (const config of functionConfigs) {
+    if (!config.enabled) continue;
+    const bindWarnings: string[] = [];
+    for (const bind of yield* buildDockerBinds(
+      resolved.projectId,
+      functionsDir,
+      functionsDir,
+      config,
+      {
+        bitbucketCloneDirDefined,
+        additionalModuleRoots: [dependencies.flagCwd],
+        skipMissingImportMapTargets: true,
+        onWarning: (message) => {
+          bindWarnings.push(message);
+          return Effect.void;
+        },
       },
-      authArtifacts,
-      dbUrl: defaultServeDbUrl,
-      image,
-      projectRoot: input.dependencies.projectRoot,
-      supabaseDir: input.dependencies.supabaseDir,
-      flagCwd: input.dependencies.flagCwd,
-      platform: input.dependencies.platform,
-      debug: input.debug,
-      networkId: networkMode,
-      envFile: input.flags.envFile,
-      discoverFunctionEnvFiles: true,
-      importMap: input.flags.importMap,
-      noVerifyJwt: input.flags.noVerifyJwt,
-      inspectMode: input.inspectMode,
-      inspectMain: input.flags.inspectMain,
-      projectEnvValues: resolved.projectEnvValues,
-    });
+    )) {
+      if (!bind.externalScope) binds.push(bind);
+    }
+    const missingSourceWarning = bindWarnings.find((warning) =>
+      warning.includes("failed to read file:"),
+    );
+    if (missingSourceWarning !== undefined) {
+      return yield* functionsServeError(missingSourceWarning.trimStart().replace(/^WARN:\s*/, ""));
+    }
+    for (const warning of bindWarnings) {
+      if (
+        warning.startsWith("WARN: Mounting import map scope target") &&
+        !emittedScopeWarnings.has(warning)
+      ) {
+        emittedScopeWarnings.add(warning);
+        yield* output.raw(warning, "stderr");
+      }
+    }
+  }
+  return yield* buildWatchSpecs(binds);
+});
 
-    yield* reloadKong(projectId);
+interface ManagedFunctionsRuntime {
+  readonly service: EffectServiceInstance<"functions">;
+  readonly watchSpecs: ReadonlyArray<WatchSpec>;
+  readonly observation: FunctionsObservation;
+}
 
-    return startedRuntime;
-  }).pipe(
-    // A failure after `startEdgeRuntimeContainer` returns (e.g. mid-`reloadKong`)
-    // escapes its own `Effect.onError`, so this wrapper also runs the
-    // returned runtime's staging-file cleanup, not just container removal —
-    // the shared core never removes the container it created.
-    Effect.onExit((exit) =>
-      Exit.isFailure(exit)
-        ? Effect.all([
-            ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void,
-            startedRuntime === undefined ? Effect.void : startedRuntime.cleanup,
-          ]).pipe(Effect.asVoid)
-        : Effect.void,
+interface FunctionsObservation {
+  readonly exited: Deferred.Deferred<void>;
+  readonly active: Ref.Ref<boolean>;
+}
+
+const observeFunctions = Effect.fnUntraced(function* (
+  service: EffectServiceInstance<"functions">,
+  output: typeof Output.Service,
+  observation: FunctionsObservation,
+) {
+  const signalIfActive = Ref.get(observation.active).pipe(
+    Effect.flatMap((active) =>
+      active ? Deferred.succeed(observation.exited, undefined) : Effect.void,
     ),
+  );
+  yield* Effect.forkScoped(
+    service.followLogs().pipe(
+      Stream.runForEach((entry) =>
+        output.raw(entry.message, entry.stream === "stderr" ? "stderr" : "stdout"),
+      ),
+      Effect.ignoreCause,
+      Effect.ensuring(Deferred.succeed(observation.exited, undefined)),
+    ),
+    { startImmediately: true },
+  );
+  yield* Effect.forkScoped(
+    service.followStatus.pipe(
+      Stream.runForEach((status) =>
+        status.phase === "failed" || status.phase === "stopped" ? signalIfActive : Effect.void,
+      ),
+      Effect.ignoreCause,
+      Effect.ensuring(signalIfActive),
+    ),
+    { startImmediately: true },
   );
 });
 
+interface ResolvedManagedFunctions {
+  readonly resolved: ServeResolvedConfig;
+  readonly config: import("@supabase/stack/effect").StackConfig;
+  readonly functions: ReadonlyArray<ResolvedDeployFunctionConfig>;
+  readonly environment: {
+    readonly globalEnv: Readonly<Record<string, string>>;
+    readonly functionEnv: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  };
+  readonly candidateConfig: EffectServiceConfig<"functions">;
+}
+
 /**
- * Downgrades `self`'s failure to `onShutdown()`'s success when a shutdown signal arrives
- * within `gracePeriod` of that failure — the Windows console-signal tie-break in
- * {@link shutdownSignalGracePeriod}'s doc comment.
+ * Stack preparation takes the persisted stack view, while the service restart
+ * takes the service's concrete config. Keep the candidate conversion in one
+ * place so preparation and restart compare the same resolved function inputs.
  */
-const withShutdownGrace = <A, E, R>(
-  self: Effect.Effect<A, E, R>,
-  shutdownRequested: Deferred.Deferred<void>,
-  gracePeriod: Duration.Duration,
-  onShutdown: () => A,
-): Effect.Effect<A, E, R> =>
-  self.pipe(
-    Effect.catch((error) =>
-      Effect.raceFirst(
-        Deferred.await(shutdownRequested).pipe(Effect.as(onShutdown())),
-        Effect.sleep(gracePeriod).pipe(Effect.andThen(Effect.fail(error))),
-      ),
+const managedFunctionsCandidateStackConfig = (
+  config: import("@supabase/stack/effect").StackConfig,
+  candidate: EffectServiceConfig<"functions">,
+): import("@supabase/stack/effect").StackConfig => {
+  const inspector = candidate.endpoints?.inspector;
+  const inspectorListener =
+    inspector === undefined
+      ? undefined
+      : inspector.enabled === false
+        ? { enabled: false as const }
+        : {
+            enabled: true as const,
+            ...(inspector.address === undefined ? {} : { address: inspector.address }),
+            ...(typeof inspector.port === "number" ? { port: inspector.port } : {}),
+          };
+  return {
+    ...config,
+    capabilities: {
+      ...config.capabilities,
+      functions: {
+        enabled: true,
+        ...(candidate.version === undefined ? {} : { version: candidate.version }),
+        settings: candidate.settings,
+      },
+    },
+    ...(inspectorListener === undefined
+      ? {}
+      : {
+          listeners: {
+            ...config.listeners,
+            functionsInspector: inspectorListener,
+          },
+        }),
+  };
+};
+
+const resolveManagedFunctions = Effect.fnUntraced(function* (
+  flags: FunctionsServeFlags,
+  dependencies: FunctionsServeDependencies,
+  inspectMode: FunctionsServeInspectMode | undefined,
+) {
+  const resolved = yield* resolveServeConfig(
+    dependencies.projectRoot,
+    dependencies.projectIdOverride,
+    dependencies.goViperCompat,
+    dependencies.goConfigCompat,
+  );
+  const config = yield* loadStackConfig(dependencies.projectRoot);
+  const functions = yield* resolveServeFunctionConfigs(
+    dependencies.projectRoot,
+    dependencies.supabaseDir,
+    resolved,
+    flags.importMap,
+    flags.noVerifyJwt,
+    dependencies.flagCwd,
+  );
+  const environment = yield* managedFunctionEnvironment(config, functions, flags, dependencies);
+  return {
+    resolved,
+    config,
+    functions,
+    environment,
+    candidateConfig: managedFunctionsConfig(
+      config,
+      functions,
+      inspectMode,
+      flags.inspectMain,
+      environment.globalEnv,
+      environment.functionEnv,
+    ),
+  } satisfies ResolvedManagedFunctions;
+});
+
+const startManagedFunctions = Effect.fnUntraced(function* (
+  flags: FunctionsServeFlags,
+  dependencies: FunctionsServeDependencies,
+  inspectMode: FunctionsServeInspectMode | undefined,
+  output: typeof Output.Service,
+) {
+  const api = yield* StackApi;
+  const candidate = yield* resolveManagedFunctions(flags, dependencies, inspectMode);
+  const existing = yield* api.findStack({ projectRoot: dependencies.projectRoot });
+  const stack = Option.isSome(existing)
+    ? yield* api.openStack(existing.value.id)
+    : yield* api.createStack({
+        projectRoot: dependencies.projectRoot,
+        initialConfig: candidate.config,
+      });
+  // A missing default is a destroyed registration, not a reason for a client
+  // to create a replacement under the same name. The supervisor owns default
+  // registration and reports the typed not-found failure to this caller.
+  const service = yield* stack.services.get({ name: "functions" });
+  if (service.service !== "functions") {
+    return yield* functionsServeError("stack functions service has an unexpected kind");
+  }
+  const descriptor = yield* service.describe;
+  const prepared = yield* stack.prepare({
+    services: [service.id],
+    config: managedFunctionsCandidateStackConfig(candidate.config, candidate.candidateConfig),
+  });
+  const preparedInstance = prepared.instances.find((instance) => instance.id === service.id);
+  if (preparedInstance === undefined) {
+    return yield* functionsServeError("stack prepare omitted the functions service");
+  }
+  if (
+    descriptor.effectiveConfigFingerprint === undefined ||
+    preparedInstance.effectiveConfigFingerprint === undefined
+  ) {
+    return yield* functionsServeError("stack functions config fingerprint is unavailable");
+  }
+  const observation: FunctionsObservation = {
+    exited: yield* Deferred.make<void>(),
+    active: yield* Ref.make(false),
+  };
+  yield* observeFunctions(service, output, observation);
+  if (preparedInstance.effectiveConfigFingerprint !== descriptor.effectiveConfigFingerprint) {
+    yield* service.restart({ config: candidate.candidateConfig });
+  } else {
+    const status = yield* service.status;
+    if (status.phase !== "ready" && status.phase !== "starting") yield* service.start;
+  }
+  yield* Ref.set(observation.active, true);
+  return {
+    service,
+    watchSpecs: yield* managedFunctionsWatchSpecs(candidate.resolved, flags, dependencies),
+    observation,
+  } satisfies ManagedFunctionsRuntime;
+});
+
+const serveManagedFunctions = Effect.fnUntraced(function* (
+  flags: FunctionsServeFlags,
+  dependencies: FunctionsServeDependencies,
+  inspectMode: FunctionsServeInspectMode | undefined,
+) {
+  const output = yield* Output;
+  const processControl = yield* ProcessControl;
+  const shutdownRequested = yield* Deferred.make<void>();
+  yield* processControl
+    .awaitSignal()
+    .pipe(
+      Effect.andThen(Deferred.succeed(shutdownRequested, void 0)),
+      Effect.forkScoped({ startImmediately: true }),
+    );
+  const startup = yield* Effect.raceFirst(
+    Deferred.await(shutdownRequested).pipe(Effect.as({ _tag: "shutdown" as const })),
+    startManagedFunctions(flags, dependencies, inspectMode, output).pipe(
+      Effect.map((runtime) => ({ _tag: "started" as const, runtime })),
     ),
   );
+  if (startup._tag === "shutdown") {
+    yield* writeStoppedServingMessage();
+    return;
+  }
+  let runtime = startup.runtime;
+  yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
+  for (;;) {
+    const outcome = yield* Effect.raceFirst(
+      Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
+      Effect.raceFirst(
+        waitForRestartSignal(runtime.watchSpecs).pipe(Effect.as("restart" as const)),
+        Deferred.await(runtime.observation.exited).pipe(Effect.as("exited" as const)),
+      ),
+    );
+    if (outcome === "shutdown") {
+      yield* writeStoppedServingMessage();
+      return;
+    }
+    if (outcome === "exited") {
+      yield* writeContainerEndedMessage({ _tag: "containerGone" });
+      return;
+    }
+    yield* Ref.set(runtime.observation.active, false);
+    const restarted = yield* Effect.raceFirst(
+      Deferred.await(shutdownRequested).pipe(Effect.as({ _tag: "shutdown" as const })),
+      Effect.gen(function* () {
+        const candidate = yield* resolveManagedFunctions(flags, dependencies, inspectMode);
+        yield* runtime.service.restart({ config: candidate.candidateConfig });
+        yield* Ref.set(runtime.observation.active, true);
+        return {
+          _tag: "restarted" as const,
+          runtime: {
+            service: runtime.service,
+            watchSpecs: yield* managedFunctionsWatchSpecs(candidate.resolved, flags, dependencies),
+            observation: runtime.observation,
+          } satisfies ManagedFunctionsRuntime,
+        };
+      }),
+    );
+    if (restarted._tag === "shutdown") {
+      yield* writeStoppedServingMessage();
+      return;
+    }
+    runtime = restarted.runtime;
+  }
+});
 
 export const serveFunctions = Effect.fn("functions.serve")(function* (
   flags: FunctionsServeFlags,
   dependencies: FunctionsServeDependencies,
 ) {
-  const processControl = yield* ProcessControl;
+  yield* StackApi;
   const inspectMode = yield* Effect.try({
     try: () => {
       const resolvedInspectMode = resolveFunctionsServeInspectMode(flags);
       buildFunctionsServeInspectArgs(resolvedInspectMode, flags.inspectMain);
       return resolvedInspectMode;
     },
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    catch: (cause) => functionsServeError("invalid Functions serve inspection flags", cause),
   });
-  const gracePeriod = dependencies.timers?.shutdownSignalGracePeriod ?? shutdownSignalGracePeriod;
-  const retryDelay = dependencies.timers?.dockerLogRetryDelay ?? dockerLogRetryDelay;
-
-  const loop = Effect.gen(function* () {
-    // Hoisted to the loop's lifetime (not per-race) so a signal arriving
-    // between races isn't dropped while nothing is listening for it.
-    const shutdownRequested = yield* Deferred.make<void>();
-    yield* processControl
-      .awaitSignal()
-      .pipe(
-        Effect.andThen(Deferred.succeed(shutdownRequested, void 0)),
-        Effect.forkScoped({ startImmediately: true }),
-      );
-
-    for (;;) {
-      const startOutcome = yield* withShutdownGrace(
-        Effect.raceFirst(
-          Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
-          startEdgeRuntime({
-            flags,
-            dependencies,
-            debug: dependencies.debug,
-            networkId: dependencies.networkId,
-            inspectMode,
-          }).pipe(Effect.map((started) => ({ _tag: "started" as const, started }))),
-        ),
-        shutdownRequested,
-        gracePeriod,
-        () => "shutdown" as const,
-      );
-
-      if (startOutcome === "shutdown") {
-        yield* writeStoppedServingMessage();
-        return;
-      }
-
-      const started = startOutcome.started;
-
-      const outcome = yield* withShutdownGrace(
-        Effect.raceFirst(
-          Effect.raceFirst(
-            Deferred.await(shutdownRequested).pipe(Effect.as({ _tag: "shutdown" as const })),
-            waitForRestartSignal(started.watchSpecs).pipe(Effect.as({ _tag: "restart" as const })),
-          ),
-          streamContainerLogs(started.containerId, retryDelay).pipe(
-            Effect.map((reason) => ({ _tag: "exited" as const, reason })),
-          ),
-        ),
-        // raceFirst above already interrupted the restart listener, so only a shutdown
-        // signal — not a restart — can still downgrade this failure here.
-        shutdownRequested,
-        gracePeriod,
-        () => ({ _tag: "shutdown" as const }),
-      ).pipe(
-        Effect.ensuring(
-          bestEffortRemoveContainer(started.containerId).pipe(Effect.ensuring(started.cleanup)),
-        ),
-      );
-
-      if (outcome._tag === "shutdown") {
-        yield* writeStoppedServingMessage();
-        return;
-      }
-      if (outcome._tag === "exited") {
-        yield* writeContainerEndedMessage(outcome.reason);
-        return;
-      }
-    }
-  });
-
-  yield* Effect.scoped(loop);
+  return yield* Effect.scoped(serveManagedFunctions(flags, dependencies, inspectMode));
 });

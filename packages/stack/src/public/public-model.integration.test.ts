@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Schema } from "effect";
 import { StackStatusSchema } from "./Status.ts";
+import { ServiceInstanceIdSchema } from "./ServiceInstanceId.ts";
 
 const STATUS_CAPABILITIES = [
   "database",
@@ -17,8 +18,8 @@ const STATUS_CAPABILITIES = [
 
 const STATUS_FIXTURE = {
   id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  lifecycle: "stopped",
-  desiredLifecycle: "stopped",
+  lifecycle: "running",
+  desiredLifecycle: "running",
   runtime: { kind: "native" },
   endpoints: {
     api: {
@@ -32,13 +33,26 @@ const STATUS_FIXTURE = {
     database: "17",
   },
   capabilities: STATUS_CAPABILITIES.map((name) => ({
+    id: ServiceInstanceIdSchema.make(`${name}-instance`),
     name,
     activation: "lazy",
     state: name === "rest" ? "dormant" : "disabled",
   })),
+  instances: [
+    {
+      id: "rest-instance",
+      service: "rest",
+      enabled: true,
+      intent: "started",
+      phase: "dormant",
+      activation: "lazy",
+      endpoints: [],
+    },
+  ],
   artifacts: [
     {
       workloadId: "rest:rest",
+      instanceId: "rest-instance",
       capability: "rest",
       state: "downloading",
     },
@@ -51,21 +65,26 @@ describe("public stack model", () => {
       Effect.map((status) => {
         expect(status.capabilities.map(({ name }) => name)).toEqual([...STATUS_CAPABILITIES]);
         expect(status.capabilities.find(({ name }) => name === "rest")?.state).toBe("dormant");
+        expect(status.instances).toEqual(STATUS_FIXTURE.instances);
         expect(status.artifacts).toEqual([
-          { workloadId: "rest:rest", capability: "rest", state: "downloading" },
+          {
+            workloadId: "rest:rest",
+            instanceId: "rest-instance",
+            capability: "rest",
+            state: "downloading",
+          },
         ]);
       }),
     ),
   );
 
-  it.effect("rejects status snapshots with missing capability entries", () =>
+  it.effect("decodes status snapshots with destroyed defaults omitted", () =>
     Effect.gen(function* () {
-      const exit = yield* Schema.decodeUnknownEffect(StackStatusSchema)({
+      const status = yield* Schema.decodeUnknownEffect(StackStatusSchema)({
         ...STATUS_FIXTURE,
         capabilities: STATUS_FIXTURE.capabilities.slice(1),
-      }).pipe(Effect.exit);
-
-      expect(Exit.isFailure(exit)).toBe(true);
+      });
+      expect(status.capabilities.some(({ name }) => name === "database")).toBe(false);
     }),
   );
 
@@ -79,7 +98,6 @@ describe("public stack model", () => {
             : capability,
         ),
       }).pipe(Effect.exit);
-
       expect(Exit.isFailure(exit)).toBe(true);
     }),
   );

@@ -3,9 +3,14 @@ import { Buffer } from "node:buffer";
 import { encrypt, PrivateKey } from "eciesjs";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Path, Redacted } from "effect";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
-import { compileStack } from "../../../../../../packages/stack/src/model/Compiler.ts";
+import {
+  compileStack,
+  seedServiceRegistry,
+  type CompiledStack,
+} from "../../../../../../packages/stack/src/model/Compiler.ts";
+import { createExecutionPlan } from "../../../../../../packages/stack/src/model/ExecutionPlan.ts";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { StackConfigError, loadStackConfig } from "../../../command-internal/stack-config.ts";
@@ -39,6 +44,17 @@ const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(
     Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
   );
+
+const planFor = (compiled: CompiledStack, projectRoot: string) =>
+  Effect.gen(function* () {
+    const seeded = yield* seedServiceRegistry(
+      compiled.definition,
+      { projectRoot, runtime: { kind: "native" }, path: yield* Path.Path },
+      compiled.sourceConfig,
+      compiled.secrets,
+    );
+    return yield* createExecutionPlan({ kind: "native" }, seeded.registry);
+  }).pipe(Effect.provide(BunServices.layer));
 
 const encrypted = (privateKey: string, plaintext: string): string =>
   `encrypted:${Buffer.from(
@@ -562,7 +578,12 @@ auto_expose_new_tables = true
       if (config.capabilities.storage === undefined || !("settings" in config.capabilities.storage))
         throw new Error("storage settings missing");
       expect(config.capabilities.storage.settings?.image_transformation).toEqual({ enabled: true });
-      expect(config.capabilities.database?.settings?.health_timeout).toBe("45s");
+      if (
+        config.capabilities.database === undefined ||
+        !("settings" in config.capabilities.database)
+      )
+        throw new Error("database settings missing");
+      expect(config.capabilities.database.settings?.health_timeout).toBe("45s");
       expect(config.security?.jwt?.signing).toEqual({
         kind: "jwks-file",
         path: "supabase/overridden-keys.json",
@@ -651,7 +672,12 @@ openai_api_key = "config-studio-key"
       if (config.capabilities?.studio === undefined || !("settings" in config.capabilities.studio))
         throw new Error("Studio settings missing");
       expect(config.capabilities.rest.settings?.schemas).toEqual(["public", "storage"]);
-      expect(config.capabilities.database?.version).toBe("17");
+      if (
+        config.capabilities.database === undefined ||
+        !("version" in config.capabilities.database)
+      )
+        throw new Error("database version missing");
+      expect(config.capabilities.database.version).toBe("17");
       if (
         config.capabilities.analytics === undefined ||
         !("settings" in config.capabilities.analytics)
@@ -739,10 +765,11 @@ openai_api_key = "config-studio-key"
         true,
       );
       expect(compiled.definition.capabilities.storage.activation).toBe("lazy");
-      expect(compiled.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy")).toBe(
+      const compiledPlan = yield* planFor(compiled, root);
+      expect(compiledPlan.workloads.some(({ recipeId }) => recipeId === "storage:imgproxy")).toBe(
         true,
       );
-      expect(compiled.executionPlan.workloads.some(({ id }) => id === "analytics:vector")).toBe(
+      expect(compiledPlan.workloads.some(({ recipeId }) => recipeId === "analytics:vector")).toBe(
         true,
       );
     });
@@ -793,8 +820,9 @@ enabled = false
       expect(
         enabledCompiled.definition.capabilities.storage.settings.image_transformation?.enabled,
       ).toBe(true);
+      const enabledCompiledPlan = yield* planFor(enabledCompiled, enabled);
       expect(
-        enabledCompiled.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy"),
+        enabledCompiledPlan.workloads.some(({ recipeId }) => recipeId === "storage:imgproxy"),
       ).toBe(true);
 
       const disabledConfig = yield* load(disabled);
@@ -807,8 +835,9 @@ enabled = false
       expect(
         disabledCompiled.definition.capabilities.storage.settings.image_transformation?.enabled,
       ).toBe(false);
+      const disabledCompiledPlan = yield* planFor(disabledCompiled, disabled);
       expect(
-        disabledCompiled.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy"),
+        disabledCompiledPlan.workloads.some(({ recipeId }) => recipeId === "storage:imgproxy"),
       ).toBe(false);
     });
   });

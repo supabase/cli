@@ -8,6 +8,8 @@ import { PORT_FIELD_PROTOCOL, type PortField } from "../public/Status.ts";
 
 export interface HostListener {
   readonly field: PortField;
+  /** Concrete gateway binding key; distinct instances may share a PortField projection. */
+  readonly routeKey?: string;
   readonly address: string;
   readonly port: number;
   readonly close: Effect.Effect<void>;
@@ -339,8 +341,6 @@ export const bindHostListenerWithOptions = (
     }),
   );
 };
-
-export const isHttpPortField = (field: PortField): boolean => PORT_FIELD_PROTOCOL[field] === "http";
 
 const boundAddress = (server: HttpServer | NetServer, fallback: string): string => {
   const address = server.address();

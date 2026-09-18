@@ -1,8 +1,16 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, Option, Redacted, Path, Schema } from "effect";
+import { EffectCreateServiceOptionsSchema } from "../public/Service.ts";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
-import { canonicalize, compileStack, rebuildExecutionPlan, sameDefinition } from "./Compiler.ts";
+import {
+  canonical,
+  compileStack,
+  createExecutionPlan,
+  fingerprintCreationInputs,
+  seedServiceRegistry,
+  sameDefinition,
+} from "./Compiler.ts";
 import { resolveThirdPartyIssuer } from "./capabilities/auth-third-party.ts";
 import { DEFAULT_DATABASE_HEALTH_TIMEOUT } from "./capabilities/database.ts";
 import { catalogEntryFor } from "./WorkloadCatalog.ts";
@@ -14,14 +22,68 @@ const compile = (
   runtime: Parameters<typeof compileStack>[0]["runtime"] = { kind: "native" },
   previous?: Parameters<typeof compileStack>[1],
 ) =>
-  compileStack({ projectRoot: "/tmp/supabase-project", runtime, config }, previous).pipe(
-    Effect.provide(layer),
-  );
+  Effect.gen(function* () {
+    const context = { projectRoot: "/tmp/supabase-project", runtime, path: yield* Path.Path };
+    const compiled = yield* compileStack({ ...context, config }, previous);
+    const seeded = yield* seedServiceRegistry(
+      compiled.definition,
+      context,
+      config ?? {},
+      compiled.secrets,
+    );
+    const executionPlan = yield* createExecutionPlan(runtime, seeded.registry);
+    return { ...compiled, registry: seeded.registry, executionPlan };
+  }).pipe(Effect.provide(layer));
 
 const failureOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
 describe("closed capability compiler", () => {
+  it.live(
+    "keeps creation proof stable across the RPC codec while distinguishing secret inputs",
+    () =>
+      Effect.gen(function* () {
+        const request = {
+          service: "database" as const,
+          name: "retained-client-name",
+          config: {
+            password: Redacted.make("requested-password"),
+            endpoints: { sql: { port: "auto" as const } },
+          },
+        };
+        const codec = Schema.fromJsonString(Schema.toCodecJson(EffectCreateServiceOptionsSchema));
+        const wire = yield* Schema.encodeEffect(codec)(request);
+        const received = yield* Schema.decodeEffect(codec)(wire);
+        expect(yield* fingerprintCreationInputs(request)).toBe(
+          yield* fingerprintCreationInputs(received),
+        );
+        expect(
+          yield* fingerprintCreationInputs({
+            ...request,
+            config: { ...request.config, password: Redacted.make("different-password") },
+          }),
+        ).not.toBe(yield* fingerprintCreationInputs(request));
+      }).pipe(Effect.provide(layer)),
+  );
+
+  it.live("materializes shared API credentials without Auth or database workloads", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({
+        capabilities: {
+          database: { enabled: false },
+          auth: { enabled: false },
+          rest: { enabled: false },
+          functions: { enabled: true },
+        },
+      });
+      const slots = new Set(result.secrets.map((entry) => entry.slot));
+      expect(slots.has("secret:auth.settings.publishable_key")).toBe(true);
+      expect(slots.has("secret:auth.settings.secret_key")).toBe(true);
+      expect(slots.has("secret:auth.settings.anon_key")).toBe(true);
+      expect(slots.has("secret:auth.settings.service_role_key")).toBe(true);
+    }),
+  );
+
   it.live("compiles every optional exclusion and closes Studio dependents", () =>
     Effect.gen(function* () {
       for (const name of [
@@ -56,11 +118,13 @@ describe("closed capability compiler", () => {
       });
       expect(analyticsOff.definition.capabilities.studio.enabled).toBe(true);
       expect(analyticsOff.definition.capabilities.analytics.enabled).toBe(false);
-      expect(analyticsOff.executionPlan.workloads.some(({ id }) => id === "studio:studio")).toBe(
-        true,
-      );
       expect(
-        analyticsOff.executionPlan.workloads.some(({ id }) => id === "analytics:analytics"),
+        analyticsOff.executionPlan.workloads.some(({ recipeId }) => recipeId === "studio:studio"),
+      ).toBe(true);
+      expect(
+        analyticsOff.executionPlan.workloads.some(
+          ({ recipeId }) => recipeId === "analytics:analytics",
+        ),
       ).toBe(false);
     }),
   );
@@ -110,7 +174,14 @@ describe("closed capability compiler", () => {
     Effect.gen(function* () {
       const result = yield* compile({});
       expect(result.definition.preparation).toBe("background");
-      expect(result.executionPlan.activation).toEqual({
+      expect(
+        Object.fromEntries(
+          result.registry.instances.map((instance) => [
+            instance.service,
+            result.executionPlan.activation[instance.id],
+          ]),
+        ),
+      ).toEqual({
         database: "eager",
         rest: "lazy",
         auth: "lazy",
@@ -242,15 +313,14 @@ describe("closed capability compiler", () => {
       expect(result.definition.capabilities.auth.settings).toMatchObject({
         site_url: "https://example.test",
       });
-      expect(canonicalize(result.definition)).not.toContain("secret-value");
-      expect(canonicalize(result.executionPlan)).not.toContain("secret-value");
+      expect(canonical(result.definition)).not.toContain("secret-value");
+      expect(canonical(result.executionPlan)).not.toContain("secret-value");
       const supplied = result.secrets.find(
         (entry) => entry.slot === "secret:auth.settings.secret_key",
       );
       expect(supplied?.policy).toBe("managed");
       expect(Redacted.isRedacted(supplied?.value)).toBe(true);
       for (const slot of [
-        "secret:database.internal.password",
         "secret:auth.settings.publishable_key",
         "secret:auth.settings.jwt_secret",
         "secret:auth.settings.anon_key",
@@ -258,7 +328,7 @@ describe("closed capability compiler", () => {
       ]) {
         expect(result.secrets.find((entry) => entry.slot === slot)?.policy).toBe("managed");
       }
-      expect(canonicalize(result.executionPlan)).not.toContain("secret-value");
+      expect(canonical(result.executionPlan)).not.toContain("secret-value");
     }),
   );
 
@@ -577,10 +647,11 @@ describe("closed capability compiler", () => {
           },
         },
       }).pipe(Effect.exit);
-      expect(failureOf(invalidEncryption)).toBeInstanceOf(InvalidStackConfigError);
-      expect(failureOf(invalidEncryption)?.setting).toBe(
-        "capabilities.pooler.settings.encryption_key",
-      );
+      const error = failureOf(invalidEncryption);
+      expect(error).toBeInstanceOf(InvalidStackConfigError);
+      if (!(error instanceof InvalidStackConfigError))
+        throw new Error("Expected invalid encryption key");
+      expect(error.setting).toBe("capabilities.pooler.settings.encryption_key");
 
       const invalidSecretBase = yield* compile({
         capabilities: {
@@ -603,27 +674,6 @@ describe("closed capability compiler", () => {
         edge_runtime: { secrets: {} },
         functions: {},
       });
-    }),
-  );
-
-  it.live("persists and reuses the managed database password slot", () =>
-    Effect.gen(function* () {
-      const first = yield* compile({});
-      const initial = first.secrets.filter(
-        (entry) => entry.slot === "secret:database.internal.password",
-      );
-      expect(initial).toHaveLength(1);
-      const second = yield* compile(
-        {},
-        { kind: "native" },
-        {
-          definition: first.definition,
-        },
-      );
-      expect(
-        second.secrets.filter((entry) => entry.slot === "secret:database.internal.password"),
-      ).toHaveLength(1);
-      expect(second.secrets[0]?.slot).toBe(initial[0]?.slot);
     }),
   );
 
@@ -710,7 +760,7 @@ describe("closed capability compiler", () => {
       const result = yield* compile({});
       const database = result.executionPlan.workloads.filter((w) => w.capability === "database");
       expect(database).toHaveLength(1);
-      expect(database[0]?.id).toBe("database:database");
+      expect(database[0]?.recipeId).toBe("database:database");
       expect(database[0]?.bootstrap).toBe("database");
     }),
   );
@@ -719,15 +769,6 @@ describe("closed capability compiler", () => {
     Effect.gen(function* () {
       const result = yield* compile({
         capabilities: { functions: { settings: { functions_root: "../outside" } } },
-      }).pipe(Effect.exit);
-      expect(failureOf(result)).toBeInstanceOf(InvalidStackConfigError);
-    }),
-  );
-
-  it.live("reports dependency closure errors", () =>
-    Effect.gen(function* () {
-      const result = yield* compile({
-        capabilities: { rest: { enabled: false }, studio: { enabled: true } },
       }).pipe(Effect.exit);
       expect(failureOf(result)).toBeInstanceOf(InvalidStackConfigError);
     }),
@@ -742,7 +783,7 @@ describe("closed capability compiler", () => {
         const result = yield* compile({ capabilities: { database: { version: major } } });
         expect(result.definition.capabilities.database.version).toBe(release);
         expect(
-          result.executionPlan.workloads.find((w) => w.id === "database:database")?.artifacts,
+          result.executionPlan.workloads.find((w) => w.recipeId === "database:database")?.artifacts,
         ).toEqual({
           native: { kind: "native", release },
           container: {
@@ -850,20 +891,16 @@ describe("closed capability compiler", () => {
     }),
   );
 
-  it.live("validates persisted capability closure before rebuilding its plan", () =>
+  it.live("rejects a plan whose concrete dependency registration is missing", () =>
     Effect.gen(function* () {
       const first = yield* compile({});
-      const persisted = {
-        ...first.definition,
-        capabilities: {
-          ...first.definition.capabilities,
-          rest: { ...first.definition.capabilities.rest, enabled: false },
+      const result = yield* createExecutionPlan(
+        { kind: "native" },
+        {
+          ...first.registry,
+          instances: first.registry.instances.filter((instance) => instance.service !== "rest"),
         },
-      };
-      const result = yield* rebuildExecutionPlan({ kind: "native" }, persisted).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      ).pipe(Effect.exit);
       expect(failureOf(result)).toBeInstanceOf(InvalidStackConfigError);
     }),
   );
@@ -888,9 +925,6 @@ describe("closed capability compiler", () => {
         hello: {
           enabled: true,
           verify_jwt: false,
-          import_map: "",
-          entrypoint: "",
-          static_files: [],
           env: {},
         },
       });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { Effect, Exit, Layer, Option, Stdio } from "effect";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
@@ -518,6 +518,104 @@ describe("functions deploy", () => {
       expect(multiparts).toHaveLength(0);
     }).pipe(
       Effect.provide(layer),
+      Effect.ensuring(
+        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+      ),
+    );
+  });
+
+  it.live("does not upload a symlinked file outside an external import-map root", () => {
+    const repoRoot = tempRoot.current;
+    const workdir = join(repoRoot, "app");
+    const fixtureName = basename(repoRoot);
+    const externalMaps = join(repoRoot, "..", `${fixtureName}-external-maps`);
+    const outsideFile = join(repoRoot, "..", `${fixtureName}-external-secret.ts`);
+    const multipartFileNames: string[] = [];
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.body._tag === "FormData") {
+          multipartFileNames.push(
+            ...request.body.formData
+              .getAll("file")
+              .flatMap((part) => (part instanceof File ? [part.name] : [])),
+          );
+        }
+        if (request.method === "GET") return Effect.succeed(jsonResponse(request, 200, []));
+        return Effect.succeed(
+          jsonResponse(request, 201, {
+            id: "function-id",
+            slug: "hello-world",
+            name: "hello-world",
+            status: "ACTIVE",
+            version: 2,
+            created_at: 1_687_423_025_152,
+            updated_at: 1_687_423_025_152,
+            verify_jwt: true,
+            import_map: true,
+            entrypoint_path: "supabase/functions/hello-world/index.ts",
+            import_map_path: "supabase/functions/hello-world/maps/deno.json",
+          }),
+        );
+      },
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir }),
+        runtimeInfo: mockRuntimeInfo({ cwd: workdir }),
+      }),
+      Layer.succeed(YesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
+      yield* Effect.tryPromise(() =>
+        writeCliConfig(
+          workdir,
+          [
+            'project_id = "test-project"',
+            "[functions.hello-world]",
+            'import_map = "./functions/hello-world/maps/deno.json"',
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.tryPromise(() =>
+        writeLocalFunction(
+          workdir,
+          "hello-world",
+          'import "@vendor/inside.ts"\nDeno.serve(() => new Response("ok"))\n',
+        ),
+      );
+      yield* Effect.tryPromise(() => mkdir(externalMaps, { recursive: true }));
+      yield* Effect.tryPromise(() =>
+        writeFile(join(externalMaps, "deno.json"), '{"imports":{"@vendor/":"./"}}'),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(join(externalMaps, "inside.ts"), "export const inside = true\n"),
+      );
+      yield* Effect.tryPromise(() => writeFile(outsideFile, "export const secret = true\n"));
+      yield* Effect.tryPromise(() => symlink(outsideFile, join(externalMaps, "leak.ts")));
+      yield* Effect.tryPromise(() =>
+        symlink(externalMaps, join(workdir, "supabase", "functions", "hello-world", "maps"), "dir"),
+      );
+
+      yield* functionsDeploy(baseFlags);
+
+      expect(multipartFileNames).toContain("supabase/functions/hello-world/maps/inside.ts");
+      expect(multipartFileNames.some((name) => name.includes("leak.ts"))).toBe(false);
+      expect(stripControlSequences(out.stderrText)).toContain(
+        "WARN: Skipping import path outside source root:",
+      );
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.tryPromise(() => rm(externalMaps, { recursive: true, force: true }))),
+      Effect.ensuring(Effect.tryPromise(() => rm(outsideFile, { force: true }))),
       Effect.ensuring(
         Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
       ),

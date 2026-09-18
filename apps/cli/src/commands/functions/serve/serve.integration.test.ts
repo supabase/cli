@@ -1,197 +1,41 @@
-import { FetchHttpClient } from "effect/unstable/http";
-import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
-import {
-  Cause,
-  Deferred,
-  Duration,
-  Effect,
-  Exit,
-  Fiber,
-  Layer,
-  Option,
-  PubSub,
-  Queue,
-  Sink,
-  Stream,
-} from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { beforeEach, vi } from "vitest";
+import { Deferred, Effect, Fiber, Layer, Option, Queue, Redacted, Stream } from "effect";
+import { TestClock } from "effect/testing";
 
 import {
   buildTestRuntime,
-  mockCommandSettings,
   mockCommandPlatformApiService,
+  mockCommandSettings,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { toDockerPath } from "../../../shared/functions/functions-docker.ts";
-import {
-  mockOutput,
-  mockProcessControl,
-  mockRuntimeInfo,
-} from "../../../../tests/helpers/mocks.ts";
-import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
 import { DebugFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { FileWatcher, type FileWatchEvent } from "../../../shared/runtime/file-watcher.service.ts";
 import {
   ProcessControl,
   type CliProcessSignal,
 } from "../../../shared/runtime/process-control.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
-import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
-import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import {
-  DockerLogsStreamError,
-  EdgeRuntimeContainerCrashedError,
-  EdgeRuntimeLogStreamLostError,
-  ServeLocalDbInspectError,
-  ServeLocalDbNotRunningError,
-} from "../../../shared/functions/serve.errors.ts";
-import {
-  actionability,
-  ErrorActionabilityId,
-} from "../../../shared/telemetry/error-actionability.ts";
-import {
-  serveFunctions,
-  type FunctionsServeFlags,
-  type FunctionsServeTimers,
-} from "../../../shared/functions/serve.ts";
+import { serveFunctions, type FunctionsServeFlags } from "../../../shared/functions/serve.ts";
+import type {
+  EffectServiceConfig,
+  EffectStack,
+  ServiceInstanceId,
+  StackDescriptor,
+  StackConfig,
+  StackLogEntry,
+  ServiceStatus,
+} from "@supabase/stack/effect";
+import { ServiceInstanceIdSchema, StackIdSchema } from "@supabase/stack/effect";
 
-const deployMockState = vi.hoisted(() => ({
-  runCalls: [] as Array<{
-    command: string;
-    args: ReadonlyArray<string>;
-    options: unknown;
-  }>,
-  networkCalls: [] as Array<{
-    networkMode: string;
-    projectId: string;
-  }>,
-  volumeCalls: [] as Array<{
-    volumeName: string;
-    projectId: string;
-  }>,
-  runHandler: undefined as
-    | undefined
-    | ((
-        command: string,
-        args: ReadonlyArray<string>,
-        options: unknown,
-      ) =>
-        | {
-            exitCode: number;
-            stdout: string;
-            stderr: string;
-          }
-        // Never resolves — lets a test fork+interrupt while this specific call is in flight,
-        // matching Effect's own canonical "forever pending, interruptible" primitive.
-        | { pending: true }
-        // Fails the effect itself — models `spawnContainerCli` failing to spawn
-        // any container runtime (neither docker nor podman on PATH), as opposed
-        // to a spawned process exiting non-zero.
-        | { failure: Error }),
-  reset() {
-    this.runCalls = [];
-    this.networkCalls = [];
-    this.volumeCalls = [];
-    this.runHandler = undefined;
-  },
-}));
-
-vi.mock("../../../shared/functions/functions-docker.ts", async () => {
-  const actual = await vi.importActual<
-    typeof import("../../../shared/functions/functions-docker.ts")
-  >("../../../shared/functions/functions-docker.ts");
-  const { Effect } = await import("effect");
-  const { getRegistryImageUrl } = await import("../../../command-internal/docker-registry.ts");
-
-  return {
-    ...actual,
-    ensureDockerNetwork: (networkMode: string, projectId: string) =>
-      Effect.sync(() => {
-        deployMockState.networkCalls.push({ networkMode, projectId });
-      }),
-    ensureDockerNamedVolume: (volumeName: string, projectId: string) =>
-      Effect.sync(() => {
-        deployMockState.volumeCalls.push({ volumeName, projectId });
-      }),
-    // Stubbed to the pure registry-mapping step, skipping the real
-    // cache-check/pull (`docker image inspect`/`pull` via the real
-    // `ChildProcessSpawner`, not this file's mocked `runChildProcess`),
-    // which would otherwise insert real 4s/8s retry backoffs into every
-    // test that reaches container start. See `functions-docker.unit.test.ts`
-    // for that coverage.
-    resolveFunctionsDockerImage: (
-      image: string,
-      projectEnvValues?: Readonly<Record<string, string>>,
-    ) => getRegistryImageUrl(image, projectEnvValues),
-    runChildProcess: (command: string, args: ReadonlyArray<string>, options?: unknown) =>
-      Effect.suspend(() => {
-        const envFile = args.flatMap((value, index) =>
-          args[index - 1] === "--env-file" ? [value] : [],
-        )[0];
-        const multilineEnvDir = args
-          .flatMap((value, index) => (args[index - 1] === "-v" ? [value] : []))
-          .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro,Z"))
-          ?.slice(0, -":/root/.supabase/multiline-env:ro,Z".length);
-        const enrichedOptions =
-          envFile === undefined && multilineEnvDir === undefined
-            ? options
-            : {
-                ...(typeof options === "object" && options !== null ? options : {}),
-                ...(envFile === undefined
-                  ? {}
-                  : { envFileContents: readFileSync(envFile, "utf8") }),
-                ...(multilineEnvDir === undefined
-                  ? {}
-                  : {
-                      multilineEnvScript: readFileSync(
-                        join(multilineEnvDir, "multiline-env.sh"),
-                        "utf8",
-                      ),
-                      multilineEnvFiles: Object.fromEntries(
-                        readdirSync(join(multilineEnvDir, "values"))
-                          .filter((name) => name.startsWith("env-"))
-                          .map((name) => [
-                            name,
-                            readFileSync(join(multilineEnvDir, "values", name), "utf8"),
-                          ]),
-                      ),
-                    }),
-              };
-        deployMockState.runCalls.push({ command, args: [...args], options: enrichedOptions });
-        const result = deployMockState.runHandler?.(command, args, options) ?? {
-          exitCode: 0,
-          stdout: "",
-          stderr: "",
-        };
-        if ("pending" in result) return Effect.never;
-        if ("failure" in result) return Effect.fail(result.failure);
-        return Effect.succeed(result);
-      }),
-  };
-});
-
-const tempRoot = useTempWorkdir("supabase-functions-serve-int-");
-
-// Root bypasses POSIX permission bits, so chmod-based failure tests can't run there.
-const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
-
-const { functionsServe } = await import("./serve.handler.ts");
-
-interface LogProcessBehavior {
-  readonly exitCode?: number;
-  readonly stdout?: string;
-  readonly stderr?: string;
-  readonly pending?: boolean;
-  readonly onSpawn?: () => void;
-}
+const tempRoot = useTempWorkdir("supabase-functions-serve-managed-");
 
 function baseFlags(overrides: Partial<FunctionsServeFlags> = {}): FunctionsServeFlags {
   return {
@@ -206,59 +50,192 @@ function baseFlags(overrides: Partial<FunctionsServeFlags> = {}): FunctionsServe
   };
 }
 
-function extractFlagValues(args: ReadonlyArray<string>, flag: string) {
-  return args.flatMap((value, index) => (args[index - 1] === flag ? [value] : []));
+async function writeProjectConfig(content = 'project_id = "test-project"\n') {
+  await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
+  await writeFile(join(tempRoot.current, "supabase", "config.toml"), content);
 }
 
-async function extractDockerEnvEntries(call: { args: ReadonlyArray<string>; options: unknown }) {
-  const values = extractFlagValues(call.args, "-e");
-  if (values.some((value) => value.includes("="))) {
-    return values;
-  }
-
-  const envFile = extractFlagValues(call.args, "--env-file")[0];
-  if (envFile !== undefined) {
-    const options =
-      typeof call.options === "object" && call.options !== null ? call.options : undefined;
-    const envFileContents =
-      options !== undefined && "envFileContents" in options
-        ? (options.envFileContents as string | undefined)
-        : undefined;
-    const contents = envFileContents ?? (await readFile(envFile, "utf8"));
-    return contents
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-  }
-
-  const options =
-    typeof call.options === "object" && call.options !== null ? call.options : undefined;
-  const env =
-    options !== undefined && "env" in options
-      ? (options.env as Readonly<Record<string, string>> | undefined)
-      : undefined;
-  if (env === undefined) {
-    return values;
-  }
-  return values.map((name) => `${name}=${env[name] ?? ""}`);
+async function writeFunction(slug: string, file = "index.ts", content = "export default {}\n") {
+  const path = join(tempRoot.current, "supabase", "functions", slug, file);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, content);
 }
 
-function waitFor(condition: () => boolean, message: string) {
-  return Effect.gen(function* () {
-    const deadline = Date.now() + 3_000;
-    while (!condition()) {
-      if (Date.now() >= deadline) {
-        return yield* Effect.fail(new Error(message));
-      }
-      yield* Effect.sleep(Duration.millis(20));
-    }
-  });
+function serviceStatus(
+  id: ServiceInstanceId,
+  phase: "stopped" | "dormant" | "starting" | "ready" | "failed" = "stopped",
+) {
+  return {
+    id,
+    service: "functions" as const,
+    name: undefined,
+    enabled: true,
+    intent:
+      phase === "stopped" || phase === "dormant" ? ("stopped" as const) : ("started" as const),
+    phase,
+    activation: "eager" as const,
+    endpoints: [],
+  };
 }
 
-function mockQueuedProcessControl() {
+function makeStack(options: {
+  fingerprint: string;
+  preparedFingerprint?: string;
+  prepare?: "normal" | "blocked";
+  restart?: "normal" | "blocked";
+  logStream?: Stream.Stream<StackLogEntry>;
+  logQueue?: Queue.Queue<StackLogEntry>;
+  statusQueue?: Queue.Queue<ServiceStatus>;
+}) {
+  const id = ServiceInstanceIdSchema.make("functions");
+  const stackId = StackIdSchema.make("a".repeat(64));
+  let phase: "stopped" | "starting" | "ready" = "stopped";
+  const starts: number[] = [];
+  const restarts: Array<EffectServiceConfig<"functions"> | undefined> = [];
+  const preparedConfigs: Array<StackConfig | undefined> = [];
+  const prepareStarted = Effect.runSync(Deferred.make<void>());
+  const prepareCompleted = Effect.runSync(Deferred.make<void>());
+  const started = Effect.runSync(Deferred.make<void>());
+  const restarted = Effect.runSync(Deferred.make<void>());
+  const restartStarted = Effect.runSync(Deferred.make<void>());
+  const subscriptions = { logs: 0, status: 0 };
+  const startsBeforeObservation: boolean[] = [];
+  const restartsWithObservation: boolean[] = [];
+
+  const descriptor = {
+    id,
+    service: "functions" as const,
+    name: undefined,
+    enabled: true,
+    config: {
+      enabled: true,
+      activation: "eager" as const,
+      idleTimeoutSeconds: false as const,
+      version: "1",
+      settings: {},
+    },
+    dependencies: {},
+    snapshotSupport: "unsupported" as const,
+    endpoints: {},
+    effectiveConfigFingerprint: options.fingerprint,
+    data: { origin: "absent" as const },
+  };
+
+  const service = {
+    id,
+    service: "functions" as const,
+    name: undefined,
+    describe: Effect.succeed(descriptor),
+    status: Effect.sync(() => serviceStatus(id, phase)),
+    credentials: Effect.succeed({
+      publishableKey: "sb_publishable_test",
+      secretKey: "sb_secret_test",
+      anonJwt: "anon-test",
+      serviceRoleJwt: "service-role-test",
+    }),
+    prepare: Effect.succeed({ instances: [] }),
+    start: Effect.gen(function* () {
+      startsBeforeObservation.push(subscriptions.logs > 0 && subscriptions.status > 0);
+      starts.push(starts.length + 1);
+      phase = "ready";
+      yield* Deferred.succeed(started, undefined);
+      return serviceStatus(id, phase);
+    }),
+    sleep: Effect.succeed(serviceStatus(id, "stopped")),
+    stop: Effect.sync(() => {
+      phase = "stopped";
+      return serviceStatus(id, phase);
+    }),
+    restart: (input?: { readonly config?: EffectServiceConfig<"functions"> }) =>
+      Effect.gen(function* () {
+        restartsWithObservation.push(subscriptions.logs > 0 && subscriptions.status > 0);
+        restarts.push(input?.config);
+        phase = "ready";
+        yield* Deferred.succeed(restartStarted, undefined);
+        if (options.restart === "blocked") return yield* Effect.never;
+        yield* Deferred.succeed(restarted, undefined);
+        return serviceStatus(id, phase);
+      }),
+    destroy: Effect.void,
+    exportSnapshot: () => Effect.die("unexpected snapshot export"),
+    restoreSnapshot: () => Effect.die("unexpected snapshot restore"),
+    logs: () => Effect.die("unexpected logs query"),
+    followLogs: () => {
+      subscriptions.logs += 1;
+      return (
+        options.logStream ??
+        (options.logQueue === undefined ? Stream.never : Stream.fromQueue(options.logQueue))
+      );
+    },
+    followStatus: Stream.unwrap(
+      Effect.sync(() => {
+        subscriptions.status += 1;
+        return options.statusQueue === undefined
+          ? Stream.never
+          : Stream.fromQueue(options.statusQueue);
+      }),
+    ),
+  };
+
+  const stack: EffectStack = {
+    id: stackId,
+    services: {
+      get: () => Effect.succeed(service),
+      list: Effect.succeed([descriptor]),
+      create: () => Effect.die("unexpected service create"),
+    },
+    prepare: (input?: {
+      readonly services?: ReadonlyArray<string>;
+      readonly config?: StackConfig;
+    }) =>
+      Effect.gen(function* () {
+        preparedConfigs.push(input?.config);
+        yield* Deferred.succeed(prepareStarted, undefined);
+        if (options.prepare === "blocked") return yield* Effect.never;
+        yield* Deferred.succeed(prepareCompleted, undefined);
+        return {
+          instances: [
+            {
+              id,
+              service: "functions" as const,
+              artifacts: [],
+              effectiveConfigFingerprint: options.preparedFingerprint ?? options.fingerprint,
+            },
+          ],
+          capabilities: [],
+        };
+      }),
+    status: Effect.die("unexpected stack status"),
+    followStatus: Stream.never,
+    credentials: Effect.die("unexpected stack credentials"),
+    start: () => Effect.die("unexpected stack start"),
+    sleep: () => Effect.die("unexpected stack sleep"),
+    stop: () => Effect.die("unexpected stack stop"),
+    restart: () => Effect.die("unexpected stack restart"),
+    destroy: () => Effect.die("unexpected stack destroy"),
+    logs: () => Effect.die("unexpected stack logs"),
+    followLogs: () => Stream.never,
+  };
+
+  return {
+    stack,
+    service,
+    starts,
+    restarts,
+    preparedConfigs,
+    prepareStarted,
+    prepareCompleted,
+    started,
+    restarted,
+    restartStarted,
+    subscriptions,
+    startsBeforeObservation,
+    restartsWithObservation,
+  };
+}
+
+function processControl() {
   const signals = Effect.runSync(Queue.unbounded<CliProcessSignal>());
-  let exitCode: number | undefined;
-
   return {
     layer: Layer.succeed(
       ProcessControl,
@@ -266,4000 +243,362 @@ function mockQueuedProcessControl() {
         awaitSignal: () => Queue.take(signals),
         awaitShutdown: Effect.never,
         holdSignals: () => Effect.void,
-        exit: (code: number) =>
-          Effect.gen(function* () {
-            exitCode = code;
-            return yield* Effect.never;
-          }),
-        setExitCode: (code: number) =>
-          Effect.sync(() => {
-            exitCode = code;
-          }),
-        getExitCode: Effect.sync(() => exitCode),
+        exit: () => Effect.never,
+        setExitCode: () => Effect.void,
+        getExitCode: Effect.succeed(undefined),
       }),
     ),
-    signal(signal: CliProcessSignal = "SIGINT") {
-      Effect.runSync(Queue.offer(signals, signal));
-    },
+    signal: () => Effect.runSync(Queue.offer(signals, "SIGINT")),
   };
 }
 
-function mockFileWatcher(expectedPaths: ReadonlyArray<string> = []) {
-  const pubsub = Effect.runSync(PubSub.unbounded<ReadonlyArray<FileWatchEvent>>({ replay: 8 }));
-  const expectedWatch = Effect.runSync(Deferred.make<void>());
-  const watchCalls: Array<{
-    path: string;
-    ignore?: ReadonlyArray<string>;
-    recursive?: boolean;
-  }> = [];
-
+function fileWatcher() {
+  const events = Effect.runSync(Queue.unbounded<ReadonlyArray<FileWatchEvent>>());
+  const watched = Effect.runSync(Deferred.make<void>());
+  const paths: string[] = [];
   return {
     layer: Layer.succeed(
       FileWatcher,
       FileWatcher.of({
-        watch: (path, options) => {
-          watchCalls.push({
-            path,
-            ignore: options?.ignore,
-            recursive: options?.recursive,
-          });
-          if (
-            expectedPaths.every((expectedPath) =>
-              watchCalls.some((call) => call.path === expectedPath),
-            )
-          ) {
-            Effect.runSync(Deferred.succeed(expectedWatch, undefined));
-          }
-          return Stream.fromPubSub(pubsub);
+        watch: (path) => {
+          paths.push(path);
+          Effect.runSync(Deferred.succeed(watched, undefined));
+          return Stream.fromQueue(events);
         },
       }),
     ),
-    emit(events: ReadonlyArray<FileWatchEvent>) {
-      PubSub.publishUnsafe(pubsub, events);
-    },
-    get watchCalls() {
-      return watchCalls;
-    },
-    awaitExpectedWatch: Deferred.await(expectedWatch),
+    paths,
+    watched,
+    emit: (event: FileWatchEvent) => Effect.runSync(Queue.offer(events, [event])),
   };
 }
 
-function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
-  const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
-  let index = 0;
-
-  return {
-    layer: Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make((command) =>
-        Effect.sync(() => {
-          if (command._tag !== "StandardCommand") {
-            throw new Error(`unexpected child process kind: ${command._tag}`);
-          }
-
-          const record = {
-            command: command.command,
-            args: [...command.args],
-          };
-          spawned.push(record);
-          const behavior = behaviors[Math.min(index, behaviors.length - 1)] ?? {};
-          index += 1;
-          behavior.onSpawn?.();
-
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(1_000 + spawned.length),
-            exitCode:
-              behavior.pending === true
-                ? Effect.never
-                : Effect.succeed(ChildProcessSpawner.ExitCode(behavior.exitCode ?? 0)),
-            isRunning: Effect.succeed(behavior.pending === true),
-            kill: () => Effect.void,
-            unref: Effect.succeed(Effect.void),
-            stdin: Sink.drain,
-            stdout:
-              behavior.stdout === undefined
-                ? Stream.empty
-                : Stream.make(new TextEncoder().encode(behavior.stdout)),
-            stderr:
-              behavior.stderr === undefined
-                ? Stream.empty
-                : Stream.make(new TextEncoder().encode(behavior.stderr)),
-            all: Stream.empty,
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          });
-        }),
-      ),
-    ),
-    get spawned() {
-      return spawned;
-    },
-  };
-}
-
-interface SetupOptions {
-  readonly fetch?: typeof globalThis.fetch;
-  readonly debug?: boolean;
-  readonly workdir?: string;
-  readonly networkId?: Option.Option<string>;
-  readonly projectId?: Option.Option<string>;
-  readonly processControl?:
-    | ReturnType<typeof mockProcessControl>
-    | ReturnType<typeof mockQueuedProcessControl>;
-  readonly fileWatcher?: ReturnType<typeof mockFileWatcher>;
-  readonly childSpawner?: ReturnType<typeof mockDockerLogSpawner>;
-}
-
-function setupServe(options: SetupOptions = {}) {
-  const workdir = options.workdir ?? tempRoot.current;
+function setup(
+  stackState: ReturnType<typeof makeStack>,
+  control: ReturnType<typeof processControl>,
+  watcher = fileWatcher(),
+  existingStack = true,
+) {
   const out = mockOutput({ format: "text", interactive: false });
   const telemetry = mockTelemetryStateTracked();
-  const cliSettings = mockCommandSettings({
-    workdir,
-    projectId: options.projectId ?? Option.none(),
-  });
+  const settings = mockCommandSettings({ workdir: tempRoot.current });
   const api = mockCommandPlatformApiService({ v1: {} });
-  const processControl = options.processControl ?? mockProcessControl();
-  const fileWatcher = options.fileWatcher ?? mockFileWatcher();
-  const childSpawner = options.childSpawner ?? mockDockerLogSpawner([{ exitCode: 1 }]);
-
+  const descriptor: StackDescriptor = {
+    id: stackState.stack.id,
+    projectRoot: tempRoot.current,
+    name: "test",
+    branchContext: "main",
+    runtime: { kind: "native" },
+    desiredLifecycle: "running",
+  };
+  const stackApi = Layer.succeed(
+    StackApi,
+    StackApi.of({
+      findStack: () => Effect.succeed(existingStack ? Option.some(descriptor) : Option.none()),
+      openStack: () => Effect.succeed(stackState.stack),
+      createStack: () => Effect.succeed(stackState.stack),
+      inspectStack: () => Effect.die("unexpected stack inspect"),
+      discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
+    }),
+  );
   const layer = Layer.mergeAll(
     buildTestRuntime({
       out,
-      api: {
-        ...api,
-        ...(options.fetch === undefined
-          ? {}
-          : {
-              httpClientLayer: FetchHttpClient.layer.pipe(
-                Layer.provide(Layer.succeed(FetchHttpClient.Fetch, options.fetch)),
-              ),
-            }),
-      },
-      cliSettings,
+      api,
+      cliSettings: settings,
       telemetry: telemetry.layer,
       runtimeInfo: mockRuntimeInfo({
-        cwd: workdir,
-        homeDir: workdir,
+        cwd: tempRoot.current,
+        homeDir: tempRoot.current,
         platform: "linux",
       }),
-      processControl,
+      processControl: control,
     }),
-    fileWatcher.layer,
-    childSpawner.layer,
-    Layer.succeed(DebugFlag, options.debug ?? false),
-    Layer.succeed(NetworkIdFlag, options.networkId ?? Option.none()),
+    stackApi,
+    watcher.layer,
+    Layer.succeed(DebugFlag, false),
+    Layer.succeed(NetworkIdFlag, Option.none()),
   );
-
-  return { layer, out, telemetry, processControl, fileWatcher, childSpawner };
+  return { layer, out, watcher };
 }
 
-/**
- * Mirrors `serve.handler.ts`'s wiring but calls `serveFunctions` directly so a test can override
- * its shutdown-grace/log-retry timers, which the handler's own signature doesn't expose.
- */
-function serveWithTimers(flags: FunctionsServeFlags, timers: FunctionsServeTimers) {
+function serve(flags: FunctionsServeFlags) {
   return Effect.gen(function* () {
-    const cliSettings = yield* CommandSettings;
-    const runtimeInfo = yield* RuntimeInfo;
-    const telemetryState = yield* TelemetryState;
-    const debug = yield* DebugFlag;
-    const networkId = yield* NetworkIdFlag;
-
+    const settings = yield* CommandSettings;
+    const runtime = yield* RuntimeInfo;
     yield* serveFunctions(flags, {
-      projectRoot: cliSettings.workdir,
-      supabaseDir: join(cliSettings.workdir, "supabase"),
-      flagCwd: runtimeInfo.cwd,
-      platform: runtimeInfo.platform,
-      debug,
-      networkId,
-      projectIdOverride: cliSettings.projectId,
+      projectRoot: settings.workdir,
+      supabaseDir: join(settings.workdir, "supabase"),
+      flagCwd: runtime.cwd,
+      platform: runtime.platform,
+      debug: false,
+      networkId: Option.none(),
+      projectIdOverride: settings.projectId,
       goViperCompat: true,
       goConfigCompat: functionsGoConfigCompat,
-      timers,
-    }).pipe(Effect.ensuring(telemetryState.flush));
+    });
   });
 }
 
-async function writeCliConfig(content: string) {
-  await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
-  await writeFile(join(tempRoot.current, "supabase", "config.toml"), content);
-}
-
-async function writeFunctionFile(slug: string, relativePath: string, contents: string) {
-  const pathname = join(tempRoot.current, "supabase", "functions", slug, relativePath);
-  await mkdir(dirname(pathname), { recursive: true });
-  await writeFile(pathname, contents);
-}
-
-async function writeProjectFile(relativePath: string, contents: string) {
-  const pathname = join(tempRoot.current, relativePath);
-  await mkdir(dirname(pathname), { recursive: true });
-  await writeFile(pathname, contents);
-}
-
-beforeEach(() => {
-  deployMockState.reset();
-});
-
-describe("functions serve integration", () => {
-  it.live("overlays each Function's env file on the shared fallback", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
+describe("managed functions serve integration", () => {
+  it.live("starts cold without database or auth services and preserves function config", () =>
+    Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("world", "index.ts", 'Deno.serve(() => new Response("world"))\n'),
-      );
-      yield* Effect.promise(() =>
-        writeProjectFile(
-          join("supabase", "functions", ".env"),
-          ["SHARED=shared", "GLOBAL_ONLY=global", ""].join("\n"),
+        writeProjectConfig(
+          'project_id = "test-project"\n\n[functions.disabled]\nenabled = false\n',
         ),
       );
-      yield* Effect.promise(() =>
-        writeFunctionFile(
-          "hello",
-          ".env",
-          ["SHARED=hello", "FUNCTION_ONLY=hello", "SUPABASE_SKIP=ignored", ""].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("world", ".env", ["SHARED=world", "FUNCTION_ONLY=world", ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeFunction("hello"));
+      yield* Effect.promise(() => writeFunction("disabled"));
+      const state = makeStack({ fingerprint: "same" });
+      const control = processControl();
+      const { layer } = setup(state, control, undefined, false);
+      const fiber = yield* Effect.forkChild(serve(baseFlags()).pipe(Effect.provide(layer)));
+      yield* Deferred.await(state.started);
+      control.signal();
+      yield* Fiber.join(fiber);
 
-      const { layer, out } = setupServe({ childSpawner });
-      yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "create",
-      );
-      expect(dockerRun).toBeDefined();
-      if (dockerRun === undefined) {
-        throw new Error("expected docker create call");
-      }
-
-      const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-      expect(envs).toContain("SHARED=shared");
-      expect(envs).toContain("GLOBAL_ONLY=global");
-      const functionsConfig = envs.find((entry) =>
-        entry.startsWith("SUPABASE_INTERNAL_FUNCTIONS_CONFIG="),
-      );
-      expect(functionsConfig).toBeDefined();
-      if (functionsConfig === undefined) {
-        throw new Error("missing functions config env");
-      }
-
-      expect(
-        JSON.parse(functionsConfig.slice("SUPABASE_INTERNAL_FUNCTIONS_CONFIG=".length)),
-      ).toEqual({
-        hello: expect.objectContaining({
-          env: { SHARED: "hello", FUNCTION_ONLY: "hello" },
-        }),
-        world: expect.objectContaining({
-          env: { SHARED: "world", FUNCTION_ONLY: "world" },
-        }),
-      });
-      expect(out.stderrText).toContain(
-        "Env name cannot start with SUPABASE_, skipping: SUPABASE_SKIP\n",
-      );
-    });
-  });
-
-  it.live("uses an explicit env file instead of automatic Function env files", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() =>
-        writeProjectFile(
-          join("supabase", "functions", ".env"),
-          ["SOURCE=shared", "GLOBAL_ONLY=global", ""].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", ".env", "INVALID-KEY=must-not-be-read\n"),
-      );
-      yield* Effect.promise(() =>
-        writeProjectFile(
-          "custom.env",
-          ["SOURCE=explicit", "EXPLICIT_ONLY=explicit", ""].join("\n"),
-        ),
-      );
-
-      const { layer } = setupServe({ childSpawner });
-      yield* functionsServe(baseFlags({ envFile: Option.some("custom.env") })).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
-
-      const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "create",
-      );
-      expect(dockerRun).toBeDefined();
-      if (dockerRun === undefined) {
-        throw new Error("expected docker create call");
-      }
-
-      const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-      expect(envs).toContain("SOURCE=explicit");
-      expect(envs).toContain("EXPLICIT_ONLY=explicit");
-      expect(envs).not.toContain("GLOBAL_ONLY=global");
-      const functionsConfig = envs.find((entry) =>
-        entry.startsWith("SUPABASE_INTERNAL_FUNCTIONS_CONFIG="),
-      );
-      expect(functionsConfig).toBeDefined();
-      if (functionsConfig === undefined) {
-        throw new Error("missing functions config env");
-      }
-      expect(
-        JSON.parse(functionsConfig.slice("SUPABASE_INTERNAL_FUNCTIONS_CONFIG=".length)),
-      ).toEqual({
-        hello: {
-          verifyJWT: true,
-          entrypointPath: "supabase/functions/hello/index.ts",
-        },
-      });
-    });
-  });
-
-  it.live("fails before starting the runtime when a Function env file is malformed", () => {
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      const functionEnvPath = join(tempRoot.current, "supabase", "functions", "hello", ".env");
-      yield* Effect.promise(() => writeFunctionFile("hello", ".env", "API-KEY=secret-value\n"));
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain(`failed to parse environment file: ${functionEnvPath}`);
-        expect(error.message).toContain("unexpected character '-' in variable name");
-        expect(error.message).not.toContain("secret-value");
-        expect(error.message).not.toContain('near "API-KEY=secret-value"');
-      }
-      expect(
-        deployMockState.runCalls.filter(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        ),
-      ).toHaveLength(0);
-      expect(deployMockState.networkCalls).toHaveLength(0);
-      expect(deployMockState.volumeCalls).toHaveLength(0);
-    });
-  });
-
-  it.live(
-    "starts the runtime from config-defined functions and wires env, binds, and telemetry",
-    () => {
-      deployMockState.runHandler = (command, args) => {
-        if (command !== "docker") {
-          throw new Error(`unexpected process: ${command}`);
-        }
-        if (args[0] === "container" && args[1] === "inspect") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "container" && args[1] === "rm") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-        }
-        if (args[0] === "exec") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        throw new Error(`unexpected docker args: ${args.join(" ")}`);
-      };
-
-      const childSpawner = mockDockerLogSpawner([
-        {
-          exitCode: 1,
-          stderr: "error running container: exit 1",
-        },
-      ]);
-
-      return Effect.gen(function* () {
-        yield* Effect.promise(() =>
-          writeCliConfig(
-            [
-              'project_id = "test-project"',
-              "[functions.hello]",
-              'entrypoint = "./functions/hello/src/main.ts"',
-              'import_map = "./functions/hello/deno.json"',
-              'static_files = ["./shared/index.html"]',
-              "",
-              "[functions.disabled]",
-              "enabled = false",
-              "",
-            ].join("\n"),
-          ),
-        );
-        yield* Effect.promise(() =>
-          writeFunctionFile("hello", "src/main.ts", 'Deno.serve(() => new Response("hello"))\n'),
-        );
-        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-        yield* Effect.promise(() =>
-          writeProjectFile("supabase/shared/index.html", "<h1>hello</h1>\n"),
-        );
-        yield* Effect.promise(() =>
-          writeProjectFile(
-            join("supabase", "functions", ".env"),
-            ["HELLO=WORLD", "SUPABASE_SKIP=1", ""].join("\n"),
-          ),
-        );
-        yield* Effect.promise(() =>
-          writeProjectFile(join("supabase", ".temp", "edge-runtime-version"), "1.73.13\n"),
-        );
-
-        const { layer, out, telemetry } = setupServe({ childSpawner });
-
-        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-        expect(error).toBeInstanceOf(Error);
-        if (error instanceof Error) {
-          expect(error.message).toContain("error running container: exit 1");
-        }
-
-        expect(deployMockState.volumeCalls).toEqual([
-          {
-            volumeName: "supabase_edge_runtime_test-project",
-            projectId: "test-project",
-          },
-        ]);
-        expect(deployMockState.networkCalls).toEqual([
-          {
-            networkMode: "supabase_network_test-project",
-            projectId: "test-project",
-          },
-        ]);
-        expect(telemetry.flushed).toBe(true);
-        expect(out.stderrText).toContain("Setting up Edge Functions runtime...\n");
-        expect(out.stderrText).toContain("Skipped serving Function: disabled\n");
-
-        const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        );
-        expect(dockerRun).toBeDefined();
-        if (dockerRun === undefined) {
-          throw new Error("expected docker create call");
-        }
-
-        expect(dockerRun.args).toContain("--network");
-        expect(dockerRun.args).toContain("supabase_network_test-project");
-        expect(dockerRun.args).toContain("--add-host");
-        expect(dockerRun.args).toContain("host.docker.internal:host-gateway");
-        // The pin's content is applied verbatim as the tag: a bare pin
-        // stays bare, no `v` synthesized.
-        expect(dockerRun.args).toContain("public.ecr.aws/supabase/edge-runtime:1.73.13");
-        // The main service is `docker cp`-streamed in, never a single-file host bind.
-        expect(
-          extractFlagValues(dockerRun.args, "-v").some((value) =>
-            value.includes(":/root/index.ts"),
-          ),
-        ).toBe(false);
-        const bringUpSteps = deployMockState.runCalls
-          .map((call) => call.args[0])
-          .filter((step) => step === "create" || step === "cp" || step === "start");
-        expect(bringUpSteps).toEqual(["create", "cp", "start"]);
-        expect(deployMockState.runCalls.map((call) => call.args.slice(0, 3))).toContainEqual([
-          "cp",
-          "-",
-          "supabase_edge_runtime_test-project:/",
-        ]);
-        expect(extractFlagValues(dockerRun.args, "--workdir")).toEqual([
-          toDockerPath(tempRoot.current),
-        ]);
-        expect(dockerRun.args[dockerRun.args.length - 1]).toBe(
-          "exec edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
-        );
-
-        const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-        expect(envs).toContain("HELLO=WORLD");
-        expect(envs).not.toContain("SUPABASE_SKIP=1");
-        const functionsConfig = envs.find((entry) =>
-          entry.startsWith("SUPABASE_INTERNAL_FUNCTIONS_CONFIG="),
-        );
-        expect(functionsConfig).toBeDefined();
-        if (functionsConfig === undefined) {
-          throw new Error("missing functions config env");
-        }
-
-        expect(
-          JSON.parse(functionsConfig.slice("SUPABASE_INTERNAL_FUNCTIONS_CONFIG=".length)),
-        ).toEqual({
-          hello: {
-            verifyJWT: true,
-            entrypointPath: "supabase/functions/hello/src/main.ts",
-            importMapPath: "supabase/functions/hello/deno.json",
-            staticFiles: ["supabase/shared/index.html"],
-          },
-        });
-
-        // The reload must carry bring-up's `--nginx-conf`; a bare `kong reload`
-        // re-renders nginx.conf from Kong's default template and drops the
-        // `email_templates` server GoTrue fetches.
-        expect(deployMockState.runCalls).toContainEqual({
-          command: "docker",
-          args: [
-            "exec",
-            "supabase_kong_test-project",
-            "kong",
-            "reload",
-            "--nginx-conf",
-            "/home/kong/custom_nginx.template",
-          ],
-          options: { stdout: "ignore", stderr: "pipe" },
-        });
-
-        expect(childSpawner.spawned).toEqual([
-          {
-            command: "docker",
-            args: ["logs", "-f", "--timestamps", "supabase_edge_runtime_test-project"],
-          },
-          {
-            command: "docker",
-            args: [
-              "container",
-              "inspect",
-              "supabase_edge_runtime_test-project",
-              "--format",
-              "{{json .State}}",
-            ],
-          },
-        ]);
-      });
-    },
-  );
-
-  it.live("mounts multiline env values without placing their contents in docker argv", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    let multilineEnvDirWhenLogsStarted: string | undefined;
-    let multilineEnvDirExistedWhenLogsStarted = false;
-    const childSpawner = mockDockerLogSpawner([
-      {
-        exitCode: 1,
-        stderr: "error running container: exit 1",
-        onSpawn: () => {
-          const dockerRun = deployMockState.runCalls.find(
-            (call) => call.command === "docker" && call.args[0] === "create",
-          );
-          if (dockerRun === undefined) {
-            throw new Error("expected docker create call before docker logs spawn");
-          }
-          multilineEnvDirWhenLogsStarted = extractFlagValues(dockerRun.args, "-v")
-            .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro,Z"))
-            ?.slice(0, -":/root/.supabase/multiline-env:ro,Z".length);
-          multilineEnvDirExistedWhenLogsStarted =
-            multilineEnvDirWhenLogsStarted !== undefined &&
-            existsSync(multilineEnvDirWhenLogsStarted);
-        },
-      },
-    ]);
-
-    const multilineValue = ["-----BEGIN KEY-----", "EOF_ENV_0", "line-3", "-----END KEY-----"].join(
-      "\n",
-    );
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() =>
-        writeProjectFile(
-          join("supabase", "functions", ".env"),
-          [`MULTILINE_SECRET="${multilineValue}"`, ""].join("\n"),
-        ),
-      );
-
-      const { layer } = setupServe({ childSpawner });
-
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-      expect(error).toBeInstanceOf(Error);
-
-      const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "create",
-      );
-      expect(dockerRun).toBeDefined();
-      if (dockerRun === undefined) {
-        throw new Error("expected docker create call");
-      }
-
-      expect(dockerRun.args).toContain(
-        Effect.runSync(getRegistryImageUrl(dockerfileServiceImage("edgeruntime"))),
-      );
-      expect(dockerRun.args.join(" ")).not.toContain(multilineValue);
-      expect(dockerRun.args.join(" ")).not.toContain("EOF_ENV_0");
-
-      const multilineBind = extractFlagValues(dockerRun.args, "-v").find((value) =>
-        value.endsWith(":/root/.supabase/multiline-env:ro,Z"),
-      );
-      expect(multilineBind).toBeDefined();
-      if (multilineBind === undefined) {
-        throw new Error("expected multiline env bind");
-      }
-
-      const options =
-        typeof dockerRun.options === "object" && dockerRun.options !== null
-          ? dockerRun.options
+      expect((yield* state.service.status).phase).toBe("ready");
+      expect(state.starts).toHaveLength(1);
+      expect(state.restarts).toHaveLength(0);
+      const config = state.preparedConfigs[0];
+      const functionsCapability = config?.capabilities?.functions;
+      const settings =
+        functionsCapability !== undefined && "settings" in functionsCapability
+          ? functionsCapability.settings
           : undefined;
-      const script =
-        options !== undefined && "multilineEnvScript" in options
-          ? (options.multilineEnvScript as string | undefined)
-          : undefined;
-      const files =
-        options !== undefined && "multilineEnvFiles" in options
-          ? (options.multilineEnvFiles as Record<string, string> | undefined)
-          : undefined;
-
-      expect(script).toBeDefined();
-      expect(files).toBeDefined();
-      expect(script).toContain(
-        'MULTILINE_SECRET="$(cat /root/.supabase/multiline-env/values/env-0; printf x)"',
-      );
-      expect(script).toContain('export MULTILINE_SECRET="${MULTILINE_SECRET%x}"');
-      expect(script).not.toContain(multilineValue);
-      expect(script).not.toContain("EOF_ENV_0");
-      expect(files?.["env-0"]).toBe(multilineValue);
-      expect(multilineEnvDirWhenLogsStarted).toBeDefined();
-      if (multilineEnvDirWhenLogsStarted === undefined) {
-        throw new Error("expected multiline env dir when docker logs started");
-      }
-      expect(multilineEnvDirExistedWhenLogsStarted).toBe(true);
-      expect(existsSync(multilineEnvDirWhenLogsStarted)).toBe(false);
-    });
-  });
-
-  it.live(
-    "cleans up a stale multiline-env directory from a previous run even when this run has no multiline secrets",
-    () => {
-      deployMockState.runHandler = (command, args) => {
-        if (command !== "docker") {
-          throw new Error(`unexpected process: ${command}`);
-        }
-        if (args[0] === "container" && args[1] === "inspect") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "container" && args[1] === "rm") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-        }
-        if (args[0] === "exec") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        throw new Error(`unexpected docker args: ${args.join(" ")}`);
-      };
-
-      const childSpawner = mockDockerLogSpawner([
-        {
-          exitCode: 1,
-          stderr: "error running container: exit 1",
-        },
-      ]);
-
-      const staleMultilineEnvDir = join(
-        tempRoot.current,
-        "supabase",
-        ".temp",
-        "start-secrets",
-        "supabase_edge_runtime_test-project",
-        "multiline-env",
-      );
-
-      return Effect.gen(function* () {
-        yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-        yield* Effect.promise(() =>
-          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-        );
-        yield* Effect.promise(() =>
-          writeProjectFile(join("supabase", "functions", ".env"), ["HELLO=WORLD", ""].join("\n")),
-        );
-        // Simulates a stale directory left behind by an earlier run that had multiline secrets.
-        yield* Effect.promise(async () => {
-          await mkdir(join(staleMultilineEnvDir, "values"), { recursive: true, mode: 0o700 });
-          await writeFile(join(staleMultilineEnvDir, "multiline-env.sh"), "stale script\n");
-          await writeFile(join(staleMultilineEnvDir, "values", "env-0"), "stale secret\n");
-        });
-
-        const { layer } = setupServe({ childSpawner });
-
-        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-        expect(error).toBeInstanceOf(Error);
-
-        expect(existsSync(staleMultilineEnvDir)).toBe(false);
-
-        const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        );
-        expect(dockerRun).toBeDefined();
-        if (dockerRun === undefined) {
-          throw new Error("expected docker create call");
-        }
-        expect(
-          extractFlagValues(dockerRun.args, "-v").some((value) =>
-            value.endsWith(":/root/.supabase/multiline-env:ro,Z"),
-          ),
-        ).toBe(false);
-      });
-    },
+      expect(settings?.functions?.hello?.enabled).toBe(true);
+      expect(settings?.functions?.disabled?.enabled).toBe(false);
+    }),
   );
 
-  it.live("fails before startup when a multiline env name is not a shell identifier", () => {
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() =>
-        writeProjectFile(
-          join("supabase", "functions", ".env"),
-          ['FOO.BAR="line-1\nline-2"', ""].join("\n"),
-        ),
-      );
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("invalid multiline environment variable name");
-        expect(error.message).toContain("FOO.BAR");
-      }
-      expect(
-        deployMockState.runCalls.filter(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        ),
-      ).toHaveLength(0);
-    });
-  });
-
-  it.live("sanitizes dotenv parse failures from config env files", () => {
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() => writeProjectFile(".env.development", "API-KEY=secret-value\n"));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("failed to parse environment file:");
-        expect(error.message).toContain(".env.development");
-        expect(error.message).toContain("unexpected character '-' in variable name");
-        expect(error.message).not.toContain("secret-value");
-        expect(error.message).not.toContain('near "API-KEY=secret-value"');
-      }
-      expect(deployMockState.runCalls).toHaveLength(0);
-    });
-  });
-
-  it.live("skips missing unused import map targets during serve startup", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const childSpawner = mockDockerLogSpawner([
-      {
-        exitCode: 1,
-        stderr: "error running container: exit 1",
-      },
-    ]);
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(
-          [
-            'project_id = "test-project"',
-            "[functions.hello]",
-            'entrypoint = "./functions/hello/index.ts"',
-            'import_map = "./functions/hello/deno.json"',
-            "",
-          ].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile(
-          "hello",
-          "deno.json",
-          JSON.stringify({
-            imports: {
-              "unused-alias/": "../missing-shared/",
-            },
-          }),
-        ),
-      );
-
-      const { layer } = setupServe({ childSpawner });
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("error running container: exit 1");
-      }
-      expect(
-        deployMockState.runCalls.some(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        ),
-      ).toBe(true);
-    });
-  });
-
-  it.live("binds deno.json import map references outside the project root", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const childSpawner = mockDockerLogSpawner([
-      {
-        exitCode: 1,
-        stderr: "external import map logs failed",
-      },
-    ]);
-
-    return Effect.gen(function* () {
-      const externalImportMapPath = join(dirname(tempRoot.current), "shared-import-map.json");
-
-      yield* Effect.promise(() =>
-        writeCliConfig(
-          [
-            'project_id = "test-project"',
-            "[functions.hello]",
-            'entrypoint = "./functions/hello/index.ts"',
-            'import_map = "./functions/hello/deno.json"',
-            "",
-          ].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFile(externalImportMapPath, JSON.stringify({ imports: {} })),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile(
-          "hello",
-          "deno.json",
-          JSON.stringify({
-            importMap: "../../../../shared-import-map.json",
-          }),
-        ),
-      );
-
-      const { layer } = setupServe({ childSpawner });
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("external import map logs failed");
-      }
-
-      const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "create",
-      );
-      expect(dockerRun).toBeDefined();
-      if (dockerRun === undefined) {
-        throw new Error("expected docker create invocation");
-      }
-      // `buildDockerBinds` realpath-resolves host paths, so compare against the
-      // resolved path (on macOS the temp dir lives under /var -> /private/var).
-      const resolvedExternalImportMapPath = realpathSync(externalImportMapPath);
-      expect(
-        extractFlagValues(dockerRun.args, "-v").some(
-          (value) =>
-            value.startsWith(`${resolvedExternalImportMapPath}:`) &&
-            value.endsWith("/shared-import-map.json:ro"),
-        ),
-      ).toBe(true);
-    });
-  });
-
-  it.live("binds git-root workspace imports for serve", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const childSpawner = mockDockerLogSpawner([
-      {
-        exitCode: 1,
-        stderr: "workspace import logs failed",
-      },
-    ]);
-
-    return Effect.gen(function* () {
-      const sharedPath = join(tempRoot.current, "packages", "shared", "src", "index.ts");
-
-      yield* Effect.promise(() => mkdir(join(tempRoot.current, ".git"), { recursive: true }));
-      yield* Effect.promise(() =>
-        writeCliConfig(
-          [
-            'project_id = "test-project"',
-            "[functions.hello]",
-            'entrypoint = "./functions/hello/index.ts"',
-            'import_map = "./functions/hello/deno.json"',
-            "",
-          ].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeProjectFile("packages/shared/src/index.ts", 'export const shared = "hello"\n'),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile(
-          "hello",
-          "index.ts",
-          [
-            'import { shared } from "@repo/shared"',
-            "Deno.serve(() => new Response(shared))",
-            "",
-          ].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile(
-          "hello",
-          "deno.json",
-          JSON.stringify({
-            imports: {
-              "@repo/shared": "../../../packages/shared/src/index.ts",
-            },
-          }),
-        ),
-      );
-
-      const { layer } = setupServe({ childSpawner });
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("workspace import logs failed");
-      }
-
-      const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "create",
-      );
-      expect(dockerRun).toBeDefined();
-      if (dockerRun === undefined) {
-        throw new Error("expected docker create invocation");
-      }
-      const resolvedSharedPath = realpathSync(sharedPath);
-      expect(
-        extractFlagValues(dockerRun.args, "-v").some(
-          (value) =>
-            value.startsWith(`${resolvedSharedPath}:`) &&
-            value.endsWith("/packages/shared/src/index.ts:ro"),
-        ),
-      ).toBe(true);
-    });
-  });
-
-  it.live(
-    "mounts a workspace package once when functions import the directory and its files",
-    () => {
-      deployMockState.runHandler = (command, args) => {
-        if (command !== "docker") {
-          throw new Error(`unexpected process: ${command}`);
-        }
-        if (args[0] === "container" && (args[1] === "inspect" || args[1] === "rm")) {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-        }
-        if (args[0] === "exec") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        throw new Error(`unexpected docker args: ${args.join(" ")}`);
-      };
-
-      const childSpawner = mockDockerLogSpawner([
-        {
-          exitCode: 1,
-          stderr: "overlapping bind logs failed",
-        },
-      ]);
-
-      return Effect.gen(function* () {
-        yield* Effect.promise(() => mkdir(join(tempRoot.current, ".git"), { recursive: true }));
-        yield* Effect.promise(() =>
-          writeCliConfig(
-            [
-              'project_id = "test-project"',
-              "[functions.hello]",
-              'entrypoint = "./functions/hello/index.ts"',
-              'import_map = "./functions/hello/deno.json"',
-              "",
-            ].join("\n"),
-          ),
-        );
-        yield* Effect.promise(() =>
-          writeProjectFile("packages/orm/index.ts", 'export * from "./core/foo.ts";\n'),
-        );
-        yield* Effect.promise(() =>
-          writeProjectFile("packages/orm/core/foo.ts", 'export const foo = "foo";\n'),
-        );
-        yield* Effect.promise(() =>
-          writeFunctionFile(
-            "hello",
-            "index.ts",
-            [
-              'import { foo } from "@proj/orm/core/foo.ts";',
-              'import "@proj/orm/index.ts";',
-              "Deno.serve(() => new Response(foo))",
-              "",
-            ].join("\n"),
-          ),
-        );
-        yield* Effect.promise(() =>
-          writeFunctionFile(
-            "hello",
-            "deno.json",
-            JSON.stringify({
-              imports: {
-                "@proj/orm/": "../../../packages/orm/",
-              },
-            }),
-          ),
-        );
-
-        const { layer } = setupServe({ childSpawner });
-        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-        expect(error).toBeInstanceOf(Error);
-        if (error instanceof Error) {
-          expect(error.message).toContain("overlapping bind logs failed");
-        }
-
-        const dockerCreate = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        );
-        expect(dockerCreate).toBeDefined();
-        if (dockerCreate === undefined) {
-          throw new Error("expected docker create invocation");
-        }
-        const bindValues = extractFlagValues(dockerCreate.args, "-v");
-        const resolvedOrmDir = realpathSync(join(tempRoot.current, "packages", "orm"));
-        expect(bindValues.some((value) => value.startsWith(`${resolvedOrmDir}:`))).toBe(true);
-        expect(bindValues.filter((value) => value.startsWith(`${resolvedOrmDir}/`))).toEqual([]);
-      });
-    },
+  it.live("reuses a ready instance when the prepared effective config is unchanged", () =>
+    Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig());
+      yield* Effect.promise(() => writeFunction("hello"));
+      const state = makeStack({ fingerprint: "same" });
+      state.service.status = Effect.succeed(serviceStatus(state.service.id, "ready"));
+      const control = processControl();
+      const { layer } = setup(state, control);
+      const fiber = yield* Effect.forkChild(serve(baseFlags()).pipe(Effect.provide(layer)));
+      yield* Deferred.await(state.prepareCompleted);
+      control.signal();
+      yield* Fiber.join(fiber);
+      expect(state.starts).toHaveLength(0);
+      expect(state.restarts).toHaveLength(0);
+    }),
   );
 
-  it.live("keeps --workdir when an import-map ancestor mount absorbs every project bind", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && (args[1] === "inspect" || args[1] === "rm")) {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const childSpawner = mockDockerLogSpawner([
-      {
-        exitCode: 1,
-        stderr: "ancestor mount logs failed",
-      },
-    ]);
-
-    return Effect.gen(function* () {
-      const realRoot = realpathSync(tempRoot.current);
-      const projectDir = join(realRoot, "apps", "api");
-      const functionDir = join(projectDir, "supabase", "functions", "hello");
-      yield* Effect.promise(async () => {
-        await mkdir(join(realRoot, ".git"), { recursive: true });
-        await mkdir(functionDir, { recursive: true });
-        await mkdir(join(realRoot, "apps", "shared"), { recursive: true });
-        await writeFile(
-          join(projectDir, "supabase", "config.toml"),
-          [
-            'project_id = "test-project"',
-            "[functions.hello]",
-            'entrypoint = "./functions/hello/index.ts"',
-            'import_map = "./functions/hello/deno.json"',
-            "",
-          ].join("\n"),
-        );
-        await writeFile(join(realRoot, "apps", "shared", "index.ts"), 'export const s = "s";\n');
-        await writeFile(
-          join(functionDir, "index.ts"),
-          ['import { s } from "~/shared/index.ts";', "Deno.serve(() => new Response(s))", ""].join(
-            "\n",
-          ),
-        );
-        await writeFile(
-          join(functionDir, "deno.json"),
-          JSON.stringify({ imports: { "~/": "../../../../" } }),
-        );
-      });
-
-      const { layer } = setupServe({ workdir: projectDir, childSpawner });
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("ancestor mount logs failed");
-      }
-
-      const dockerCreate = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "create",
-      );
-      expect(dockerCreate).toBeDefined();
-      if (dockerCreate === undefined) {
-        throw new Error("expected docker create invocation");
-      }
-      const appsDir = join(realRoot, "apps");
-      const bindValues = extractFlagValues(dockerCreate.args, "-v");
-      expect(bindValues.some((value) => value.startsWith(`${appsDir}:`))).toBe(true);
-      expect(bindValues.filter((value) => value.startsWith(`${appsDir}/`))).toEqual([]);
-      expect(extractFlagValues(dockerCreate.args, "--workdir")).toEqual([toDockerPath(projectDir)]);
-    });
-  });
-
-  it.live("leaves the existing container alone when create loses a name conflict", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && (args[1] === "inspect" || args[1] === "rm")) {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create") {
-        return {
-          exitCode: 1,
-          stdout: "",
-          stderr:
-            'Conflict. The container name "/supabase_edge_runtime_test-project" is already in use',
-        };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig('project_id = "test-project"\n'));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      const steps = deployMockState.runCalls.map((call) => call.args.slice(0, 2));
-      const createIndex = steps.findIndex(([first]) => first === "create");
-      expect(createIndex).toBeGreaterThan(-1);
-      expect(
-        steps
-          .slice(createIndex + 1)
-          .some(([first, second]) => first === "container" && second === "rm"),
-      ).toBe(false);
-    });
-  });
-
-  it.live("removes the created container when the bootstrap copy fails", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && (args[1] === "inspect" || args[1] === "rm")) {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "cp") {
-        return { exitCode: 1, stdout: "", stderr: "cp target is gone" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig('project_id = "test-project"\n'));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      expect(String(error)).toContain(
-        "failed to copy edge runtime main service into container: cp target is gone",
-      );
-      const steps = deployMockState.runCalls.map((call) => call.args.slice(0, 2));
-      const createIndex = steps.findIndex(([first]) => first === "create");
-      expect(createIndex).toBeGreaterThan(-1);
-      expect(steps.some(([first]) => first === "start")).toBe(false);
-      expect(
-        steps
-          .slice(createIndex + 1)
-          .some(([first, second]) => first === "container" && second === "rm"),
-      ).toBe(true);
-    });
-  });
-
-  it.live("binds per-function deno.json scope targets outside a nested project repository", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const processControl = mockQueuedProcessControl();
-    const childSpawner = mockDockerLogSpawner([{ pending: true }]);
-
-    return Effect.gen(function* () {
-      const workspaceRoot = tempRoot.current;
-      const projectRoot = join(workspaceRoot, "infra", "my-project");
-      const rootDenoJson = join(workspaceRoot, "deno.json");
-      const libsDir = join(workspaceRoot, "libs");
-
-      yield* Effect.promise(() => mkdir(join(workspaceRoot, ".git"), { recursive: true }));
-      yield* Effect.promise(async () => {
-        await writeProjectFile(join("infra", "my-project", ".git"), "gitdir: ignored\n");
-        await writeProjectFile(
-          "deno.json",
-          JSON.stringify({
-            workspace: ["./libs/*", "./infra/*/supabase/functions/*"],
-            imports: { "@acme/thing": "./libs/thing/index.ts" },
-          }),
-        );
-        await writeProjectFile(
-          join("infra", "my-project", "supabase", "config.toml"),
-          'project_id = "test-project"\n',
-        );
-        await writeProjectFile(
-          join("libs", "thing", "deno.json"),
-          JSON.stringify({ name: "@acme/thing", version: "1.0.0", exports: "./index.ts" }),
-        );
-        await writeProjectFile(join("libs", "thing", "index.ts"), "export const thing = 1\n");
-        const functionRelative = join("infra", "my-project", "supabase", "functions", "hello");
-        await writeProjectFile(
-          join(functionRelative, "index.ts"),
-          'import { thing } from "@acme/thing"\nDeno.serve(() => new Response(String(thing)))\n',
-        );
-        const sharedDenoJson = JSON.stringify({
-          imports: { "@std/assert": "jsr:@std/assert@1" },
-          scopes: {
-            __local: {
-              __workspace: "../../../../../deno.json",
-              __libs: "../../../../../libs",
-            },
-          },
-        });
-        await writeProjectFile(join(functionRelative, "deno.json"), sharedDenoJson);
-        const worldRelative = join("infra", "my-project", "supabase", "functions", "world");
-        await writeProjectFile(
-          join(worldRelative, "index.ts"),
-          'import { thing } from "@acme/thing"\nDeno.serve(() => new Response(String(thing)))\n',
-        );
-        await writeProjectFile(join(worldRelative, "deno.json"), sharedDenoJson);
-      });
-
-      const resolvedWorkspaceRoot = realpathSync(workspaceRoot);
-      const resolvedLibsDir = realpathSync(libsDir);
-      const watchedFunctionsDir = join(projectRoot, "supabase", "functions");
-      const fileWatcher = mockFileWatcher([watchedFunctionsDir]);
-      const { layer, out } = setupServe({
-        childSpawner,
-        fileWatcher,
-        processControl,
-        workdir: projectRoot,
-      });
-      const fiber = yield* functionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.forkChild({ startImmediately: true }),
-      );
-
-      yield* fileWatcher.awaitExpectedWatch;
-
-      const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "create",
-      );
-      expect(dockerRun).toBeDefined();
-      if (dockerRun === undefined) {
-        throw new Error("expected docker create invocation");
-      }
-      const bindValues = extractFlagValues(dockerRun.args, "-v");
-      const resolvedRootDenoJson = realpathSync(rootDenoJson);
-      expect(bindValues).toContain(`${resolvedRootDenoJson}:${toDockerPath(rootDenoJson)}:ro`);
-      expect(bindValues).toContain(`${resolvedLibsDir}:${toDockerPath(libsDir)}:ro`);
-      const rootDenoJsonWarn = `WARN: Mounting import map scope target outside the project root: ${resolvedRootDenoJson}\n`;
-      const libsWarn = `WARN: Mounting import map scope target outside the project root: ${resolvedLibsDir}\n`;
-      expect(out.rawChunks.filter((chunk) => chunk.text === rootDenoJsonWarn)).toEqual([
-        { text: rootDenoJsonWarn, stream: "stderr" },
-      ]);
-      expect(out.rawChunks.filter((chunk) => chunk.text === libsWarn)).toEqual([
-        { text: libsWarn, stream: "stderr" },
-      ]);
-      const watchedPaths = fileWatcher.watchCalls.map((call) => call.path);
-      expect(watchedPaths).toContain(watchedFunctionsDir);
-      expect(watchedPaths).not.toContain(resolvedWorkspaceRoot);
-      expect(watchedPaths).not.toContain(resolvedLibsDir);
-      expect(fileWatcher.watchCalls).toContainEqual(
-        expect.objectContaining({ path: watchedFunctionsDir, recursive: true }),
-      );
-
-      processControl.signal("SIGINT");
-      const exit = yield* Fiber.await(fiber);
-      expect(Exit.isSuccess(exit)).toBe(true);
-    });
-  });
-
-  it.live(
-    "does not let an ancestor project's deno.json get misattributed to this project's own function when --workdir names a config-less subdirectory of it",
-    () => {
-      deployMockState.runHandler = (command, args) => {
-        if (command !== "docker") {
-          throw new Error(`unexpected process: ${command}`);
-        }
-        if (args[0] === "container" && args[1] === "inspect") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "container" && args[1] === "rm") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-        }
-        if (args[0] === "exec") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        throw new Error(`unexpected docker args: ${args.join(" ")}`);
-      };
-
-      const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
-      const nestedWorkdir = join(tempRoot.current, "nested", "dir");
-
-      return Effect.gen(function* () {
-        // Ancestor project: a config.toml plus a function with an entrypoint
-        // and a deno.json, at the same slug the sub-project below serves.
-        yield* Effect.promise(() => writeCliConfig('project_id = "ancestor-project"\n'));
-        yield* Effect.promise(() =>
-          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("ancestor"))\n'),
-        );
-        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-        // The sub-project has its own entrypoint but no deno.json or
-        // config.toml, making it "config-less" relative to the ancestor.
-        yield* Effect.promise(() =>
-          mkdir(join(nestedWorkdir, "supabase", "functions", "hello"), { recursive: true }),
-        );
-        yield* Effect.promise(() =>
-          writeFile(
-            join(nestedWorkdir, "supabase", "functions", "hello", "index.ts"),
-            "Deno.serve(() => new Response())\n",
-          ),
-        );
-
-        const { layer } = setupServe({ childSpawner, workdir: nestedWorkdir });
-        yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-        const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        );
-        expect(dockerRun).toBeDefined();
-        if (dockerRun === undefined) {
-          throw new Error("expected docker create call");
-        }
-
-        const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-        const functionsConfigEntry = envs.find((entry) =>
-          entry.startsWith("SUPABASE_INTERNAL_FUNCTIONS_CONFIG="),
-        );
-        expect(functionsConfigEntry).toBeDefined();
-        if (functionsConfigEntry === undefined) {
-          throw new Error("missing functions config env");
-        }
-        const functionsConfig = JSON.parse(
-          functionsConfigEntry.slice("SUPABASE_INTERNAL_FUNCTIONS_CONFIG=".length),
-        );
-        // "hello" is still served, just with no import map, since the
-        // ancestor's deno.json must never be borrowed for it.
-        expect(functionsConfig).toHaveProperty("hello");
-        expect(functionsConfig.hello).not.toHaveProperty("importMapPath");
-      });
-    },
+  it.live("restarts the same registered instance when the effective config changes", () =>
+    Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig());
+      yield* Effect.promise(() => writeFunction("hello"));
+      const state = makeStack({ fingerprint: "old", preparedFingerprint: "new" });
+      const control = processControl();
+      const { layer } = setup(state, control);
+      const fiber = yield* Effect.forkChild(serve(baseFlags()).pipe(Effect.provide(layer)));
+      yield* Deferred.await(state.prepareCompleted);
+      control.signal();
+      yield* Fiber.join(fiber);
+      expect(state.restarts).toHaveLength(1);
+      expect(state.service.id).toBe("functions");
+    }),
   );
 
-  it.live("restarts the runtime when watched files change", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const fileWatcher = mockFileWatcher();
-    const childSpawner = mockDockerLogSpawner([
-      { pending: true },
-      { exitCode: 1, stderr: "docker logs exited with 1" },
-    ]);
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
+  it.live("forwards inspector settings and env precedence to the service candidate", () =>
+    Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer, out } = setupServe({ fileWatcher, childSpawner });
-      const fiber = yield* functionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.forkChild({ startImmediately: true }),
-      );
-
-      yield* waitFor(
-        () =>
-          deployMockState.runCalls.filter(
-            (call) => call.command === "docker" && call.args[0] === "create",
-          ).length === 1,
-        "timed out waiting for first docker create",
-      );
-
-      fileWatcher.emit([
-        {
-          path: join(tempRoot.current, "supabase", "functions", "hello", "index.ts"),
-          type: "update",
-        },
-        {
-          path: join(tempRoot.current, "supabase", "functions", "hello", "helper.ts"),
-          type: "create",
-        },
-      ]);
-
-      const error = yield* Fiber.join(fiber).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("docker logs exited with 1");
-      }
-
-      expect(
-        deployMockState.runCalls.filter(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        ),
-      ).toHaveLength(2);
-      // Prints the fsnotify op token (WRITE/CREATE/REMOVE), not the
-      // internal event-type name.
-      expect(out.stderrText).toContain(
-        `File change detected: ${join(tempRoot.current, "supabase", "functions", "hello", "index.ts")} (WRITE)`,
-      );
-      expect(out.stderrText).toContain(
-        `File change detected: ${join(tempRoot.current, "supabase", "functions", "hello", "helper.ts")} (CREATE)`,
-      );
-
-      // The restart wrapper reloads Kong after each successful bring-up:
-      // once for the initial start, once for the file-change-triggered restart.
-      expect(
-        deployMockState.runCalls.filter(
-          (call) =>
-            call.command === "docker" &&
-            call.args[0] === "exec" &&
-            call.args.includes("supabase_kong_test-project") &&
-            call.args.includes("reload"),
-        ),
-      ).toHaveLength(2);
-    });
-  });
-
-  it.live("stops serving cleanly on a process signal", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const processControl = mockQueuedProcessControl();
-    const childSpawner = mockDockerLogSpawner([{ pending: true }]);
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer, out } = setupServe({ processControl, childSpawner });
-      const fiber = yield* functionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.forkChild({ startImmediately: true }),
-      );
-
-      yield* waitFor(
-        () =>
-          deployMockState.runCalls.some(
-            (call) => call.command === "docker" && call.args[0] === "create",
-          ),
-        "timed out waiting for docker create",
-      );
-      processControl.signal("SIGINT");
-
-      const exit = yield* Fiber.await(fiber);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(
-        out.stdoutText
-          .replaceAll("\u001b[1m", "")
-          .replaceAll("\u001b[22m", "")
-          .replaceAll("\\", "/"),
-      ).toContain("Stopped serving supabase/functions\n");
-    });
-  });
-
-  it.live("does not remove the existing runtime when interrupted before startup owns it", () => {
-    const processControl = mockQueuedProcessControl();
-    // Blocks startup at the DB assertion (`container inspect`), the last
-    // pre-ownership step before removing the existing container. If JWKS
-    // resolution ever moves before this assertion, the pending fetch would
-    // hang here and this test would fail on the waitFor timeout instead.
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { pending: true };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    return Effect.gen(function* () {
-      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-        () =>
-          new Promise<Response>(() => {
-            // Intentionally pending — must never be reached before the assertion.
-          }),
-      );
-
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          fetchMock.mockRestore();
-        }),
-      );
-
-      yield* Effect.promise(() =>
-        writeCliConfig(
+        writeProjectConfig(
           [
             'project_id = "test-project"',
-            "",
-            "[auth.third_party.workos]",
-            "enabled = true",
-            'issuer_url = "https://issuer.example.com"',
-            "",
-          ].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer, out } = setupServe({ processControl });
-      const fiber = yield* functionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.forkChild({ startImmediately: true }),
-      );
-
-      yield* waitFor(
-        () =>
-          deployMockState.runCalls.some(
-            (call) =>
-              call.command === "docker" &&
-              call.args[0] === "container" &&
-              call.args[1] === "inspect",
-          ),
-        "timed out waiting for the DB inspect",
-      );
-      processControl.signal("SIGINT");
-
-      const exit = yield* Fiber.await(fiber);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(
-        deployMockState.runCalls.some(
-          (call) =>
-            call.command === "docker" &&
-            call.args[0] === "container" &&
-            call.args[1] === "rm" &&
-            call.args.includes("supabase_edge_runtime_test-project"),
-        ),
-      ).toBe(false);
-      // No remote JWKS request either — JWKS resolves only after the DB
-      // assertion succeeds.
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(out.stdoutText).toContain("Stopped serving");
-    });
-  });
-
-  it.live(
-    "cleans up staged secrets when interrupted while reloading Kong after a successful bring-up",
-    () => {
-      const processControl = mockQueuedProcessControl();
-      deployMockState.runHandler = (command, args) => {
-        if (command !== "docker") {
-          throw new Error(`unexpected process: ${command}`);
-        }
-        if (args[0] === "container" && args[1] === "inspect") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "container" && args[1] === "rm") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-        }
-        if (args[0] === "exec") {
-          // Hangs Kong reload so the interrupt lands after bring-up succeeds
-          // (secrets staged, runtime started) but before `reloadKong` returns.
-          return { pending: true };
-        }
-        throw new Error(`unexpected docker args: ${args.join(" ")}`);
-      };
-
-      const childSpawner = mockDockerLogSpawner([{ pending: true }]);
-
-      const stagingDir = join(
-        tempRoot.current,
-        "supabase",
-        ".temp",
-        "start-secrets",
-        "supabase_edge_runtime_test-project",
-      );
-
-      return Effect.gen(function* () {
-        yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-        yield* Effect.promise(() =>
-          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-        );
-        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-        const { layer } = setupServe({ processControl, childSpawner });
-        const fiber = yield* functionsServe(baseFlags()).pipe(
-          Effect.provide(layer),
-          Effect.forkChild({ startImmediately: true }),
-        );
-
-        yield* waitFor(
-          () =>
-            deployMockState.runCalls.some(
-              (call) => call.command === "docker" && call.args[0] === "exec",
-            ),
-          "timed out waiting for Kong reload to start",
-        );
-        expect(existsSync(stagingDir)).toBe(true);
-        processControl.signal("SIGINT");
-
-        const exit = yield* Fiber.await(fiber);
-        expect(Exit.isSuccess(exit)).toBe(true);
-
-        expect(
-          deployMockState.runCalls.some(
-            (call) =>
-              call.command === "docker" &&
-              call.args[0] === "container" &&
-              call.args[1] === "rm" &&
-              call.args.includes("supabase_edge_runtime_test-project"),
-          ),
-        ).toBe(true);
-        expect(existsSync(stagingDir)).toBe(false);
-      });
-    },
-  );
-
-  describe("shutdown vs. container-exit outcomes", () => {
-    function baseDockerRunHandler() {
-      return (command: string, args: ReadonlyArray<string>) => {
-        if (command !== "docker") {
-          throw new Error(`unexpected process: ${command}`);
-        }
-        // The plain pre-create DB check and stale-container removal, never the
-        // `--format`-qualified `inspectContainerState` calls: those go through
-        // `childSpawner`, the same `ChildProcessSpawner` `docker logs -f` uses.
-        if (args[0] === "container" && args[1] === "inspect") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "container" && args[1] === "rm") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-        }
-        if (args[0] === "exec") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        throw new Error(`unexpected docker args: ${args.join(" ")}`);
-      };
-    }
-
-    // Models `inspectContainerState`'s `docker container inspect --format {{json .State}}` reply.
-    function inspectStateBehavior(running: boolean, exitCode = 0): LogProcessBehavior {
-      return {
-        exitCode: 0,
-        stdout: JSON.stringify({
-          Status: running ? "running" : "exited",
-          Running: running,
-          ExitCode: exitCode,
-        }),
-        stderr: "",
-      };
-    }
-
-    function containerInspectCalls(childSpawner: ReturnType<typeof mockDockerLogSpawner>) {
-      return childSpawner.spawned.filter(
-        (call) =>
-          call.command === "docker" && call.args[0] === "container" && call.args[1] === "inspect",
-      );
-    }
-
-    async function writeHelloFunction() {
-      await writeCliConfig(['project_id = "test-project"', ""].join("\n"));
-      await writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
-      await writeFunctionFile("hello", "deno.json", '{"imports":{}}\n');
-    }
-
-    it.live(
-      "exits cleanly when a shutdown signal and a docker-logs failure land in the same tick (Windows console-signal tie-break)",
-      () => {
-        deployMockState.runHandler = baseDockerRunHandler();
-        const processControl = mockQueuedProcessControl();
-        // Signaling from `onSpawn` fires the instant the mocked `docker logs -f` spawns,
-        // forcing the shutdown signal and its failure into the same tick.
-        const childSpawner = mockDockerLogSpawner([
-          {
-            exitCode: 1,
-            stderr: "docker logs killed by signal",
-            onSpawn: () => processControl.signal("SIGINT"),
-          },
-        ]);
-
-        return Effect.gen(function* () {
-          yield* Effect.promise(writeHelloFunction);
-
-          const { layer, out } = setupServe({ processControl, childSpawner });
-          const fiber = yield* functionsServe(baseFlags()).pipe(
-            Effect.provide(layer),
-            Effect.forkChild({ startImmediately: true }),
-          );
-
-          const exit = yield* Fiber.await(fiber);
-          expect(Exit.isSuccess(exit)).toBe(true);
-          expect(
-            out.stdoutText
-              .replaceAll("\u001b[1m", "")
-              .replaceAll("\u001b[22m", "")
-              .replaceAll("\\", "/"),
-          ).toContain("Stopped serving supabase/functions\n");
-        });
-      },
-    );
-
-    it.live(
-      "downgrades a docker-logs failure to a clean shutdown when the signal lands within the grace window",
-      () => {
-        deployMockState.runHandler = baseDockerRunHandler();
-        const processControl = mockQueuedProcessControl();
-        // Delays the signal past the log-stream failure so only the grace window, not a
-        // same-tick race, can produce a clean exit. A generous injected grace period keeps
-        // this margin independent of the real clock.
-        const childSpawner = mockDockerLogSpawner([
-          {
-            exitCode: 1,
-            stderr: "docker logs killed by signal",
-            onSpawn: () => {
-              Effect.runFork(
-                Effect.sleep(Duration.millis(15)).pipe(
-                  Effect.andThen(Effect.sync(() => processControl.signal("SIGINT"))),
-                ),
-              );
-            },
-          },
-        ]);
-
-        return Effect.gen(function* () {
-          yield* Effect.promise(writeHelloFunction);
-
-          const { layer, out } = setupServe({ processControl, childSpawner });
-          const fiber = yield* serveWithTimers(baseFlags(), {
-            shutdownSignalGracePeriod: Duration.seconds(2),
-          }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
-
-          const exit = yield* Fiber.await(fiber);
-          expect(Exit.isSuccess(exit)).toBe(true);
-          expect(
-            out.stdoutText
-              .replaceAll("\u001b[1m", "")
-              .replaceAll("\u001b[22m", "")
-              .replaceAll("\\", "/"),
-          ).toContain("Stopped serving supabase/functions\n");
-        });
-      },
-    );
-
-    it.live(
-      "downgrades a startup failure to a clean shutdown when the signal lands within the grace window",
-      () => {
-        const processControl = mockQueuedProcessControl();
-        // Delays the signal past the startup failure so only the grace window, not a
-        // same-tick race, can produce a clean exit. A generous injected grace period keeps
-        // this margin independent of the real clock.
-        deployMockState.runHandler = (command, args) => {
-          if (command !== "docker") {
-            throw new Error(`unexpected process: ${command}`);
-          }
-          if (args[0] === "container" && args[1] === "inspect") {
-            Effect.runFork(
-              Effect.sleep(Duration.millis(15)).pipe(
-                Effect.andThen(Effect.sync(() => processControl.signal("SIGINT"))),
-              ),
-            );
-            return {
-              exitCode: 1,
-              stdout: "",
-              stderr: "Error: No such container: supabase_db_test-project",
-            };
-          }
-          throw new Error(`unexpected docker args: ${args.join(" ")}`);
-        };
-
-        return Effect.gen(function* () {
-          yield* Effect.promise(writeHelloFunction);
-
-          const { layer, out } = setupServe({ processControl });
-          const fiber = yield* serveWithTimers(baseFlags(), {
-            shutdownSignalGracePeriod: Duration.seconds(2),
-          }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
-
-          const exit = yield* Fiber.await(fiber);
-          expect(Exit.isSuccess(exit)).toBe(true);
-          expect(
-            out.stdoutText
-              .replaceAll("\u001b[1m", "")
-              .replaceAll("\u001b[22m", "")
-              .replaceAll("\\", "/"),
-          ).toContain("Stopped serving supabase/functions\n");
-        });
-      },
-    );
-
-    it.live(
-      "still fails with a tagged error when the container crashes with a non-zero exit code",
-      () => {
-        deployMockState.runHandler = baseDockerRunHandler();
-        // `docker logs -f` itself exits 0 (the container it tails stopped), so
-        // `streamContainerLogs` inspects the container's own exit code next.
-        const childSpawner = mockDockerLogSpawner([
-          { exitCode: 0 },
-          inspectStateBehavior(false, 1),
-        ]);
-
-        return Effect.gen(function* () {
-          yield* Effect.promise(writeHelloFunction);
-
-          const { layer } = setupServe({ childSpawner });
-          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-          expect(error).toBeInstanceOf(EdgeRuntimeContainerCrashedError);
-          if (error instanceof EdgeRuntimeContainerCrashedError) {
-            expect(error.exitCode).toBe(1);
-            expect(error.message).toContain("supabase_edge_runtime_test-project");
-            expect(error.message).toContain("exit 1");
-            // A runtime we launched died on its own: our bug, not the user's,
-            // and specifically not `unknown`.
-            expect(error[ErrorActionabilityId]).toEqual(actionability.runtimeCrash);
-          }
-        });
-      },
-    );
-
-    it.live(
-      "ends the session successfully, with a distinct message, when a supervisor tears the container down (exit 143)",
-      () => {
-        deployMockState.runHandler = baseDockerRunHandler();
-        const childSpawner = mockDockerLogSpawner([
-          { exitCode: 0 },
-          inspectStateBehavior(false, 143),
-        ]);
-
-        return Effect.gen(function* () {
-          yield* Effect.promise(writeHelloFunction);
-
-          const { layer, out } = setupServe({ childSpawner });
-          const exit = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.exit);
-
-          expect(Exit.isSuccess(exit)).toBe(true);
-          expect(out.stdoutText).toContain("Edge Runtime container stopped (exit 143).");
-          expect(out.stdoutText).toContain("Stopped serving");
-        });
-      },
-    );
-
-    it.live(
-      "still fails as an internal runtime crash for a real crash signal (SIGSEGV, 139)",
-      () => {
-        deployMockState.runHandler = baseDockerRunHandler();
-        const childSpawner = mockDockerLogSpawner([
-          { exitCode: 0 },
-          inspectStateBehavior(false, 139),
-        ]);
-
-        return Effect.gen(function* () {
-          yield* Effect.promise(writeHelloFunction);
-
-          const { layer } = setupServe({ childSpawner });
-          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-          expect(error).toBeInstanceOf(EdgeRuntimeContainerCrashedError);
-          if (error instanceof EdgeRuntimeContainerCrashedError) {
-            expect(error.exitCode).toBe(139);
-            expect(error[ErrorActionabilityId]).toEqual(actionability.runtimeCrash);
-          }
-        });
-      },
-    );
-
-    it.live(
-      "ends the session normally, with a distinct message, when the container exits gracefully (exit 0)",
-      () => {
-        deployMockState.runHandler = baseDockerRunHandler();
-        const childSpawner = mockDockerLogSpawner([
-          { exitCode: 0 },
-          inspectStateBehavior(false, 0),
-        ]);
-
-        return Effect.gen(function* () {
-          yield* Effect.promise(writeHelloFunction);
-
-          const { layer, out } = setupServe({ childSpawner });
-          const exit = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.exit);
-
-          expect(Exit.isSuccess(exit)).toBe(true);
-          expect(out.stdoutText).toContain("Edge Runtime exited (code 0).");
-          expect(out.stdoutText).toContain("Stopped serving");
-        });
-      },
-    );
-
-    it.live(
-      "ends the session normally when the container is removed before the follow-up inspect can run",
-      () => {
-        deployMockState.runHandler = baseDockerRunHandler();
-        const childSpawner = mockDockerLogSpawner([
-          { exitCode: 0 },
-          {
-            exitCode: 1,
-            stderr:
-              "Error response from daemon: No such container: supabase_edge_runtime_test-project",
-          },
-        ]);
-
-        return Effect.gen(function* () {
-          yield* Effect.promise(writeHelloFunction);
-
-          const { layer, out } = setupServe({ childSpawner });
-          const exit = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.exit);
-
-          expect(Exit.isSuccess(exit)).toBe(true);
-          expect(out.stdoutText).toContain("Edge Runtime container is no longer available.");
-          expect(out.stdoutText).toContain("Stopped serving");
-        });
-      },
-    );
-
-    it.live(
-      "re-attaches instead of reporting a graceful exit when docker logs exits 0 but the container is still running",
-      () => {
-        deployMockState.runHandler = baseDockerRunHandler();
-        // The first `docker logs -f` exit is a stream EOF while the container
-        // keeps running; only the second is its real stop.
-        const childSpawner = mockDockerLogSpawner([
-          { exitCode: 0 },
-          inspectStateBehavior(true, 0),
-          { exitCode: 0 },
-          inspectStateBehavior(false, 0),
-        ]);
-
-        return Effect.gen(function* () {
-          yield* Effect.promise(writeHelloFunction);
-
-          const { layer, out } = setupServe({ childSpawner });
-          const exit = yield* serveWithTimers(baseFlags(), {
-            dockerLogRetryDelay: Duration.millis(1),
-          }).pipe(Effect.provide(layer), Effect.exit);
-
-          expect(Exit.isSuccess(exit)).toBe(true);
-          expect(out.stdoutText).toContain("Stopped serving");
-          expect(
-            childSpawner.spawned.filter(
-              (call) => call.command === "docker" && call.args[0] === "logs",
-            ),
-          ).toHaveLength(2);
-          expect(containerInspectCalls(childSpawner)).toHaveLength(2);
-        });
-      },
-    );
-
-    it.live(
-      "re-attaches on the second consecutive-since timestamp when logs resume with progress",
-      () => {
-        deployMockState.runHandler = baseDockerRunHandler();
-        const childSpawner = mockDockerLogSpawner([
-          { exitCode: 0, stdout: "2024-01-01T00:00:00.000000000Z hello\n" },
-          inspectStateBehavior(true, 0),
-          { exitCode: 0 },
-          inspectStateBehavior(false, 0),
-        ]);
-
-        return Effect.gen(function* () {
-          yield* Effect.promise(writeHelloFunction);
-
-          const { layer } = setupServe({ childSpawner });
-          const exit = yield* serveWithTimers(baseFlags(), {
-            dockerLogRetryDelay: Duration.millis(1),
-          }).pipe(Effect.provide(layer), Effect.exit);
-
-          expect(Exit.isSuccess(exit)).toBe(true);
-          const logsCalls = childSpawner.spawned.filter(
-            (call) => call.command === "docker" && call.args[0] === "logs",
-          );
-          expect(logsCalls).toHaveLength(2);
-          expect(logsCalls[0]?.args).not.toContain("--since");
-          expect(logsCalls[1]?.args).toContain("--since");
-          expect(logsCalls[1]?.args).toContain("2024-01-01T00:00:00.000000000Z");
-        });
-      },
-    );
-
-    it.live(
-      "fails with a tagged error after repeatedly losing the log stream while the container stays running",
-      () => {
-        deployMockState.runHandler = baseDockerRunHandler();
-        const reattachPair: ReadonlyArray<LogProcessBehavior> = [
-          { exitCode: 1, stderr: "docker logs connection reset" },
-          inspectStateBehavior(true, 0),
-        ];
-        const childSpawner = mockDockerLogSpawner(
-          Array.from({ length: 6 }, () => reattachPair).flat(),
-        );
-
-        return Effect.gen(function* () {
-          yield* Effect.promise(writeHelloFunction);
-
-          const { layer } = setupServe({ childSpawner });
-          const error = yield* serveWithTimers(baseFlags(), {
-            dockerLogRetryDelay: Duration.millis(1),
-          }).pipe(Effect.provide(layer), Effect.flip);
-
-          expect(error).toBeInstanceOf(EdgeRuntimeLogStreamLostError);
-          if (error instanceof EdgeRuntimeLogStreamLostError) {
-            expect(error.containerId).toBe("supabase_edge_runtime_test-project");
-            expect(error.message).toContain("supabase_edge_runtime_test-project");
-            expect(error.message).toContain("5 times");
-          }
-        });
-      },
-    );
-
-    it.live(
-      "classifies an unreachable docker daemon as user-actionable rather than unknown",
-      () => {
-        deployMockState.runHandler = baseDockerRunHandler();
-        const childSpawner = mockDockerLogSpawner([
-          {
-            exitCode: 1,
-            stderr: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock",
-          },
-        ]);
-
-        return Effect.gen(function* () {
-          yield* Effect.promise(writeHelloFunction);
-
-          const { layer } = setupServe({ childSpawner });
-          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-          expect(error).toBeInstanceOf(DockerLogsStreamError);
-          if (error instanceof DockerLogsStreamError) {
-            expect(error.daemonDown).toBe(true);
-            expect(error[ErrorActionabilityId]).toEqual({
-              ...actionability.dockerNotRunning,
-              fingerprint_suffix: "docker_not_running",
-            });
-          }
-        });
-      },
-    );
-
-    it.live("still fails when the edge runtime container never comes up", () => {
-      deployMockState.runHandler = (command, args) => {
-        if (command !== "docker") {
-          throw new Error(`unexpected process: ${command}`);
-        }
-        if (args[0] === "container" && args[1] === "inspect") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "container" && args[1] === "rm") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "create") {
-          return { exitCode: 1, stdout: "", stderr: "failed to create container" };
-        }
-        throw new Error(`unexpected docker args: ${args.join(" ")}`);
-      };
-
-      return Effect.gen(function* () {
-        yield* Effect.promise(writeHelloFunction);
-
-        const { layer } = setupServe({});
-        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-        expect(error).toBeInstanceOf(Error);
-        if (error instanceof Error) {
-          expect(error.message).toContain("failed to create container");
-        }
-      });
-    });
-  });
-
-  it.live("passes inspect, debug, and custom network settings through to edge-runtime", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "inspect failed" }]);
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer } = setupServe({
-        debug: true,
-        networkId: Option.some("custom-network"),
-        childSpawner,
-      });
-
-      const error = yield* functionsServe(
-        baseFlags({
-          inspectMode: Option.some("wait"),
-          inspectMain: true,
-        }),
-      ).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("inspect failed");
-      }
-
-      const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "create",
-      );
-      expect(dockerRun).toBeDefined();
-      if (dockerRun === undefined) {
-        throw new Error("expected docker create call");
-      }
-
-      expect(dockerRun.args).toContain("--network");
-      expect(dockerRun.args).toContain("custom-network");
-      expect(dockerRun.args).toContain("-p");
-      expect(dockerRun.args).toContain("8083:8083");
-
-      const commandScript = dockerRun.args[dockerRun.args.length - 1] ?? "";
-      expect(commandScript).toContain("--inspect-wait=0.0.0.0:8083");
-      expect(commandScript).toContain("--inspect-main");
-      expect(commandScript).toContain("--verbose");
-
-      const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-      expect(envs).toContain("SUPABASE_INTERNAL_DEBUG=true");
-      expect(envs).toContain("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=0");
-      expect(deployMockState.networkCalls).toEqual([
-        { networkMode: "custom-network", projectId: "test-project" },
-      ]);
-    });
-  });
-
-  it.live("injects the Deno runtime template without the TypeScript-only preamble", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      return { exitCode: 0, stdout: "", stderr: "" };
-    };
-
-    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "template logs failed" }]);
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-
-      const { layer } = setupServe({ childSpawner });
-      yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "create",
-      );
-      expect(dockerRun).toBeDefined();
-      if (dockerRun === undefined) {
-        throw new Error("expected docker create call");
-      }
-
-      const commandScript = dockerRun.args[dockerRun.args.length - 1] ?? "";
-      expect(commandScript).toBe(
-        "exec edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
-      );
-
-      const cp = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "cp",
-      );
-      expect(cp).toBeDefined();
-      if (cp === undefined) {
-        throw new Error("expected docker cp call");
-      }
-      const cpOptions: unknown = cp.options;
-      const stdin =
-        typeof cpOptions === "object" && cpOptions !== null && "stdin" in cpOptions
-          ? cpOptions.stdin
-          : undefined;
-      // Narrows the mock-recorded `unknown`; the `instanceof Uint8Array` check still guards.
-      const isCpArchiveStream = (value: unknown): value is Stream.Stream<Uint8Array> =>
-        Stream.isStream(value);
-      expect(isCpArchiveStream(stdin)).toBe(true);
-      if (!isCpArchiveStream(stdin)) return yield* Effect.die("docker cp stdin was not a stream");
-      const chunks = yield* Stream.runCollect(stdin);
-      const archiveBytes = chunks[0];
-      if (!(archiveBytes instanceof Uint8Array)) {
-        return yield* Effect.die("docker cp stdin did not contain archive bytes");
-      }
-      const files = yield* Effect.promise(() => new Bun.Archive(archiveBytes).files());
-      const mainService = files.get("root/index.ts");
-      if (mainService === undefined) {
-        return yield* Effect.die("docker cp archive did not contain root/index.ts");
-      }
-      const template = yield* Effect.promise(() => mainService.text());
-      expect(template.length).toBeGreaterThan(0);
-      expect(template).not.toContain("@ts-nocheck");
-      expect(template).not.toContain("declare const Deno");
-      expect(template).not.toContain("declare const EdgeRuntime");
-      expect(commandScript).not.toContain("@ts-nocheck");
-    });
-  });
-
-  it.live("maps the configured inspector_port to the container inspector port", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      return { exitCode: 0, stdout: "", stderr: "" };
-    };
-
-    const childSpawner = mockDockerLogSpawner([
-      { exitCode: 1, stderr: "inspect port logs failed" },
-    ]);
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(
-          [
-            'project_id = "test-project"',
-            "",
             "[edge_runtime]",
-            'policy = "per_worker"',
-            "inspector_port = 9229",
+            "deno_version = 2",
+            "[functions.hello]",
+            "verify_jwt = true",
+            'entrypoint = "./functions/hello/main.ts"',
+            'static_files = ["./functions/hello/data.json"]',
             "",
           ].join("\n"),
         ),
       );
+      yield* Effect.promise(() => writeFunction("hello", "main.ts"));
+      yield* Effect.promise(() => writeFunction("hello", "data.json", "asset\n"));
       yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+        writeFile(join(tempRoot.current, "custom-map.json"), '{"imports":{}}\n'),
       );
-
-      const { layer } = setupServe({ childSpawner });
-      yield* functionsServe(baseFlags({ inspect: true })).pipe(Effect.provide(layer), Effect.flip);
-
-      const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "create",
-      );
-      expect(dockerRun).toBeDefined();
-      if (dockerRun === undefined) {
-        throw new Error("expected docker create call");
-      }
-
-      expect(dockerRun.args).toContain("-p");
-      expect(dockerRun.args).toContain("9229:8083");
-      expect(dockerRun.args).not.toContain("8083:8083");
-    });
-  });
-
-  it.live("fetches remote jwks for enabled third-party auth providers", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "jwks logs failed" }]);
-
-    return Effect.gen(function* () {
-      const remoteKeys = [
-        {
-          kty: "RSA",
-          kid: "remote-key",
-          alg: "RS256",
-          use: "sig",
-          n: "abc",
-          e: "AQAB",
-        },
-      ];
-
-      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-        const url =
-          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-        if (url === "https://issuer.example/.well-known/openid-configuration") {
-          return new Response(JSON.stringify({ jwks_uri: "https://issuer.example/jwks.json" }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
-        if (url === "https://issuer.example/jwks.json") {
-          return new Response(JSON.stringify({ keys: remoteKeys }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
-        throw new Error(`unexpected fetch url: ${url}`);
-      });
-
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          fetchMock.mockRestore();
-        }),
-      );
-
       yield* Effect.promise(() =>
-        writeCliConfig(
-          [
-            'project_id = "test-project"',
-            "",
-            "[auth.third_party.workos]",
-            "enabled = true",
-            'issuer_url = "https://issuer.example"',
-            "",
-          ].join("\n"),
+        writeFile(
+          join(tempRoot.current, "supabase", "functions", ".env"),
+          "SHARED=shared\nTOKEN=shared\n",
         ),
       );
       yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+        writeFile(
+          join(tempRoot.current, "supabase", "functions", "hello", ".env"),
+          "TOKEN=function\n",
+        ),
       );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer } = setupServe({ childSpawner, fetch: fetchMock });
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("jwks logs failed");
-      }
-
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-
-      const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "create",
+      const state = makeStack({ fingerprint: "old", preparedFingerprint: "new" });
+      const control = processControl();
+      const { layer } = setup(state, control);
+      const fiber = yield* Effect.forkChild(
+        serve(
+          baseFlags({
+            inspectMode: Option.some("wait"),
+            inspectMain: true,
+            noVerifyJwt: Option.some(true),
+            importMap: Option.some("custom-map.json"),
+          }),
+        ).pipe(Effect.provide(layer)),
       );
-      expect(dockerRun).toBeDefined();
-      if (dockerRun === undefined) {
-        throw new Error("expected docker create call");
-      }
+      yield* Deferred.await(state.prepareCompleted);
+      control.signal();
+      yield* Fiber.join(fiber);
+      const config = state.restarts[0];
+      const inspectorEndpoint = config?.endpoints?.inspector;
+      expect(
+        inspectorEndpoint !== undefined && "port" in inspectorEndpoint
+          ? inspectorEndpoint.port
+          : undefined,
+      ).toBe("auto");
+      expect(config?.settings?.inspector).toEqual({ mode: "wait", main: true });
+      expect(config?.settings?.functions?.hello?.verify_jwt).toBe(false);
+      expect(config?.settings?.functions?.hello?.entrypoint).toContain("main.ts");
+      expect(config?.settings?.functions?.hello?.import_map).toContain("custom-map.json");
+      expect(config?.settings?.functions?.hello?.static_files).toHaveLength(1);
+      expect(config?.settings?.edge_runtime?.deno_version).toBe(2);
+      const token = config?.settings?.functions?.hello?.env?.TOKEN;
+      expect(token === undefined ? undefined : Redacted.value(token)).toBe("function");
+      const shared = config?.settings?.functions?.hello?.env?.SHARED;
+      expect(shared === undefined ? undefined : Redacted.value(shared)).toBe("shared");
+    }),
+  );
 
-      const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-      const jwks = envs.find((entry) => entry.startsWith("SUPABASE_JWKS="));
-      expect(jwks).toBeDefined();
-      if (jwks === undefined) {
-        throw new Error("missing SUPABASE_JWKS");
-      }
+  it.live("restarts on a source change and rebuilds watcher roots", () =>
+    Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig());
+      yield* Effect.promise(() => writeFunction("hello"));
+      const externalName = `${basename(tempRoot.current)}-external.ts`;
+      const externalMapName = `${basename(tempRoot.current)}-map.json`;
+      const externalPath = join(tempRoot.current, "..", externalName);
+      const externalMapPath = join(tempRoot.current, "..", externalMapName);
+      yield* Effect.promise(() => writeFile(externalPath, "export const value = 1\n"));
+      yield* Effect.promise(() =>
+        writeFile(externalMapPath, JSON.stringify({ imports: { external: `./${externalName}` } })),
+      );
+      const state = makeStack({ fingerprint: "same" });
+      const control = processControl();
+      const watcher = fileWatcher();
+      const { layer } = setup(state, control, watcher);
+      const fiber = yield* Effect.forkChild(
+        serve(baseFlags({ importMap: Option.some(`../${externalMapName}`) })).pipe(
+          Effect.provide(layer),
+        ),
+      );
+      yield* Deferred.await(state.prepareCompleted);
+      yield* Deferred.await(watcher.watched);
+      const changed = join(tempRoot.current, "supabase", "functions", "hello", "changed.ts");
+      yield* Effect.promise(() => writeFunction("hello", "changed.ts"));
+      watcher.emit({ path: changed, type: "update" });
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("600 millis");
+      yield* Deferred.await(state.restarted);
+      control.signal();
+      yield* Fiber.join(fiber);
+      expect(state.restarts).toHaveLength(1);
+      expect(watcher.paths.length).toBeGreaterThan(1);
+      expect(watcher.paths).not.toContain(dirname(externalPath));
+      expect(state.subscriptions.logs).toBe(1);
+      expect(state.subscriptions.status).toBe(1);
+      expect(state.restartsWithObservation).toEqual([true]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
 
-      expect(JSON.parse(jwks.slice("SUPABASE_JWKS=".length))).toEqual({
-        keys: expect.arrayContaining([
-          expect.objectContaining({ kid: "remote-key" }),
-          expect.objectContaining({ kid: "b81269f1-21d8-4f2e-b719-c2240a840d90" }),
-          expect.objectContaining({ kty: "oct" }),
+  it.live("subscribes to the instance before startup and reports a failed runtime", () =>
+    Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig());
+      yield* Effect.promise(() => writeFunction("hello"));
+      const statusQueue = yield* Queue.unbounded<ServiceStatus>();
+      const state = makeStack({ fingerprint: "same", statusQueue });
+      const control = processControl();
+      const { layer, out } = setup(state, control);
+      const fiber = yield* Effect.forkChild(serve(baseFlags()).pipe(Effect.provide(layer)));
+
+      yield* Deferred.await(state.started);
+      expect(state.startsBeforeObservation).toEqual([true]);
+      yield* Queue.offer(statusQueue, serviceStatus(state.service.id, "failed"));
+      yield* Fiber.join(fiber);
+
+      expect(out.stdoutText).toContain("Edge Runtime container is no longer available");
+    }),
+  );
+
+  it.live("attaches logs before startup and reports a completed log stream", () =>
+    Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig());
+      yield* Effect.promise(() => writeFunction("hello"));
+      const functionsId = ServiceInstanceIdSchema.make("functions");
+      const state = makeStack({
+        fingerprint: "same",
+        logStream: Stream.fromIterable([
+          {
+            cursor: { opaque: "function-log-1" },
+            timestamp: new Date(0).toISOString(),
+            source: "functions" as const,
+            stream: "stdout" as const,
+            message: "function booted\n",
+            instanceId: functionsId,
+          },
         ]),
       });
-    });
-  });
+      const control = processControl();
+      const { layer, out } = setup(state, control);
+      const fiber = yield* Effect.forkChild(serve(baseFlags()).pipe(Effect.provide(layer)));
 
-  it.live(
-    "falls back to local jwks when remote jwks resolution fails for enabled third-party auth providers",
-    () => {
-      return Effect.gen(function* () {
-        deployMockState.runHandler = (command, args) => {
-          if (command !== "docker") {
-            throw new Error(`unexpected process: ${command}`);
-          }
-          if (args[0] === "container" && args[1] === "inspect") {
-            return { exitCode: 0, stdout: "", stderr: "" };
-          }
-          if (args[0] === "container" && args[1] === "rm") {
-            return { exitCode: 0, stdout: "", stderr: "" };
-          }
-          if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-            return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-          }
-          if (args[0] === "exec") {
-            return { exitCode: 0, stdout: "", stderr: "" };
-          }
-          throw new Error(`unexpected docker args: ${args.join(" ")}`);
-        };
+      yield* Deferred.await(state.started);
+      yield* Fiber.join(fiber);
 
-        const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "jwks logs failed" }]);
-
-        const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
-          throw new Error("oidc discovery failed");
-        });
-
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            fetchMock.mockRestore();
-          }),
-        );
-
-        yield* Effect.promise(() =>
-          writeCliConfig(
-            [
-              'project_id = "test-project"',
-              "",
-              "[auth.third_party.workos]",
-              "enabled = true",
-              'issuer_url = "https://issuer.example"',
-              "",
-            ].join("\n"),
-          ),
-        );
-        yield* Effect.promise(() =>
-          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-        );
-        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-        const { layer } = setupServe({ childSpawner, fetch: fetchMock });
-        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-        expect(error).toBeInstanceOf(Error);
-        if (error instanceof Error) {
-          expect(error.message).toContain("jwks logs failed");
-        }
-
-        const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        );
-        expect(dockerRun).toBeDefined();
-        if (dockerRun === undefined) {
-          throw new Error("expected docker create call");
-        }
-
-        const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-        const jwks = envs.find((entry) => entry.startsWith("SUPABASE_JWKS="));
-        expect(jwks).toBeDefined();
-        if (jwks === undefined) {
-          throw new Error("missing SUPABASE_JWKS");
-        }
-        expect(JSON.parse(jwks.slice("SUPABASE_JWKS=".length))).toEqual({
-          keys: expect.arrayContaining([
-            expect.objectContaining({ kid: "b81269f1-21d8-4f2e-b719-c2240a840d90" }),
-            expect.objectContaining({ kty: "oct" }),
-          ]),
-        });
-      });
-    },
+      expect(out.stdoutText).toContain("function booted\n");
+      expect(out.stdoutText).toContain("Edge Runtime container is no longer available");
+      expect(state.subscriptions.logs).toBe(1);
+    }),
   );
 
-  it.live(
-    "does not fail startup on a malformed third-party provider config when auth is disabled",
-    () => {
-      // Config validation's "required field" check for third-party providers
-      // only runs when auth is enabled, and `functions serve`'s JWKS
-      // resolution discards its own error unconditionally either way.
-      deployMockState.runHandler = (command, args) => {
-        if (command !== "docker") {
-          throw new Error(`unexpected process: ${command}`);
-        }
-        if (args[0] === "container" && args[1] === "inspect") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "container" && args[1] === "rm") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-        }
-        if (args[0] === "exec") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        throw new Error(`unexpected docker args: ${args.join(" ")}`);
-      };
-
-      const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "jwks logs failed" }]);
-
-      return Effect.gen(function* () {
-        const fetchMock = vi.spyOn(globalThis, "fetch");
-
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            fetchMock.mockRestore();
-          }),
-        );
-
-        yield* Effect.promise(() =>
-          writeCliConfig(
-            [
-              'project_id = "test-project"',
-              "",
-              "[auth]",
-              "enabled = false",
-              "",
-              "[auth.third_party.workos]",
-              "enabled = true",
-              "",
-            ].join("\n"),
-          ),
-        );
-        yield* Effect.promise(() =>
-          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-        );
-        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-        const { layer } = setupServe({ childSpawner });
-        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-        expect(error).toBeInstanceOf(Error);
-        if (error instanceof Error) {
-          expect(error.message).toContain("jwks logs failed");
-        }
-        expect(fetchMock).not.toHaveBeenCalled();
-
-        const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        );
-        expect(dockerRun).toBeDefined();
-        if (dockerRun === undefined) {
-          throw new Error("expected docker create call");
-        }
-
-        const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-        const jwks = envs.find((entry) => entry.startsWith("SUPABASE_JWKS="));
-        expect(jwks).toBeDefined();
-        if (jwks === undefined) {
-          throw new Error("missing SUPABASE_JWKS");
-        }
-        expect(JSON.parse(jwks.slice("SUPABASE_JWKS=".length))).toEqual({
-          keys: expect.arrayContaining([
-            expect.objectContaining({ kid: "b81269f1-21d8-4f2e-b719-c2240a840d90" }),
-            expect.objectContaining({ kty: "oct" }),
-          ]),
-        });
-      });
-    },
+  it.live("returns on shutdown while a watcher restart is in flight", () =>
+    Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig());
+      yield* Effect.promise(() => writeFunction("hello"));
+      const state = makeStack({ fingerprint: "same", restart: "blocked" });
+      const control = processControl();
+      const watcher = fileWatcher();
+      const { layer } = setup(state, control, watcher);
+      const fiber = yield* Effect.forkChild(serve(baseFlags()).pipe(Effect.provide(layer)));
+      yield* Deferred.await(state.prepareCompleted);
+      yield* Deferred.await(watcher.watched);
+      const changed = join(tempRoot.current, "supabase", "functions", "hello", "changed.ts");
+      yield* Effect.promise(() => writeFunction("hello", "changed.ts"));
+      watcher.emit({ path: changed, type: "update" });
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("600 millis");
+      yield* Deferred.await(state.restartStarted);
+      control.signal();
+      yield* Fiber.join(fiber);
+      expect(state.restarts).toHaveLength(1);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.live("includes config-defined edge runtime secrets in the runtime env", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "secrets logs failed" }]);
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(
-          [
-            'project_id = "test-project"',
-            "",
-            "[edge_runtime]",
-            'policy = "per_worker"',
-            "inspector_port = 8083",
-            "",
-            "[edge_runtime.secrets]",
-            'FROM_CONFIG = "config-value"',
-            "",
-          ].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer } = setupServe({ childSpawner });
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("secrets logs failed");
-      }
-
-      const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "create",
-      );
-      expect(dockerRun).toBeDefined();
-      if (dockerRun === undefined) {
-        throw new Error("expected docker create call");
-      }
-
-      const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-      expect(envs).toContain("FROM_CONFIG=config-value");
-    });
-  });
-
-  it.live("uppercases config secret names, skipping empty and unresolved values", () => {
-    // Config secret keys are uppercased before the map is read; only entries
-    // with a resolved (non-empty) value are kept, skipping empty or
-    // still-unresolved `env(VAR)` literals.
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "secrets logs failed" }]);
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(
-          [
-            'project_id = "test-project"',
-            "",
-            "[edge_runtime.secrets]",
-            'my_lower_secret = "keep-me"',
-            'EMPTY_SECRET = ""',
-            'UNRESOLVED_SECRET = "env(SERVE_SECRET_NEVER_SET)"',
-            "",
-          ].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer } = setupServe({ childSpawner });
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("secrets logs failed");
-      }
-
-      const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "create",
-      );
-      expect(dockerRun).toBeDefined();
-      if (dockerRun === undefined) {
-        throw new Error("expected docker create call");
-      }
-
-      const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-      expect(envs).toContain("MY_LOWER_SECRET=keep-me");
-      expect(envs.some((entry) => entry.startsWith("my_lower_secret="))).toBe(false);
-      expect(envs.some((entry) => entry.startsWith("EMPTY_SECRET="))).toBe(false);
-      expect(envs.some((entry) => entry.startsWith("UNRESOLVED_SECRET="))).toBe(false);
-    });
-  });
-
-  it.live("uses the resolved project_id when deriving docker resource names", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
-
-    return Effect.gen(function* () {
-      const envName = "SUPABASE_SERVE_PROJECT_ID";
-      const previous = process.env[envName];
-      process.env[envName] = "env-backed-project";
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          if (previous === undefined) {
-            delete process.env[envName];
-          } else {
-            process.env[envName] = previous;
-          }
-        }),
-      );
-
-      yield* Effect.promise(() =>
-        writeCliConfig([`project_id = "env(${envName})"`, ""].join("\n")),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer } = setupServe({ childSpawner });
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("serve logs failed");
-      }
-
-      expect(deployMockState.volumeCalls).toEqual([
-        {
-          volumeName: "supabase_edge_runtime_env-backed-project",
-          projectId: "env-backed-project",
-        },
-      ]);
-      expect(deployMockState.networkCalls).toEqual([
-        {
-          networkMode: "supabase_network_env-backed-project",
-          projectId: "env-backed-project",
-        },
-      ]);
-      expect(deployMockState.runCalls).toContainEqual(
-        expect.objectContaining({
-          command: "docker",
-          args: ["container", "inspect", "supabase_db_env-backed-project"],
-        }),
-      );
-    });
-  });
-
-  it.live(
-    "prefers the legacy SUPABASE_PROJECT_ID override when deriving docker resource names",
-    () => {
-      deployMockState.runHandler = (command, args) => {
-        if (command !== "docker") {
-          throw new Error(`unexpected process: ${command}`);
-        }
-        if (args[0] === "container" && args[1] === "inspect") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "container" && args[1] === "rm") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-        }
-        if (args[0] === "exec") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        throw new Error(`unexpected docker args: ${args.join(" ")}`);
-      };
-
-      const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
-
-      return Effect.gen(function* () {
-        yield* Effect.promise(() =>
-          writeCliConfig(
-            [
-              'project_id = "config-project"',
-              "",
-              "[functions.hello]",
-              "verify_jwt = true",
-              "",
-              "[remotes.override]",
-              'project_id = "overrideprojectaaaaa"',
-              "",
-              "[remotes.override.functions.hello]",
-              "verify_jwt = false",
-              "",
-            ].join("\n"),
-          ),
-        );
-        yield* Effect.promise(() =>
-          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-        );
-        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-        const { layer } = setupServe({
-          childSpawner,
-          projectId: Option.some("overrideprojectaaaaa"),
-        });
-        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-        expect(error).toBeInstanceOf(Error);
-        if (error instanceof Error) {
-          expect(error.message).toContain("serve logs failed");
-        }
-
-        expect(deployMockState.volumeCalls).toEqual([
-          {
-            volumeName: "supabase_edge_runtime_overrideprojectaaaaa",
-            projectId: "overrideprojectaaaaa",
-          },
-        ]);
-        expect(deployMockState.networkCalls).toEqual([
-          {
-            networkMode: "supabase_network_overrideprojectaaaaa",
-            projectId: "overrideprojectaaaaa",
-          },
-        ]);
-        expect(deployMockState.runCalls).toContainEqual(
-          expect.objectContaining({
-            command: "docker",
-            args: ["container", "inspect", "supabase_db_overrideprojectaaaaa"],
-          }),
-        );
-
-        const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        );
-        expect(dockerRun).toBeDefined();
-        if (dockerRun === undefined) {
-          throw new Error("expected docker create call");
-        }
-
-        const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-        const functionsConfig = envs.find((entry) =>
-          entry.startsWith("SUPABASE_INTERNAL_FUNCTIONS_CONFIG="),
-        );
-        expect(functionsConfig).toBeDefined();
-        if (functionsConfig === undefined) {
-          throw new Error("missing SUPABASE_INTERNAL_FUNCTIONS_CONFIG");
-        }
-
-        expect(
-          JSON.parse(functionsConfig.slice("SUPABASE_INTERNAL_FUNCTIONS_CONFIG=".length)),
-        ).toEqual(
-          expect.objectContaining({
-            hello: expect.objectContaining({
-              verifyJWT: false,
-            }),
-          }),
-        );
-      });
-    },
-  );
-
-  it.live("fails inspect flag conflicts before startup work begins", () => {
-    return Effect.gen(function* () {
-      const { layer } = setupServe();
-      const error = yield* functionsServe(
-        baseFlags({
-          inspect: true,
-          inspectMode: Option.some("run"),
-        }),
-      ).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain(
-          "if any flags in the group [inspect inspect-mode] are set none of the others can be; [inspect inspect-mode] were all set",
-        );
-      }
-      expect(deployMockState.runCalls).toHaveLength(0);
-      expect(deployMockState.volumeCalls).toHaveLength(0);
-      expect(deployMockState.networkCalls).toHaveLength(0);
-    });
-  });
-
-  it.live("fails when the project config is malformed", () => {
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig("not valid toml ]["));
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(JSON.stringify(error)).toContain("CliConfigParseError");
-      expect(deployMockState.runCalls).toHaveLength(0);
-    });
-  });
-
-  it.live("fails when the local database is not running", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return {
-          exitCode: 1,
-          stdout: "",
-          stderr: "Error: No such container: supabase_db_test-project",
-        };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(ServeLocalDbNotRunningError);
-      if (error instanceof ServeLocalDbNotRunningError) {
-        expect(error.message).toContain("supabase start is not running.");
-        expect(error[ErrorActionabilityId]).toEqual(actionability.startStack);
-      }
-    });
-  });
-
-  it.live("surfaces a down docker daemon as the inspect failure with the install hint", () => {
-    // No upfront docker precheck: a down daemon surfaces from the DB
-    // container inspect as `failed to inspect service: <connection error>`,
-    // with the Docker Desktop install hint attached as a suggestion.
-    const daemonDownStderr =
-      "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?";
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 1, stdout: "", stderr: daemonDownStderr };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(ServeLocalDbInspectError);
-      if (error instanceof ServeLocalDbInspectError) {
-        expect(error.message).toBe(`failed to inspect service: ${daemonDownStderr}`);
-        expect(error.message).not.toContain("failed to run docker");
-        expect(error.daemonDown).toBe(true);
-        expect(error[ErrorActionabilityId]).toEqual({
-          ...actionability.dockerNotRunning,
-          fingerprint_suffix: "docker_not_running",
-        });
-      }
-      expect(error).toHaveProperty(
-        "suggestion",
-        "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop",
-      );
-
-      expect(deployMockState.runCalls).toEqual([
-        expect.objectContaining({
-          command: "docker",
-          args: ["container", "inspect", "supabase_db_test-project"],
-        }),
-      ]);
-      expect(deployMockState.volumeCalls).toHaveLength(0);
-      expect(deployMockState.networkCalls).toHaveLength(0);
-    });
-  });
-
-  it.live("keeps the install hint when no container runtime is installed at all", () => {
-    // Missing docker/podman binaries are treated the same as a missing
-    // daemon socket; the spawn-failure cause must survive into the
-    // `failed to inspect service: …` message instead of being blanked.
-    const runtimeNotFoundMessage =
-      "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH";
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { failure: new Error(runtimeNotFoundMessage) };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(ServeLocalDbInspectError);
-      if (error instanceof ServeLocalDbInspectError) {
-        expect(error.message).toBe(`failed to inspect service: ${runtimeNotFoundMessage}`);
-        expect(error.message).not.toContain("failed to run docker");
-        expect(error.daemonDown).toBe(true);
-      }
-      expect(error).toHaveProperty(
-        "suggestion",
-        "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop",
-      );
-    });
-  });
-
-  it.live("fails with the config error, not a docker error, when both are broken", () => {
-    deployMockState.runHandler = () => ({
-      exitCode: 1,
-      stdout: "",
-      stderr:
-        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
-    });
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig("not valid toml ]["));
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toHaveProperty("_tag", "CliConfigParseError");
-      expect(deployMockState.runCalls).toHaveLength(0);
-    });
-  });
-
-  it.live("makes no remote JWKS request when docker is down", () => {
-    // JWKS is fetched only after the DB assertion, so a down daemon's error
-    // surfaces immediately without waiting on any OIDC/JWKS request.
-    const daemonDownStderr =
-      "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?";
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 1, stdout: "", stderr: daemonDownStderr };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    return Effect.gen(function* () {
-      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-        const url =
-          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-        throw new Error(`unexpected fetch before the DB assertion: ${url}`);
-      });
-
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          fetchMock.mockRestore();
-        }),
-      );
-
-      yield* Effect.promise(() =>
-        writeCliConfig(
-          [
-            'project_id = "test-project"',
-            "",
-            "[auth.third_party.workos]",
-            "enabled = true",
-            'issuer_url = "https://issuer.example"',
-            "",
-          ].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(ServeLocalDbInspectError);
-      if (error instanceof ServeLocalDbInspectError) {
-        expect(error.message).toBe(`failed to inspect service: ${daemonDownStderr}`);
-        expect(error.daemonDown).toBe(true);
-      }
-      expect(fetchMock).not.toHaveBeenCalled();
-    });
-  });
-
-  it.live("fails with the auth config error, not a docker error, when both are broken", () => {
-    deployMockState.runHandler = () => ({
-      exitCode: 1,
-      stdout: "",
-      stderr:
-        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
-    });
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(
-          ['project_id = "test-project"', "", "[auth]", 'jwt_secret = "short"', ""].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toBe(
-          "Invalid config for auth.jwt_secret. Must be at least 16 characters",
-        );
-      }
-      expect(deployMockState.runCalls).toHaveLength(0);
-    });
-  });
-
-  it.live("resolves env() config values from root env development files", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-      }
-      if (args[0] === "exec") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "root env logs failed" }]);
-    const previousSupabaseEnv = process.env["SUPABASE_ENV"];
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig([`project_id = "env(ROOT_PROJECT_ID)"`, ""].join("\n")),
-      );
-      yield* Effect.promise(() =>
-        writeProjectFile(".env.development", "ROOT_PROJECT_ID=root-env-project\n"),
-      );
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      process.env["SUPABASE_ENV"] = "development";
-
-      const { layer } = setupServe({ childSpawner });
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("root env logs failed");
-      }
-
-      expect(deployMockState.volumeCalls).toEqual([
-        {
-          volumeName: "supabase_edge_runtime_root-env-project",
-          projectId: "root-env-project",
-        },
-      ]);
-      expect(deployMockState.networkCalls).toEqual([
-        {
-          networkMode: "supabase_network_root-env-project",
-          projectId: "root-env-project",
-        },
-      ]);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previousSupabaseEnv === undefined) {
-            delete process.env["SUPABASE_ENV"];
-          } else {
-            process.env["SUPABASE_ENV"] = previousSupabaseEnv;
-          }
-        }),
-      ),
-    );
-  });
-
-  it.live(
-    "resolves numeric env() config values from root env development files before decode",
-    () => {
-      deployMockState.runHandler = (command, args) => {
-        if (command !== "docker") {
-          throw new Error(`unexpected process: ${command}`);
-        }
-        if (args[0] === "container" && args[1] === "inspect") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "container" && args[1] === "rm") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-        }
-        if (args[0] === "exec") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        throw new Error(`unexpected docker args: ${args.join(" ")}`);
-      };
-
-      const childSpawner = mockDockerLogSpawner([
-        { exitCode: 1, stderr: "root api env logs failed" },
-      ]);
-      const previousSupabaseEnv = process.env["SUPABASE_ENV"];
-
-      return Effect.gen(function* () {
-        yield* Effect.promise(() =>
-          writeCliConfig(
-            ['project_id = "test-project"', "[api]", 'port = "env(ROOT_API_PORT)"', ""].join("\n"),
-          ),
-        );
-        yield* Effect.promise(() => writeProjectFile(".env.development", "ROOT_API_PORT=5544\n"));
-        yield* Effect.promise(() =>
-          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-        );
-        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-        process.env["SUPABASE_ENV"] = "development";
-
-        const { layer } = setupServe({ childSpawner });
-        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-        expect(error).toBeInstanceOf(Error);
-        if (error instanceof Error) {
-          expect(error.message).toContain("root api env logs failed");
-        }
-
-        const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        );
-        expect(dockerRun).toBeDefined();
-        if (dockerRun === undefined) {
-          throw new Error("expected docker create call");
-        }
-
-        const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-        expect(envs).toContain("SUPABASE_INTERNAL_HOST_PORT=5544");
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previousSupabaseEnv === undefined) {
-              delete process.env["SUPABASE_ENV"];
-            } else {
-              process.env["SUPABASE_ENV"] = previousSupabaseEnv;
-            }
-          }),
-        ),
-      );
-    },
-  );
-
-  it.live(
-    "does not publish default jwks fallbacks when signing_keys_path is configured but empty",
-    () => {
-      deployMockState.runHandler = (command, args) => {
-        if (command !== "docker") {
-          throw new Error(`unexpected process: ${command}`);
-        }
-        if (args[0] === "container" && args[1] === "inspect") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "container" && args[1] === "rm") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-        }
-        if (args[0] === "exec") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        throw new Error(`unexpected docker args: ${args.join(" ")}`);
-      };
-
-      const childSpawner = mockDockerLogSpawner([
-        { exitCode: 1, stderr: "empty signing keys logs failed" },
-      ]);
-
-      return Effect.gen(function* () {
-        yield* Effect.promise(() =>
-          writeCliConfig(
-            [
-              'project_id = "test-project"',
-              "[auth]",
-              'signing_keys_path = "./signing-keys.json"',
-              "",
-            ].join("\n"),
-          ),
-        );
-        yield* Effect.promise(() =>
-          writeProjectFile(join("supabase", "signing-keys.json"), "[]\n"),
-        );
-        yield* Effect.promise(() =>
-          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-        );
-        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-        const { layer } = setupServe({ childSpawner });
-        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-        expect(error).toBeInstanceOf(Error);
-        if (error instanceof Error) {
-          expect(error.message).toContain("empty signing keys logs failed");
-        }
-
-        const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        );
-        expect(dockerRun).toBeDefined();
-        if (dockerRun === undefined) {
-          throw new Error("expected docker create call");
-        }
-
-        const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
-        const jwks = envs.find((entry) => entry.startsWith("SUPABASE_JWKS="));
-        expect(jwks).toBeDefined();
-        if (jwks === undefined) {
-          throw new Error("missing SUPABASE_JWKS");
-        }
-
-        const parsed = JSON.parse(jwks.slice("SUPABASE_JWKS=".length)) as {
-          readonly keys: ReadonlyArray<Record<string, unknown>>;
-        };
-        expect(
-          parsed.keys.some((key) => key["kid"] === "b81269f1-21d8-4f2e-b719-c2240a840d90"),
-        ).toBe(false);
-        expect(parsed.keys.some((key) => key["kty"] === "oct")).toBe(false);
-      });
-    },
-  );
-
-  it.live("fails when the explicit env file is missing", () => {
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(
-        baseFlags({
-          envFile: Option.some(".env"),
-        }),
-      ).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain(".env");
-        expect(error.message).toContain("no such file or directory");
-      }
-      expect(
-        deployMockState.runCalls.filter(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        ),
-      ).toHaveLength(0);
-    });
-  });
-
-  it.live("surfaces the real filesystem error when the functions path is not a directory", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        writeFileSync(join(tempRoot.current, "supabase", "functions"), "not a directory\n");
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(
-          [
-            'project_id = "test-project"',
-            "[functions.hello]",
-            'entrypoint = "./functions/hello/index.ts"',
-            "",
-          ].join("\n"),
-        ),
-      );
-
-      const { layer, out } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("ENOTDIR");
-        expect(error.message).toContain(join("supabase", "functions"));
-        expect(error.message).not.toContain("An error occurred in Effect.tryPromise");
-      }
-      expect(out.stderrText).toContain("Setting up Edge Functions runtime...\n");
-      expect(deployMockState.runCalls.map((call) => call.args.slice(0, 2))).toEqual([
-        ["container", "inspect"],
-        ["container", "rm"],
-      ]);
-      expect(
-        deployMockState.runCalls.filter(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        ),
-      ).toHaveLength(0);
-      expect(deployMockState.networkCalls).toHaveLength(0);
-      expect(deployMockState.volumeCalls).toHaveLength(0);
-    });
-  });
-
-  it.live("preserves the primary error when artifact cleanup also fails", () => {
-    deployMockState.runHandler = (command, args) => {
-      if (command !== "docker") {
-        throw new Error(`unexpected process: ${command}`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (args[0] === "container" && args[1] === "rm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`unexpected docker args: ${args.join(" ")}`);
-    };
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      yield* Effect.promise(() =>
-        writeProjectFile(
-          join("supabase", "functions", ".env"),
-          ['FOO.BAR="line-1\nline-2"', ""].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeProjectFile(join("supabase", ".temp", "start-secrets"), "not a directory\n"),
-      );
-
-      const { layer, out } = setupServe();
-      const exit = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.exit);
-
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isSuccess(exit)) {
-        throw new Error("expected functions serve to fail");
-      }
-      const error = Cause.squash(exit.cause);
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("invalid multiline environment variable name");
-        expect(error.message).toContain("FOO.BAR");
-        expect(error.message).not.toContain("ENOTDIR");
-        expect(error.message).not.toContain("An error occurred in Effect.tryPromise");
-      }
-      expect(out.messages).toContainEqual({
-        type: "warn",
-        message: expect.stringContaining("Failed to clean up Edge Runtime artifacts: ENOTDIR"),
-      });
-      expect(out.messages).toContainEqual({
-        type: "warn",
-        message: expect.stringContaining(join("supabase", ".temp", "start-secrets")),
-      });
-      expect(out.messages).not.toContainEqual({
-        type: "warn",
-        message: expect.stringContaining("An error occurred in Effect.tryPromise"),
-      });
-      expect(deployMockState.runCalls.filter((call) => call.args[0] === "create")).toHaveLength(0);
-    });
-  });
-
-  describe("Config.Validate / dotenv / env-override parity (CLI-1963)", () => {
-    it.live(
-      "fails before any Docker work when config.toml has an explicit empty project_id",
-      () => {
-        return Effect.gen(function* () {
-          yield* Effect.promise(() => writeCliConfig('project_id = ""\n'));
-          yield* Effect.promise(() =>
-            writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-          );
-
-          const { layer } = setupServe();
-          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-          expect(error).toBeInstanceOf(Error);
-          if (error instanceof Error) {
-            expect(error.message).toBe("Missing required field in config: project_id");
-          }
-          expect(deployMockState.runCalls).toHaveLength(0);
-          expect(deployMockState.networkCalls).toHaveLength(0);
-          expect(deployMockState.volumeCalls).toHaveLength(0);
-        });
-      },
-    );
-
-    it.live(
-      "fails before any Docker work on an unrelated Config.Validate branch (unsupported Postgres major version)",
-      () => {
-        return Effect.gen(function* () {
-          yield* Effect.promise(() =>
-            writeCliConfig(
-              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
-            ),
-          );
-          yield* Effect.promise(() =>
-            writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-          );
-
-          const { layer } = setupServe();
-          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-          expect(error).toBeInstanceOf(Error);
-          if (error instanceof Error) {
-            expect(error.message).toBe(
-              "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
-            );
-          }
-          expect(deployMockState.runCalls).toHaveLength(0);
-          expect(deployMockState.networkCalls).toHaveLength(0);
-          expect(deployMockState.volumeCalls).toHaveLength(0);
-        });
-      },
-    );
-
-    it.live(
-      "resolves the deno v1 edge-runtime image tag when SUPABASE_EDGE_RUNTIME_DENO_VERSION=1 overrides an unset config value",
-      () => {
-        deployMockState.runHandler = (command, args) => {
-          if (command !== "docker") {
-            throw new Error(`unexpected process: ${command}`);
-          }
-          if (args[0] === "container" && args[1] === "inspect") {
-            return { exitCode: 0, stdout: "", stderr: "" };
-          }
-          if (args[0] === "container" && args[1] === "rm") {
-            return { exitCode: 0, stdout: "", stderr: "" };
-          }
-          if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-            return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-          }
-          if (args[0] === "exec") {
-            return { exitCode: 0, stdout: "", stderr: "" };
-          }
-          throw new Error(`unexpected docker args: ${args.join(" ")}`);
-        };
-        const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
-
-        return Effect.gen(function* () {
-          const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-          process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => {
-              if (previous === undefined) {
-                delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-              } else {
-                process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
-              }
-            }),
-          );
-
-          yield* Effect.promise(() =>
-            writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-          );
-          yield* Effect.promise(() =>
-            writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-          );
-          yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-          const { layer } = setupServe({ childSpawner });
-          yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-          const dockerRun = deployMockState.runCalls.find(
-            (call) => call.command === "docker" && call.args[0] === "create",
-          );
-          expect(dockerRun).toBeDefined();
-          if (dockerRun === undefined) {
-            throw new Error("expected docker create call");
-          }
-          expect(dockerRun.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.68.4");
-        });
-      },
-    );
-
-    it.live(
-      "uses SUPABASE_NETWORK_ID as the docker network when no --network-id flag is passed",
-      () => {
-        deployMockState.runHandler = (command, args) => {
-          if (command !== "docker") {
-            throw new Error(`unexpected process: ${command}`);
-          }
-          if (args[0] === "container" && args[1] === "inspect") {
-            return { exitCode: 0, stdout: "", stderr: "" };
-          }
-          if (args[0] === "container" && args[1] === "rm") {
-            return { exitCode: 0, stdout: "", stderr: "" };
-          }
-          if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-            return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-          }
-          if (args[0] === "exec") {
-            return { exitCode: 0, stdout: "", stderr: "" };
-          }
-          throw new Error(`unexpected docker args: ${args.join(" ")}`);
-        };
-        const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
-
-        return Effect.gen(function* () {
-          const previous = process.env["SUPABASE_NETWORK_ID"];
-          process.env["SUPABASE_NETWORK_ID"] = "env-network";
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => {
-              if (previous === undefined) {
-                delete process.env["SUPABASE_NETWORK_ID"];
-              } else {
-                process.env["SUPABASE_NETWORK_ID"] = previous;
-              }
-            }),
-          );
-
-          yield* Effect.promise(() =>
-            writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-          );
-          yield* Effect.promise(() =>
-            writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-          );
-          yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-          const { layer } = setupServe({ childSpawner });
-          yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-          expect(deployMockState.networkCalls).toEqual([
-            { networkMode: "env-network", projectId: "test-project" },
-          ]);
-          const dockerRun = deployMockState.runCalls.find(
-            (call) => call.command === "docker" && call.args[0] === "create",
-          );
-          expect(dockerRun?.args).toContain("env-network");
-        });
-      },
-    );
-
-    it.live("prefers an explicit --network-id flag over SUPABASE_NETWORK_ID", () => {
-      deployMockState.runHandler = (command, args) => {
-        if (command !== "docker") {
-          throw new Error(`unexpected process: ${command}`);
-        }
-        if (args[0] === "container" && args[1] === "inspect") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "container" && args[1] === "rm") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-        }
-        if (args[0] === "exec") {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        throw new Error(`unexpected docker args: ${args.join(" ")}`);
-      };
-      const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
-
-      return Effect.gen(function* () {
-        const previous = process.env["SUPABASE_NETWORK_ID"];
-        process.env["SUPABASE_NETWORK_ID"] = "env-network";
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            if (previous === undefined) {
-              delete process.env["SUPABASE_NETWORK_ID"];
-            } else {
-              process.env["SUPABASE_NETWORK_ID"] = previous;
-            }
-          }),
-        );
-
-        yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-        yield* Effect.promise(() =>
-          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-        );
-        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
-
-        const { layer } = setupServe({ childSpawner, networkId: Option.some("flag-network") });
-        yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-        expect(deployMockState.networkCalls).toEqual([
-          { networkMode: "flag-network", projectId: "test-project" },
-        ]);
-        const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        );
-        expect(dockerRun?.args).toContain("flag-network");
-        expect(dockerRun?.args).not.toContain("env-network");
-      });
-    });
-  });
-
-  it.live("surfaces the real filesystem error when the fallback env file is unreadable", () => {
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-      yield* Effect.promise(() =>
-        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-      );
-      // A directory at the fallback path makes the read fail with a non-ENOENT error (EISDIR).
-      yield* Effect.promise(() =>
-        mkdir(join(tempRoot.current, "supabase", "functions", ".env"), { recursive: true }),
-      );
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain("EISDIR");
-        expect(error.message).not.toContain("An error occurred in Effect.tryPromise");
-      }
-      expect(
-        deployMockState.runCalls.filter(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        ),
-      ).toHaveLength(0);
-    });
-  });
-
-  it.live.skipIf(isRoot)(
-    "surfaces the real filesystem error when the env staging dir cannot be created",
-    () => {
-      return Effect.gen(function* () {
-        yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
-        yield* Effect.promise(() =>
-          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
-        );
-        // A read-only parent makes the per-container staging-dir mkdir fail with EACCES.
-        const stagingRoot = join(tempRoot.current, "supabase", ".temp", "start-secrets");
-        yield* Effect.promise(() => mkdir(stagingRoot, { recursive: true }));
-        yield* Effect.promise(() => chmod(stagingRoot, 0o555));
-
-        const { layer } = setupServe();
-        const error = yield* functionsServe(baseFlags()).pipe(
-          Effect.provide(layer),
-          Effect.flip,
-          Effect.ensuring(Effect.promise(() => chmod(stagingRoot, 0o755))),
-        );
-
-        expect(error).toBeInstanceOf(Error);
-        if (error instanceof Error) {
-          expect(error.message).toContain("EACCES");
-          expect(error.message).not.toContain("An error occurred in Effect.tryPromise");
-        }
-        expect(
-          deployMockState.runCalls.filter(
-            (call) => call.command === "docker" && call.args[0] === "create",
-          ),
-        ).toHaveLength(0);
-      });
-    },
+  it.live("returns on shutdown while startup preparation is blocked", () =>
+    Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig());
+      yield* Effect.promise(() => writeFunction("hello"));
+      const state = makeStack({ fingerprint: "same", prepare: "blocked" });
+      const control = processControl();
+      const { layer } = setup(state, control);
+      const fiber = yield* Effect.forkChild(serve(baseFlags()).pipe(Effect.provide(layer)));
+      yield* Deferred.await(state.prepareStarted);
+      control.signal();
+      yield* Fiber.join(fiber);
+      expect(state.service.id).toBe("functions");
+    }),
   );
 });

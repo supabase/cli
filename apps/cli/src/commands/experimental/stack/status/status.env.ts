@@ -57,7 +57,9 @@ export const stackEnvValues = (
   names: ReadonlyMap<string, string>,
 ): Readonly<Record<string, string>> => {
   const values: Record<string, string> = {
-    DB_URL: Redacted.value(credentials.database.url),
+    ...(credentials.database === undefined
+      ? {}
+      : { DB_URL: Redacted.value(credentials.database.url) }),
     ...(credentials.api === undefined
       ? {}
       : {

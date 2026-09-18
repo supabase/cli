@@ -1,27 +1,34 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, ConfigProvider, Data, Effect, Exit, Path, Stream } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Data,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Path,
+  Stream,
+} from "effect";
 import { homedir, tmpdir } from "node:os";
 
-import type { PromiseStack } from "./PromiseStack.ts";
+import { CAPABILITY_NAMES } from "./Capability.ts";
+import { StackCleanupError, StackRuntimeError } from "./Errors.ts";
+import type { EffectStack } from "./EffectStack.ts";
+import { StackIdSchema } from "./StackId.ts";
+import { ServiceInstanceIdSchema } from "./ServiceInstanceId.ts";
+import type { StackStatus } from "./Status.ts";
 import { createTestStackWith, type TestStackOperations } from "./Testing.ts";
 import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
-import { CAPABILITY_NAMES } from "./Capability.ts";
-import { StackIdSchema } from "./StackId.ts";
-import type { StackStatus } from "./Status.ts";
-class FixtureError extends Data.TaggedError("FixtureError")<{ readonly cause: unknown }> {}
-const fixturePromise = <A>(thunk: () => A): Promise<A> =>
-  Effect.runPromiseExit(
-    Effect.try({ try: thunk, catch: (cause) => new FixtureError({ cause }) }),
-  ).then((exit) => {
-    if (Exit.isSuccess(exit)) return exit.value;
-    const error = Cause.squash(exit.cause);
-    throw error instanceof FixtureError ? error.cause : error;
-  });
+
+class FixtureError extends Data.TaggedError("FixtureError")<{ readonly cause?: unknown }> {}
 
 const stackId = StackIdSchema.make(
   "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
 );
+
 const status = (
   lifecycle: StackStatus["lifecycle"],
   includeApi = true,
@@ -45,6 +52,7 @@ const status = (
       : {},
   versions: {},
   capabilities: CAPABILITY_NAMES.map((name) => ({
+    id: ServiceInstanceIdSchema.make(`${name}-instance`),
     name,
     activation: name === "functions" ? "lazy" : "eager",
     state:
@@ -58,128 +66,120 @@ const status = (
     ...(failedCapability === name ? { state: "failed", error: `${name} failed` } : {}),
   })),
   artifacts: [],
+  instances: [],
 });
-const stream = <A>(values: ReadonlyArray<A>): AsyncIterable<A> =>
-  Stream.toAsyncIterable(Stream.fromIterable(values));
+
 type FakeStackOptions = {
   readonly failStart?: boolean;
   readonly reachesReadiness?: boolean;
   readonly includeApi?: boolean;
   readonly functionsState?: "ready" | "dormant" | "stopping" | "stopped";
   readonly failedCapability?: string;
+  readonly failDestroy?: boolean;
 };
-const fakeStack = (events: Array<string>, options: FakeStackOptions = {}): PromiseStack => {
+
+const fakeStack = (events: Array<string>, options: FakeStackOptions = {}): EffectStack => {
   const {
     failStart = false,
     reachesReadiness = true,
     includeApi = true,
     functionsState = "dormant",
     failedCapability,
+    failDestroy = false,
   } = options;
+  const currentStatus = () =>
+    status(reachesReadiness ? "running" : "stopped", includeApi, functionsState, failedCapability);
   return {
     id: stackId,
-    status: () =>
-      fixturePromise(() =>
-        status(
-          reachesReadiness ? "running" : "stopped",
-          includeApi,
-          functionsState,
-          failedCapability,
-        ),
-      ),
-    credentials: () =>
-      fixturePromise(() => ({
-        database: { url: "postgres://test", password: "test" },
-        api: {
-          publishableKey: "publishable",
-          secretKey: "secret",
-          anonJwt: "anon",
-          serviceRoleJwt: "service",
-        },
-        storage: {
-          endpoint: "http://storage",
-          region: "local",
-          accessKeyId: "access",
-          secretAccessKey: "storage",
-        },
-      })),
-    prepare: () => fixturePromise(() => ({ capabilities: [] })),
+    services: {
+      create: () => Effect.die("service fixture is not configured"),
+      get: () => Effect.die("service fixture is not configured"),
+      list: Effect.succeed([]),
+    },
+    status: Effect.sync(currentStatus),
+    credentials: Effect.die("credentials fixture is not configured"),
+    prepare: () => Effect.succeed({ instances: [] }),
     start: () =>
-      fixturePromise(() => {
-        events.push("start");
-        if (failStart) throw new Error("startup failed");
-        return status(
-          reachesReadiness ? "running" : "stopped",
-          includeApi,
-          functionsState,
-          failedCapability,
-        );
-      }),
-    stop: () => fixturePromise(() => undefined),
+      failStart
+        ? Effect.sync(() => {
+            events.push("start");
+            return Effect.fail(new StackRuntimeError({ message: "startup failed" }));
+          }).pipe(Effect.flatten)
+        : Effect.sync(() => {
+            events.push("start");
+            return currentStatus();
+          }),
+    sleep: () => Effect.sync(currentStatus),
+    stop: () => Effect.sync(() => status("stopped", includeApi, functionsState, failedCapability)),
+    restart: () => Effect.sync(currentStatus),
     destroy: () =>
-      fixturePromise(() => {
+      Effect.sync(() => {
         events.push("destroy");
-        if (failStart) throw new Error("destroy failed");
-      }),
-    resetDatabase: () =>
-      fixturePromise(() =>
-        status(
-          reachesReadiness ? "running" : "stopped",
-          includeApi,
-          functionsState,
-          failedCapability,
-        ),
-      ),
-    logs: () => fixturePromise(() => ({ entries: [], cursor: { opaque: "v1_0" }, running: false })),
-    followLogs: () => stream([]),
+        return failDestroy
+          ? Effect.fail(new StackCleanupError({ message: "destroy failed" }))
+          : Effect.void;
+      }).pipe(Effect.flatten),
+    logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
+    followLogs: (_query) => Stream.empty,
+    followStatus: Stream.empty,
   };
 };
+
 const setupFixture = (root: string, stackOptions: FakeStackOptions = {}) => {
   const events: Array<string> = [];
   const removed: Array<string> = [];
   const operations: TestStackOperations = {
-    createRoot: () => fixturePromise(() => root),
+    createRoot: Effect.succeed(root),
     createStack: (options) =>
-      fixturePromise(() => {
+      Effect.sync(() => {
         events.push(`create:${options.projectRoot}`);
         return fakeStack(events, stackOptions);
       }),
-    removeRoot: (removedRoot) =>
-      fixturePromise(() => {
-        removed.push(removedRoot);
-      }),
+    removeRoot: (removedRoot) => Effect.sync(() => void removed.push(removedRoot)),
   };
   return { events, removed, operations };
 };
+
+const getFailure = <A, E>(exit: Exit.Exit<A, E>): unknown =>
+  Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+
 describe("test stack resource", () => {
   it.live("starts automatically and destroys only its owned identity", () =>
     Effect.gen(function* () {
       const { events, removed, operations } = setupFixture("/tmp/stack-test-owned");
-      const stack = yield* Effect.promise(() => createTestStackWith({}, operations));
-      yield* Effect.promise(() => stack[Symbol.asyncDispose]());
+      yield* Effect.scoped(
+        Effect.acquireUseRelease(
+          createTestStackWith({}, operations),
+          () => Effect.void,
+          (stack) => stack.destroy(),
+        ),
+      );
       expect(events).toEqual(["create:/tmp/stack-test-owned", "start", "destroy"]);
       expect(removed).toEqual(["/tmp/stack-test-owned"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
   it.live("preserves startup failure while retaining the root when destroy fails", () =>
     Effect.gen(function* () {
       const { events, removed, operations } = setupFixture("/tmp/stack-test-failed", {
         failStart: true,
+        failDestroy: true,
       });
-      yield* Effect.promise(() =>
-        expect(createTestStackWith({}, operations)).rejects.toThrow(
-          /startup failed[\s\S]*retained test stack root \/tmp\/stack-test-failed/,
-        ),
-      );
+      const result = yield* Effect.exit(createTestStackWith({}, operations));
+      const failure = getFailure(result);
+      expect(failure).toBeInstanceOf(Error);
+      expect(failure).toMatchObject({
+        message: expect.stringContaining("retained test stack root"),
+      });
       expect(events).toEqual(["create:/tmp/stack-test-failed", "start", "destroy"]);
       expect(removed).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
   it.live("includes bounded startup diagnostics before cleanup removes a failed stack", () =>
     Effect.gen(function* () {
       const events: Array<string> = [];
       const removed: Array<string> = [];
-      const logQueries: Array<Parameters<PromiseStack["logs"]>[0]> = [];
       const entries = Array.from({ length: 51 }, (_, index) => ({
         cursor: { opaque: `v1_${(index + 1).toString(36)}` },
         timestamp: "2026-01-01T00:00:00.000Z",
@@ -188,143 +188,47 @@ describe("test stack resource", () => {
         message: index === 50 ? "pooler stderr" : `old-${index}`,
       }));
       const operations: TestStackOperations = {
-        createRoot: () => fixturePromise(() => "/tmp/stack-test-diagnostics"),
+        createRoot: Effect.succeed("/tmp/stack-test-diagnostics"),
         createStack: () =>
-          fixturePromise(() => ({
+          Effect.succeed({
             ...fakeStack(events),
             start: () =>
-              fixturePromise(() => {
+              Effect.sync(() => {
                 events.push("start");
-                throw new Error("startup failed");
-              }),
-            status: () => fixturePromise(() => status("starting")),
-            logs: (query) =>
-              fixturePromise(() => {
-                logQueries.push(query);
-                return { entries, cursor: { opaque: "v1_1" }, running: false };
-              }),
-          })),
-        removeRoot: (root) =>
-          fixturePromise(() => {
-            removed.push(root);
+                return Effect.fail(new StackRuntimeError({ message: "startup failed" }));
+              }).pipe(Effect.flatten),
+            status: Effect.succeed(status("starting")),
+            logs: () => Effect.succeed({ entries, cursor: { opaque: "v1_1" }, running: false }),
           }),
+        removeRoot: (root) => Effect.sync(() => void removed.push(root)),
       };
-      const failure: unknown = yield* Effect.promise(() =>
-        createTestStackWith({}, operations).then(
-          () => undefined,
-          (error: unknown) => error,
-        ),
-      );
-      expect(failure).toBeInstanceOf(Error);
-      if (!(failure instanceof Error)) return yield* Effect.die("expected startup failure");
-      expect(failure.message).toContain("startup failed");
-      expect(failure.message).toContain("pooler stderr");
-      expect(failure.message).not.toContain("old-0");
-      expect(failure.cause).toEqual(expect.objectContaining({ message: "startup failed" }));
-      expect(logQueries).toEqual([{ tail: 50 }]);
+      const result = yield* Effect.exit(createTestStackWith({}, operations));
+      const failure = getFailure(result);
+      expect(failure).toMatchObject({ message: expect.stringContaining("pooler stderr") });
+      expect(failure).toMatchObject({ message: expect.not.stringContaining("old-0") });
       expect(events).toEqual(["start", "destroy"]);
       expect(removed).toEqual(["/tmp/stack-test-diagnostics"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
-  it.live("fails and cleans up when start returns before the stack is ready", () =>
-    Effect.gen(function* () {
-      const events: Array<string> = [];
-      const removed: Array<string> = [];
-      const operations: TestStackOperations = {
-        createRoot: () => fixturePromise(() => "/tmp/stack-test-unready"),
-        createStack: () =>
-          fixturePromise(() => ({
-            ...fakeStack(events),
-            start: () =>
-              fixturePromise(() => {
-                events.push("start");
-                return status("starting");
-              }),
-          })),
-        removeRoot: (root) =>
-          fixturePromise(() => {
-            removed.push(root);
-          }),
-      };
-      yield* Effect.promise(() =>
-        expect(
-          createTestStackWith({ config: { capabilities: { database: {} } } }, operations),
-        ).rejects.toThrow("Stack did not become ready after start (lifecycle starting)"),
-      );
-      expect(events).toEqual(["start", "destroy"]);
-      expect(removed).toEqual(["/tmp/stack-test-unready"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-  it.live("removes the exact root after disposal", () =>
-    Effect.gen(function* () {
-      const events: Array<string> = [];
-      const removed: Array<string> = [];
-      const operations: TestStackOperations = {
-        createRoot: () => fixturePromise(() => "/tmp/stack-test-close-failed"),
-        createStack: () => fixturePromise(() => fakeStack(events)),
-        removeRoot: (root) =>
-          fixturePromise(() => {
-            removed.push(root);
-          }),
-      };
-      const stack = yield* Effect.promise(() => createTestStackWith({}, operations));
-      yield* Effect.promise(() => expect(stack[Symbol.asyncDispose]()).resolves.toBeUndefined());
-      expect(events).toEqual(["start", "destroy"]);
-      expect(removed).toEqual(["/tmp/stack-test-close-failed"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-  it.live("does not require disabled Functions or an unconfigured API listener", () =>
-    Effect.gen(function* () {
-      const events: Array<string> = [];
-      const operations: TestStackOperations = {
-        createRoot: () => fixturePromise(() => "/tmp/stack-test-disabled-surfaces"),
-        createStack: () =>
-          fixturePromise(() => fakeStack(events, { includeApi: false, functionsState: "stopped" })),
-        removeRoot: () => fixturePromise(() => undefined),
-      };
-      const stack = yield* Effect.promise(() =>
-        createTestStackWith(
-          { config: { capabilities: { functions: { enabled: false } } } },
-          operations,
-        ),
-      );
-      yield* Effect.promise(() => stack[Symbol.asyncDispose]());
-      expect(events).toEqual(["start", "destroy"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
+
   it.live("runs setupProject after creating the root and before creating the stack", () =>
     Effect.gen(function* () {
       const events: Array<string> = [];
       const operations: TestStackOperations = {
-        createRoot: () =>
-          fixturePromise(() => {
-            events.push("root");
-            return "/tmp/stack-test-setup";
-          }),
+        createRoot: Effect.succeed("/tmp/stack-test-setup"),
         createStack: (options) =>
-          fixturePromise(() => {
+          Effect.sync(() => {
             events.push(`create:${options.projectRoot}`);
             return fakeStack(events);
           }),
-        removeRoot: () =>
-          fixturePromise(() => {
-            events.push("remove");
-          }),
+        removeRoot: () => Effect.sync(() => void events.push("remove")),
       };
-      const stack = yield* Effect.promise(() =>
-        createTestStackWith(
-          {
-            setupProject: (root) =>
-              fixturePromise(() => {
-                events.push(`setup:${root}`);
-              }),
-          },
-          operations,
-        ),
+      const stack = yield* createTestStackWith(
+        { setupProject: (root) => Effect.sync(() => void events.push(`setup:${root}`)) },
+        operations,
       );
-      yield* Effect.promise(() => stack[Symbol.asyncDispose]());
+      yield* stack.destroy();
       expect(events).toEqual([
-        "root",
         "setup:/tmp/stack-test-setup",
         "create:/tmp/stack-test-setup",
         "start",
@@ -333,32 +237,30 @@ describe("test stack resource", () => {
       ]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
   it.live("uses the managed runtime state root without mutating process environment", () =>
     Effect.gen(function* () {
-      const events: Array<string> = [];
       const originalEnvironment = yield* defaultRuntimeEnvironment;
-      let environment: Parameters<NonNullable<TestStackOperations["createStack"]>>[1] | undefined;
+      let environment: Parameters<NonNullable<TestStackOperations["createStack"]>>[1];
       const operations: TestStackOperations = {
-        createRoot: () => fixturePromise(() => "/tmp/stack-test-isolated-state"),
+        createRoot: Effect.succeed("/tmp/stack-test-isolated-state"),
         createStack: (_options, runtimeEnvironment) =>
-          fixturePromise(() => {
+          Effect.sync(() => {
             environment = runtimeEnvironment;
-            events.push("create");
-            return fakeStack(events);
+            return fakeStack([]);
           }),
-        removeRoot: () => fixturePromise(() => undefined),
+        removeRoot: () => Effect.void,
       };
-      const stack = yield* Effect.promise(() => createTestStackWith({}, operations));
-      yield* Effect.promise(() => stack[Symbol.asyncDispose]());
-      expect(environment?.stateRoot).toBe((yield* defaultRuntimeEnvironment).stateRoot);
+      const stack = yield* createTestStackWith({}, operations);
+      yield* stack.destroy();
+      expect(environment?.stateRoot).toBe(originalEnvironment.stateRoot);
       expect(environment?.artifactCacheRoot).toBe(
         (yield* Path.Path).join(tmpdir(), "supabase-stack-test-artifacts"),
       );
-      expect(environment?.artifactCacheRoot).not.toContain("stack-test-isolated-state");
-      // Compare against the snapshot above to prove no global environment mutation occurred.
       expect(yield* defaultRuntimeEnvironment).toEqual(originalEnvironment);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
   it.live("falls back to the OS home when HOME is unavailable", () =>
     Effect.gen(function* () {
       const environment = yield* defaultRuntimeEnvironment.pipe(
@@ -367,229 +269,241 @@ describe("test stack resource", () => {
       expect(environment.stateRoot).toBe(`${homedir()}/.supabase/managed/stacks`);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
   it.live("removes the exact root when setupProject fails", () =>
     Effect.gen(function* () {
-      const events: Array<string> = [];
       let created = false;
-      const operations: TestStackOperations = {
-        createRoot: () => fixturePromise(() => "/tmp/stack-test-setup-failed"),
-        createStack: () =>
-          fixturePromise(() => {
-            created = true;
-            return fakeStack(events);
-          }),
-        removeRoot: (root) =>
-          fixturePromise(() => {
-            events.push(`remove:${root}`);
-          }),
-      };
-      yield* Effect.promise(() =>
-        expect(
-          createTestStackWith(
-            {
-              setupProject: () =>
-                fixturePromise(() => {
-                  throw new Error("project setup failed");
-                }),
-            },
-            operations,
-          ),
-        ).rejects.toThrow("project setup failed"),
-      );
-      expect(created).toBe(false);
-      expect(events).toEqual(["remove:/tmp/stack-test-setup-failed"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-  it.live("rejects readiness when a configured capability fails", () =>
-    Effect.gen(function* () {
-      const events: Array<string> = [];
       const removed: Array<string> = [];
       const operations: TestStackOperations = {
-        createRoot: () => fixturePromise(() => "/tmp/stack-test-capability-failed"),
-        createStack: () => fixturePromise(() => fakeStack(events, { failedCapability: "auth" })),
-        removeRoot: (root) =>
-          fixturePromise(() => {
-            removed.push(root);
+        createRoot: Effect.succeed("/tmp/stack-test-setup-failed"),
+        createStack: () =>
+          Effect.sync(() => {
+            created = true;
+            return fakeStack([]);
           }),
+        removeRoot: (root) => Effect.sync(() => void removed.push(root)),
       };
-      yield* Effect.promise(() =>
-        expect(createTestStackWith({}, operations)).rejects.toThrow("auth failed"),
+      const result = yield* Effect.exit(
+        createTestStackWith(
+          { setupProject: () => Effect.fail(new FixtureError({ cause: "project setup failed" })) },
+          operations,
+        ),
       );
-      expect(events).toEqual(["start", "destroy"]);
-      expect(removed).toEqual(["/tmp/stack-test-capability-failed"]);
+      expect(getFailure(result)).toMatchObject({
+        message: expect.stringContaining("project setup failed"),
+      });
+      expect(created).toBe(false);
+      expect(removed).toEqual(["/tmp/stack-test-setup-failed"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
-  it.live("rejects readiness when the lifecycle stops before becoming ready", () =>
-    Effect.gen(function* () {
-      const events: Array<string> = [];
-      const operations: TestStackOperations = {
-        createRoot: () => fixturePromise(() => "/tmp/stack-test-lifecycle-stopped"),
-        createStack: () =>
-          fixturePromise(() => ({
-            ...fakeStack(events),
-            start: () =>
-              fixturePromise(() => {
-                events.push("start");
-                return status("stopped");
-              }),
-          })),
-        removeRoot: () => fixturePromise(() => undefined),
-      };
-      yield* Effect.promise(() =>
-        expect(createTestStackWith({}, operations)).rejects.toThrow("stopped"),
-      );
-      expect(events).toEqual(["start", "destroy"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-  it.live("rejects readiness when the lifecycle starts stopping before becoming ready", () =>
-    Effect.gen(function* () {
-      const events: Array<string> = [];
-      const operations: TestStackOperations = {
-        createRoot: () => fixturePromise(() => "/tmp/stack-test-lifecycle-stopping"),
-        createStack: () =>
-          fixturePromise(() => ({
-            ...fakeStack(events),
-            start: () =>
-              fixturePromise(() => {
-                events.push("start");
-                return status("stopping");
-              }),
-          })),
-        removeRoot: () => fixturePromise(() => undefined),
-      };
-      yield* Effect.promise(() =>
-        expect(createTestStackWith({}, operations)).rejects.toThrow("stopping"),
-      );
-      expect(events).toEqual(["start", "destroy"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-  it.live("accepts a lazy capability that is stopping during a running stack", () =>
+
+  it.live("allows lazy Functions to stop during a running stack", () =>
     Effect.gen(function* () {
       const { events, operations } = setupFixture("/tmp/stack-test-lazy-stopping", {
         functionsState: "stopping",
       });
-      const stack = yield* Effect.promise(() =>
-        createTestStackWith({ config: { capabilities: { functions: {} } } }, operations),
+      const stack = yield* createTestStackWith(
+        { config: { capabilities: { functions: {} } } },
+        operations,
       );
-      yield* Effect.promise(() => stack[Symbol.asyncDispose]());
+      yield* stack.destroy();
       expect(events).toEqual(["create:/tmp/stack-test-lazy-stopping", "start", "destroy"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
-  it.live("uses the managed state root while test stacks overlap", () =>
+
+  it.live("rejects a stack that stops before becoming ready", () =>
     Effect.gen(function* () {
-      const roots = ["/tmp/stack-test-shared-a", "/tmp/stack-test-shared-b"];
-      const environments: Array<Parameters<NonNullable<TestStackOperations["createStack"]>>[1]> =
-        [];
-      const removedRoots: Array<string> = [];
-      const operations: TestStackOperations = {
-        createRoot: () =>
-          fixturePromise(() => {
-            const root = roots.shift();
-            if (root === undefined) throw new Error("No test root available");
-            return root;
-          }),
-        createStack: (_options, environment) =>
-          fixturePromise(() => {
-            environments.push(environment);
-            return fakeStack([]);
-          }),
-        removeRoot: (root) =>
-          fixturePromise(() => {
-            removedRoots.push(root);
-          }),
-      };
-      const [first, second] = yield* Effect.promise(() =>
-        Promise.all([createTestStackWith({}, operations), createTestStackWith({}, operations)]),
+      const { events, removed, operations } = setupFixture("/tmp/stack-test-unready", {
+        reachesReadiness: false,
+      });
+      const result = yield* Effect.exit(
+        createTestStackWith({ config: { capabilities: { database: {} } } }, operations),
       );
-      expect(environments.map((environment) => environment?.stateRoot)).toEqual([
-        (yield* defaultRuntimeEnvironment).stateRoot,
-        (yield* defaultRuntimeEnvironment).stateRoot,
-      ]);
-      yield* Effect.promise(() => first[Symbol.asyncDispose]());
-      yield* Effect.promise(() => second[Symbol.asyncDispose]());
-      expect(removedRoots).toEqual(["/tmp/stack-test-shared-a", "/tmp/stack-test-shared-b"]);
+      expect(getFailure(result)).toMatchObject({
+        message: expect.stringContaining("lifecycle stopped"),
+      });
+      expect(events).toEqual(["create:/tmp/stack-test-unready", "start", "destroy"]);
+      expect(removed).toEqual(["/tmp/stack-test-unready"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
-  it.live("creates auto roots under the managed state root and cleans up the exact root", () =>
+
+  it.live("accepts disabled Functions without an API listener", () =>
     Effect.gen(function* () {
-      let setupRoot: string | undefined;
+      const { events, removed, operations } = setupFixture("/tmp/stack-test-disabled", {
+        includeApi: false,
+        functionsState: "stopped",
+      });
+      const stack = yield* createTestStackWith(
+        { config: { capabilities: { functions: { enabled: false } } } },
+        operations,
+      );
+      yield* stack.destroy();
+      expect(events).toEqual(["create:/tmp/stack-test-disabled", "start", "destroy"]);
+      expect(removed).toEqual(["/tmp/stack-test-disabled"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("reports a failed capability with diagnostics and removes its root", () =>
+    Effect.gen(function* () {
+      const { events, removed, operations } = setupFixture("/tmp/stack-test-capability-failed", {
+        failedCapability: "auth",
+      });
+      const result = yield* Effect.exit(createTestStackWith({}, operations));
+      expect(getFailure(result)).toMatchObject({ message: expect.stringContaining("auth failed") });
+      expect(events).toEqual(["create:/tmp/stack-test-capability-failed", "start", "destroy"]);
+      expect(removed).toEqual(["/tmp/stack-test-capability-failed"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("rejects a lifecycle that starts stopping before becoming ready", () =>
+    Effect.gen(function* () {
+      const events: Array<string> = [];
+      const removed: Array<string> = [];
+      const operations: TestStackOperations = {
+        createRoot: Effect.succeed("/tmp/stack-test-stopping"),
+        createStack: () =>
+          Effect.succeed({
+            ...fakeStack(events),
+            start: () =>
+              Effect.sync(() => {
+                events.push("start");
+                return status("stopping");
+              }),
+          }),
+        removeRoot: (root) => Effect.sync(() => void removed.push(root)),
+      };
+      const result = yield* Effect.exit(createTestStackWith({}, operations));
+      expect(getFailure(result)).toMatchObject({
+        message: expect.stringContaining("lifecycle stopping"),
+      });
+      expect(events).toEqual(["start", "destroy"]);
+      expect(removed).toEqual(["/tmp/stack-test-stopping"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps the project root for selected service destruction", () =>
+    Effect.gen(function* () {
+      const { removed, operations } = setupFixture("/tmp/stack-test-selected-destroy");
+      const stack = yield* createTestStackWith({}, operations);
+      yield* stack.destroy({ services: [] });
+      expect(removed).toEqual([]);
+      yield* stack.destroy();
+      expect(removed).toEqual(["/tmp/stack-test-selected-destroy"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("creates automatic roots below managed state and removes that exact root", () =>
+    Effect.gen(function* () {
       let createdRoot: string | undefined;
-      let removedRoot: string | undefined;
-      const stack = yield* Effect.promise(() =>
-        createTestStackWith(
-          {
-            setupProject: (root) =>
-              fixturePromise(() => {
-                setupRoot = root;
-              }),
-          },
-          {
-            createStack: (options) =>
-              fixturePromise(() => {
-                createdRoot = options.projectRoot;
-                return fakeStack([]);
-              }),
-            removeRoot: (root) =>
-              fixturePromise(() => {
-                removedRoot = root;
-              }),
-          },
-        ),
+      let setupRoot: string | undefined;
+      const stack = yield* createTestStackWith(
+        {
+          setupProject: (root) => Effect.sync(() => void (setupRoot = root)),
+        },
+        {
+          createStack: (options) =>
+            Effect.sync(() => {
+              createdRoot = options.projectRoot;
+              return fakeStack([]);
+            }),
+          removeRoot: (root) =>
+            Effect.flatMap(FileSystem.FileSystem, (fs) =>
+              fs.remove(root, { recursive: true, force: true }),
+            ).pipe(Effect.provide(NodeServices.layer)),
+        },
       );
       const managedRoot = (yield* defaultRuntimeEnvironment).stateRoot;
-      const { join, dirname, sep } = yield* Path.Path;
-      const projectsRoot = join(dirname(managedRoot), "test-projects");
+      const path = yield* Path.Path;
+      const projectsRoot = path.join(path.dirname(managedRoot), "test-projects");
       expect(setupRoot).toBe(createdRoot);
-      expect(createdRoot?.startsWith(`${projectsRoot}${sep}`)).toBe(true);
-      if (!managedRoot.startsWith(`${tmpdir()}${sep}`))
-        expect(createdRoot?.startsWith(`${tmpdir()}${sep}`)).toBe(false);
-      yield* Effect.promise(() => stack[Symbol.asyncDispose]());
-      expect(removedRoot).toBe(createdRoot);
+      expect(createdRoot?.startsWith(`${projectsRoot}${path.sep}`)).toBe(true);
+      yield* stack.destroy();
+      expect(createdRoot).toBeDefined();
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(createdRoot ?? "")).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
-  it.live("retains the project root and managed state when one stack destroy fails", () =>
+
+  it.live("cleans up overlapping stacks independently", () =>
     Effect.gen(function* () {
-      const roots = ["/tmp/stack-test-retained-a", "/tmp/stack-test-retained-b"];
-      const removedRoots: Array<string> = [];
-      const environments: Array<Parameters<NonNullable<TestStackOperations["createStack"]>>[1]> =
-        [];
+      const roots = ["/tmp/stack-test-shared-a", "/tmp/stack-test-shared-b"];
+      const removed: Array<string> = [];
       const operations: TestStackOperations = {
-        createRoot: () =>
-          fixturePromise(() => {
-            const root = roots.shift();
-            if (root === undefined) throw new Error("No test root available");
-            return root;
+        createRoot: Effect.suspend(() => {
+          const root = roots.shift();
+          return root === undefined
+            ? Effect.fail(new FixtureError({ cause: "no test root" }))
+            : Effect.succeed(root);
+        }),
+        createStack: () => Effect.succeed(fakeStack([])),
+        removeRoot: (root) => Effect.sync(() => void removed.push(root)),
+      };
+      const stacks = yield* Effect.all(
+        [createTestStackWith({}, operations), createTestStackWith({}, operations)],
+        { concurrency: 2 },
+      );
+      yield* Effect.all(
+        stacks.map((stack) => stack.destroy()),
+        { concurrency: 2 },
+      );
+      expect(removed).toEqual(["/tmp/stack-test-shared-a", "/tmp/stack-test-shared-b"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("removes the exact root when acquisition is interrupted", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const events: Array<string> = [];
+      const removed: Array<string> = [];
+      const operations: TestStackOperations = {
+        createRoot: Effect.succeed("/tmp/stack-test-interrupted"),
+        createStack: () =>
+          Effect.succeed({
+            ...fakeStack(events),
+            start: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(entered, undefined);
+                return yield* Effect.never;
+              }),
           }),
-        createStack: (options, environment) =>
-          fixturePromise(() => {
-            environments.push(environment);
+        removeRoot: (root) => Effect.sync(() => void removed.push(root)),
+      };
+      const fiber = yield* Effect.forkChild(createTestStackWith({}, operations));
+      yield* Deferred.await(entered);
+      yield* Fiber.interrupt(fiber);
+      const result = yield* Fiber.await(fiber);
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) expect(Cause.hasInterrupts(result.cause)).toBe(true);
+      expect(events).toEqual(["destroy"]);
+      expect(removed).toEqual(["/tmp/stack-test-interrupted"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("retains the root when an explicit destroy fails and permits retry", () =>
+    Effect.gen(function* () {
+      let failDestroy = true;
+      const { removed, operations: baseOperations } = setupFixture("/tmp/stack-test-retained");
+      const operations: TestStackOperations = {
+        ...baseOperations,
+        createStack: () =>
+          Effect.sync(() => {
+            const resource = fakeStack([], { failDestroy: false });
             return {
-              ...fakeStack([]),
+              ...resource,
               destroy: () =>
-                fixturePromise(() => {
-                  if (options.projectRoot.endsWith("-a")) throw new Error("destroy a failed");
-                }),
+                failDestroy
+                  ? Effect.fail(new StackCleanupError({ message: "destroy failed" }))
+                  : Effect.void,
             };
           }),
-        removeRoot: (root) =>
-          fixturePromise(() => {
-            removedRoots.push(root);
-          }),
       };
-      const [first, second] = yield* Effect.promise(() =>
-        Promise.all([createTestStackWith({}, operations), createTestStackWith({}, operations)]),
-      );
-      yield* Effect.promise(() =>
-        expect(first[Symbol.asyncDispose]()).rejects.toThrow(
-          "destroy a failed; retained test stack root /tmp/stack-test-retained-a",
-        ),
-      );
-      yield* Effect.promise(() => second[Symbol.asyncDispose]());
-      expect(removedRoots).toEqual(["/tmp/stack-test-retained-b"]);
-      expect(environments.map((environment) => environment?.stateRoot)).toEqual([
-        (yield* defaultRuntimeEnvironment).stateRoot,
-        (yield* defaultRuntimeEnvironment).stateRoot,
-      ]);
+      const stack = yield* createTestStackWith({}, operations);
+      const first = yield* Effect.exit(stack.destroy());
+      expect(getFailure(first)).toMatchObject({ message: "destroy failed" });
+      expect(removed).toEqual([]);
+      failDestroy = false;
+      yield* stack.destroy();
+      expect(removed).toEqual(["/tmp/stack-test-retained"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

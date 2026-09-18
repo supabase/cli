@@ -36,8 +36,10 @@ import {
   type RuntimeCleanupRequest,
   type ObservedWorkload,
   type RuntimeDriver,
+  type RuntimeStartOptions,
   type RuntimeWorkloadKey,
 } from "./RuntimeDriver.ts";
+import { makeRuntimeCoordination } from "./RuntimeCoordination.ts";
 import { ContainerEngineError } from "../public/Errors.ts";
 
 export interface ContainerRuntimeOptions {
@@ -112,21 +114,23 @@ interface ContainerRuntimeResource {
   readonly key: RuntimeWorkloadKey;
   readonly workload: PlannedWorkload;
   readonly failure: Deferred.Deferred<never, RuntimeDriverError>;
+  readonly startOptions: RuntimeStartOptions;
   logFiber?: Fiber.Fiber<void, never>;
   watchFiber?: Fiber.Fiber<void, never>;
   stopRequested: boolean;
 }
 
-const resourceKey = (key: RuntimeWorkloadKey): string => `${key.stackId}:${key.workloadId}`;
+const resourceKey = (key: RuntimeWorkloadKey): string =>
+  JSON.stringify([key.stackId, key.instanceId, key.workloadId]);
 
 const nameFor = (key: RuntimeWorkloadKey, role: ContainerResourceRole): string =>
   role === "network"
     ? `supabase-${key.stackId.slice(0, 16)}-network`
-    : `supabase-${key.stackId.slice(0, 16)}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-${role}`;
+    : `supabase-${key.stackId.slice(0, 16)}-${key.instanceId}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-${role}`;
 
-/** Distinct from {@link nameFor}(..., "workload") so one-shots cannot collide with an eager main container. */
-export const schemaInitContainerName = (key: RuntimeWorkloadKey): string =>
-  `supabase-${key.stackId.slice(0, 16)}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-schema-init`;
+/** Stable, engine-safe name for one operation-scoped catalog initialization container. */
+export const catalogInitContainerName = (key: RuntimeWorkloadKey, operationId: string): string =>
+  `supabase-${key.stackId.slice(0, 16)}-${key.instanceId}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-init-${operationId.replace(/[^A-Za-z0-9_.-]/g, "-")}`;
 
 const networkLabelsFor = (
   key: RuntimeWorkloadKey,
@@ -139,17 +143,21 @@ const networkLabelsFor = (
 const workloadLabelsFor = (
   key: RuntimeWorkloadKey,
   ownerSessionId: string,
+  recipeId: string,
 ): ContainerWorkloadLabels => ({
   stackId: key.stackId,
   ownerSessionId,
+  instanceId: key.instanceId,
   workloadId: key.workloadId,
+  recipeId,
   role: "workload",
 });
 const startupLabelsFor = (
   key: RuntimeWorkloadKey,
   ownerSessionId: string,
+  recipeId: string,
 ): ContainerWorkloadLabels => ({
-  ...workloadLabelsFor(key, ownerSessionId),
+  ...workloadLabelsFor(key, ownerSessionId, recipeId),
   startup: true,
 });
 const volumeOwnerFor = (key: RuntimeWorkloadKey, request: ContainerVolumeRequest): string =>
@@ -159,11 +167,14 @@ const volumeLabelsFor = (
   request: ContainerVolumeRequest,
 ): ContainerVolumeLabels => ({
   stackId: key.stackId,
+  instanceId: key.instanceId,
   workloadId: volumeOwnerFor(key, request),
   role: "volume",
 });
 const volumeNameFor = (key: RuntimeWorkloadKey, ownerWorkloadId: string): string =>
-  `supabase-${key.stackId}-${ownerWorkloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-volume`;
+  `supabase-${key.stackId}-${key.instanceId}-${ownerWorkloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-volume`;
+export const workloadVolumeName = (key: RuntimeWorkloadKey): string =>
+  volumeNameFor(key, key.workloadId);
 const volumeSpecFor = (
   key: RuntimeWorkloadKey,
   request: ContainerVolumeRequest,
@@ -183,7 +194,9 @@ const volumeMountFor = (
 const sameLabels = (left: ContainerLabels, right: ContainerLabels): boolean =>
   left.role === right.role &&
   (left.role === "volume" && right.role === "volume"
-    ? left.stackId === right.stackId && left.workloadId === right.workloadId
+    ? left.stackId === right.stackId &&
+      left.instanceId === right.instanceId &&
+      left.workloadId === right.workloadId
     : left.stackId === right.stackId &&
       "ownerSessionId" in left &&
       "ownerSessionId" in right &&
@@ -195,7 +208,16 @@ const sameLabels = (left: ContainerLabels, right: ContainerLabels): boolean =>
 const sameWorkloadIdentity = (left: ContainerLabels, right: ContainerWorkloadLabels): boolean =>
   left.role === "workload" &&
   left.stackId === right.stackId &&
+  left.instanceId === right.instanceId &&
   left.workloadId === right.workloadId &&
+  left.recipeId === right.recipeId &&
+  left.startup !== true;
+
+const sameWorkloadKey = (left: ContainerLabels, key: RuntimeWorkloadKey): boolean =>
+  left.role === "workload" &&
+  left.stackId === key.stackId &&
+  left.instanceId === key.instanceId &&
+  left.workloadId === key.workloadId &&
   left.startup !== true;
 
 /** Networks are identified by stack identity. */
@@ -206,13 +228,15 @@ const sameNetworkIdentity = (left: ContainerLabels, right: ContainerNetworkLabel
   left.ownerSessionId === right.ownerSessionId;
 
 const toDriverError = (
-  key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
+  key: Pick<RuntimeWorkloadKey, "stackId"> &
+    Partial<Pick<RuntimeWorkloadKey, "instanceId" | "workloadId">>,
   error: unknown,
 ): RuntimeDriverError =>
   new RuntimeDriverError({
     message: error instanceof Error ? error.message : String(error),
     stackId: key.stackId,
-    workloadId: key.workloadId,
+    ...(key.instanceId === undefined ? {} : { instanceId: key.instanceId }),
+    ...(key.workloadId === undefined ? {} : { workloadId: key.workloadId }),
     cause: error,
   });
 
@@ -226,9 +250,20 @@ const toContainerEngineError = (
     cause: error,
   });
 
+const runtimeCleanupError = (key: RuntimeWorkloadKey): RuntimeDriverError =>
+  new RuntimeDriverError({
+    message: "Container runtime cleanup is in progress",
+    stackId: key.stackId,
+    instanceId: key.instanceId,
+    workloadId: key.workloadId,
+  });
+const failRuntimeCleanup = (key: RuntimeWorkloadKey): Effect.Effect<never, RuntimeDriverError> =>
+  Effect.fail(runtimeCleanupError(key));
+
 const withEngine = <A>(
   engine: ContainerEngine,
-  key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
+  key: Pick<RuntimeWorkloadKey, "stackId"> &
+    Partial<Pick<RuntimeWorkloadKey, "instanceId" | "workloadId">>,
   effect: Effect.Effect<A, ContainerEngineFailure>,
 ): Effect.Effect<A, RuntimeDriverError> =>
   effect.pipe(
@@ -364,7 +399,7 @@ export const makeContainerRuntime = (
       options.startupProcessTimeout ?? ("5 minutes" satisfies Duration.Input);
     const parentScope = yield* Scope.Scope;
     const runtimeScope = yield* Scope.fork(parentScope, "parallel");
-    const registration = yield* Semaphore.make(1);
+    const coordination = yield* makeRuntimeCoordination;
     // Serialize only exact shared-network (and volume identity) establishment. Resolution,
     // image pulls, startup migrations, container creation, and readiness run outside this gate.
     const setup = yield* Semaphore.make(1);
@@ -373,7 +408,8 @@ export const makeContainerRuntime = (
     const startFibers = new Map<string, Fiber.Fiber<ObservedWorkload, RuntimeDriverError>>();
 
     const withEngine = <A>(
-      key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
+      key: Pick<RuntimeWorkloadKey, "stackId"> &
+        Partial<Pick<RuntimeWorkloadKey, "instanceId" | "workloadId">>,
       effect: Effect.Effect<A, ContainerEngineFailure>,
     ): Effect.Effect<A, RuntimeDriverError> =>
       effect.pipe(
@@ -392,7 +428,8 @@ export const makeContainerRuntime = (
       key: RuntimeWorkloadKey,
       containerId: string,
     ): Effect.Effect<void, RuntimeDriverError> =>
-      registration.withPermit(
+      coordination.withKey(
+        key,
         Effect.uninterruptible(
           Effect.gen(function* () {
             const exact = (yield* withEngine(key, options.engine.listResources(key.stackId))).find(
@@ -435,6 +472,7 @@ export const makeContainerRuntime = (
           : new RuntimeDriverError({
               message,
               stackId: resource.key.stackId,
+              instanceId: resource.key.instanceId,
               workloadId: resource.key.workloadId,
               cause: error,
             });
@@ -508,7 +546,7 @@ export const makeContainerRuntime = (
     const observe = (
       stackId: StackId,
     ): Effect.Effect<ReadonlyArray<ObservedWorkload>, RuntimeDriverError> =>
-      withEngine({ stackId, workloadId: "" }, options.engine.listResources(stackId)).pipe(
+      withEngine({ stackId }, options.engine.listResources(stackId)).pipe(
         Effect.map((entries) =>
           entries
             .filter(isWorkloadResource)
@@ -517,6 +555,7 @@ export const makeContainerRuntime = (
             .map((entry) => {
               const key: RuntimeWorkloadKey = {
                 stackId: entry.labels.stackId,
+                instanceId: entry.labels.instanceId,
                 workloadId: entry.labels.workloadId,
               };
               const local = resources.get(resourceKey(key));
@@ -549,7 +588,7 @@ export const makeContainerRuntime = (
         readonly volumeRequest?: ContainerVolumeRequest;
       }>,
     ): Effect.Effect<void, RuntimeDriverError> => {
-      const labels = startupLabelsFor(key, options.ownerSessionId);
+      const labels = startupLabelsFor(key, options.ownerSessionId, workload.recipeId);
       return runContainerStartupProcess({
         engine: options.engine,
         key,
@@ -584,6 +623,7 @@ export const makeContainerRuntime = (
     const start = (
       key: RuntimeWorkloadKey,
       workload: PlannedWorkload,
+      startOptions: RuntimeStartOptions = {},
     ): Effect.Effect<ObservedWorkload, RuntimeDriverError> => {
       const artifact = containerArtifact(workload);
       if (artifact === undefined)
@@ -591,11 +631,12 @@ export const makeContainerRuntime = (
           new RuntimeDriverError({
             message: "Container runtime cannot start a native artifact",
             stackId: key.stackId,
+            instanceId: key.instanceId,
             workloadId: key.workloadId,
           }),
         );
 
-      const labels = workloadLabelsFor(key, options.ownerSessionId);
+      const labels = workloadLabelsFor(key, options.ownerSessionId, workload.recipeId);
       const networkLabels = networkLabelsFor(key, options.ownerSessionId);
       const networkName = nameFor(key, "network");
       const resolved =
@@ -656,8 +697,10 @@ export const makeContainerRuntime = (
             namedCollision !== undefined &&
             (collision === undefined ||
               collision.labels.stackId !== key.stackId ||
+              collision.labels.instanceId !== key.instanceId ||
               collision.labels.workloadId !== key.workloadId ||
-              collision.labels.role !== "workload")
+              collision.labels.role !== "workload" ||
+              collision.labels.startup !== true)
           )
             return yield* toDriverError(
               key,
@@ -839,11 +882,33 @@ export const makeContainerRuntime = (
                   container: container.id,
                   state: "starting",
                   failure,
+                  startOptions,
                   stopRequested: false,
                 };
-                resources.set(resourceKey(key), createdResource);
                 return createdResource;
-              }),
+              }).pipe(
+                Effect.flatMap((createdResource) =>
+                  coordination.withKeyCommit(
+                    key,
+                    Effect.sync(() => {
+                      resources.set(resourceKey(key), createdResource);
+                      return createdResource;
+                    }),
+                  ),
+                ),
+                Effect.flatMap((committed) =>
+                  Option.isNone(committed)
+                    ? Effect.fail(
+                        new RuntimeDriverError({
+                          message: "Container runtime cleanup is in progress",
+                          stackId: key.stackId,
+                          instanceId: key.instanceId,
+                          workloadId: key.workloadId,
+                        }),
+                      )
+                    : Effect.succeed(committed.value),
+                ),
+              ),
             ).pipe(Effect.exit),
           );
           if (Exit.isFailure(registered)) {
@@ -860,6 +925,7 @@ export const makeContainerRuntime = (
         const postRegistration = Effect.gen(function* () {
           yield* attachLogs(resource, "all");
           yield* attachExitWatcher(resource);
+          if (resource.startOptions.onStarted !== undefined) yield* resource.startOptions.onStarted;
           const readiness =
             resolution.waitForReadiness === undefined
               ? options.waitForReadiness === undefined
@@ -893,46 +959,67 @@ export const makeContainerRuntime = (
         }
         return completed.value;
       });
-      return Effect.gen(function* () {
-        const inFlight = startFibers.get(id);
-        if (inFlight !== undefined) return yield* Fiber.join(inFlight);
-        const guardRef = yield* Ref.make(false);
-        startGuards.set(id, guardRef);
-        // Track the whole registration wait, not only the body after permit acquisition. Cleanup
-        // must be able to interrupt starts queued behind another activation as well. The permit
-        // only covers forking the body; readiness and log following continue after it is released.
-        const run = Effect.gen(function* () {
-          const body = yield* registration.withPermit(
-            Effect.forkChild(startEffect, { startImmediately: true }),
+      const admission = coordination.withKeyCommit(
+        key,
+        Effect.gen(function* () {
+          const inFlight = startFibers.get(id);
+          if (inFlight !== undefined) return { kind: "join" as const, fiber: inFlight };
+          const existing = resources.get(id);
+          if (existing?.state === "running")
+            return {
+              kind: "ready" as const,
+              value: { ...key, state: "ready" } satisfies ObservedWorkload,
+            };
+          const guardRef = yield* Ref.make(false);
+          startGuards.set(id, guardRef);
+          // Track the whole registration wait so cleanup can interrupt starts queued behind
+          // another activation; readiness and log following continue after this short section.
+          const run: Effect.Effect<ObservedWorkload, RuntimeDriverError> = Effect.gen(function* () {
+            const body = yield* coordination.withKeyCommit(
+              key,
+              Effect.forkChild(startEffect, { startImmediately: true }),
+            );
+            if (Option.isNone(body)) return yield* failRuntimeCleanup(key);
+            return yield* Fiber.join(body.value);
+          });
+          const fiber = yield* Effect.forkChild(run, { startImmediately: true });
+          startFibers.set(id, fiber);
+          return { kind: "start" as const, fiber, guardRef };
+        }),
+      );
+      return Effect.flatMap(
+        admission,
+        (admitted): Effect.Effect<ObservedWorkload, RuntimeDriverError> => {
+          if (Option.isNone(admitted)) return failRuntimeCleanup(key);
+          if (admitted.value.kind === "ready") return Effect.succeed(admitted.value.value);
+          const { fiber } = admitted.value;
+          if (admitted.value.kind === "join") return Fiber.join(fiber);
+          return Effect.uninterruptibleMask<ObservedWorkload, RuntimeDriverError, never>(
+            (restore) =>
+              Effect.gen(function* () {
+                const joined = yield* restore(Fiber.join(fiber)).pipe(Effect.exit);
+                if (Exit.isFailure(joined)) {
+                  yield* Fiber.interrupt(fiber);
+                  const resource = resources.get(id);
+                  if (resource !== undefined) {
+                    const cleanup = yield* cleanupRegisteredResource(resource).pipe(Effect.exit);
+                    if (Exit.isFailure(cleanup))
+                      return yield* Effect.failCause(Cause.combine(joined.cause, cleanup.cause));
+                  }
+                  return yield* Effect.failCause(joined.cause);
+                }
+                return joined.value;
+              }).pipe(
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    if (startGuards.get(id) === admitted.value.guardRef) startGuards.delete(id);
+                    if (startFibers.get(id) === fiber) startFibers.delete(id);
+                  }),
+                ),
+              ),
           );
-          return yield* Fiber.join(body);
-        });
-        const fiber = yield* Effect.forkChild(run, { startImmediately: true });
-        startFibers.set(id, fiber);
-        return yield* Effect.uninterruptibleMask((restore) =>
-          Effect.gen(function* () {
-            const joined = yield* restore(Fiber.join(fiber)).pipe(Effect.exit);
-            if (Exit.isFailure(joined)) {
-              yield* Fiber.interrupt(fiber);
-              const resource = resources.get(id);
-              if (resource !== undefined) {
-                const cleanup = yield* cleanupRegisteredResource(resource).pipe(Effect.exit);
-                if (Exit.isFailure(cleanup))
-                  return yield* Effect.failCause(Cause.combine(joined.cause, cleanup.cause));
-              }
-              return yield* Effect.failCause(joined.cause);
-            }
-            return joined.value;
-          }).pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (startGuards.get(id) === guardRef) startGuards.delete(id);
-                if (startFibers.get(id) === fiber) startFibers.delete(id);
-              }),
-            ),
-          ),
-        );
-      });
+        },
+      );
     };
 
     const stopInPermit = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> => {
@@ -949,6 +1036,7 @@ export const makeContainerRuntime = (
                 new RuntimeDriverError({
                   message: "Container workload was stopped while starting",
                   stackId: key.stackId,
+                  instanceId: key.instanceId,
                   workloadId: key.workloadId,
                 }),
               );
@@ -963,12 +1051,7 @@ export const makeContainerRuntime = (
             Effect.flatMap((entries) => {
               const exact = entries
                 .filter(isWorkloadResource)
-                .find((entry) =>
-                  sameWorkloadIdentity(
-                    entry.labels,
-                    workloadLabelsFor(key, options.ownerSessionId),
-                  ),
-                );
+                .find((entry) => sameWorkloadKey(entry.labels, key));
               return exact === undefined
                 ? Effect.void
                 : exact.state === "running"
@@ -979,10 +1062,14 @@ export const makeContainerRuntime = (
     };
 
     const stop = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
-      registration.withPermit(stopInPermit(key));
+      coordination.withKey(
+        key,
+        Effect.suspend(() => stopInPermit(key)),
+      );
 
     const remove = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
-      registration.withPermit(
+      coordination.withKey(
+        key,
         Effect.gen(function* () {
           const found = resources.get(resourceKey(key));
           if (found !== undefined) {
@@ -994,6 +1081,7 @@ export const makeContainerRuntime = (
               new RuntimeDriverError({
                 message: "Container workload was removed while starting",
                 stackId: key.stackId,
+                instanceId: key.instanceId,
                 workloadId: key.workloadId,
               }),
             );
@@ -1010,9 +1098,7 @@ export const makeContainerRuntime = (
           const entries = yield* withEngine(key, options.engine.listResources(key.stackId));
           const exact = entries
             .filter(isWorkloadResource)
-            .find((entry) =>
-              sameWorkloadIdentity(entry.labels, workloadLabelsFor(key, options.ownerSessionId)),
-            );
+            .find((entry) => sameWorkloadKey(entry.labels, key));
           if (exact === undefined) return;
           if (exact.state === "running")
             yield* withEngine(key, options.engine.stopContainer(exact.id));
@@ -1021,14 +1107,15 @@ export const makeContainerRuntime = (
       );
 
     const cleanup = (request: RuntimeCleanupRequest): Effect.Effect<void, RuntimeDriverError> =>
-      registration.withPermit(
+      coordination.withStackCleanup(
+        request.stackId,
         Effect.gen(function* () {
           // Stop and interrupt starts that have not registered a resource yet. Without this
           // fence, cleanup can observe an empty resource list while an activation is still inside
           // createContainer, then the activation creates a new orphan after cleanup returns.
           const pendingStartIds = new Set(
             [...startGuards.keys(), ...startFibers.keys()].filter((id) =>
-              id.startsWith(`${request.stackId}:`),
+              id.startsWith(`["${request.stackId}",`),
             ),
           );
           for (const id of pendingStartIds) {
@@ -1040,12 +1127,8 @@ export const makeContainerRuntime = (
             if (fiber !== undefined) yield* Fiber.interrupt(fiber);
           }
 
-          const stackKey = {
-            stackId: request.stackId,
-            workloadId: "",
-          } satisfies RuntimeWorkloadKey;
           const entries = yield* withEngine(
-            stackKey,
+            { stackId: request.stackId },
             options.engine.listResources(request.stackId),
           );
           const owned = entries
@@ -1068,30 +1151,48 @@ export const makeContainerRuntime = (
           // Stop and remove every stack workload before touching its network. A failed
           // stop does not prevent the remove attempt; all failures are returned together.
           for (const entry of owned.filter(isWorkloadResource)) {
-            if (entry.state === "running")
-              yield* attempt(withEngine(stackKey, options.engine.stopContainer(entry.id)));
-            yield* attempt(withEngine(stackKey, options.engine.removeContainer(entry.id)));
+            const workloadKey = {
+              stackId: request.stackId,
+              instanceId: entry.labels.instanceId,
+              workloadId: entry.labels.workloadId,
+            } satisfies RuntimeWorkloadKey;
+            yield* attempt(
+              coordination.withKey(
+                workloadKey,
+                Effect.gen(function* () {
+                  if (entry.state === "running")
+                    yield* withEngine(workloadKey, options.engine.stopContainer(entry.id));
+                  yield* withEngine(workloadKey, options.engine.removeContainer(entry.id));
+                }),
+              ),
+            );
           }
           for (const entry of owned.filter(isNetworkResource))
-            yield* attempt(withEngine(stackKey, options.engine.removeNetwork(entry.id)));
+            yield* attempt(
+              withEngine({ stackId: request.stackId }, options.engine.removeNetwork(entry.id)),
+            );
           if (request.destroy)
             for (const entry of owned.filter((candidate) => candidate.kind === "volume"))
-              yield* attempt(withEngine(stackKey, options.engine.removeVolume(entry.id)));
+              yield* attempt(
+                withEngine({ stackId: request.stackId }, options.engine.removeVolume(entry.id)),
+              );
 
           for (const id of resources.keys())
-            if (id.startsWith(`${request.stackId}:`)) resources.delete(id);
+            if (id.startsWith(`["${request.stackId}",`)) resources.delete(id);
           if (cleanupCause.reasons.length > 0) return yield* Effect.failCause(cleanupCause);
         }),
       );
 
     const wipePersistentData = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
-      registration.withPermit(
+      coordination.withKey(
+        key,
         Effect.gen(function* () {
           const entries = yield* withEngine(key, options.engine.listResources(key.stackId));
           const volumes = entries.filter(
             (entry) =>
               entry.kind === "volume" &&
               entry.labels.role === "volume" &&
+              entry.labels.instanceId === key.instanceId &&
               entry.labels.workloadId === key.workloadId,
           );
           for (const volume of volumes)

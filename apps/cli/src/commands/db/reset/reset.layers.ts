@@ -17,6 +17,7 @@ import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { stackApiLayer } from "../../../command-internal/stack-api.ts";
 import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
+import { bundledPostgresClientLayer } from "../../../command-internal/bundled-postgres-client.ts";
 
 /**
  * Runtime layer for `supabase db reset`: the Postgres connection, the db-config resolver,
@@ -80,8 +81,9 @@ export const dbResetRuntimeLayer = Layer.mergeAll(
   dockerRunLayer,
   // Backs `isLocalDbRunning`'s direct Engine-API probe (+ its `--debug` trace).
   localDockerEngineLayer.pipe(Layer.provide(debugLoggerLayer)),
-  // Exposed so `db reset --local` can open the project stack and call `resetDatabase`.
+  // Exposed so `db reset --local` can open the project stack and manage registered instances.
   stackApiLayer,
+  bundledPostgresClientLayer,
   stackCatalogSetupLayer,
   commandRuntimeLayer(["db", "reset"]),
 );

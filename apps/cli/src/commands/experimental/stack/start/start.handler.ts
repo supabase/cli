@@ -50,19 +50,13 @@ const eagerlyActivate = <
   value: T,
 ): T => (value.enabled === false ? value : Object.assign({}, value, { activation: "eager" }));
 
-const isPostgresOnlyStatus = (status: StackStatus): boolean => {
-  const database = status.capabilities.find((capability) => capability.name === "database");
-  if (status.lifecycle !== "running" || database?.state !== "ready") return false;
-  return STACK_START_EXCLUDABLE_CAPABILITIES.every(
-    (name) =>
-      status.capabilities.find((capability) => capability.name === name)?.state === "disabled",
-  );
-};
-
-const isPostgresOnlyConfig = (config: StackConfig): boolean =>
-  STACK_START_EXCLUDABLE_CAPABILITIES.every(
-    (name) => config.capabilities?.[name]?.enabled === false,
-  );
+const hasServicePolicyDifference = (status: StackStatus, config: StackConfig): boolean =>
+  STACK_START_EXCLUDABLE_CAPABILITIES.some((name) => {
+    const requestedDisabled = config.capabilities?.[name]?.enabled === false;
+    const instance = status.instances.find((candidate) => candidate.service === name);
+    const actualDisabled = instance?.enabled === false || instance?.phase === "stopped";
+    return requestedDisabled !== actualDisabled;
+  });
 
 const validateExclusions = (exclusions: ReadonlyArray<string>) => {
   const unknown = exclusions.filter(
@@ -182,6 +176,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               projectRoot: target.projectRoot,
               ...(target.name === undefined ? {} : { name: target.name }),
               ...(runtime === undefined ? {} : { runtime }),
+              initialConfig: startConfig,
             })
             .pipe(Effect.mapError(stackStartError));
     if (stack.dockerFallbackNotice !== undefined)
@@ -190,13 +185,16 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const addressed = yield* stack.status.pipe(Effect.mapError(stackStartError));
     const firstCreate = addressed.desiredLifecycle === "unconfigured";
     const starting = yield* output.task("Starting local Supabase stack...");
-    if (isPostgresOnlyStatus(addressed) && !isPostgresOnlyConfig(startConfig)) {
-      yield* stack.stop.pipe(
-        Effect.tapError((error) => starting.fail(error.message)),
-        Effect.mapError(stackStartError),
-      );
-    }
-    const status = yield* stack.start({ config: startConfig }).pipe(
+    if (
+      addressed.lifecycle === "running" &&
+      (flags.eager || hasServicePolicyDifference(addressed, startConfig))
+    )
+      return yield* new StackCommandStartError({
+        reason: "lifecycle",
+        message: "The selected stack is already running with a different service policy.",
+        suggestion: "Run supabase stack restart to apply --eager or --exclude changes.",
+      });
+    const status = yield* stack.start().pipe(
       Effect.tapError((error) => starting.fail(error.message)),
       Effect.mapError(stackStartError),
     );

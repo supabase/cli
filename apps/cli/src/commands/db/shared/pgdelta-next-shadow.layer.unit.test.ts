@@ -5,43 +5,50 @@ import { allowSameDatabaseIdentityForPlanShadows } from "./pgdelta-next-shadow.l
 describe("allowSameDatabaseIdentityForPlanShadows", () => {
   it.each([
     {
-      scenario: "the declarative shadow restored the tar the migrations shadow just exported",
+      scenario: "the declarative shadow restored the migrations snapshot lineage",
       restored: true,
-      sameKey: true,
+      migrationsLineage: "lineage-1",
+      declarativeLineage: "lineage-1",
       expected: true,
     },
     {
-      scenario: "both shadows warm-restored the same key",
+      scenario: "both shadows warm-restored the same snapshot lineage",
       restored: true,
-      sameKey: true,
+      migrationsLineage: "lineage-2",
+      declarativeLineage: "lineage-2",
       expected: true,
     },
     {
       scenario: "the declarative shadow was cold-provisioned",
       restored: false,
-      sameKey: true,
+      migrationsLineage: "lineage-3",
+      declarativeLineage: "lineage-3",
       expected: false,
     },
     {
-      // Also covers an absent key on either side (uncached/bypassed/uncachable acquisitions),
-      // which the caller folds into `sameSnapshotKey: false`.
-      scenario: "the shadows carry different or absent snapshot keys",
+      scenario: "the shadows carry different or absent snapshot lineage",
       restored: true,
-      sameKey: false,
+      migrationsLineage: "lineage-4",
+      declarativeLineage: "lineage-5",
       expected: false,
     },
     {
       scenario: "neither shadow came from a snapshot",
       restored: false,
-      sameKey: false,
+      migrationsLineage: undefined,
+      declarativeLineage: undefined,
       expected: false,
     },
-  ])("returns $expected when $scenario", ({ restored, sameKey, expected }) => {
-    expect(
-      allowSameDatabaseIdentityForPlanShadows({
-        declarativeRestoredFromPgDataSnapshot: restored,
-        sameSnapshotKey: sameKey,
-      }),
-    ).toBe(expected);
-  });
+  ])(
+    "returns $expected when $scenario",
+    ({ restored, migrationsLineage, declarativeLineage, expected }) => {
+      expect(
+        allowSameDatabaseIdentityForPlanShadows({
+          declarativeRestoredFromPgDataSnapshot: restored,
+          migrationsSnapshotLineageId: migrationsLineage,
+          declarativeSnapshotLineageId: declarativeLineage,
+        }),
+      ).toBe(expected);
+    },
+  );
 });

@@ -301,35 +301,47 @@ jwt_secret = "encrypted:not-a-real-ciphertext"
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("rejects function paths outside the function root", () => {
+  it.effect("accepts function paths outside the function root within the project", () => {
     return Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-outside-function"
 
 [functions.hello]
 import_map = "./import_map.json"
+entrypoint = "./external/index.ts"
+static_files = ["./external/asset.txt"]
 `);
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("functions.hello.import_map");
+      const config = yield* load(root);
+      if (
+        config.capabilities?.functions === undefined ||
+        !("settings" in config.capabilities.functions)
+      )
+        throw new Error("Functions settings missing");
+      expect(config.capabilities.functions.settings?.functions?.hello).toMatchObject({
+        import_map: "../../import_map.json",
+        entrypoint: "../../external/index.ts",
+        static_files: ["../../external/asset.txt"],
+      });
     });
   });
 
-  it.effect(
-    "rejects supabase-prefixed function paths that resolve outside the project root",
-    () => {
-      return Effect.gen(function* () {
-        const root = yield* project(`project_id = "stack-config-nested-supabase"
+  it.effect("preserves trusted function paths outside the project root", () => {
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-outside-project"
 
 [functions.hello]
-entrypoint = "supabase/functions/hello/index.ts"
+entrypoint = "../../outside.ts"
 `);
-        const exit = yield* load(root).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit))
-          expect(String(exit.cause)).toContain("functions.hello.entrypoint");
-      });
-    },
-  );
+      const config = yield* load(root);
+      if (
+        config.capabilities?.functions === undefined ||
+        !("settings" in config.capabilities.functions)
+      )
+        throw new Error("Functions settings missing");
+      expect(config.capabilities.functions.settings?.functions?.hello?.entrypoint).toBe(
+        "../../../../outside.ts",
+      );
+    });
+  });
 
   it.effect("resolves supabase-prefixed signing paths beneath the config directory", () => {
     return Effect.gen(function* () {

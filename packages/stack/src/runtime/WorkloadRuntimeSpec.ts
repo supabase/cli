@@ -6,7 +6,7 @@ import {
   isRecord,
   secret,
   settingValue,
-  settingsFor,
+  settingsForInstance,
   valueAt,
 } from "../state/MaterializedSettings.ts";
 import type {
@@ -14,25 +14,34 @@ import type {
   ContainerMount,
   ContainerStartupProcess,
 } from "./ContainerEngine.ts";
-import { catalogEntryFor, containerAliasFor } from "../model/WorkloadCatalog.ts";
+import { catalogEntryFor } from "../model/WorkloadCatalog.ts";
 import { parseFileSize } from "../model/capabilities/storage.ts";
 import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
 import { Effect, type Duration } from "effect";
 import { StackPreparationError, StackStateInvalidError } from "../public/Errors.ts";
 import { FUNCTIONS_CONTAINER_ROOT } from "../functions/serve-main-deps.ts";
-import { DATABASE_INTERNAL_PASSWORD_SLOT } from "../state/SecretStore.ts";
-export { FUNCTIONS_CONTAINER_ROOT } from "../functions/serve-main-deps.ts";
+import type { FunctionFilesPlan } from "../functions/FunctionFiles.ts";
+import type { FunctionOverride, FunctionOverrides } from "../functions/serve-main-resolver.ts";
 
 type WorkloadRuntimeKind = "native" | "container";
 
 /** Closed set of private ports a workload may expose to the host gateway. */
-type WorkloadBindingName = "primary" | "admin" | "ui" | "smtp" | "pop3" | "inspector" | "rpc";
+type WorkloadBindingName =
+  | "sql:internal"
+  | "primary"
+  | "admin"
+  | "ui"
+  | "smtp"
+  | "pop3"
+  | "inspector"
+  | "rpc";
 
 interface WorkloadBinding {
   readonly containerPort: number;
 }
 
 interface WorkloadBindings {
+  readonly "sql:internal"?: WorkloadBinding;
   readonly primary?: WorkloadBinding;
   readonly admin?: WorkloadBinding;
   readonly ui?: WorkloadBinding;
@@ -42,15 +51,21 @@ interface WorkloadBindings {
   readonly rpc?: WorkloadBinding;
 }
 
-type BindingSelectionState = Pick<PersistedStackState, "definition" | "runtime">;
+type BindingSelectionState = Pick<PersistedStackState, "registry" | "runtime" | "listeners">;
 
 export interface WorkloadBindingIntent {
+  readonly instanceId: string;
   readonly workloadId: string;
   readonly binding: WorkloadBindingName;
 }
 
 /** Inputs resolved by the owner before a process/container is created. */
 export interface WorkloadRuntimeInputs {
+  /** Materialized settings for a one-shot catalog recipe on its database instance. */
+  readonly catalog?: Readonly<{
+    readonly capability: CapabilityName;
+    readonly settings: unknown;
+  }>;
   /** Resolved GoTrue signing key JSON and public JWKS. */
   readonly auth?: Readonly<{
     readonly jwtKeys?: string;
@@ -68,6 +83,8 @@ export interface WorkloadRuntimeInputs {
   readonly functions?: Readonly<{
     readonly bootstrapPath?: string;
     readonly secrets?: Readonly<Record<string, string>>;
+    /** Files outside the managed functions tree that must be visible to containers. */
+    readonly files?: FunctionFilesPlan;
   }>;
   /** Stack-owned native persistent data paths. Containers use their named volumes instead. */
   readonly database?: Readonly<{ readonly dataPath?: string }>;
@@ -193,19 +210,42 @@ export const validateWorkloadRuntimeInputs = (
   inputs: WorkloadRuntimeInputs = {},
 ): Effect.Effect<void, StackPreparationError | StackStateInvalidError> =>
   Effect.gen(function* () {
-    const signing = state.definition?.security.jwt.signing;
-    const thirdParty = resolveThirdPartyIssuer(settingsFor(state, "auth"));
+    const signing = state.security.jwt?.signing;
+    const thirdParty = resolveThirdPartyIssuer(
+      settingsForWorkload(state, workload.instanceId, "auth", inputs.catalog),
+    );
     if (!thirdParty.ok)
       return yield* new StackPreparationError({
         message: thirdParty.message,
         workload: workload.id,
       });
+    if (workload.recipeId === "realtime:realtime") {
+      const dbEncryptionKey = valueAtInstance(
+        state,
+        workload.instanceId,
+        "realtime",
+        "db_enc_key",
+        inputs,
+      );
+      const secretKeyBase = valueAtInstance(
+        state,
+        workload.instanceId,
+        "realtime",
+        "secret_key_base",
+        inputs,
+      );
+      if (dbEncryptionKey.length === 0 || secretKeyBase.length === 0)
+        return yield* new StackPreparationError({
+          message: "Resolved Realtime secret settings are required",
+          workload: workload.id,
+        });
+    }
     const jwksConsumer =
-      workload.id === "rest:rest" ||
-      workload.id === "auth:auth" ||
-      workload.id === "realtime:realtime" ||
-      workload.id === "storage:storage" ||
-      workload.id === "functions:edge-runtime";
+      workload.recipeId === "rest:rest" ||
+      workload.recipeId === "auth:auth" ||
+      workload.recipeId === "realtime:realtime" ||
+      workload.recipeId === "storage:storage" ||
+      workload.recipeId === "functions:edge-runtime";
     if (
       jwksConsumer &&
       (signing?.kind === "jwks-file" || thirdParty.value !== undefined) &&
@@ -225,11 +265,12 @@ export const validateWorkloadRuntimeInputs = (
         message: "Managed JWT signing secret is required for the configured auth mode",
         workload: workload.id,
       });
-    if (workload.id === "analytics:analytics") {
-      const backend = valueAt(state, "analytics", "backend");
+    if (workload.recipeId === "analytics:analytics") {
+      const backend = valueAtInstance(state, workload.instanceId, "analytics", "backend", inputs);
       if (
         backend === "bigquery" &&
-        valueAt(state, "analytics", "gcp_jwt_path").length > 0 &&
+        valueAtInstance(state, workload.instanceId, "analytics", "gcp_jwt_path", inputs).length >
+          0 &&
         (inputs.analytics?.gcpJwtPath === undefined || inputs.analytics.gcpJwtPath.length === 0)
       )
         return yield* new StackPreparationError({
@@ -237,7 +278,7 @@ export const validateWorkloadRuntimeInputs = (
           workload: workload.id,
         });
     }
-    if (workload.id === "auth:auth") {
+    if (workload.recipeId === "auth:auth") {
       if (
         signing?.kind === "jwks-file" &&
         (inputs.auth?.jwtKeys === undefined || inputs.auth.jwtKeys.length === 0)
@@ -246,7 +287,7 @@ export const validateWorkloadRuntimeInputs = (
           message: "Resolved JWT signing keys are required for Auth",
           workload: workload.id,
         });
-      const email = settingsFor(state, "auth");
+      const email = settingsForWorkload(state, workload.instanceId, "auth", inputs.catalog);
       const emailSettings = isRecord(email) && isRecord(email.email) ? email.email : undefined;
       const templates = emailSettings?.template;
       const notifications = emailSettings?.notification;
@@ -270,42 +311,77 @@ export const validateWorkloadRuntimeInputs = (
     }
   });
 
-export const FUNCTIONS_BOOTSTRAP_CONTAINER_PATH = "/root";
+const FUNCTIONS_BOOTSTRAP_CONTAINER_PATH = "/root";
 
 const compactEnvironment = (
   environment: Readonly<Record<string, string>>,
 ): Readonly<Record<string, string>> =>
   Object.fromEntries(Object.entries(environment).filter(([, value]) => value.length > 0));
 
-const capabilityEnabled = (state: PersistedStackState, capability: CapabilityName): boolean =>
-  state.definition?.capabilities[capability].enabled ?? true;
+const capabilityEnabled = (
+  state: PersistedStackState,
+  capability: CapabilityName,
+  instanceId: string,
+): boolean =>
+  state.registry.instances.find(
+    (instance) => instance.id === instanceId && instance.service === capability,
+  )?.config.enabled ?? false;
 
 const capabilityEnv = (
   state: PersistedStackState,
   capability: CapabilityName,
   prefix: string,
+  instanceId: string,
   omit: (key: string) => boolean = () => false,
+  inputs: WorkloadRuntimeInputs = {},
 ): Record<string, string> => {
   const out: Record<string, string> = {};
-  const settings = settingsFor(state, capability);
+  const settings = settingsForWorkload(state, instanceId, capability, inputs.catalog);
   if (settings !== undefined) flattenSettings(state, settings, prefix, out);
   for (const key of Object.keys(out)) if (omit(key)) delete out[key];
   return out;
 };
 
-const dbPort = (state: PersistedStackState): number =>
-  state.privatePorts.find(
+const valueAtInstance = (
+  state: PersistedStackState,
+  instanceId: string,
+  capability: CapabilityName,
+  path: string,
+  inputs: WorkloadRuntimeInputs = {},
+): string => {
+  let current: unknown = settingsForWorkload(state, instanceId, capability, inputs.catalog);
+  for (const segment of path.split(".")) {
+    if (!isRecord(current)) return "";
+    current = current[segment];
+  }
+  return settingValue(state, current);
+};
+
+const dbPort = (state: PersistedStackState, instanceId: string): number => {
+  const port = state.privatePorts.find(
     (assignment) =>
-      assignment.workloadId === "database:database" && assignment.binding === "primary",
-  )?.port ?? 5432;
+      assignment.instanceId === instanceId &&
+      assignment.workloadId.endsWith(":database") &&
+      assignment.binding === "sql:internal",
+  )?.port;
+  if (port === undefined) throw new Error(`Missing database port for instance ${instanceId}`);
+  return port;
+};
+
+const databaseInstanceIdFor = (state: PersistedStackState, instanceId: string): string =>
+  serviceInstanceIdFor(state, instanceId, "database");
 
 const privatePortFor = (
   state: PersistedStackState,
   workloadId: string,
   binding: WorkloadBindingName,
+  instanceId: string,
 ): number | undefined =>
   state.privatePorts.find(
-    (assignment) => assignment.workloadId === workloadId && assignment.binding === binding,
+    (assignment) =>
+      assignment.instanceId === instanceId &&
+      assignment.workloadId === workloadId &&
+      assignment.binding === binding,
   )?.port;
 
 const bindingFor = (
@@ -319,38 +395,162 @@ const workloadPort = (
   binding: WorkloadBindingName,
   runtime: WorkloadRuntimeKind,
   containerPort: number,
+  instanceId: string,
 ): number =>
   runtime === "container"
     ? containerPort
-    : (privatePortFor(state, workloadId, binding) ?? containerPort);
+    : (privatePortFor(state, workloadId, binding, instanceId) ??
+      (() => {
+        throw new Error(`Missing ${binding} port for workload ${workloadId}`);
+      })());
 
 const containerPortFor = (
   state: PersistedStackState,
   workloadId: string,
   binding: WorkloadBindingName,
   fallback: number,
+  instanceId: string,
 ): number => {
-  if (workloadId === "pooler:pooler" && binding === "primary")
-    return valueAt(state, "pooler", "pool_mode") === "session" ? 5432 : 6543;
+  if (workloadId.endsWith(":pooler") && binding === "primary")
+    return valueAtInstance(state, instanceId, "pooler", "pool_mode") === "session" ? 5432 : 6543;
   return fallback;
 };
 
-const dbHost = (runtime: WorkloadRuntimeKind): string =>
-  runtime === "container" ? containerAliasFor("database:database") : "127.0.0.1";
+const dbHost = (
+  state: PersistedStackState,
+  runtime: WorkloadRuntimeKind,
+  instanceId: string,
+): string => {
+  if (runtime === "native") return "127.0.0.1";
+  const databaseId = serviceInstanceIdFor(state, instanceId, "database");
+  const catalog = catalogEntryFor("database:database");
+  if (catalog === undefined) throw new Error("Database catalog entry is missing");
+  return `${catalog.containerAlias}-${databaseId}`;
+};
+
+const serviceInstanceIdFor = (
+  state: PersistedStackState,
+  currentInstanceId: string,
+  service: string,
+): string => {
+  const current = state.registry.instances.find((entry) => entry.id === currentInstanceId);
+  if (current === undefined) throw new Error(`Instance ${currentInstanceId} is missing`);
+  const dependencies: Readonly<Record<string, string>> = current.dependencies;
+  if (service === "database" && current.service === "database") return current.id;
+  const dependency = dependencies[service];
+  if (dependency === undefined)
+    throw new Error(`Dependency ${service} is missing for instance ${currentInstanceId}`);
+  return dependency;
+};
+
+const workloadIdFor = (
+  state: PersistedStackState,
+  currentInstanceId: string,
+  recipeId: string,
+): string => {
+  const separator = recipeId.indexOf(":");
+  const service = recipeId.slice(0, separator);
+  const suffix = recipeId.slice(separator + 1);
+  const current = state.registry.instances.find((entry) => entry.id === currentInstanceId);
+  if (current === undefined) throw new Error(`Instance ${currentInstanceId} is missing`);
+  const target =
+    current.service === service
+      ? current.id
+      : serviceInstanceIdFor(state, currentInstanceId, service);
+  return `${target}:${suffix}`;
+};
+
+const databasePassword = (state: PersistedStackState, currentInstanceId: string): string => {
+  const databaseId = serviceInstanceIdFor(state, currentInstanceId, "database");
+  const database = state.registry.instances.find(
+    (entry) => entry.id === databaseId && entry.service === "database",
+  );
+  if (
+    database === undefined ||
+    database.service !== "database" ||
+    database.config.passwordSecretRef === undefined
+  )
+    throw new Error(`Database password slot is missing for instance ${databaseId}`);
+  return secret(state, database.config.passwordSecretRef);
+};
+
+const settingsForWorkload = (
+  state: PersistedStackState,
+  currentInstanceId: string,
+  capability: CapabilityName,
+  catalog?: WorkloadRuntimeInputs["catalog"],
+): unknown => {
+  if (catalog?.capability === capability) return catalog.settings;
+  const current = state.registry.instances.find((entry) => entry.id === currentInstanceId);
+  const dependencies = current?.dependencies;
+  const targetId =
+    current?.service === capability
+      ? current.id
+      : dependencies === undefined || dependencies === null
+        ? undefined
+        : Object.entries(dependencies).find(([name]) => name === capability)?.[1];
+  return targetId === undefined ? undefined : settingsForInstance(state, targetId, capability);
+};
+
+const serviceAlias = (
+  state: PersistedStackState,
+  runtime: WorkloadRuntimeKind,
+  currentInstanceId: string,
+  recipeId: PlannedWorkload["recipeId"],
+): string => {
+  const catalog = catalogEntryFor(recipeId);
+  if (catalog === undefined) throw new Error(`Catalog entry is missing for ${recipeId}`);
+  if (runtime === "native") return "127.0.0.1";
+  const service = recipeId.slice(0, recipeId.indexOf(":"));
+  return `${catalog.containerAlias}-${serviceInstanceIdFor(state, currentInstanceId, service)}`;
+};
 
 const dbUrl = (
   state: PersistedStackState,
   role: string,
   runtime: WorkloadRuntimeKind,
+  instanceId: string,
   database = "postgres",
 ): string => {
-  const port = runtime === "container" ? 5432 : dbPort(state);
-  return `postgresql://${role}:${secret(state, DATABASE_INTERNAL_PASSWORD_SLOT)}@${dbHost(runtime)}:${port}/${database}`;
+  const port =
+    runtime === "container" ? 5432 : dbPort(state, databaseInstanceIdFor(state, instanceId));
+  return `postgresql://${role}:${databasePassword(state, instanceId)}@${dbHost(state, runtime, instanceId)}:${port}/${database}`;
 };
 
-const usesResolvedJwks = (state: PersistedStackState): boolean => {
-  const signing = state.definition?.security.jwt.signing;
-  const thirdParty = resolveThirdPartyIssuer(settingsFor(state, "auth"));
+const functionsDatabaseUrl = (
+  state: PersistedStackState,
+  runtime: WorkloadRuntimeKind,
+  instanceId: string,
+  inputs: WorkloadRuntimeInputs,
+): string | undefined => {
+  const instance = state.registry.instances.find((entry) => entry.id === instanceId);
+  const dependencies: Readonly<Record<string, string>> = instance?.dependencies ?? {};
+  const databaseId = dependencies.database ?? state.registry.defaultInstanceIds.database;
+  if (databaseId === undefined) return undefined;
+  const database = state.registry.instances.find(
+    (entry) => entry.id === databaseId && entry.service === "database",
+  );
+  if (
+    database === undefined ||
+    database.service !== "database" ||
+    database.config.enabled === false ||
+    database.config.passwordSecretRef === undefined
+  )
+    return undefined;
+  const port = state.ports.find(
+    (assignment) =>
+      assignment.owner === "instance" &&
+      assignment.instanceId === database.id &&
+      assignment.binding === "sql",
+  )?.port;
+  const host = runtime === "native" ? "127.0.0.1" : inputs.hostRoute?.host;
+  if (port === undefined || host === undefined) return undefined;
+  return `postgresql://supabase_admin:${secret(state, database.config.passwordSecretRef)}@${host}:${port}/postgres`;
+};
+
+const usesResolvedJwks = (state: PersistedStackState, instanceId: string): boolean => {
+  const signing = state.security.jwt?.signing;
+  const thirdParty = resolveThirdPartyIssuer(settingsForWorkload(state, instanceId, "auth"));
   return signing?.kind === "jwks-file" || (thirdParty.ok && thirdParty.value !== undefined);
 };
 
@@ -363,7 +563,8 @@ const edgeRuntimeJwtEnvironment = (
     SUPABASE_INTERNAL_PUBLISHABLE_KEY: secret(state, "secret:auth.settings.publishable_key"),
     SUPABASE_INTERNAL_SECRET_KEY: secret(state, "secret:auth.settings.secret_key"),
     SUPABASE_INTERNAL_HOST_PORT: String(
-      state.ports.find((assignment) => assignment.field === "api")?.port ?? "",
+      state.ports.find((assignment) => assignment.owner === "stack" && assignment.binding === "api")
+        ?.port ?? "",
     ),
     SUPABASE_JWKS: inputs.auth?.jwks ?? '{"keys":[]}',
   });
@@ -372,17 +573,25 @@ const edgeRuntimeJwtEnvironment = (
   return { ...inputs.functions?.secrets, ...fixed };
 };
 
-const functionsConfigEnvironment = (state: PersistedStackState): string => {
-  const settings = settingsFor(state, "functions");
+export const functionOverridesForSettings = (
+  state: PersistedStackState,
+  instanceId: string,
+): FunctionOverrides => {
+  const settings = settingsForInstance(state, instanceId, "functions");
   const edgeRuntime =
     isRecord(settings) && isRecord(settings.edge_runtime) ? settings.edge_runtime : {};
   const configured = isRecord(settings) && isRecord(settings.functions) ? settings.functions : {};
-  const result: Record<string, unknown> = {};
-  const defaults: Record<string, unknown> = {};
-  if (typeof edgeRuntime.verify_jwt_default === "boolean")
-    defaults.verify_jwt = edgeRuntime.verify_jwt_default;
-  if (typeof edgeRuntime.import_map_default === "string")
-    defaults.import_map_root = edgeRuntime.import_map_default;
+  const result: Record<string, FunctionOverride> = {};
+  const defaults: FunctionOverride = {
+    ...(typeof edgeRuntime.verify_jwt_default === "boolean"
+      ? { verifyJWT: edgeRuntime.verify_jwt_default }
+      : {}),
+    ...(typeof edgeRuntime.import_map_default === "string"
+      ? {
+          importMapRoot: edgeRuntime.import_map_default,
+        }
+      : {}),
+  };
   if (Object.keys(defaults).length > 0) result.$default = defaults;
   for (const [slug, value] of Object.entries(configured)) {
     if (!isRecord(value)) continue;
@@ -391,26 +600,87 @@ const functionsConfigEnvironment = (state: PersistedStackState): string => {
           Object.entries(value.env).map(([key, entry]) => [key, settingValue(state, entry)]),
         )
       : {};
-    result[slug] = {
-      enabled: value.enabled ?? true,
-      verify_jwt: value.verify_jwt ?? true,
-      import_map: settingValue(state, value.import_map),
-      entrypoint: settingValue(state, value.entrypoint),
-      static_files: Array.isArray(value.static_files)
-        ? value.static_files.map((entry) => settingValue(state, entry))
-        : [],
+    const functionConfig: FunctionOverride = {
+      enabled: value.enabled !== false,
       env,
+      ...(typeof value.verify_jwt === "boolean" ? { verifyJWT: value.verify_jwt } : {}),
+      ...(value.import_map === undefined
+        ? {}
+        : {
+            importMapPath: settingValue(state, value.import_map),
+          }),
+      ...(value.entrypoint === undefined
+        ? {}
+        : {
+            entrypointPath: settingValue(state, value.entrypoint),
+          }),
+      ...(Array.isArray(value.static_files)
+        ? {
+            staticFiles: value.static_files.map((entry) => settingValue(state, entry)),
+          }
+        : {}),
     };
+    result[slug] = functionConfig;
   }
-  return JSON.stringify(result);
+  return result;
 };
 
-const functionsRoot = (state: PersistedStackState): string =>
-  valueAt(state, "functions", "functions_root");
+const functionsConfigEnvironment = (state: PersistedStackState, instanceId: string): string =>
+  JSON.stringify(functionOverridesForSettings(state, instanceId));
+
+const functionsInstanceIdFor = (
+  state: PersistedStackState,
+  instanceId: string,
+): string | undefined => {
+  const instance = state.registry.instances.find((entry) => entry.id === instanceId);
+  if (instance?.service === "functions") return instance.id;
+  if (instance?.service !== "studio") return undefined;
+  const functionsId = state.registry.defaultInstanceIds.functions;
+  const functions = state.registry.instances.find(
+    (entry) => entry.id === functionsId && entry.service === "functions",
+  );
+  return functions?.config.enabled === true ? functions.id : undefined;
+};
+
+const functionsRoot = (state: PersistedStackState, instanceId: string): string => {
+  const functionsId = functionsInstanceIdFor(state, instanceId);
+  const settings =
+    functionsId === undefined ? undefined : settingsForInstance(state, functionsId, "functions");
+  return isRecord(settings) ? settingValue(state, settings.functions_root) : "";
+};
+
+const pathWithin = (root: string, candidate: string): boolean => {
+  const normalizedRoot = root.replaceAll("\\", "/").replace(/\/+$/u, "");
+  const normalizedCandidate = candidate.replaceAll("\\", "/");
+  return (
+    normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`)
+  );
+};
+
+const functionsContainerMounts = (
+  state: PersistedStackState,
+  workload: PlannedWorkload,
+  inputs: WorkloadRuntimeInputs,
+): ReadonlyArray<ContainerMount> => {
+  const root = functionsRoot(state, workload.instanceId);
+  if (root.length === 0) return [];
+  const filesByTarget = new Map<string, FunctionFilesPlan["files"][number]>();
+  for (const file of inputs.functions?.files?.files ?? []) {
+    if (!pathWithin(root, file.hostPath) && !filesByTarget.has(file.targetPath))
+      filesByTarget.set(file.targetPath, file);
+  }
+  const extra = [...filesByTarget.values()].map((file) => ({
+    source: file.hostPath,
+    target: file.targetPath,
+    readOnly: true,
+  }));
+  return [{ source: root, target: root, readOnly: true }, ...extra];
+};
 
 const privateEndpointFor = (
   state: PersistedStackState,
   workloadId: string,
+  instanceId: string,
   bindings: WorkloadBindings,
   binding: WorkloadBindingName,
   runtime: WorkloadRuntimeKind,
@@ -420,8 +690,8 @@ const privateEndpointFor = (
   if (declared === undefined) return undefined;
   const port =
     runtime === "container"
-      ? containerPortFor(state, workloadId, binding, declared.containerPort)
-      : privatePortFor(state, workloadId, binding);
+      ? containerPortFor(state, workloadId, binding, declared.containerPort, instanceId)
+      : privatePortFor(state, workloadId, binding, instanceId);
   return port === undefined
     ? undefined
     : {
@@ -438,34 +708,49 @@ const nativeArgsFor = (
   args: ReadonlyArray<string>,
   inputs: WorkloadRuntimeInputs,
 ): ReadonlyArray<string> => {
-  if (workload.id === "analytics:vector" && inputs.analytics?.vectorConfigPath !== undefined)
+  if (workload.recipeId === "analytics:vector" && inputs.analytics?.vectorConfigPath !== undefined)
     return ["--config", inputs.analytics.vectorConfigPath];
-  if (workload.id !== "functions:edge-runtime") return args;
+  if (workload.recipeId !== "functions:edge-runtime") return args;
   return args.map((arg) => (arg.startsWith("--main-service=") ? "--main-service=." : arg));
 };
 
 const nativeFunctionsDirectory = (
   state: PersistedStackState,
+  instanceId: string,
   inputs: WorkloadRuntimeInputs,
 ): string => {
   const bootstrapPath = inputs.functions?.bootstrapPath;
-  if (bootstrapPath === undefined) return functionsRoot(state);
+  if (bootstrapPath === undefined) return functionsRoot(state, instanceId);
   return bootstrapPath.slice(0, bootstrapPath.lastIndexOf("/")) || bootstrapPath;
 };
 
-const functionsInspectorRequested = (state: Pick<PersistedStackState, "definition">): boolean => {
-  const inspectorSettings = state.definition?.capabilities.functions.settings.inspector;
+const functionsInspectorRequested = (
+  state: Pick<PersistedStackState, "registry" | "listeners">,
+  instanceId: string,
+): boolean => {
+  const functions = state.registry.instances.find(
+    (instance) => instance.id === instanceId && instance.service === "functions",
+  );
+  const functionSettings: unknown = functions?.config.settings;
+  const inspectorSettings = isRecord(functionSettings) ? functionSettings.inspector : undefined;
+  const functionEndpoints: unknown = functions?.config.endpoints;
   return (
-    isRecord(inspectorSettings) || state.definition?.listeners.functionsInspector.enabled === true
+    isRecord(inspectorSettings) ||
+    (isRecord(functionEndpoints) &&
+      isRecord(functionEndpoints.inspector) &&
+      functionEndpoints.inspector.enabled === true)
   );
 };
 
 const functionsInspectorArgs = (
   state: PersistedStackState,
   runtime: WorkloadRuntimeKind,
+  instanceId: string,
 ): ReadonlyArray<string> => {
-  const configuredMode = valueAt(state, "functions", "inspector.mode");
-  const inspectorRequested = functionsInspectorRequested(state);
+  const settings = settingsForInstance(state, instanceId, "functions");
+  const inspector = isRecord(settings) && isRecord(settings.inspector) ? settings.inspector : {};
+  const configuredMode = settingValue(state, inspector.mode);
+  const inspectorRequested = functionsInspectorRequested(state, instanceId);
   const mode =
     configuredMode === "run" || configuredMode === "brk" || configuredMode === "wait"
       ? configuredMode
@@ -474,14 +759,16 @@ const functionsInspectorArgs = (
         : "";
   if (mode !== "run" && mode !== "brk" && mode !== "wait") return [];
   const port =
-    runtime === "container" ? 9229 : privatePortFor(state, "functions:edge-runtime", "inspector");
+    runtime === "container"
+      ? 9229
+      : privatePortFor(state, `${instanceId}:edge-runtime`, "inspector", instanceId);
   if (port === undefined)
     throw new Error("Functions inspector private port assignment is required");
   const address = runtime === "container" ? "0.0.0.0" : "127.0.0.1";
   const flag = mode === "brk" ? "--inspect-brk" : mode === "wait" ? "--inspect-wait" : "--inspect";
   return [
     `${flag}=${address}:${port}`,
-    ...(valueAt(state, "functions", "inspector.main") === "true" ? ["--inspect-main"] : []),
+    ...(settingValue(state, inspector.main) === "true" ? ["--inspect-main"] : []),
   ];
 };
 
@@ -493,9 +780,15 @@ const nativeProcessFor = (
   spec: WorkloadRuntimeSpecDefinition,
   inputs: WorkloadRuntimeInputs = {},
 ): NativeProcessResolution => {
-  const catalog = catalogEntryFor(workload.id);
+  const catalog = catalogEntryFor(workload.recipeId);
   const executablePath = catalog?.executablePath;
-  const resolvedPort = privatePortFor(state, workload.id, "primary") ?? port;
+  const resolvedPort =
+    privatePortFor(
+      state,
+      workload.id,
+      workload.recipeId === "database:database" ? "sql:internal" : "primary",
+      workload.instanceId,
+    ) ?? port;
   const args = spec
     .args(state, workload, resolvedPort, "native")
     .map((arg) =>
@@ -508,10 +801,10 @@ const nativeProcessFor = (
       executablePath === undefined ? artifactRoot : artifactPath(artifactRoot, executablePath),
     args: nativeArgs,
     cwd:
-      workload.id === "functions:edge-runtime"
-        ? nativeFunctionsDirectory(state, inputs)
+      workload.recipeId === "functions:edge-runtime"
+        ? nativeFunctionsDirectory(state, workload.instanceId, inputs)
         : (spec.cwd?.(state, workload) ?? state.identity.projectRoot),
-    ...(workload.id === "database:database"
+    ...(workload.recipeId === "database:database"
       ? { gracefulStopSignal: "SIGINT", gracefulStopTimeout: "15 seconds" }
       : {}),
   };
@@ -525,7 +818,7 @@ const nativeStartupProcessesFor = (
 ): ReadonlyArray<NativeProcessResolution> => {
   const artifact = (relative: string): string => artifactPath(artifactRoot, relative);
   const cwd = artifactRoot;
-  switch (workload.id) {
+  switch (workload.recipeId) {
     case "auth:auth":
       return [{ executable: artifact("bin/auth"), args: ["migrate"], cwd }];
     case "storage:storage":
@@ -546,31 +839,54 @@ const nativeStartupProcessesFor = (
 
 const withRestSettings = (
   state: PersistedStackState,
+  instanceId: string,
   runtime: WorkloadRuntimeKind,
   port: number,
   inputs: WorkloadRuntimeInputs = {},
 ): Record<string, string> =>
   compactEnvironment({
-    PGRST_DB_URI: dbUrl(state, "authenticator", runtime),
-    PGRST_DB_SCHEMAS: valueAt(state, "rest", "schemas"),
-    PGRST_DB_EXTRA_SEARCH_PATH: valueAt(state, "rest", "extra_search_path"),
+    PGRST_DB_URI: dbUrl(state, "authenticator", runtime, instanceId),
+    PGRST_DB_SCHEMAS: valueAtInstance(state, instanceId, "rest", "schemas", inputs),
+    PGRST_DB_EXTRA_SEARCH_PATH: valueAtInstance(
+      state,
+      instanceId,
+      "rest",
+      "extra_search_path",
+      inputs,
+    ),
     PGRST_DB_ANON_ROLE: "anon",
-    PGRST_JWT_SECRET: usesResolvedJwks(state)
+    PGRST_JWT_SECRET: usesResolvedJwks(state, instanceId)
       ? (inputs.auth?.jwks ?? "")
       : secret(state, "secret:auth.settings.jwt_secret"),
     PGRST_SERVER_PORT: String(port),
-    PGRST_DB_MAX_ROWS: valueAt(state, "rest", "max_rows"),
-    PGRST_ADMIN_SERVER_PORT: String(workloadPort(state, "rest:rest", "admin", runtime, 3001)),
-    PGRST_OPENAPI_SERVER_PROXY_URI: valueAt(state, "rest", "external_url"),
+    PGRST_DB_MAX_ROWS: valueAtInstance(state, instanceId, "rest", "max_rows", inputs),
+    PGRST_ADMIN_SERVER_PORT: String(
+      workloadPort(
+        state,
+        workloadIdFor(state, instanceId, "rest:rest"),
+        "admin",
+        runtime,
+        3001,
+        instanceId,
+      ),
+    ),
+    PGRST_OPENAPI_SERVER_PROXY_URI: valueAtInstance(
+      state,
+      instanceId,
+      "rest",
+      "external_url",
+      inputs,
+    ),
   });
 
 const authNestedEnvironment = (
   state: PersistedStackState,
+  instanceId: string,
   jwtIssuer: string,
   inputs: WorkloadRuntimeInputs,
 ): Record<string, string> => {
   const out: Record<string, string> = {};
-  const settings = settingsFor(state, "auth");
+  const settings = settingsForWorkload(state, instanceId, "auth", inputs.catalog);
   if (!isRecord(settings)) return out;
   const external = settings.external;
   if (isRecord(external))
@@ -650,12 +966,16 @@ const authNestedEnvironment = (
 };
 
 const authExternalUrl = (state: PersistedStackState): string => {
-  const apiPort = state.ports.find((assignment) => assignment.field === "api")?.port;
+  const apiPort = state.ports.find(
+    (assignment) => assignment.owner === "stack" && assignment.binding === "api",
+  )?.port;
   return `http://127.0.0.1${apiPort === undefined ? "" : `:${apiPort}`}/auth/v1`;
 };
 
 const apiListenerUrl = (state: PersistedStackState, inputs?: WorkloadRuntimeInputs): string => {
-  const apiPort = state.ports.find((assignment) => assignment.field === "api")?.port;
+  const apiPort = state.ports.find(
+    (assignment) => assignment.owner === "stack" && assignment.binding === "api",
+  )?.port;
   const host = inputs?.hostRoute?.host ?? "127.0.0.1";
   return `http://${host}${apiPort === undefined ? "" : `:${apiPort}`}`;
 };
@@ -665,8 +985,12 @@ const apiGatewayUrl = (state: PersistedStackState, inputs?: WorkloadRuntimeInput
   return valueAt(state, "studio", "api_url") || apiListenerUrl(state);
 };
 
-const authSmsProvider = (state: PersistedStackState): string => {
-  const sms = settingsFor(state, "auth");
+const authSmsProvider = (
+  state: PersistedStackState,
+  instanceId: string,
+  inputs: WorkloadRuntimeInputs,
+): string => {
+  const sms = settingsForWorkload(state, instanceId, "auth", inputs.catalog);
   if (!isRecord(sms) || !isRecord(sms.sms)) return "";
   // Providers are checked in this fixed order; if multiple are enabled, the first one wins
   // and only its credentials are passed to GoTrue.
@@ -678,18 +1002,26 @@ const authSmsProvider = (state: PersistedStackState): string => {
   return "";
 };
 
-const authSmsTestOtp = (state: PersistedStackState): string => {
-  const value = valueAt(state, "auth", "sms.test_otp");
+const authSmsTestOtp = (
+  state: PersistedStackState,
+  instanceId: string,
+  inputs: WorkloadRuntimeInputs,
+): string => {
+  const value = valueAtInstance(state, instanceId, "auth", "sms.test_otp", inputs);
   if (value.length === 0) return "";
-  const settings = settingsFor(state, "auth");
+  const settings = settingsForWorkload(state, instanceId, "auth", inputs.catalog);
   if (!isRecord(settings) || !isRecord(settings.sms) || !isRecord(settings.sms.test_otp)) return "";
   return Object.entries(settings.sms.test_otp)
     .map(([phone, otp]) => `${phone}:${settingValue(state, otp)}`)
     .join(",");
 };
 
-const passwordRequiredCharacters = (state: PersistedStackState): string => {
-  const requirements = valueAt(state, "auth", "password_requirements");
+const passwordRequiredCharacters = (
+  state: PersistedStackState,
+  instanceId: string,
+  inputs: WorkloadRuntimeInputs,
+): string => {
+  const requirements = valueAtInstance(state, instanceId, "auth", "password_requirements", inputs);
   if (requirements === "letters_digits")
     return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789";
   if (requirements === "lower_upper_letters_digits")
@@ -701,6 +1033,7 @@ const passwordRequiredCharacters = (state: PersistedStackState): string => {
 
 const withAuthSettings = (
   state: PersistedStackState,
+  instanceId: string,
   runtime: WorkloadRuntimeKind,
   port: number,
   inputs: WorkloadRuntimeInputs = {},
@@ -710,22 +1043,25 @@ const withAuthSettings = (
       state,
       "auth",
       "GOTRUE",
+      instanceId,
       (key) =>
         key === "GOTRUE_SIGNING_KEYS_PATH" ||
         key.startsWith("GOTRUE_THIRD_PARTY_") ||
         key.startsWith("GOTRUE_EXTERNAL_") ||
         key.startsWith("GOTRUE_MFA_PHONE_"),
+      inputs,
     ),
     ...authNestedEnvironment(
       state,
-      valueAt(state, "auth", "jwt_issuer") || authExternalUrl(state),
+      instanceId,
+      valueAtInstance(state, instanceId, "auth", "jwt_issuer", inputs) || authExternalUrl(state),
       inputs,
     ),
-    GOTRUE_DB_DATABASE_URL: dbUrl(state, "supabase_auth_admin", runtime),
+    GOTRUE_DB_DATABASE_URL: dbUrl(state, "supabase_auth_admin", runtime, instanceId),
     GOTRUE_DB_DRIVER: "postgres",
-    GOTRUE_SITE_URL: valueAt(state, "auth", "site_url"),
+    GOTRUE_SITE_URL: valueAtInstance(state, instanceId, "auth", "site_url", inputs),
     GOTRUE_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
-    GOTRUE_JWT_EXP: valueAt(state, "auth", "jwt_expiry"),
+    GOTRUE_JWT_EXP: valueAtInstance(state, instanceId, "auth", "jwt_expiry", inputs),
     GOTRUE_JWT_AUD: "authenticated",
     GOTRUE_JWT_ADMIN_ROLES: "service_role",
     GOTRUE_JWT_DEFAULT_GROUP_NAME: "authenticated",
@@ -740,16 +1076,62 @@ const withAuthSettings = (
     GOTRUE_MAILER_URLPATHS_CONFIRMATION: `${authExternalUrl(state)}/verify`,
     GOTRUE_MAILER_URLPATHS_RECOVERY: `${authExternalUrl(state)}/verify`,
     GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: `${authExternalUrl(state)}/verify`,
-    GOTRUE_URI_ALLOW_LIST: valueAt(state, "auth", "additional_redirect_urls"),
-    GOTRUE_REFRESH_TOKEN_ROTATION_ENABLED: valueAt(state, "auth", "enable_refresh_token_rotation"),
-    GOTRUE_REFRESH_TOKEN_REUSE_INTERVAL: valueAt(state, "auth", "refresh_token_reuse_interval"),
-    GOTRUE_DISABLE_SIGNUP: valueAt(state, "auth", "enable_signup") === "false" ? "true" : "false",
-    GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: valueAt(state, "auth", "enable_anonymous_sign_ins"),
-    GOTRUE_PASSWORD_MIN_LENGTH: valueAt(state, "auth", "minimum_password_length"),
-    GOTRUE_PASSWORD_REQUIREMENTS: valueAt(state, "auth", "password_requirements"),
-    GOTRUE_PASSWORD_REQUIRED_CHARACTERS: passwordRequiredCharacters(state),
-    GOTRUE_JWT_ISSUER: valueAt(state, "auth", "jwt_issuer") || authExternalUrl(state),
-    GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: valueAt(state, "auth", "enable_manual_linking"),
+    GOTRUE_URI_ALLOW_LIST: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "additional_redirect_urls",
+      inputs,
+    ),
+    GOTRUE_REFRESH_TOKEN_ROTATION_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "enable_refresh_token_rotation",
+      inputs,
+    ),
+    GOTRUE_REFRESH_TOKEN_REUSE_INTERVAL: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "refresh_token_reuse_interval",
+      inputs,
+    ),
+    GOTRUE_DISABLE_SIGNUP:
+      valueAtInstance(state, instanceId, "auth", "enable_signup", inputs) === "false"
+        ? "true"
+        : "false",
+    GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "enable_anonymous_sign_ins",
+      inputs,
+    ),
+    GOTRUE_PASSWORD_MIN_LENGTH: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "minimum_password_length",
+      inputs,
+    ),
+    GOTRUE_PASSWORD_REQUIREMENTS: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "password_requirements",
+      inputs,
+    ),
+    GOTRUE_PASSWORD_REQUIRED_CHARACTERS: passwordRequiredCharacters(state, instanceId, inputs),
+    GOTRUE_JWT_ISSUER:
+      valueAtInstance(state, instanceId, "auth", "jwt_issuer", inputs) || authExternalUrl(state),
+    GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "enable_manual_linking",
+      inputs,
+    ),
     GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: valueAt(
       state,
       "auth",
@@ -760,35 +1142,157 @@ const withAuthSettings = (
       "auth",
       "refresh_token_reuse_interval",
     ),
-    GOTRUE_RATE_LIMIT_EMAIL_SENT: valueAt(state, "auth", "rate_limit.email_sent"),
-    GOTRUE_RATE_LIMIT_SMS_SENT: valueAt(state, "auth", "rate_limit.sms_sent"),
-    GOTRUE_RATE_LIMIT_ANONYMOUS_USERS: valueAt(state, "auth", "rate_limit.anonymous_users"),
-    GOTRUE_RATE_LIMIT_TOKEN_REFRESH: valueAt(state, "auth", "rate_limit.token_refresh"),
-    GOTRUE_RATE_LIMIT_VERIFY: valueAt(state, "auth", "rate_limit.token_verifications"),
-    GOTRUE_RATE_LIMIT_OTP: valueAt(state, "auth", "rate_limit.sign_in_sign_ups"),
-    GOTRUE_RATE_LIMIT_WEB3: valueAt(state, "auth", "rate_limit.web3"),
-    GOTRUE_SECURITY_CAPTCHA_ENABLED: valueAt(state, "auth", "captcha.enabled"),
-    GOTRUE_SECURITY_CAPTCHA_PROVIDER: valueAt(state, "auth", "captcha.provider"),
-    GOTRUE_SECURITY_CAPTCHA_SECRET: valueAt(state, "auth", "captcha.secret"),
-    GOTRUE_MFA_TOTP_ENROLL_ENABLED: valueAt(state, "auth", "mfa.totp.enroll_enabled"),
-    GOTRUE_MFA_TOTP_VERIFY_ENABLED: valueAt(state, "auth", "mfa.totp.verify_enabled"),
-    GOTRUE_MFA_PHONE_ENROLL_ENABLED: valueAt(state, "auth", "mfa.phone.enroll_enabled"),
-    GOTRUE_MFA_PHONE_VERIFY_ENABLED: valueAt(state, "auth", "mfa.phone.verify_enabled"),
-    ...(valueAt(state, "auth", "mfa.phone.enroll_enabled") === "true" ||
-    valueAt(state, "auth", "mfa.phone.verify_enabled") === "true"
+    GOTRUE_RATE_LIMIT_EMAIL_SENT: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "rate_limit.email_sent",
+      inputs,
+    ),
+    GOTRUE_RATE_LIMIT_SMS_SENT: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "rate_limit.sms_sent",
+      inputs,
+    ),
+    GOTRUE_RATE_LIMIT_ANONYMOUS_USERS: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "rate_limit.anonymous_users",
+      inputs,
+    ),
+    GOTRUE_RATE_LIMIT_TOKEN_REFRESH: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "rate_limit.token_refresh",
+      inputs,
+    ),
+    GOTRUE_RATE_LIMIT_VERIFY: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "rate_limit.token_verifications",
+      inputs,
+    ),
+    GOTRUE_RATE_LIMIT_OTP: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "rate_limit.sign_in_sign_ups",
+      inputs,
+    ),
+    GOTRUE_RATE_LIMIT_WEB3: valueAtInstance(state, instanceId, "auth", "rate_limit.web3", inputs),
+    GOTRUE_SECURITY_CAPTCHA_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "captcha.enabled",
+      inputs,
+    ),
+    GOTRUE_SECURITY_CAPTCHA_PROVIDER: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "captcha.provider",
+      inputs,
+    ),
+    GOTRUE_SECURITY_CAPTCHA_SECRET: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "captcha.secret",
+      inputs,
+    ),
+    GOTRUE_MFA_TOTP_ENROLL_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "mfa.totp.enroll_enabled",
+      inputs,
+    ),
+    GOTRUE_MFA_TOTP_VERIFY_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "mfa.totp.verify_enabled",
+      inputs,
+    ),
+    GOTRUE_MFA_PHONE_ENROLL_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "mfa.phone.enroll_enabled",
+      inputs,
+    ),
+    GOTRUE_MFA_PHONE_VERIFY_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "mfa.phone.verify_enabled",
+      inputs,
+    ),
+    ...(valueAtInstance(state, instanceId, "auth", "mfa.phone.enroll_enabled", inputs) === "true" ||
+    valueAtInstance(state, instanceId, "auth", "mfa.phone.verify_enabled", inputs) === "true"
       ? {
-          GOTRUE_MFA_PHONE_OTP_LENGTH: valueAt(state, "auth", "mfa.phone.otp_length"),
-          GOTRUE_MFA_PHONE_TEMPLATE: valueAt(state, "auth", "mfa.phone.template"),
-          GOTRUE_MFA_PHONE_MAX_FREQUENCY: valueAt(state, "auth", "mfa.phone.max_frequency"),
+          GOTRUE_MFA_PHONE_OTP_LENGTH: valueAtInstance(
+            state,
+            instanceId,
+            "auth",
+            "mfa.phone.otp_length",
+            inputs,
+          ),
+          GOTRUE_MFA_PHONE_TEMPLATE: valueAtInstance(
+            state,
+            instanceId,
+            "auth",
+            "mfa.phone.template",
+            inputs,
+          ),
+          GOTRUE_MFA_PHONE_MAX_FREQUENCY: valueAtInstance(
+            state,
+            instanceId,
+            "auth",
+            "mfa.phone.max_frequency",
+            inputs,
+          ),
         }
       : {}),
-    GOTRUE_MFA_WEB_AUTHN_ENROLL_ENABLED: valueAt(state, "auth", "mfa.web_authn.enroll_enabled"),
-    GOTRUE_MFA_WEB_AUTHN_VERIFY_ENABLED: valueAt(state, "auth", "mfa.web_authn.verify_enabled"),
-    GOTRUE_MFA_MAX_ENROLLED_FACTORS: valueAt(state, "auth", "mfa.max_enrolled_factors"),
-    GOTRUE_SESSIONS_TIMEBOX: valueAt(state, "auth", "sessions.timebox"),
-    GOTRUE_SESSIONS_INACTIVITY_TIMEOUT: valueAt(state, "auth", "sessions.inactivity_timeout"),
+    GOTRUE_MFA_WEB_AUTHN_ENROLL_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "mfa.web_authn.enroll_enabled",
+      inputs,
+    ),
+    GOTRUE_MFA_WEB_AUTHN_VERIFY_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "mfa.web_authn.verify_enabled",
+      inputs,
+    ),
+    GOTRUE_MFA_MAX_ENROLLED_FACTORS: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "mfa.max_enrolled_factors",
+      inputs,
+    ),
+    GOTRUE_SESSIONS_TIMEBOX: valueAtInstance(state, instanceId, "auth", "sessions.timebox", inputs),
+    GOTRUE_SESSIONS_INACTIVITY_TIMEOUT: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "sessions.inactivity_timeout",
+      inputs,
+    ),
     GOTRUE_MAILER_AUTOCONFIRM:
-      valueAt(state, "auth", "email.enable_confirmations") === "false" ? "true" : "false",
+      valueAtInstance(state, instanceId, "auth", "email.enable_confirmations", inputs) === "false"
+        ? "true"
+        : "false",
     GOTRUE_MAILER_TEMPLATE_RELOADING_ENABLED: "true",
     GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: valueAt(
       state,
@@ -800,76 +1304,176 @@ const withAuthSettings = (
       "auth",
       "email.secure_password_change",
     ),
-    GOTRUE_MAILER_MAX_FREQUENCY: valueAt(state, "auth", "email.max_frequency"),
-    GOTRUE_SMTP_MAX_FREQUENCY: valueAt(state, "auth", "email.max_frequency"),
-    GOTRUE_MAILER_OTP_LENGTH: valueAt(state, "auth", "email.otp_length"),
-    GOTRUE_MAILER_OTP_EXP: valueAt(state, "auth", "email.otp_expiry"),
-    ...(valueAt(state, "auth", "email.smtp.enabled") === "true"
+    GOTRUE_MAILER_MAX_FREQUENCY: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "email.max_frequency",
+      inputs,
+    ),
+    GOTRUE_SMTP_MAX_FREQUENCY: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "email.max_frequency",
+      inputs,
+    ),
+    GOTRUE_MAILER_OTP_LENGTH: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "email.otp_length",
+      inputs,
+    ),
+    GOTRUE_MAILER_OTP_EXP: valueAtInstance(state, instanceId, "auth", "email.otp_expiry", inputs),
+    ...(valueAtInstance(state, instanceId, "auth", "email.smtp.enabled", inputs) === "true"
       ? {
-          GOTRUE_SMTP_HOST: valueAt(state, "auth", "email.smtp.host"),
-          GOTRUE_SMTP_PORT: valueAt(state, "auth", "email.smtp.port"),
-          GOTRUE_SMTP_USER: valueAt(state, "auth", "email.smtp.user"),
-          GOTRUE_SMTP_PASS: valueAt(state, "auth", "email.smtp.pass"),
-          GOTRUE_SMTP_ADMIN_EMAIL: valueAt(state, "auth", "email.smtp.admin_email"),
-          GOTRUE_SMTP_SENDER_NAME: valueAt(state, "auth", "email.smtp.sender_name"),
+          GOTRUE_SMTP_HOST: valueAtInstance(state, instanceId, "auth", "email.smtp.host", inputs),
+          GOTRUE_SMTP_PORT: valueAtInstance(state, instanceId, "auth", "email.smtp.port", inputs),
+          GOTRUE_SMTP_USER: valueAtInstance(state, instanceId, "auth", "email.smtp.user", inputs),
+          GOTRUE_SMTP_PASS: valueAtInstance(state, instanceId, "auth", "email.smtp.pass", inputs),
+          GOTRUE_SMTP_ADMIN_EMAIL: valueAtInstance(
+            state,
+            instanceId,
+            "auth",
+            "email.smtp.admin_email",
+            inputs,
+          ),
+          GOTRUE_SMTP_SENDER_NAME: valueAtInstance(
+            state,
+            instanceId,
+            "auth",
+            "email.smtp.sender_name",
+            inputs,
+          ),
         }
-      : capabilityEnabled(state, "mail")
+      : capabilityEnabled(state, "mail", instanceId)
         ? {
-            GOTRUE_SMTP_HOST:
-              runtime === "container" ? containerAliasFor("mail:mail") : "127.0.0.1",
-            GOTRUE_SMTP_PORT: String(workloadPort(state, "mail:mail", "smtp", runtime, 1025)),
-            GOTRUE_SMTP_ADMIN_EMAIL: valueAt(state, "mail", "admin_email"),
-            GOTRUE_SMTP_SENDER_NAME: valueAt(state, "mail", "sender_name"),
+            GOTRUE_SMTP_HOST: serviceAlias(state, runtime, instanceId, "mail:mail"),
+            GOTRUE_SMTP_PORT: String(
+              workloadPort(
+                state,
+                workloadIdFor(state, instanceId, "mail:mail"),
+                "smtp",
+                runtime,
+                1025,
+                instanceId,
+              ),
+            ),
+            GOTRUE_SMTP_ADMIN_EMAIL: valueAtInstance(
+              state,
+              instanceId,
+              "mail",
+              "admin_email",
+              inputs,
+            ),
+            GOTRUE_SMTP_SENDER_NAME: valueAtInstance(
+              state,
+              instanceId,
+              "mail",
+              "sender_name",
+              inputs,
+            ),
           }
         : {}),
     GOTRUE_SMS_AUTOCONFIRM:
-      valueAt(state, "auth", "sms.enable_confirmations") === "false" ? "true" : "false",
-    GOTRUE_SMS_MAX_FREQUENCY: valueAt(state, "auth", "sms.max_frequency"),
+      valueAtInstance(state, instanceId, "auth", "sms.enable_confirmations", inputs) === "false"
+        ? "true"
+        : "false",
+    GOTRUE_SMS_MAX_FREQUENCY: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "sms.max_frequency",
+      inputs,
+    ),
     GOTRUE_SMS_OTP_EXP: "6000",
     GOTRUE_SMS_OTP_LENGTH: "6",
-    GOTRUE_SMS_TEMPLATE: valueAt(state, "auth", "sms.template"),
-    GOTRUE_SMS_PROVIDER: authSmsProvider(state),
-    GOTRUE_SMS_TEST_OTP: authSmsTestOtp(state),
-    GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED: valueAt(state, "auth", "web3.solana.enabled"),
-    GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED: valueAt(state, "auth", "web3.ethereum.enabled"),
-    GOTRUE_EXTERNAL_EMAIL_ENABLED: valueAt(state, "auth", "email.enable_signup"),
-    GOTRUE_EXTERNAL_PHONE_ENABLED: valueAt(state, "auth", "sms.enable_signup"),
-    GOTRUE_OAUTH_SERVER_ENABLED: valueAt(state, "auth", "oauth_server.enabled"),
-    GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH: valueAt(
+    GOTRUE_SMS_TEMPLATE: valueAtInstance(state, instanceId, "auth", "sms.template", inputs),
+    GOTRUE_SMS_PROVIDER: authSmsProvider(state, instanceId, inputs),
+    GOTRUE_SMS_TEST_OTP: authSmsTestOtp(state, instanceId, inputs),
+    GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED: valueAtInstance(
       state,
+      instanceId,
+      "auth",
+      "web3.solana.enabled",
+      inputs,
+    ),
+    GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "web3.ethereum.enabled",
+      inputs,
+    ),
+    GOTRUE_EXTERNAL_EMAIL_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "email.enable_signup",
+      inputs,
+    ),
+    GOTRUE_EXTERNAL_PHONE_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "sms.enable_signup",
+      inputs,
+    ),
+    GOTRUE_OAUTH_SERVER_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "auth",
+      "oauth_server.enabled",
+      inputs,
+    ),
+    GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH: valueAtInstance(
+      state,
+      instanceId,
       "auth",
       "oauth_server.authorization_url_path",
+      inputs,
     ),
-    GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION: valueAt(
+    GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION: valueAtInstance(
       state,
+      instanceId,
       "auth",
       "oauth_server.allow_dynamic_registration",
+      inputs,
     ),
   });
 
 const withStorageSettings = (
   state: PersistedStackState,
+  instanceId: string,
   runtime: WorkloadRuntimeKind,
   port: number,
   inputs: WorkloadRuntimeInputs = {},
 ): Record<string, string> => {
-  const fileSizeLimit = parseFileSize(valueAt(state, "storage", "file_size_limit"));
+  const fileSizeLimit = parseFileSize(
+    valueAtInstance(state, instanceId, "storage", "file_size_limit", inputs),
+  );
+  const imageTransformationEnabled =
+    valueAtInstance(state, instanceId, "storage", "image_transformation.enabled", inputs) ===
+    "true";
   return compactEnvironment({
     ...capabilityEnv(
       state,
       "storage",
       "STORAGE",
+      instanceId,
       (key) =>
         key === "STORAGE_FILE_SIZE_LIMIT" ||
         key.startsWith("STORAGE_S3_PROTOCOL_") ||
         key.startsWith("STORAGE_VECTOR_") ||
         key.startsWith("STORAGE_IMAGE_TRANSFORMATION_"),
+      inputs,
     ),
     PORT: String(port),
     ANON_KEY: secret(state, "secret:auth.settings.anon_key"),
     SERVICE_KEY: secret(state, "secret:auth.settings.service_role_key"),
     AUTH_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
-    DATABASE_URL: dbUrl(state, "supabase_storage_admin", runtime),
+    DATABASE_URL: dbUrl(state, "supabase_storage_admin", runtime, instanceId),
     ...(fileSizeLimit === undefined ? {} : { FILE_SIZE_LIMIT: fileSizeLimit }),
     STORAGE_BACKEND: "file",
     FILE_STORAGE_BACKEND_PATH:
@@ -880,11 +1484,35 @@ const withStorageSettings = (
       runtime === "container"
         ? "/mnt"
         : (inputs.storage?.dataPath ?? `${state.identity.projectRoot}/.supabase/storage`),
-    ENABLE_IMAGE_TRANSFORMATION: valueAt(state, "storage", "image_transformation.enabled"),
-    S3_PROTOCOL_ENABLED: valueAt(state, "storage", "s3_protocol.enabled"),
-    S3_PROTOCOL_ACCESS_KEY_ID: valueAt(state, "storage", "s3_protocol.access_key_id"),
-    S3_PROTOCOL_ACCESS_KEY_SECRET: valueAt(state, "storage", "s3_protocol.secret_access_key"),
-    STORAGE_S3_REGION: valueAt(state, "storage", "s3_protocol.region"),
+    ENABLE_IMAGE_TRANSFORMATION: valueAtInstance(
+      state,
+      instanceId,
+      "storage",
+      "image_transformation.enabled",
+      inputs,
+    ),
+    S3_PROTOCOL_ENABLED: valueAtInstance(
+      state,
+      instanceId,
+      "storage",
+      "s3_protocol.enabled",
+      inputs,
+    ),
+    S3_PROTOCOL_ACCESS_KEY_ID: valueAtInstance(
+      state,
+      instanceId,
+      "storage",
+      "s3_protocol.access_key_id",
+      inputs,
+    ),
+    S3_PROTOCOL_ACCESS_KEY_SECRET: valueAtInstance(
+      state,
+      instanceId,
+      "storage",
+      "s3_protocol.secret_access_key",
+      inputs,
+    ),
+    STORAGE_S3_REGION: valueAtInstance(state, instanceId, "storage", "s3_protocol.region", inputs),
     GLOBAL_S3_BUCKET: "stub",
     TENANT_ID: "stub",
     S3_PROTOCOL_PREFIX: "/storage/v1",
@@ -894,16 +1522,20 @@ const withStorageSettings = (
     PGRST_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
     ...(inputs.auth?.jwks === undefined ? {} : { JWT_JWKS: inputs.auth.jwks }),
     TUS_URL_PATH: "/storage/v1/upload/resumable",
-    IMGPROXY_URL:
-      runtime === "container"
-        ? `http://${containerAliasFor("storage:imgproxy")}:5001`
-        : `http://127.0.0.1:${workloadPort(state, "storage:imgproxy", "primary", runtime, 5001)}`,
-    ...(valueAt(state, "storage", "vector.enabled") === "true"
+    ...(imageTransformationEnabled && inputs.catalog === undefined
+      ? {
+          IMGPROXY_URL:
+            runtime === "container"
+              ? `http://${serviceAlias(state, runtime, instanceId, "storage:imgproxy")}:5001`
+              : `http://127.0.0.1:${workloadPort(state, workloadIdFor(state, instanceId, "storage:imgproxy"), "primary", runtime, 5001, instanceId)}`,
+        }
+      : {}),
+    ...(valueAtInstance(state, instanceId, "storage", "vector.enabled", inputs) === "true"
       ? {
           VECTOR_ENABLED: "true",
           VECTOR_BUCKET_PROVIDER: "pgvector",
           VECTOR_STORE_MIGRATIONS_ENABLED: "true",
-          VECTOR_DATABASE_URL: dbUrl(state, "postgres", runtime),
+          VECTOR_DATABASE_URL: dbUrl(state, "postgres", runtime, instanceId),
         }
       : {}),
   });
@@ -911,10 +1543,11 @@ const withStorageSettings = (
 
 const databaseArgs = (
   state: PersistedStackState,
+  instanceId: string,
   port: number,
   runtime: WorkloadRuntimeKind,
 ): ReadonlyArray<string> => {
-  const settings = settingsFor(state, "database");
+  const settings = settingsForInstance(state, instanceId, "database");
   const postgresSettings = isRecord(settings) ? settings.settings : undefined;
   const tuning = isRecord(postgresSettings) ? postgresSettings : {};
   const tuned = Object.entries(tuning).flatMap(([key, value]) => {
@@ -926,31 +1559,48 @@ const databaseArgs = (
     String(port),
     "-c",
     runtime === "container" ? "listen_addresses=*" : "listen_addresses=127.0.0.1",
+    ...(runtime === "container" ? ["-c", "unix_socket_directories=/tmp"] : []),
     ...tuned,
   ];
 };
 
 const analyticsEnv = (
   state: PersistedStackState,
+  instanceId: string,
   runtime: WorkloadRuntimeKind,
   port: number,
   inputs: WorkloadRuntimeInputs = {},
 ): Record<string, string> => {
-  const backend = valueAt(state, "analytics", "backend");
+  const backend = valueAtInstance(state, instanceId, "analytics", "backend", inputs);
   const gcpJwtPath = inputs.analytics?.gcpJwtPath ?? "";
   return compactEnvironment({
-    ...capabilityEnv(state, "analytics", "ANALYTICS", (key) => key === "ANALYTICS_GCP_JWT_PATH"),
+    ...capabilityEnv(
+      state,
+      "analytics",
+      "ANALYTICS",
+      instanceId,
+      (key) => key === "ANALYTICS_GCP_JWT_PATH",
+      inputs,
+    ),
     PORT: String(port),
     PHX_HTTP_PORT: String(port),
-    DB_HOSTNAME: dbHost(runtime),
-    DB_PORT: String(runtime === "container" ? 5432 : dbPort(state)),
+    DB_HOSTNAME: dbHost(state, runtime, instanceId),
+    DB_PORT: String(
+      runtime === "container" ? 5432 : dbPort(state, databaseInstanceIdFor(state, instanceId)),
+    ),
     DB_DATABASE: "_supabase",
     DB_SCHEMA: "_analytics",
     DB_USERNAME: "supabase_admin",
-    DB_PASSWORD: secret(state, DATABASE_INTERNAL_PASSWORD_SLOT),
+    DB_PASSWORD: databasePassword(state, instanceId),
     LOGFLARE_SUPABASE_MODE: "true",
     LOGFLARE_SINGLE_TENANT: "true",
-    LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAt(state, "analytics", "api_key"),
+    LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAtInstance(
+      state,
+      instanceId,
+      "analytics",
+      "api_key",
+      inputs,
+    ),
     LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
     LOGFLARE_MIN_CLUSTER_SIZE: "1",
     LOGFLARE_LOG_LEVEL: "warn",
@@ -958,13 +1608,25 @@ const analyticsEnv = (
     RELEASE_COOKIE: "cookie",
     ...(backend === "postgres"
       ? {
-          POSTGRES_BACKEND_URL: dbUrl(state, "postgres", runtime, "_supabase"),
+          POSTGRES_BACKEND_URL: dbUrl(state, "postgres", runtime, instanceId, "_supabase"),
           POSTGRES_BACKEND_SCHEMA: "_analytics",
         }
       : {
           GOOGLE_DATASET_ID_APPEND: "_prod",
-          GOOGLE_PROJECT_ID: valueAt(state, "analytics", "gcp_project_id"),
-          GOOGLE_PROJECT_NUMBER: valueAt(state, "analytics", "gcp_project_number"),
+          GOOGLE_PROJECT_ID: valueAtInstance(
+            state,
+            instanceId,
+            "analytics",
+            "gcp_project_id",
+            inputs,
+          ),
+          GOOGLE_PROJECT_NUMBER: valueAtInstance(
+            state,
+            instanceId,
+            "analytics",
+            "gcp_project_number",
+            inputs,
+          ),
           GOOGLE_APPLICATION_CREDENTIALS:
             runtime === "container" && gcpJwtPath.length > 0
               ? "/opt/app/rel/logflare/bin/gcloud.json"
@@ -975,9 +1637,9 @@ const analyticsEnv = (
 
 const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "database:database": {
-    bindings: { primary: { containerPort: 5432 } },
-    args: (state, _workload, port) => databaseArgs(state, port, "native"),
-    env: (state, _workload, _port, runtime = "native", inputs = {}) =>
+    bindings: { "sql:internal": { containerPort: 5432 } },
+    args: (state, workload, port) => databaseArgs(state, workload.instanceId, port, "native"),
+    env: (state, workload, _port, runtime = "native", inputs = {}) =>
       compactEnvironment({
         PGDATA:
           runtime === "container"
@@ -985,25 +1647,29 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
             : (inputs.database?.dataPath ?? `${state.identity.projectRoot}/.supabase/db/data`),
         POSTGRES_USER: "supabase_admin",
         POSTGRES_DB: "postgres",
-        POSTGRES_PASSWORD: secret(state, DATABASE_INTERNAL_PASSWORD_SLOT),
+        POSTGRES_PASSWORD: databasePassword(state, workload.instanceId),
+        ...(runtime === "native"
+          ? { PGPORT: String(dbPort(state, databaseInstanceIdFor(state, workload.instanceId))) }
+          : {}),
         TZDIR: "/var/db/timezone/zoneinfo",
       }),
-    containerArgs: (state, _workload, port) => databaseArgs(state, port, "container"),
+    containerArgs: (state, workload, port) =>
+      databaseArgs(state, workload.instanceId, port, "container"),
     readiness: { protocol: "tcp" },
   },
   "rest:rest": {
     bindings: { primary: { containerPort: 3000 }, admin: { containerPort: 3001 } },
     args: () => [],
-    env: (state, _workload, port, runtime = "native", inputs = {}) =>
-      withRestSettings(state, runtime, port, inputs),
+    env: (state, workload, port, runtime = "native", inputs = {}) =>
+      withRestSettings(state, workload.instanceId, runtime, port, inputs),
     containerArgs: () => [],
     readiness: { protocol: "http", path: "/" },
   },
   "auth:auth": {
     bindings: { primary: { containerPort: 9999 } },
     args: () => [],
-    env: (state, _workload, port, runtime = "native", inputs = {}) =>
-      withAuthSettings(state, runtime, port, inputs),
+    env: (state, workload, port, runtime = "native", inputs = {}) =>
+      withAuthSettings(state, workload.instanceId, runtime, port, inputs),
     containerArgs: () => [],
     containerStartupProcesses: () => [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
     readiness: { protocol: "http", path: "/health" },
@@ -1011,33 +1677,49 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "realtime:realtime": {
     bindings: { primary: { containerPort: 4000 }, rpc: { containerPort: 5369 } },
     args: () => [],
-    env: (state, _workload, port, runtime = "native", inputs = {}) => {
+    env: (state, workload, port, runtime = "native", inputs = {}) => {
       // Production Realtime defaults both gen_rpc TCP ports to 5369. Native stacks
       // need a unique host binding; container netns already owns 5369 in-container.
       const rpcPort =
         state.runtime.kind === "native"
-          ? privatePortFor(state, "realtime:realtime", "rpc")
+          ? privatePortFor(state, workload.id, "rpc", workload.instanceId)
           : undefined;
       return compactEnvironment({
-        ...capabilityEnv(state, "realtime", "REALTIME"),
+        ...capabilityEnv(state, "realtime", "REALTIME", workload.instanceId, undefined, inputs),
         PORT: String(port),
-        DB_HOST: dbHost(runtime),
-        DB_PORT: String(runtime === "container" ? 5432 : dbPort(state)),
+        DB_HOST: dbHost(state, runtime, workload.instanceId),
+        DB_PORT: String(
+          runtime === "container"
+            ? 5432
+            : dbPort(state, databaseInstanceIdFor(state, workload.instanceId)),
+        ),
         DB_USER: "supabase_admin",
-        DB_PASSWORD: secret(state, DATABASE_INTERNAL_PASSWORD_SLOT),
+        DB_PASSWORD: databasePassword(state, workload.instanceId),
         DB_NAME: "postgres",
         DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
         API_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
         ...(inputs.auth?.jwks === undefined ? {} : { API_JWT_JWKS: inputs.auth.jwks }),
         METRICS_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
-        DB_ENC_KEY: secret(state, "secret:realtime.settings.db_enc_key"),
-        SECRET_KEY_BASE: secret(state, "secret:realtime.settings.secret_key_base"),
+        DB_ENC_KEY: valueAtInstance(state, workload.instanceId, "realtime", "db_enc_key", inputs),
+        SECRET_KEY_BASE: valueAtInstance(
+          state,
+          workload.instanceId,
+          "realtime",
+          "secret_key_base",
+          inputs,
+        ),
         DNS_NODES: "''",
         APP_NAME: "realtime",
         SEED_SELF_HOST: "true",
-        MAX_HEADER_LENGTH: valueAt(state, "realtime", "max_header_length"),
+        MAX_HEADER_LENGTH: valueAtInstance(
+          state,
+          workload.instanceId,
+          "realtime",
+          "max_header_length",
+          inputs,
+        ),
         ERL_AFLAGS:
-          valueAt(state, "realtime", "ip_version") === "IPv6"
+          valueAtInstance(state, workload.instanceId, "realtime", "ip_version", inputs) === "IPv6"
             ? "-proto_dist inet6_tcp"
             : "-proto_dist inet_tcp",
         RUN_JANITOR: "true",
@@ -1058,8 +1740,8 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "storage:storage": {
     bindings: { primary: { containerPort: 5000 } },
     args: () => [],
-    env: (state, _workload, port, runtime = "native", inputs = {}) =>
-      withStorageSettings(state, runtime, port, inputs),
+    env: (state, workload, port, runtime = "native", inputs = {}) =>
+      withStorageSettings(state, workload.instanceId, runtime, port, inputs),
     containerArgs: () => [],
     containerStartupProcesses: () => [{ entrypoint: "/slim-runtime/bin/prepare", command: [] }],
     readiness: { protocol: "http", path: "/status" },
@@ -1076,91 +1758,120 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   },
   "functions:edge-runtime": {
     bindings: { primary: { containerPort: 9000 }, inspector: { containerPort: 9229 } },
-    cwd: functionsRoot,
-    args: (state, _workload, port, runtime = "native") => [
+    cwd: (state, workload) => functionsRoot(state, workload.instanceId),
+    args: (state, workload, port, runtime = "native") => [
       "start",
-      `--main-service=${functionsRoot(state)}`,
+      `--main-service=${functionsRoot(state, workload.instanceId)}`,
       `--port=${port}`,
-      `--policy=${valueAt(state, "functions", "edge_runtime.policy")}`,
-      ...functionsInspectorArgs(state, runtime),
+      `--policy=${valueAtInstance(state, workload.instanceId, "functions", "edge_runtime.policy")}`,
+      ...functionsInspectorArgs(state, runtime, workload.instanceId),
     ],
-    env: (state, _workload, port, runtime = "native", inputs = {}) => ({
+    env: (state, workload, port, runtime = "native", inputs = {}) => ({
       ...edgeRuntimeJwtEnvironment(state, inputs),
       EDGE_RUNTIME_PORT: String(port),
       FUNCTIONS_CONTAINER_ROOT,
-      SUPABASE_INTERNAL_FUNCTIONS_ROOT:
-        runtime === "container" ? FUNCTIONS_CONTAINER_ROOT : functionsRoot(state),
-      SUPABASE_INTERNAL_FUNCTIONS_CONFIG: functionsConfigEnvironment(state),
+      SUPABASE_INTERNAL_FUNCTIONS_ROOT: functionsRoot(state, workload.instanceId),
+      SUPABASE_INTERNAL_FUNCTIONS_CONFIG: functionsConfigEnvironment(state, workload.instanceId),
       SUPABASE_URL: apiListenerUrl(state, runtime === "container" ? inputs : undefined),
-      EDGE_RUNTIME_POLICY: valueAt(state, "functions", "edge_runtime.policy"),
-      EDGE_RUNTIME_DENO_VERSION: valueAt(state, "functions", "edge_runtime.deno_version"),
-      INSPECTOR_MODE: valueAt(state, "functions", "inspector.mode"),
-      INSPECTOR_MAIN: valueAt(state, "functions", "inspector.main"),
+      ...(functionsDatabaseUrl(state, runtime, workload.instanceId, inputs) === undefined
+        ? {}
+        : {
+            SUPABASE_DB_URL: functionsDatabaseUrl(state, runtime, workload.instanceId, inputs),
+          }),
+      EDGE_RUNTIME_POLICY: valueAtInstance(
+        state,
+        workload.instanceId,
+        "functions",
+        "edge_runtime.policy",
+      ),
+      EDGE_RUNTIME_DENO_VERSION: valueAtInstance(
+        state,
+        workload.instanceId,
+        "functions",
+        "edge_runtime.deno_version",
+      ),
+      INSPECTOR_MODE: valueAtInstance(state, workload.instanceId, "functions", "inspector.mode"),
+      INSPECTOR_MAIN: valueAtInstance(state, workload.instanceId, "functions", "inspector.main"),
     }),
-    containerArgs: (state, _workload, port) => [
+    containerArgs: (state, workload, port) => [
       "start",
       `--main-service=${FUNCTIONS_BOOTSTRAP_CONTAINER_PATH}`,
       `--port=${port}`,
-      `--policy=${valueAt(state, "functions", "edge_runtime.policy")}`,
-      ...functionsInspectorArgs(state, "container"),
+      `--policy=${valueAtInstance(state, workload.instanceId, "functions", "edge_runtime.policy")}`,
+      ...functionsInspectorArgs(state, "container", workload.instanceId),
     ],
-    containerMounts: (state) => [
-      { source: functionsRoot(state), target: FUNCTIONS_CONTAINER_ROOT, readOnly: true },
-    ],
+    containerMounts: (state, workload, inputs = {}) =>
+      functionsContainerMounts(state, workload, inputs),
     readiness: { protocol: "http", path: "/_internal/health" },
   },
   "studio:studio": {
     bindings: { primary: { containerPort: 3000 } },
     args: () => [],
-    env: (state, _workload, port, runtime = "native", inputs = {}) =>
-      compactEnvironment({
-        ...capabilityEnv(state, "studio", "STUDIO"),
+    env: (state, workload, port, runtime = "native", inputs = {}) => {
+      const analyticsInstanceId = serviceInstanceIdFor(state, workload.instanceId, "analytics");
+      return compactEnvironment({
+        ...capabilityEnv(state, "studio", "STUDIO", workload.instanceId),
         PORT: String(port),
         HOSTNAME: "0.0.0.0",
         STUDIO_PG_META_URL:
           runtime === "container"
-            ? `http://${containerAliasFor("studio:pgmeta")}:8080`
-            : `http://127.0.0.1:${workloadPort(state, "studio:pgmeta", "primary", runtime, 8080)}`,
+            ? `http://${serviceAlias(state, runtime, workload.instanceId, "studio:pgmeta")}:8080`
+            : `http://127.0.0.1:${workloadPort(state, workloadIdFor(state, workload.instanceId, "studio:pgmeta"), "primary", runtime, 8080, workload.instanceId)}`,
         LOGFLARE_URL:
           runtime === "container"
-            ? `http://${containerAliasFor("analytics:analytics")}:4000`
-            : `http://127.0.0.1:${workloadPort(state, "analytics:analytics", "primary", runtime, 4000)}`,
-        LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAt(state, "analytics", "api_key"),
-        NEXT_PUBLIC_ENABLE_LOGS: capabilityEnabled(state, "analytics") ? "true" : "false",
-        NEXT_ANALYTICS_BACKEND_PROVIDER: valueAt(state, "analytics", "backend"),
+            ? `http://${serviceAlias(state, runtime, workload.instanceId, "analytics:analytics")}:4000`
+            : `http://127.0.0.1:${workloadPort(state, `${analyticsInstanceId}:analytics`, "primary", runtime, 4000, analyticsInstanceId)}`,
+        LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAtInstance(
+          state,
+          analyticsInstanceId,
+          "analytics",
+          "api_key",
+        ),
+        NEXT_PUBLIC_ENABLE_LOGS: capabilityEnabled(state, "analytics", analyticsInstanceId)
+          ? "true"
+          : "false",
+        NEXT_ANALYTICS_BACKEND_PROVIDER: valueAtInstance(
+          state,
+          analyticsInstanceId,
+          "analytics",
+          "backend",
+        ),
         SUPABASE_URL: apiGatewayUrl(state, runtime === "container" ? inputs : undefined),
         SUPABASE_PUBLIC_URL: apiListenerUrl(state),
         SUPABASE_ANON_KEY: secret(state, "secret:auth.settings.anon_key"),
         SUPABASE_SERVICE_KEY: secret(state, "secret:auth.settings.service_role_key"),
         SUPABASE_PUBLISHABLE_KEY: secret(state, "secret:auth.settings.publishable_key"),
         SUPABASE_SECRET_KEY: secret(state, "secret:auth.settings.secret_key"),
-        EDGE_FUNCTIONS_MANAGEMENT_FOLDER:
-          runtime === "container" ? FUNCTIONS_CONTAINER_ROOT : functionsRoot(state),
+        EDGE_FUNCTIONS_MANAGEMENT_FOLDER: functionsRoot(state, workload.instanceId),
         OPENAI_API_KEY: secret(state, "secret:studio.settings.openai_api_key"),
         CURRENT_CLI_VERSION: "local",
-        POSTGRES_PASSWORD: secret(state, DATABASE_INTERNAL_PASSWORD_SLOT),
+        POSTGRES_PASSWORD: databasePassword(state, workload.instanceId),
         POSTGRES_USER_READ_WRITE: "postgres",
         PGRST_DB_SCHEMAS: "public,graphql_public",
         PGRST_DB_EXTRA_SEARCH_PATH: "public,extensions",
         PGRST_DB_MAX_ROWS: "1000",
-      }),
+      });
+    },
     containerArgs: () => [],
-    containerMounts: (state) => [
-      { source: functionsRoot(state), target: FUNCTIONS_CONTAINER_ROOT, readOnly: true },
-    ],
+    containerMounts: (state, workload, inputs = {}) =>
+      functionsContainerMounts(state, workload, inputs),
     readiness: { protocol: "http", path: "/api/platform/profile" },
   },
   "studio:pgmeta": {
     bindings: { primary: { containerPort: 8080 } },
     args: () => [],
-    env: (state, _workload, port, runtime = "native") => ({
-      ...capabilityEnv(state, "studio", "PG_META"),
+    env: (state, workload, port, runtime = "native") => ({
+      ...capabilityEnv(state, "studio", "PG_META", workload.instanceId),
       PG_META_PORT: String(port),
-      PG_META_DB_HOST: dbHost(runtime),
-      PG_META_DB_PORT: String(runtime === "container" ? 5432 : dbPort(state)),
+      PG_META_DB_HOST: dbHost(state, runtime, workload.instanceId),
+      PG_META_DB_PORT: String(
+        runtime === "container"
+          ? 5432
+          : dbPort(state, databaseInstanceIdFor(state, workload.instanceId)),
+      ),
       PG_META_DB_NAME: "postgres",
       PG_META_DB_USER: "postgres",
-      PG_META_DB_PASSWORD: secret(state, DATABASE_INTERNAL_PASSWORD_SLOT),
+      PG_META_DB_PASSWORD: databasePassword(state, workload.instanceId),
     }),
     containerArgs: () => [],
     readiness: { protocol: "http", path: "/health" },
@@ -1172,11 +1883,11 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       pop3: { containerPort: 1110 },
     },
     args: () => [],
-    env: (state, _workload, _port, runtime = "native") => ({
-      ...capabilityEnv(state, "mail", "MAIL"),
-      MP_UI_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, "mail:mail", "ui", runtime, 8025)}`,
-      MP_SMTP_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, "mail:mail", "smtp", runtime, 1025)}`,
-      MP_POP3_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, "mail:mail", "pop3", runtime, 1110)}`,
+    env: (state, workload, _port, runtime = "native") => ({
+      ...capabilityEnv(state, "mail", "MAIL", workload.instanceId),
+      MP_UI_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, workloadIdFor(state, workload.instanceId, "mail:mail"), "ui", runtime, 8025, workload.instanceId)}`,
+      MP_SMTP_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, workloadIdFor(state, workload.instanceId, "mail:mail"), "smtp", runtime, 1025, workload.instanceId)}`,
+      MP_POP3_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, workloadIdFor(state, workload.instanceId, "mail:mail"), "pop3", runtime, 1110, workload.instanceId)}`,
       MP_SMTP_DISABLE_RDNS: "true",
     }),
     containerArgs: () => [],
@@ -1185,12 +1896,12 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "analytics:analytics": {
     bindings: { primary: { containerPort: 4000 } },
     args: () => ["start"],
-    env: (state, _workload, port, runtime = "native", inputs = {}) =>
-      analyticsEnv(state, runtime, port, inputs),
+    env: (state, workload, port, runtime = "native", inputs = {}) =>
+      analyticsEnv(state, workload.instanceId, runtime, port, inputs),
     // The slim container entrypoint performs Logflare migrations before start.
     containerArgs: () => [],
-    containerMounts: (state, _workload, inputs = {}) => {
-      const backend = valueAt(state, "analytics", "backend");
+    containerMounts: (state, workload, inputs = {}) => {
+      const backend = valueAtInstance(state, workload.instanceId, "analytics", "backend", inputs);
       const source = inputs.analytics?.gcpJwtPath ?? "";
       return backend === "bigquery" && source.length > 0
         ? [
@@ -1207,15 +1918,20 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "analytics:vector": {
     bindings: { primary: { containerPort: 9001 } },
     args: (_state, _workload, _port) => ["--config", "share/doc/vector/config/vector.yaml"],
-    env: (state, _workload, port, runtime = "native") => ({
-      ...capabilityEnv(state, "analytics", "VECTOR"),
+    env: (state, workload, port, runtime = "native") => ({
+      ...capabilityEnv(state, "analytics", "VECTOR", workload.instanceId),
       VECTOR_API_ADDRESS: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${port}`,
       VECTOR_API_PORT: String(port),
       LOGFLARE_URL:
         runtime === "container"
-          ? `http://${containerAliasFor("analytics:analytics")}:4000`
-          : `http://127.0.0.1:${workloadPort(state, "analytics:analytics", "primary", runtime, 4000)}`,
-      LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAt(state, "analytics", "api_key"),
+          ? `http://${serviceAlias(state, runtime, workload.instanceId, "analytics:analytics")}:4000`
+          : `http://127.0.0.1:${workloadPort(state, workloadIdFor(state, workload.instanceId, "analytics:analytics"), "primary", runtime, 4000, workload.instanceId)}`,
+      LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAtInstance(
+        state,
+        workload.instanceId,
+        "analytics",
+        "api_key",
+      ),
     }),
     containerArgs: (_state, _workload, _port, inputs = {}) =>
       inputs.analytics?.vectorConfigPath === undefined
@@ -1236,39 +1952,71 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "pooler:pooler": {
     bindings: { primary: { containerPort: 6543 }, admin: { containerPort: 4000 } },
     args: () => ["start"],
-    env: (state, _workload, _port, runtime = "native") => {
+    env: (state, workload, _port, runtime = "native", inputs = {}) => {
       const adminPort =
-        runtime === "container" ? 4000 : privatePortFor(state, "pooler:pooler", "admin");
-      const primaryPort = privatePortFor(state, "pooler:pooler", "primary");
+        runtime === "container"
+          ? 4000
+          : privatePortFor(state, workload.id, "admin", workload.instanceId);
+      const primaryPort = privatePortFor(state, workload.id, "primary", workload.instanceId);
       if (adminPort === undefined || primaryPort === undefined)
         throw new Error("Pooler private port assignments must be validated before env resolution");
       return {
-        ...capabilityEnv(state, "pooler", "POOLER"),
+        ...capabilityEnv(state, "pooler", "POOLER", workload.instanceId, undefined, inputs),
         // `port` is the readiness binding (admin); proxy listeners use the primary SQL binding.
         // validatePrivateAssignments guarantees both native bindings are assigned.
         PORT: String(adminPort),
         PROXY_PORT_SESSION:
-          runtime === "native" && valueAt(state, "pooler", "pool_mode") === "session"
+          runtime === "native" &&
+          valueAtInstance(state, workload.instanceId, "pooler", "pool_mode", inputs) === "session"
             ? String(primaryPort)
             : "5432",
         PROXY_PORT_TRANSACTION:
-          runtime === "native" && valueAt(state, "pooler", "pool_mode") !== "session"
+          runtime === "native" &&
+          valueAtInstance(state, workload.instanceId, "pooler", "pool_mode", inputs) !== "session"
             ? String(primaryPort)
             : "6543",
-        DATABASE_URL: `ecto://postgres:${secret(state, DATABASE_INTERNAL_PASSWORD_SLOT)}@${dbHost(runtime)}:${runtime === "container" ? 5432 : dbPort(state)}/_supabase`,
-        POSTGRES_HOST: dbHost(runtime),
-        POSTGRES_PORT: String(runtime === "container" ? 5432 : dbPort(state)),
-        POSTGRES_PASSWORD: secret(state, DATABASE_INTERNAL_PASSWORD_SLOT),
+        DATABASE_URL: `ecto://postgres:${databasePassword(state, workload.instanceId)}@${dbHost(state, runtime, workload.instanceId)}:${runtime === "container" ? 5432 : dbPort(state, databaseInstanceIdFor(state, workload.instanceId))}/_supabase`,
+        POSTGRES_HOST: dbHost(state, runtime, workload.instanceId),
+        POSTGRES_PORT: String(
+          runtime === "container"
+            ? 5432
+            : dbPort(state, databaseInstanceIdFor(state, workload.instanceId)),
+        ),
+        POSTGRES_PASSWORD: databasePassword(state, workload.instanceId),
         API_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
         REGION: "local",
-        TENANT_ID: valueAt(state, "pooler", "tenant_id"),
+        TENANT_ID: valueAtInstance(state, workload.instanceId, "pooler", "tenant_id", inputs),
         CLUSTER_POSTGRES: "true",
-        SECRET_KEY_BASE: valueAt(state, "pooler", "secret_key_base"),
-        VAULT_ENC_KEY: valueAt(state, "pooler", "encryption_key"),
+        SECRET_KEY_BASE: valueAtInstance(
+          state,
+          workload.instanceId,
+          "pooler",
+          "secret_key_base",
+          inputs,
+        ),
+        VAULT_ENC_KEY: valueAtInstance(
+          state,
+          workload.instanceId,
+          "pooler",
+          "encryption_key",
+          inputs,
+        ),
         METRICS_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
-        DEFAULT_POOL_SIZE: valueAt(state, "pooler", "default_pool_size"),
-        MAX_CLIENT_CONN: valueAt(state, "pooler", "max_client_conn"),
-        POOL_MODE: valueAt(state, "pooler", "pool_mode"),
+        DEFAULT_POOL_SIZE: valueAtInstance(
+          state,
+          workload.instanceId,
+          "pooler",
+          "default_pool_size",
+          inputs,
+        ),
+        MAX_CLIENT_CONN: valueAtInstance(
+          state,
+          workload.instanceId,
+          "pooler",
+          "max_client_conn",
+          inputs,
+        ),
+        POOL_MODE: valueAtInstance(state, workload.instanceId, "pooler", "pool_mode", inputs),
       };
     },
     // Mirror native convergence explicitly: prepare and provision before the main server.
@@ -1283,6 +2031,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
 };
 
 const WORKLOAD_BINDING_NAMES: ReadonlyArray<WorkloadBindingName> = [
+  "sql:internal",
   "primary",
   "admin",
   "ui",
@@ -1303,9 +2052,10 @@ const declaredBindings = (
 const selectedBindings = (
   state: BindingSelectionState,
   bindings: WorkloadBindings,
+  instanceId: string,
 ): ReadonlyArray<readonly [WorkloadBindingName, WorkloadBinding]> => {
   return declaredBindings(bindings).filter(([binding]) => {
-    if (binding === "inspector") return functionsInspectorRequested(state);
+    if (binding === "inspector") return functionsInspectorRequested(state, instanceId);
     // Docker already owns 5369 in the container netns; publishing it on the host
     // collides when two stacks share a host.
     if (binding === "rpc") return state.runtime.kind === "native";
@@ -1319,9 +2069,10 @@ export const privateBindingIntentsFor = (
   state: BindingSelectionState,
 ): ReadonlyArray<WorkloadBindingIntent> =>
   plan.workloads.flatMap((workload) => {
-    const spec = specs[workload.id];
+    const spec = specs[workload.recipeId];
     if (spec === undefined) return [];
-    return selectedBindings(state, spec.bindings).map(([binding]) => ({
+    return selectedBindings(state, spec.bindings, workload.instanceId).map(([binding]) => ({
+      instanceId: workload.instanceId,
       workloadId: workload.id,
       binding,
     }));
@@ -1331,13 +2082,16 @@ export const validatePrivateAssignments = (
   state: PersistedStackState,
   workload: PlannedWorkload,
 ): Effect.Effect<void, StackPreparationError> => {
-  const spec = specs[workload.id];
+  const spec = specs[workload.recipeId];
   if (spec === undefined) return Effect.void;
   // Runtime env resolution assumes every declared binding was assigned here.
-  for (const [binding] of selectedBindings(state, spec.bindings)) {
+  for (const [binding] of selectedBindings(state, spec.bindings, workload.instanceId)) {
     if (
       !state.privatePorts.some(
-        (assignment) => assignment.workloadId === workload.id && assignment.binding === binding,
+        (assignment) =>
+          assignment.instanceId === workload.instanceId &&
+          assignment.workloadId === workload.id &&
+          assignment.binding === binding,
       )
     )
       return Effect.fail(
@@ -1351,10 +2105,11 @@ export const validatePrivateAssignments = (
 };
 
 export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec | undefined => {
-  const spec = specs[workload.id];
-  const catalog = catalogEntryFor(workload.id);
+  const spec = specs[workload.recipeId];
+  const catalog = catalogEntryFor(workload.recipeId);
   if (spec === undefined || catalog === undefined) return undefined;
   const primary =
+    spec.bindings["sql:internal"] ??
     spec.bindings.primary ??
     spec.bindings.admin ??
     spec.bindings.ui ??
@@ -1370,11 +2125,17 @@ export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec |
     env: spec.env,
     containerStartupProcesses: (state, currentWorkload, inputs = {}) =>
       spec.containerStartupProcesses?.(state, currentWorkload, inputs) ?? [],
-    readiness: { ...spec.readiness, binding: spec.readiness.binding ?? "primary" },
+    readiness: {
+      ...spec.readiness,
+      binding:
+        spec.readiness.binding ??
+        (workload.recipeId === "database:database" ? "sql:internal" : "primary"),
+    },
     privateEndpoint: (state, binding = "primary", runtime = "native") =>
       privateEndpointFor(
         state,
         workload.id,
+        workload.instanceId,
         spec.bindings,
         binding,
         runtime,
@@ -1395,46 +2156,53 @@ export const containerResolutionFor = (
 ): ContainerWorkloadResolution | undefined => {
   const spec = runtimeSpecFor(workload);
   if (spec === undefined) return undefined;
-  const catalog = catalogEntryFor(workload.id);
+  const catalog = catalogEntryFor(workload.recipeId);
   if (catalog === undefined) return undefined;
   return {
     ...(spec.containerEntrypoint === undefined ? {} : { entrypoint: spec.containerEntrypoint }),
     command: spec.containerArgs(
       state,
       workload,
-      containerPortFor(state, workload.id, "primary", spec.containerPort),
+      containerPortFor(state, workload.id, "primary", spec.containerPort, workload.instanceId),
       inputs,
     ),
     startup: spec.containerStartupProcesses(state, workload, inputs),
     env: spec.env(
       state,
       workload,
-      containerPortFor(state, workload.id, "primary", spec.containerPort),
+      containerPortFor(state, workload.id, "primary", spec.containerPort, workload.instanceId),
       "container",
       inputs,
     ),
     mounts: spec.containerMounts?.(state, workload, inputs) ?? [],
-    networkAliases: [catalog.containerAlias],
-    publications: selectedBindings(state, spec.bindings).flatMap(([binding, definition]) => {
-      const assignment = state.privatePorts.find(
-        (entry) => entry.workloadId === workload.id && entry.binding === binding,
-      );
-      return assignment === undefined
-        ? []
-        : [
-            {
-              address: "127.0.0.1" as const,
-              hostPort: assignment.port,
-              containerPort: containerPortFor(
-                state,
-                workload.id,
-                binding,
-                definition.containerPort,
-              ),
-            },
-          ];
-    }),
-    ...(workload.id === "functions:edge-runtime" && inputs.functions?.bootstrapPath !== undefined
+    networkAliases: [`${catalog.containerAlias}-${workload.instanceId}`],
+    publications: selectedBindings(state, spec.bindings, workload.instanceId).flatMap(
+      ([binding, definition]) => {
+        const assignment = state.privatePorts.find(
+          (entry) =>
+            entry.instanceId === workload.instanceId &&
+            entry.workloadId === workload.id &&
+            entry.binding === binding,
+        );
+        return assignment === undefined
+          ? []
+          : [
+              {
+                address: "127.0.0.1" as const,
+                hostPort: assignment.port,
+                containerPort: containerPortFor(
+                  state,
+                  workload.id,
+                  binding,
+                  definition.containerPort,
+                  workload.instanceId,
+                ),
+              },
+            ];
+      },
+    ),
+    ...(workload.recipeId === "functions:edge-runtime" &&
+    inputs.functions?.bootstrapPath !== undefined
       ? {
           bootstrap: {
             source: inputs.functions.bootstrapPath,

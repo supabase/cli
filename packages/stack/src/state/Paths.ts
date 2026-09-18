@@ -1,6 +1,7 @@
 import { Effect, Path, Schema } from "effect";
 import { InvalidProjectRootError, InvalidStackIdentityError } from "../public/Errors.ts";
 import { StackIdSchema, type StackId } from "../public/StackId.ts";
+import { ServiceInstanceIdSchema, type ServiceInstanceId } from "../public/ServiceInstanceId.ts";
 
 export interface StackPaths {
   /** The exact `<stateRoot>/<StackId>` directory. */
@@ -14,10 +15,53 @@ export interface StackPaths {
   readonly controlMetadata: string;
 }
 
+/** Exact stack-owned paths for one registered service instance. */
+export interface ServiceInstancePaths {
+  readonly instanceRoot: string;
+  readonly data: string;
+  /** Persistent data directory owned by the PostgreSQL implementation. */
+  readonly postgresData: string;
+  readonly runtime: string;
+  /** Durable provider and snapshot compatibility metadata. */
+  readonly manifest: string;
+  readonly locks: string;
+  readonly operations: string;
+  readonly snapshotStaging: string;
+}
+
 export interface ResolveStackPathsOptions {
   readonly stateRoot: string;
   readonly stackId: StackId;
 }
+
+/** Resolves instance-owned storage and runtime paths beneath the validated stack root. */
+export const resolveServiceInstancePaths = (
+  stack: StackPaths,
+  instanceId: ServiceInstanceId,
+): Effect.Effect<ServiceInstancePaths, InvalidStackIdentityError, Path.Path> =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const validated = yield* Schema.decodeEffect(ServiceInstanceIdSchema)(instanceId).pipe(
+      Effect.mapError(
+        () =>
+          new InvalidStackIdentityError({
+            message: `Invalid service instance identifier: ${instanceId}`,
+          }),
+      ),
+    );
+    const instanceRoot = path.join(stack.runtime, "instances", validated);
+    const data = path.join(stack.data, "instances", validated);
+    return {
+      instanceRoot,
+      data,
+      postgresData: path.join(data, "postgres"),
+      runtime: instanceRoot,
+      manifest: path.join(data, "manifest.json"),
+      locks: path.join(instanceRoot, "locks"),
+      operations: path.join(instanceRoot, "operations"),
+      snapshotStaging: path.join(instanceRoot, "snapshots"),
+    };
+  });
 
 /**
  * Resolves all durable and runtime paths under one validated StackId.

@@ -15,22 +15,32 @@ import {
   Scope,
   Schedule,
   Semaphore,
+  Predicate,
+  Redacted,
+  PlatformError,
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { type PlannedWorkload } from "../model/ExecutionPlan.ts";
-import { rebuildExecutionPlan, type StackDefinition } from "../model/Compiler.ts";
+import type { RuntimeArtifactInput } from "../preparation/RuntimeArtifacts.ts";
+import { createExecutionPlan } from "../model/Compiler.ts";
+import { CAPABILITY_MODULES } from "../model/ExecutionPlan.ts";
 import {
   makeFunctionsBootstrapOwner,
   type FunctionsBootstrapOwner,
 } from "../functions/FunctionsBootstrap.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
-import { resolveStackPaths } from "../state/Paths.ts";
+import {
+  resolveServiceInstancePaths,
+  resolveStackPaths,
+  type ServiceInstancePaths,
+} from "../state/Paths.ts";
 import { redactKnownSecrets } from "../state/SecretStore.ts";
 import { privateBindingKey, type PersistedStackState } from "../state/StackState.ts";
 import type { PersistedSecretValues } from "../state/StackState.ts";
+import type { PersistedServiceInstance } from "../model/ServiceRegistry.ts";
 import type { StackId } from "../public/StackId.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
-import type { ArtifactPreparationStatus } from "../public/Status.ts";
+import type { InstanceArtifactPreparationStatus } from "../public/Status.ts";
 import type { CapabilityName } from "../public/Capability.ts";
 import {
   GatewayActivationError,
@@ -38,7 +48,12 @@ import {
   ContainerEngineError,
   PortUnavailableError,
   StackRuntimeMismatchError,
+  StackRuntimeError,
+  StackCleanupError,
+  StackLifecycleConflictError,
   StackStateInvalidError,
+  UnsupportedSnapshotError,
+  isStackError,
   type StackError,
 } from "../public/Errors.ts";
 import { makeSupervisorIngress, type SupervisorIngress } from "../supervisor/Ingress.ts";
@@ -49,7 +64,15 @@ import {
   type LogStore,
   type LogRecord,
 } from "../supervisor/LogStore.ts";
-import type { LifecycleInput } from "../supervisor/Lifecycle.ts";
+import type { InstanceRuntimeInput, LifecycleInput } from "../supervisor/Lifecycle.ts";
+import type { BackendEndpoint } from "../gateway/Gateway.ts";
+import type { RuntimeBindingPublication } from "./RuntimeBinding.ts";
+import type { PrepareResult } from "../public/Service.ts";
+import { makePostgresInstanceRuntime } from "./PostgresInstanceRuntime.ts";
+import type {
+  CatalogInitializationRecipe,
+  CatalogInitializationResult,
+} from "./PostgresInstanceRuntime.ts";
 import type { SupervisorRuntime } from "../supervisor/Supervisor.ts";
 import {
   makeProductionRuntimeArtifactPreparer,
@@ -70,24 +93,58 @@ import {
   runtimeSpecFor,
   validatePrivateAssignments,
   validateWorkloadRuntimeInputs,
+  functionOverridesForSettings,
   type WorkloadRuntimeInputs,
 } from "./WorkloadRuntimeSpec.ts";
 import { makeNativeRuntime } from "./NativeRuntime.ts";
-import { makeContainerRuntime, type ContainerWorkloadResolution } from "./ContainerRuntime.ts";
-import { DEFAULT_READINESS_DEADLINE, probeReadiness } from "./ReadinessProbe.ts";
+import {
+  makeContainerRuntime,
+  type ContainerWorkloadResolution,
+  catalogInitContainerName,
+  workloadVolumeName,
+} from "./ContainerRuntime.ts";
+import {
+  DEFAULT_READINESS_DEADLINE,
+  probeReadiness,
+  type ReadinessTarget,
+} from "./ReadinessProbe.ts";
 import { parseGoDuration } from "../model/capabilities/database.ts";
 import type {
   ContainerEngine,
+  ContainerEngineFailure,
   ContainerEngineKind,
   ContainerHostRoute,
+  ContainerResource,
+  ContainerVolumeLabels,
 } from "./ContainerEngine.ts";
+import { ContainerCommandError } from "./ContainerEngine.ts";
 import { resolveContainerEngine } from "./ContainerEngineResolver.ts";
-import { bootstrapDatabaseAt } from "./PostgresDatabaseSession.ts";
+import { bootstrapDatabaseAt, bootstrapManagedPostgres } from "./PostgresDatabaseSession.ts";
+import { databaseBootstrapPlan } from "./DatabaseBootstrapCatalog.ts";
+import { catalogEntryFor } from "../model/WorkloadCatalog.ts";
 import { DatabaseBootstrapError } from "../model/DatabaseBootstrap.ts";
+import {
+  rewriteCatalogDatabaseEnvironment,
+  runCatalogNativeProcess,
+} from "./CatalogInitialization.ts";
+import { runContainerStartupProcess } from "./ContainerRuntime.ts";
 import { validateMaterializedSecrets } from "../state/MaterializedSettings.ts";
+import { valueAt } from "../state/MaterializedSettings.ts";
+import { isRecord, settingValue, settingsForInstance } from "../state/MaterializedSettings.ts";
+import {
+  planFunctionFiles,
+  type FunctionFile,
+  type FunctionFilesPlan,
+} from "../functions/FunctionFiles.ts";
+import {
+  resolveFunctionConfigs,
+  type FunctionFileSystem,
+  FunctionFileSystemError,
+} from "../functions/serve-main-resolver.ts";
 import {
   RuntimeDriverError,
   type RuntimeDriver,
+  type RuntimeStartOptions,
   type RuntimeWorkloadKey,
 } from "./RuntimeDriver.ts";
 
@@ -110,6 +167,12 @@ export interface ProductionRuntimeOptions {
   readonly bootstrapDatabase?: (
     state: PersistedStackState,
   ) => Effect.Effect<void, DatabaseBootstrapError | StackPreparationError>;
+  /** Runs one configured catalog recipe against the supplied instance endpoint. */
+  readonly reconcileCatalogRecipe?: (
+    input: InstanceRuntimeInput,
+    recipe: CatalogInitializationRecipe,
+    endpoint: BackendEndpoint,
+  ) => Effect.Effect<CatalogInitializationResult, StackError>;
 }
 
 const preparationError = (message: string, cause?: unknown): StackPreparationError =>
@@ -122,14 +185,16 @@ const unavailableLogStore = (error: LogStoreError, path: string): LogStore => ({
 });
 
 const driverError = (
-  key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
+  key: Pick<RuntimeWorkloadKey, "stackId"> &
+    Partial<Pick<RuntimeWorkloadKey, "instanceId" | "workloadId">>,
   message: string,
   cause?: unknown,
 ): RuntimeDriverError =>
   new RuntimeDriverError({
     message,
     stackId: key.stackId,
-    workloadId: key.workloadId,
+    ...(key.instanceId === undefined ? {} : { instanceId: key.instanceId }),
+    ...(key.workloadId === undefined ? {} : { workloadId: key.workloadId }),
     ...(cause === undefined ? {} : { cause }),
   });
 
@@ -153,8 +218,8 @@ const currentStateReader = (options: ProductionRuntimeOptions) =>
     ),
   );
 
-const artifactKey = (runtime: StackRuntime, workload: PlannedWorkload): string =>
-  `${runtime.kind}:${runtime.kind === "container" ? runtime.engine : ""}:${workload.id}:${workload.selected.kind === "native" ? workload.selected.release : workload.selected.image}`;
+const artifactKey = (runtime: StackRuntime, workload: RuntimeArtifactInput): string =>
+  `${runtime.kind}:${runtime.kind === "container" ? runtime.engine : ""}:${workload.recipeId}:${workload.selected.kind === "native" ? workload.selected.release : workload.selected.image}`;
 
 const runtimeMatches = (left: StackRuntime, right: StackRuntime): boolean => {
   if (left.kind !== right.kind) return false;
@@ -167,7 +232,6 @@ const urlHost = (host: string): string => {
   return normalized.includes(":") && !normalized.startsWith("[") ? `[${normalized}]` : normalized;
 };
 
-const DATABASE_WORKLOAD_ID = "database:database";
 // Native cold starts can spend more than 30 seconds loading shared libraries before serving.
 const NATIVE_READINESS_DEADLINE = Duration.minutes(2);
 const checkNativeDatabaseLockEvidence = (
@@ -223,13 +287,11 @@ const checkNativeDatabaseLockEvidence = (
       );
   });
 const isDatabaseWorkload = (workload: PlannedWorkload): boolean =>
-  workload.id === DATABASE_WORKLOAD_ID;
+  workload.capability === "database";
 const configuredDatabaseReadinessDeadline = (
-  definition: StackDefinition | undefined,
+  state: PersistedStackState,
 ): Effect.Effect<Duration.Duration, StackPreparationError> => {
-  if (definition === undefined)
-    return Effect.fail(preparationError("Persisted database definition is missing"));
-  const configured = definition.capabilities.database.settings.health_timeout;
+  const configured = valueAt(state, "database", "health_timeout");
   if (configured === undefined || configured === null)
     return Effect.fail(preparationError("Persisted database health_timeout is missing"));
   return Effect.try({
@@ -253,17 +315,17 @@ export const readinessDeadlineFor = (
   workload: PlannedWorkload,
 ): Effect.Effect<Duration.Duration, StackPreparationError> =>
   isDatabaseWorkload(workload)
-    ? configuredDatabaseReadinessDeadline(state.definition)
+    ? configuredDatabaseReadinessDeadline(state)
     : Effect.succeed(
         state.runtime.kind === "native" ? NATIVE_READINESS_DEADLINE : DEFAULT_READINESS_DEADLINE,
       );
 
 const validateDatabaseReadinessBudget = (
-  definition: StackDefinition,
+  state: PersistedStackState,
   workloads: ReadonlyArray<PlannedWorkload>,
 ): Effect.Effect<void, StackPreparationError> =>
   workloads.some(isDatabaseWorkload)
-    ? configuredDatabaseReadinessDeadline(definition).pipe(Effect.asVoid)
+    ? configuredDatabaseReadinessDeadline(state).pipe(Effect.asVoid)
     : Effect.void;
 
 const redactEntry = <A extends { readonly message: string }>(
@@ -334,14 +396,63 @@ const readinessFor = (
   );
 };
 
-declare const SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
+const hasInspectorTarget = (value: unknown): boolean =>
+  Array.isArray(value) &&
+  value.some(
+    (entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      "webSocketDebuggerUrl" in entry &&
+      typeof entry.webSocketDebuggerUrl === "string" &&
+      entry.webSocketDebuggerUrl.length > 0,
+  );
+
+const probeInspectorReadiness = (
+  target: ReadinessTarget,
+  deadline: Duration.Duration,
+): Effect.Effect<void, RuntimeDriverError> => {
+  const attempt = Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const response = yield* client.get(
+      `http://${urlHost(target.host)}:${target.port}${target.path ?? "/"}`,
+    );
+    const body = yield* response.json;
+    if (response.status < 200 || response.status >= 300 || !hasInspectorTarget(body))
+      return yield* new RuntimeDriverError({
+        message: "Inspector target is not ready",
+        target,
+      });
+  }).pipe(
+    Effect.mapError((error) =>
+      error instanceof RuntimeDriverError
+        ? error
+        : new RuntimeDriverError({
+            message: "Inspector readiness request failed",
+            target,
+            cause: error,
+          }),
+    ),
+  );
+  return Effect.timeoutOrElse(Effect.retry(attempt, Schedule.spaced("100 millis")), {
+    duration: deadline,
+    orElse: () =>
+      Effect.fail(
+        new RuntimeDriverError({
+          message: "Inspector target readiness deadline exceeded",
+          target,
+        }),
+      ),
+  }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp));
+};
+
+declare const SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 
 // Release builds inject the already-bundled Edge Runtime entrypoint. The
 // source-only fallback keeps local development/tests convenient while keeping
 // esbuild out of the shipped supervisor's runtime dependency graph.
 const bootstrapContent =
-  typeof SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
-    ? Effect.succeed(SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE)
+  typeof SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
+    ? Effect.succeed(SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE)
     : Effect.tryPromise({
         try: () => import("../functions/serve-main-bundler.ts"),
         catch: (cause) => preparationError("Unable to bundle functions bootstrap", cause),
@@ -356,10 +467,60 @@ const bootstrapContent =
       );
 
 const mapDriverError = (
-  key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
+  key: Pick<RuntimeWorkloadKey, "stackId" | "instanceId" | "workloadId">,
   error: unknown,
 ): RuntimeDriverError =>
   driverError(key, error instanceof Error ? error.message : "Runtime operation failed", error);
+
+const isNotSymbolicLink = (error: PlatformError.PlatformError): boolean => {
+  if (!(error.reason instanceof PlatformError.SystemError) || error.reason._tag !== "Unknown")
+    return false;
+  const cause = error.reason.cause;
+  return typeof cause === "object" && cause !== null && "code" in cause && cause.code === "EINVAL";
+};
+
+const makeFunctionFileSystem = (fs: FileSystem.FileSystem): FunctionFileSystem => ({
+  lstat: (pathname) =>
+    Effect.gen(function* () {
+      const info = yield* fs.stat(pathname);
+      const isSymbolicLink = yield* fs.readLink(pathname).pipe(
+        Effect.as(true),
+        Effect.catchTag("PlatformError", (error) =>
+          isNotSymbolicLink(error) ? Effect.succeed(false) : Effect.fail(error),
+        ),
+      );
+      return {
+        isDirectory: info.type === "Directory",
+        isFile: info.type === "File",
+        isSymbolicLink,
+      };
+    }).pipe(Effect.mapError((cause) => new FunctionFileSystemError({ cause }))),
+  realPath: (pathname) =>
+    fs.realPath(pathname).pipe(Effect.mapError((cause) => new FunctionFileSystemError({ cause }))),
+  readDirectory: (pathname) =>
+    fs
+      .readDirectory(pathname)
+      .pipe(Effect.mapError((cause) => new FunctionFileSystemError({ cause }))),
+});
+
+const resolveGitRoot = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  projectRoot: string,
+): Effect.Effect<string, StackPreparationError> =>
+  Effect.gen(function* () {
+    let current = path.resolve(projectRoot);
+    while (true) {
+      const marker = path.join(current, ".git");
+      const exists = yield* fs
+        .exists(marker)
+        .pipe(Effect.mapError((cause) => preparationError("Unable to inspect Git root", cause)));
+      if (exists) return current;
+      const parent = path.dirname(current);
+      if (parent === current) return path.resolve(projectRoot);
+      current = parent;
+    }
+  });
 
 /** Ensures owner files are attempted even when the selected runtime cleanup fails. */
 export const withOwnedRuntimeFileCleanup = (
@@ -371,7 +532,7 @@ export const withOwnedRuntimeFileCleanup = (
 ): RuntimeDriver => {
   const cleanupFiles = (stackId: StackId): Effect.Effect<void, RuntimeDriverError> =>
     Effect.gen(function* () {
-      const key = { stackId, workloadId: "" };
+      const key = { stackId };
       let cleanupCause: Cause.Cause<RuntimeDriverError> = Cause.empty;
       const attempts: ReadonlyArray<Effect.Effect<void, RuntimeDriverError>> = [
         ...(preparationCleanup === undefined
@@ -419,6 +580,26 @@ export const withOwnedRuntimeFileCleanup = (
   };
 };
 
+/** Removes the durable and runtime roots owned by one destroyed service instance. */
+export const removeOwnedInstancePaths = (
+  fileSystem: FileSystem.FileSystem,
+  instancePaths: Pick<ServiceInstancePaths, "data" | "runtime">,
+): Effect.Effect<void, StackCleanupError> =>
+  Effect.forEach(
+    [instancePaths.data, instancePaths.runtime],
+    (ownedPath) =>
+      fileSystem.remove(ownedPath, { recursive: true, force: true }).pipe(
+        Effect.mapError(
+          (error) =>
+            new StackCleanupError({
+              message: `Unable to remove destroyed instance path ${ownedPath}`,
+              cause: error,
+            }),
+        ),
+      ),
+    { discard: true },
+  );
+
 /** Composes concrete runtime owners around one persisted stack identity. */
 export const makeProductionRuntime = (
   options: ProductionRuntimeOptions,
@@ -433,6 +614,12 @@ export const makeProductionRuntime = (
 > =>
   Effect.gen(function* () {
     const state = yield* currentStateReader(options);
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const runtimeContext = Context.add(
+      options.context,
+      ChildProcessSpawner.ChildProcessSpawner,
+      childProcessSpawner,
+    );
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const paths = yield* resolveStackPaths({
@@ -517,27 +704,55 @@ export const makeProductionRuntime = (
       }));
     const serveTemplate = yield* Effect.cached(bootstrapContent);
     const bootstrapDatabase =
-      options.bootstrapDatabase ?? ((state: PersistedStackState) => bootstrapDatabaseAt(state));
+      options.bootstrapDatabase ??
+      ((state: PersistedStackState) => {
+        const instanceId = state.registry.defaultInstanceIds.database;
+        const instance = state.registry.instances.find(
+          (entry) => entry.id === instanceId && entry.service === "database",
+        );
+        return instance === undefined
+          ? Effect.fail(
+              new StackPreparationError({ message: "Default database instance is missing" }),
+            )
+          : bootstrapDatabaseAt(state, instance);
+      });
 
     const artifacts = new Map<string, PreparedWorkloadArtifact>();
-    const preparationStatuses = new Map<string, ArtifactPreparationStatus>();
-    const recordPreparationProgress = (progress: RuntimeArtifactPreparationProgress): void => {
+    const preparationStatuses = new Map<string, InstanceArtifactPreparationStatus>();
+    const recordPreparationProgress = (
+      progress: RuntimeArtifactPreparationProgress,
+      workload: PlannedWorkload,
+      artifactIdentity?: string,
+    ): void => {
       preparationStatuses.set(progress.workloadId, {
         workloadId: progress.workloadId,
+        instanceId: workload.instanceId,
         capability: progress.capability,
         state: progress.state,
+        ...(artifactIdentity === undefined ? {} : { artifactIdentity }),
         ...(progress.error === undefined ? {} : { error: progress.error }),
       });
     };
     const queuePreparation = (workload: PlannedWorkload): void => {
-      if (artifacts.has(artifactKey(state.runtime, workload))) return;
+      const cached = artifacts.get(artifactKey(state.runtime, workload));
+      if (cached !== undefined) {
+        recordPreparationProgress(
+          { workloadId: workload.id, capability: workload.capability, state: "ready" },
+          workload,
+          cached.image ?? `${workload.recipeId}@${cached.version}`,
+        );
+        return;
+      }
       const current = preparationStatuses.get(workload.id);
       if (current?.state === "preparing" || current?.state === "downloading") return;
-      recordPreparationProgress({
-        workloadId: workload.id,
-        capability: workload.capability,
-        state: "queued",
-      });
+      recordPreparationProgress(
+        {
+          workloadId: workload.id,
+          capability: workload.capability,
+          state: "queued",
+        },
+        workload,
+      );
     };
     const preparationGate = yield* Semaphore.make(1);
     const parentScope = yield* Scope.Scope;
@@ -555,8 +770,7 @@ export const makeProductionRuntime = (
     // Runtime input materialization writes shared files and populates completed caches. Keep
     // that short preparation boundary serialized while allowing the actual workloads to start
     // concurrently after their inputs are ready.
-    const runtimeInputGate = yield* Semaphore.make(1);
-    const freshState = (key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">) =>
+    const freshState = (key: Pick<RuntimeWorkloadKey, "stackId" | "instanceId" | "workloadId">) =>
       currentStateReader(options).pipe(
         Effect.mapError((error) => mapDriverError(key, error)),
         Effect.flatMap((fresh) =>
@@ -571,35 +785,56 @@ export const makeProductionRuntime = (
         const cached = artifacts.get(key);
         return cached === undefined
           ? Effect.sync(() =>
-              recordPreparationProgress({
-                workloadId: workload.id,
-                capability: workload.capability,
-                state: "preparing",
-              }),
+              recordPreparationProgress(
+                {
+                  workloadId: workload.id,
+                  capability: workload.capability,
+                  state: "preparing",
+                },
+                workload,
+              ),
             ).pipe(
-              Effect.andThen(preparer.prepare(runtime, workload, recordPreparationProgress)),
+              Effect.andThen(
+                preparer.prepare(runtime, workload, (progress) =>
+                  recordPreparationProgress(progress, workload),
+                ),
+              ),
               Effect.tap((prepared) =>
                 Effect.sync(() => {
                   artifacts.set(key, prepared);
-                  recordPreparationProgress({
-                    workloadId: workload.id,
-                    capability: workload.capability,
-                    state: "ready",
-                  });
+                  recordPreparationProgress(
+                    {
+                      workloadId: workload.id,
+                      capability: workload.capability,
+                      state: "ready",
+                    },
+                    workload,
+                    prepared.image ?? `${workload.recipeId}@${prepared.version}`,
+                  );
                 }),
               ),
               Effect.tapError((error) =>
                 Effect.sync(() =>
-                  recordPreparationProgress({
-                    workloadId: workload.id,
-                    capability: workload.capability,
-                    state: "failed",
-                    error: error.message,
-                  }),
+                  recordPreparationProgress(
+                    {
+                      workloadId: workload.id,
+                      capability: workload.capability,
+                      state: "failed",
+                      error: error.message,
+                    },
+                    workload,
+                  ),
                 ),
               ),
             )
-          : Effect.succeed(cached);
+          : Effect.sync(() => {
+              recordPreparationProgress(
+                { workloadId: workload.id, capability: workload.capability, state: "ready" },
+                workload,
+                cached.image ?? `${workload.recipeId}@${cached.version}`,
+              );
+              return cached;
+            });
       });
     };
     const prepare = (runtime: StackRuntime, workload: PlannedWorkload) =>
@@ -625,7 +860,29 @@ export const makeProductionRuntime = (
             }),
           ),
         );
-        return yield* Fiber.join(joined);
+        const prepared = yield* Fiber.join(joined).pipe(
+          Effect.tapError((error) =>
+            Effect.sync(() =>
+              recordPreparationProgress(
+                {
+                  workloadId: workload.id,
+                  capability: workload.capability,
+                  state: "failed",
+                  error: error.message,
+                },
+                workload,
+              ),
+            ),
+          ),
+        );
+        yield* Effect.sync(() =>
+          recordPreparationProgress(
+            { workloadId: workload.id, capability: workload.capability, state: "ready" },
+            workload,
+            prepared.image ?? `${workload.recipeId}@${prepared.version}`,
+          ),
+        );
+        return prepared;
       });
     const prepareArtifacts = (runtime: StackRuntime, workloads: ReadonlyArray<PlannedWorkload>) =>
       Effect.forEach(workloads, (workload) => prepare(runtime, workload), {
@@ -646,16 +903,18 @@ export const makeProductionRuntime = (
       logs.append({ source: "supervisor", stream: "internal", message }).pipe(Effect.ignore);
     const prefetch = (persisted: PersistedStackState): Effect.Effect<void> =>
       Effect.gen(function* () {
-        if (persisted.definition === undefined || persisted.definition.preparation === "on-demand")
-          return;
-        const plan = yield* rebuildExecutionPlan(persisted.runtime, persisted.definition).pipe(
+        if (persisted.preparation === "on-demand") return;
+        const plan = yield* createExecutionPlan(persisted.runtime, persisted.registry).pipe(
           Effect.mapError((error) =>
             preparationError("Unable to plan background preparation", error),
           ),
         );
         const workloads = plan.workloads.filter(
           (workload) =>
-            persisted.definition?.capabilities[workload.capability].activation === "lazy" &&
+            persisted.registry.instances.find(
+              (instance) =>
+                instance.id === workload.instanceId && instance.service === workload.capability,
+            )?.config.activation === "lazy" &&
             !artifacts.has(artifactKey(persisted.runtime, workload)),
         );
         for (const workload of workloads) queuePreparation(workload);
@@ -694,55 +953,166 @@ export const makeProductionRuntime = (
         artifacts.clear();
       });
     }).pipe(Effect.uninterruptible);
-    const functionsPath = (): Effect.Effect<string, StackPreparationError> =>
-      serveTemplate.pipe(Effect.flatMap((content) => functionsBootstrap.write({ content })));
+    const functionsPath = (
+      instanceId: PlannedWorkload["instanceId"],
+    ): Effect.Effect<string, StackPreparationError> =>
+      serveTemplate.pipe(
+        Effect.flatMap((content) => functionsBootstrap.write({ instanceId, content })),
+      );
     const runtimeInputs = (
       workload: PlannedWorkload,
       fresh: PersistedStackState,
       host: ContainerHostRoute | undefined,
     ): Effect.Effect<WorkloadRuntimeInputs, StackPreparationError> =>
-      runtimeInputGate.withPermit(
-        Effect.gen(function* () {
-          const material = yield* inputOwner.resolve(fresh, workload.id);
-          const templates = material.auth?.templates;
-          const apiListener = fresh.definition?.listeners.api;
-          const apiAssignment = fresh.ports.find((assignment) => assignment.field === "api");
-          const templateBaseUrl =
-            workload.id !== "auth:auth" || templates === undefined || templates.length === 0
-              ? undefined
-              : apiListener?.enabled !== true || apiAssignment === undefined
-                ? yield* preparationError(
-                    "Configured Auth email templates require a public API listener",
-                  )
-                : `http://${urlHost(host?.host ?? apiListener.address)}:${apiAssignment.port}`;
-          const auth =
-            material.auth === undefined
-              ? undefined
-              : {
-                  ...material.auth,
-                  ...(templateBaseUrl === undefined ? {} : { templateBaseUrl }),
-                };
-          const functions =
-            workload.id === "functions:edge-runtime"
-              ? {
-                  bootstrapPath: yield* functionsPath(),
-                  ...(material.functions?.secrets === undefined
-                    ? {}
-                    : { secrets: material.functions.secrets }),
-                }
-              : undefined;
-          return {
-            ...(auth === undefined ? {} : { auth }),
-            ...(workload.id.startsWith("analytics:") && material.analytics !== undefined
-              ? { analytics: material.analytics }
-              : {}),
-            database: { dataPath: pathService.join(paths.data, "database") },
-            storage: { dataPath: pathService.join(paths.data, "storage") },
-            ...(functions === undefined ? {} : { functions }),
-            ...(host === undefined ? {} : { hostRoute: host }),
-          };
-        }),
-      );
+      Effect.gen(function* () {
+        const material = yield* inputOwner.resolve(fresh, workload.instanceId, workload.id);
+        const instancePaths = yield* resolveServiceInstancePaths(paths, workload.instanceId).pipe(
+          Effect.provideService(Path.Path, pathService),
+          Effect.mapError((cause) =>
+            preparationError("Unable to resolve service instance runtime paths", cause),
+          ),
+        );
+        const templates = material.auth?.templates;
+        const apiListener = fresh.listeners.api;
+        const apiAssignment = fresh.ports.find(
+          (assignment) => assignment.owner === "stack" && assignment.binding === "api",
+        );
+        const templateBaseUrl =
+          workload.recipeId !== "auth:auth" || templates === undefined || templates.length === 0
+            ? undefined
+            : apiListener?.enabled !== true || apiAssignment === undefined
+              ? yield* preparationError(
+                  "Configured Auth email templates require a public API listener",
+                )
+              : `http://${urlHost(host?.host ?? apiListener.address ?? "127.0.0.1")}:${apiAssignment.port}`;
+        const auth =
+          material.auth === undefined
+            ? undefined
+            : {
+                ...material.auth,
+                ...(templateBaseUrl === undefined ? {} : { templateBaseUrl }),
+              };
+        const functions =
+          workload.recipeId === "functions:edge-runtime"
+            ? {
+                bootstrapPath: yield* functionsPath(workload.instanceId),
+                files: yield* ((): Effect.Effect<FunctionFilesPlan, StackPreparationError> => {
+                  const functionSettings = settingsForInstance(
+                    fresh,
+                    workload.instanceId,
+                    "functions",
+                  );
+                  const root =
+                    isRecord(functionSettings) && functionSettings.functions_root !== undefined
+                      ? settingValue(fresh, functionSettings.functions_root)
+                      : "";
+                  if (root.length === 0)
+                    return Effect.succeed({ files: [], warnings: [], allowedRoots: [] });
+                  const projectRoot = fresh.identity.projectRoot;
+                  const functionRoot = pathService.isAbsolute(root)
+                    ? root
+                    : pathService.resolve(projectRoot, root);
+                  return Effect.gen(function* () {
+                    const overrides = functionOverridesForSettings(fresh, workload.instanceId);
+                    const functionFileSystem = makeFunctionFileSystem(fileSystem);
+                    const resolved = yield* resolveFunctionConfigs({
+                      root: functionRoot,
+                      overrides,
+                      fs: functionFileSystem,
+                    });
+                    const sourceRoot = yield* resolveGitRoot(fileSystem, pathService, projectRoot);
+                    const additionalModuleRoots = resolved
+                      .map(({ config }) => pathService.dirname(config.entrypointPath))
+                      .filter((entrypointRoot, index, roots) => {
+                        if (roots.indexOf(entrypointRoot) !== index) return false;
+                        const relative = pathService.relative(sourceRoot, entrypointRoot);
+                        return (
+                          pathService.isAbsolute(relative) ||
+                          relative === ".." ||
+                          relative.startsWith(`..${pathService.sep}`)
+                        );
+                      });
+                    const plans = yield* Effect.forEach(resolved, ({ config }) =>
+                      planFunctionFiles({
+                        projectRoot,
+                        sourceRoot,
+                        entrypoint: config.entrypointPath,
+                        importMap: config.importMapPath,
+                        staticFiles: config.staticFiles,
+                        additionalModuleRoots,
+                        skipMissingImportMapTargets: true,
+                      }).pipe(
+                        Effect.mapError((cause) =>
+                          preparationError("Unable to plan Functions runtime files", cause),
+                        ),
+                      ),
+                    );
+                    const externalStaticFiles = yield* Effect.forEach(
+                      resolved.flatMap(({ config }) =>
+                        config.staticFiles.filter((pathname) => {
+                          const relative = pathService.relative(sourceRoot, pathname);
+                          return (
+                            !/[*?[{]/u.test(relative) &&
+                            (pathService.isAbsolute(relative) ||
+                              relative === ".." ||
+                              relative.startsWith(`..${pathService.sep}`))
+                          );
+                        }),
+                      ),
+                      (pathname) =>
+                        functionFileSystem.lstat(pathname).pipe(
+                          Effect.catchTag("FunctionFileSystemError", () => Effect.void),
+                          Effect.map((info) =>
+                            info?.isFile
+                              ? {
+                                  hostPath: pathname,
+                                  targetPath: pathname,
+                                  kind: "file" as const,
+                                  externalScope: true,
+                                }
+                              : undefined,
+                          ),
+                        ),
+                    );
+                    const filesByTarget = new Map<string, FunctionFile>();
+                    for (const file of [
+                      ...plans.flatMap((plan) => plan.files),
+                      ...externalStaticFiles,
+                    ]) {
+                      if (file !== undefined && !filesByTarget.has(file.targetPath))
+                        filesByTarget.set(file.targetPath, file);
+                    }
+                    return {
+                      files: [...filesByTarget.values()],
+                      warnings: plans.flatMap((plan) => plan.warnings),
+                      allowedRoots: [...new Set(plans.flatMap((plan) => plan.allowedRoots))],
+                    };
+                  }).pipe(
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(Path.Path, pathService),
+                    Effect.mapError((cause) =>
+                      cause instanceof StackPreparationError
+                        ? cause
+                        : preparationError("Unable to plan Functions runtime files", cause),
+                    ),
+                  );
+                })(),
+                ...(material.functions?.secrets === undefined
+                  ? {}
+                  : { secrets: material.functions.secrets }),
+              }
+            : undefined;
+        return {
+          ...(auth === undefined ? {} : { auth }),
+          ...(workload.recipeId.startsWith("analytics:") && material.analytics !== undefined
+            ? { analytics: material.analytics }
+            : {}),
+          database: { dataPath: instancePaths.postgresData },
+          storage: { dataPath: pathService.join(instancePaths.data, "storage") },
+          ...(functions === undefined ? {} : { functions }),
+          ...(host === undefined ? {} : { hostRoute: host }),
+        };
+      });
 
     const preflight = (input: LifecycleInput): Effect.Effect<void, StackError> =>
       Effect.gen(function* () {
@@ -760,12 +1130,8 @@ export const makeProductionRuntime = (
         yield* rememberSecrets(knownSecrets, input.secrets);
         // Eagerly validate the candidate before any engine/artifact work. Start-time checks
         // below revalidate the fresh persisted definition because it is runtime authority.
-        yield* validateDatabaseReadinessBudget(input.definition, input.plan.workloads);
-        const candidateState: PersistedStackState = {
-          ...input.state,
-          definition: input.definition,
-          secrets: input.secrets,
-        };
+        yield* validateDatabaseReadinessBudget(input.state, input.plan.workloads);
+        const candidateState: PersistedStackState = input.state;
         yield* Effect.forEach(input.plan.workloads, (workload) =>
           validateMaterializedSecrets(candidateState, workload.capability),
         );
@@ -794,22 +1160,24 @@ export const makeProductionRuntime = (
         if (input.state.runtime.kind === "native") {
           const usableListeners = new Set(input.plan.routes.map(({ listener }) => listener));
           for (const assignment of input.state.ports) {
-            const listener = input.definition.listeners[assignment.field];
+            if (assignment.owner !== "stack" || assignment.binding !== "api") continue;
+            const listener = input.state.listeners.api;
             if (
-              !usableListeners.has(assignment.field) ||
-              !listener.enabled ||
-              (listener.port === "automatic"
+              listener === undefined ||
+              !usableListeners.has("api") ||
+              listener.enabled !== true ||
+              (listener.port === undefined
                 ? assignment.intent !== "automatic"
                 : listener.port !== assignment.port)
             )
               continue;
-            yield* checkHostPort(listener.address, assignment.port, assignment.field).pipe(
+            yield* checkHostPort(listener.address ?? "127.0.0.1", assignment.port, "api").pipe(
               Effect.mapError(
                 (error) =>
                   new PortUnavailableError({
-                    field: assignment.field,
+                    field: "api",
                     port: assignment.port,
-                    message: `Persisted ${assignment.field} port is unavailable`,
+                    message: "Persisted api port is unavailable",
                     cause: error,
                   }),
               ),
@@ -826,9 +1194,21 @@ export const makeProductionRuntime = (
               `${assignment.workloadId}:${assignment.binding}`,
             );
           }
-          yield* checkNativeDatabaseLockEvidence(
-            fileSystem,
-            pathService.join(paths.data, "database", "postmaster.pid"),
+          yield* Effect.forEach(
+            input.plan.workloads.filter((workload) => workload.capability === "database"),
+            (workload) =>
+              resolveServiceInstancePaths(paths, workload.instanceId).pipe(
+                Effect.provideService(Path.Path, pathService),
+                Effect.mapError((error) =>
+                  preparationError("Unable to resolve database runtime paths", error),
+                ),
+                Effect.flatMap((instancePaths) =>
+                  checkNativeDatabaseLockEvidence(
+                    fileSystem,
+                    pathService.join(instancePaths.postgresData, "postmaster.pid"),
+                  ),
+                ),
+              ),
           );
         }
       });
@@ -850,6 +1230,7 @@ export const makeProductionRuntime = (
           });
         const fresh = yield* freshState({
           stackId: options.stackId,
+          instanceId: workload.instanceId,
           workloadId: workload.id,
         }).pipe(Effect.mapError((error) => new GatewayActivationError({ message: error.message })));
         const spec = runtimeSpecFor(workload);
@@ -881,7 +1262,7 @@ export const makeProductionRuntime = (
             Effect.flatMap((fresh) =>
               readinessDeadlineFor(fresh, workload).pipe(
                 Effect.flatMap((deadline) =>
-                  Effect.timeout(
+                  Effect.timeoutOrElse(
                     Effect.retry(
                       Effect.suspend(() => bootstrapDatabase(fresh)),
                       {
@@ -890,7 +1271,17 @@ export const makeProductionRuntime = (
                           error instanceof DatabaseBootstrapError && error.retryable === true,
                       },
                     ),
-                    deadline,
+                    {
+                      duration: deadline,
+                      orElse: () =>
+                        Effect.fail(
+                          new StackRuntimeError({
+                            stackId: key.stackId,
+                            workloadId: key.workloadId,
+                            message: `Database bootstrap deadline exceeded for ${workload.id}`,
+                          }),
+                        ),
+                    },
                   ),
                 ),
               ),
@@ -898,6 +1289,75 @@ export const makeProductionRuntime = (
             Effect.mapError((error) => mapDriverError(key, error)),
           )
         : Effect.void;
+    const reconcileContainerDatabasePassword = (
+      key: RuntimeWorkloadKey,
+      workload: PlannedWorkload,
+      resource: ContainerResource,
+    ): Effect.Effect<void, RuntimeDriverError> => {
+      if (containerEngine === undefined)
+        return Effect.fail(driverError(key, "Container engine is unavailable"));
+      return freshState(key).pipe(
+        Effect.flatMap((fresh) =>
+          Effect.all({
+            deadline: readinessDeadlineFor(fresh, workload),
+            plan: Effect.gen(function* () {
+              const instance = fresh.registry.instances.find(
+                (entry) => entry.id === key.instanceId,
+              );
+              return instance === undefined
+                ? yield* driverError(key, "Database instance is missing from the registry")
+                : yield* databaseBootstrapPlan(fresh, instance).pipe(
+                    Effect.mapError((error) => mapDriverError(key, error)),
+                  );
+            }),
+          }),
+        ),
+        Effect.flatMap(({ deadline, plan }) =>
+          Effect.timeoutOrElse(
+            Effect.gen(function* () {
+              yield* Effect.retry(
+                containerEngine.execContainer(resource.id, [
+                  "pg_isready",
+                  "--host=/tmp",
+                  "--username=supabase_admin",
+                  "--dbname=postgres",
+                ]),
+                {
+                  schedule: Schedule.spaced("100 millis"),
+                  while: (error) =>
+                    error instanceof ContainerCommandError &&
+                    (error.exitCode === 1 || error.exitCode === 2),
+                },
+              );
+              yield* containerEngine.execContainer(
+                resource.id,
+                [
+                  "psql",
+                  "--host=/tmp",
+                  "--username=supabase_admin",
+                  "--dbname=postgres",
+                  "--no-psqlrc",
+                  "--set",
+                  "ON_ERROR_STOP=1",
+                ],
+                `SET standard_conforming_strings = on;\nALTER ROLE supabase_admin PASSWORD '${Redacted.value(plan.databasePassword).replaceAll("'", "''")}';\n`,
+              );
+            }),
+            {
+              duration: deadline,
+              orElse: () =>
+                Effect.fail(
+                  driverError(
+                    key,
+                    `Database socket readiness deadline exceeded for ${workload.id}`,
+                  ),
+                ),
+            },
+          ),
+        ),
+        Effect.mapError((error) => mapDriverError(key, error)),
+      );
+    };
 
     let driver: RuntimeDriver;
     if (state.runtime.kind === "native") {
@@ -965,29 +1425,38 @@ export const makeProductionRuntime = (
             ),
           ),
         waitForReadiness,
-        bootstrapDatabase: bootstrapWorkloadDatabase,
+        // PostgreSQL reconciliation is owned by PostgresInstanceRuntime so it can use the
+        // admitted instance's private endpoint rather than the stack default.
+        bootstrapDatabase: (key, workload) =>
+          workload.capability === "database"
+            ? Effect.void
+            : bootstrapWorkloadDatabase(key, workload),
         logStore: logs,
         knownSecrets: Ref.get(knownSecrets).pipe(Effect.map((values) => [...values])),
-        wipeDatabaseData: Effect.gen(function* () {
-          const dataPath = pathService.join(paths.data, "database");
-          const key = { stackId: options.stackId, workloadId: "database:database" };
-          const exists = yield* fileSystem.exists(dataPath).pipe(Effect.orElseSucceed(() => false));
-          if (exists)
+        wipeDatabaseData: (key) =>
+          Effect.gen(function* () {
+            const instancePaths = yield* resolveServiceInstancePaths(paths, key.instanceId).pipe(
+              Effect.provideService(Path.Path, pathService),
+              Effect.mapError((error) =>
+                driverError(key, "Unable to resolve native database data path", error),
+              ),
+            );
+            const dataPath = instancePaths.postgresData;
             yield* fileSystem
-              .remove(dataPath, { recursive: true })
+              .remove(dataPath, { recursive: true, force: true })
               .pipe(
                 Effect.mapError((error) =>
                   driverError(key, "Unable to wipe native database data", error),
                 ),
               );
-          yield* fileSystem
-            .makeDirectory(dataPath, { recursive: true, mode: 0o700 })
-            .pipe(
-              Effect.mapError((error) =>
-                driverError(key, "Unable to recreate native database data directory", error),
-              ),
-            );
-        }),
+            yield* fileSystem
+              .remove(instancePaths.manifest, { force: true })
+              .pipe(
+                Effect.mapError((error) =>
+                  driverError(key, "Unable to remove native database manifest", error),
+                ),
+              );
+          }),
       }).pipe(
         Effect.mapError((error) => preparationError("Unable to initialize native runtime", error)),
       );
@@ -1047,20 +1516,21 @@ export const makeProductionRuntime = (
                   );
                 const envFile = yield* envFiles
                   .write({
+                    instanceId: workload.instanceId,
                     workloadId: workload.id,
                     values: resolution.env,
                   })
                   .pipe(Effect.mapError((error) => mapDriverError(key, error)));
                 const volume =
-                  workload.id === "database:database"
+                  workload.recipeId === "database:database"
                     ? { target: "/var/lib/postgresql/data", readOnly: false }
-                    : workload.id === "storage:storage"
+                    : workload.recipeId === "storage:storage"
                       ? {
                           target: "/mnt",
                           readOnly: false,
                           ownerWorkloadId: "storage:storage",
                         }
-                      : workload.id === "storage:imgproxy"
+                      : workload.recipeId === "storage:imgproxy"
                         ? {
                             target: "/mnt",
                             readOnly: true,
@@ -1077,7 +1547,10 @@ export const makeProductionRuntime = (
             ),
           ),
         waitForReadiness,
-        bootstrapDatabase: bootstrapWorkloadDatabase,
+        bootstrapDatabase: (key, workload, resource) =>
+          workload.capability === "database"
+            ? reconcileContainerDatabasePassword(key, workload, resource)
+            : bootstrapWorkloadDatabase(key, workload),
         onNetworkReady: (network) => {
           const resolveGateway = containerEngine.resolveNetworkGateway;
           if (resolveGateway === undefined) return Effect.succeed(false);
@@ -1111,10 +1584,1075 @@ export const makeProductionRuntime = (
       inputOwner,
       cleanupPreparation,
     );
+    const instanceWorkloads = (input: InstanceRuntimeInput): ReadonlyArray<PlannedWorkload> =>
+      input.plan.workloads.filter((workload) => workload.instanceId === input.instance.id);
+    const instanceFailure = (input: InstanceRuntimeInput, error: unknown): StackError =>
+      isStackError(error)
+        ? error
+        : new StackRuntimeError({
+            stackId: input.stackId,
+            message: error instanceof Error ? error.message : "Instance runtime operation failed",
+            cause: error,
+          });
+    const instanceCleanupFailure = (
+      input: InstanceRuntimeInput,
+      error: unknown,
+    ): StackCleanupError =>
+      error instanceof StackCleanupError
+        ? error
+        : new StackCleanupError({
+            message:
+              error instanceof Error ? error.message : "Unable to clean up instance runtime data",
+            cause: error,
+          });
+    const endpointForBinding = (
+      input: InstanceRuntimeInput,
+      workload: PlannedWorkload,
+      binding: string,
+    ): BackendEndpoint | undefined => {
+      const assignment = input.state.privatePorts.find(
+        (entry) =>
+          entry.instanceId === input.instance.id &&
+          entry.workloadId === workload.id &&
+          entry.binding === binding,
+      );
+      return assignment === undefined ? undefined : { host: "127.0.0.1", port: assignment.port };
+    };
+    const publicationsFor = (
+      input: InstanceRuntimeInput,
+      workload: PlannedWorkload,
+    ): ReadonlyArray<RuntimeBindingPublication> =>
+      input.state.privatePorts
+        .filter(
+          (entry) => entry.instanceId === input.instance.id && entry.workloadId === workload.id,
+        )
+        .flatMap((entry) => {
+          const endpoint = endpointForBinding(input, workload, entry.binding);
+          return endpoint === undefined
+            ? []
+            : [
+                {
+                  workloadId: workload.id,
+                  recipeId: workload.recipeId,
+                  binding: entry.binding,
+                  endpoint,
+                } satisfies RuntimeBindingPublication,
+              ];
+        });
+    const startWorkloads = (
+      input: InstanceRuntimeInput,
+    ): Effect.Effect<ReadonlyArray<RuntimeBindingPublication>, StackError> =>
+      Effect.gen(function* () {
+        const publications: RuntimeBindingPublication[] = [];
+        for (const workload of instanceWorkloads(input)) {
+          yield* prepare(input.state.runtime, workload);
+          const startupPublications = publicationsFor(input, workload).filter(
+            (publication) => publication.binding === "inspector",
+          );
+          const startOptions: RuntimeStartOptions =
+            input.publishStartupBindings === undefined || startupPublications.length === 0
+              ? {}
+              : {
+                  onStarted: Effect.forEach(startupPublications, (publication) =>
+                    readinessDeadlineFor(input.state, workload).pipe(
+                      Effect.flatMap((deadline) =>
+                        probeInspectorReadiness(
+                          {
+                            mode: "http",
+                            host: publication.endpoint.host,
+                            port: publication.endpoint.port,
+                            path: "/json/list",
+                          },
+                          deadline,
+                        ),
+                      ),
+                    ),
+                  ).pipe(
+                    Effect.andThen(input.publishStartupBindings(startupPublications)),
+                    Effect.mapError((error) =>
+                      driverError(
+                        {
+                          stackId: input.stackId,
+                          instanceId: input.instance.id,
+                          workloadId: workload.id,
+                        },
+                        "Unable to publish startup bindings",
+                        error,
+                      ),
+                    ),
+                  ),
+                };
+          yield* baseDriver.start(
+            { stackId: input.stackId, instanceId: input.instance.id, workloadId: workload.id },
+            workload,
+            startOptions,
+          );
+          publications.push(...publicationsFor(input, workload));
+        }
+        return publications;
+      }).pipe(Effect.mapError((error) => instanceFailure(input, error)));
+    const stopWorkloads = (input: InstanceRuntimeInput): Effect.Effect<void, StackError> =>
+      Effect.forEach([...instanceWorkloads(input)].reverse(), (workload) =>
+        baseDriver.stop({
+          stackId: input.stackId,
+          instanceId: input.instance.id,
+          workloadId: workload.id,
+        }),
+      ).pipe(
+        Effect.asVoid,
+        Effect.mapError((error) => instanceFailure(input, error)),
+      );
+    const destroyWorkloads = (input: InstanceRuntimeInput): Effect.Effect<void, StackError> =>
+      Effect.gen(function* () {
+        for (const workload of [...instanceWorkloads(input)].reverse()) {
+          const key = {
+            stackId: input.stackId,
+            instanceId: input.instance.id,
+            workloadId: workload.id,
+          } satisfies RuntimeWorkloadKey;
+          yield* baseDriver.stop(key);
+          yield* baseDriver.remove(key);
+          yield* baseDriver.wipePersistentData(key);
+        }
+      }).pipe(Effect.mapError((error) => instanceFailure(input, error)));
+    const instancePrepare = (
+      input: InstanceRuntimeInput,
+    ): Effect.Effect<PrepareResult, StackError> =>
+      Effect.gen(function* () {
+        const prepared = yield* Effect.forEach(instanceWorkloads(input), (workload) =>
+          prepare(input.state.runtime, workload),
+        );
+        return {
+          instances: [
+            {
+              id: input.instance.id,
+              service: input.instance.service,
+              artifacts: prepared.map((artifact) => ({
+                identity:
+                  artifact.image ??
+                  `${input.plan.workloads.find((workload) => workload.id === artifact.workloadId)?.recipeId ?? artifact.workloadId}@${artifact.version}`,
+                outcome: artifact.outcome,
+              })),
+            },
+          ],
+        } satisfies PrepareResult;
+      }).pipe(Effect.mapError((error) => instanceFailure(input, error)));
+    const journalInstance = (
+      input: InstanceRuntimeInput,
+      phase: "admitted" | "running" | "settling" | "cleanup" | "complete",
+      patch?: Readonly<{
+        readonly stagingPath?: string;
+        readonly outputPath?: string;
+        readonly helperId?: string;
+      }>,
+    ): Effect.Effect<void, StackError> =>
+      options.stateStore
+        .update(options.stackId, (current) => {
+          const instance = current.registry.instances.find(
+            (entry) => entry.id === input.instance.id,
+          );
+          if (
+            instance === undefined ||
+            instance.pendingOperation?.id !== input.operation.id ||
+            instance.pendingOperation.generation !== input.operation.generation
+          )
+            return Effect.fail(
+              new StackLifecycleConflictError({
+                stackId: options.stackId,
+                message: `Instance operation ${input.operation.id} is no longer current`,
+              }),
+            );
+          const pendingOperation = {
+            ...instance.pendingOperation,
+            phase,
+            ...(patch?.stagingPath === undefined ? {} : { stagingPath: patch.stagingPath }),
+            ...(patch?.outputPath === undefined ? {} : { outputPath: patch.outputPath }),
+            ...(patch?.helperId === undefined ? {} : { helperId: patch.helperId }),
+          };
+          return Effect.succeed({
+            ...current,
+            registry: {
+              ...current.registry,
+              instances: current.registry.instances.map((entry) =>
+                entry.id === input.instance.id ? { ...entry, pendingOperation } : entry,
+              ),
+            },
+          });
+        })
+        .pipe(
+          Effect.provideContext(options.context),
+          Effect.asVoid,
+          Effect.mapError((error) =>
+            error instanceof StackLifecycleConflictError
+              ? error
+              : new StackStateInvalidError({
+                  stackId: options.stackId,
+                  message: "Unable to journal instance runtime operation",
+                  cause: error,
+                }),
+          ),
+        );
+    const publishData = (
+      input: InstanceRuntimeInput,
+      data: PersistedServiceInstance["data"],
+      shouldPublish: (instance: PersistedServiceInstance) => boolean = () => true,
+    ): Effect.Effect<void, StackError> =>
+      options.stateStore
+        .update(options.stackId, (current) => {
+          const instance = current.registry.instances.find(
+            (entry) => entry.id === input.instance.id,
+          );
+          if (
+            instance === undefined ||
+            instance.pendingOperation?.id !== input.operation.id ||
+            instance.pendingOperation.generation !== input.operation.generation
+          )
+            return Effect.fail(
+              new StackLifecycleConflictError({
+                stackId: options.stackId,
+                message: `Instance operation ${input.operation.id} is no longer current`,
+              }),
+            );
+          return Effect.succeed({
+            ...current,
+            registry: {
+              ...current.registry,
+              instances: current.registry.instances.map((entry) =>
+                entry.id === input.instance.id && shouldPublish(entry) ? { ...entry, data } : entry,
+              ),
+            },
+          });
+        })
+        .pipe(Effect.provideContext(options.context), Effect.asVoid);
+    const defaultCatalogReconcile = (
+      input: InstanceRuntimeInput,
+      recipe: CatalogInitializationRecipe,
+      endpoint: BackendEndpoint,
+    ): Effect.Effect<CatalogInitializationResult, StackError> =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          // Catalog recipes are required even when their service instance is disabled. In that
+          // case the execution plan has no long-lived workload, so materialize the one-shot
+          // recipe against this database instance while retaining its catalog artifact identity.
+          const workload =
+            input.plan.workloads.find(
+              (entry) =>
+                entry.instanceId === input.instance.id &&
+                entry.recipeId.startsWith(`${recipe.service}:`),
+            ) ??
+            (() => {
+              const release = CAPABILITY_MODULES[recipe.service].releases[recipe.version];
+              const entry = release?.workloads.find(
+                (candidate) => candidate.capability === recipe.service,
+              );
+              if (entry === undefined) return undefined;
+              const selected =
+                input.state.runtime.kind === "native"
+                  ? entry.artifacts.native
+                  : entry.artifacts.container;
+              return {
+                id: `${input.instance.id}:catalog:${recipe.service}:${entry.name}`,
+                instanceId: input.instance.id,
+                recipeId: `${recipe.service}:${entry.name}`,
+                capability: entry.capability,
+                ...(entry.bootstrap === undefined ? {} : { bootstrap: entry.bootstrap }),
+                dependencies: [],
+                readiness: entry.readiness,
+                artifacts: entry.artifacts,
+                selected,
+              } satisfies PlannedWorkload;
+            })();
+          if (workload === undefined)
+            return yield* new StackPreparationError({
+              message: `Catalog workload is missing for ${recipe.service}`,
+              workload: input.instance.id,
+            });
+          const spec = runtimeSpecFor(workload);
+          if (spec === undefined)
+            return yield* new StackPreparationError({
+              message: `Runtime specification is missing for ${workload.recipeId}`,
+              workload: workload.id,
+            });
+          const route = yield* Ref.get(hostRoute);
+          const inputs = {
+            ...(yield* runtimeInputs(workload, input.state, route)),
+            catalog: { capability: recipe.service, settings: recipe.settings },
+          } satisfies WorkloadRuntimeInputs;
+          yield* validateWorkloadRuntimeInputs(input.state, workload, inputs);
+          const artifact = yield* prepare(input.state.runtime, workload);
+          const databaseInstance =
+            input.instance.service === "database" ? input.instance : undefined;
+          const passwordSlot = databaseInstance?.config.passwordSecretRef;
+          if (passwordSlot === undefined)
+            return yield* new StackPreparationError({
+              message:
+                "Database instance password secret is unavailable for catalog initialization",
+              workload: input.instance.id,
+            });
+          const password = input.state.secrets[passwordSlot]?.value;
+          if (password === undefined || password.length === 0)
+            return yield* new StackPreparationError({
+              message: "Database instance password is unavailable for catalog initialization",
+              workload: input.instance.id,
+            });
+          const target =
+            input.state.runtime.kind === "container"
+              ? {
+                  host: `${catalogEntryFor("database:database").containerAlias}-${input.instance.id}`,
+                  port: 5432,
+                }
+              : endpoint;
+          const environment = rewriteCatalogDatabaseEnvironment(
+            spec.env(input.state, workload, spec.containerPort, input.state.runtime.kind, inputs),
+            { ...target, password },
+          );
+          const key = {
+            stackId: input.stackId,
+            instanceId: input.instance.id,
+            workloadId: workload.id,
+          } satisfies RuntimeWorkloadKey;
+          if (input.state.runtime.kind === "native") {
+            if (artifact.artifactRoot === undefined)
+              return yield* new StackPreparationError({
+                message: "Native catalog artifact root is unavailable",
+                workload: workload.id,
+              });
+            const startups = spec.nativeStartupProcesses(
+              artifact.artifactRoot,
+              input.state,
+              workload,
+              endpoint.port,
+              inputs,
+            );
+            if (startups.length === 0)
+              return yield* new StackPreparationError({
+                message: `Catalog workload has no initialization process for ${recipe.service}`,
+                workload: workload.id,
+              });
+            yield* Effect.forEach(
+              startups,
+              (startup) =>
+                runCatalogNativeProcess(
+                  {
+                    ...startup,
+                    env: { ...startup.env, ...environment },
+                    timeout: "5 minutes",
+                  },
+                  key,
+                  stateSecrets(input.state),
+                ),
+              { discard: true },
+            );
+          } else {
+            if (containerEngine === undefined)
+              return yield* new StackPreparationError({
+                message: "Container engine is unavailable for catalog initialization",
+                workload: workload.id,
+              });
+            const network = (yield* containerEngine.listResources(input.stackId)).find(
+              (resource) => resource.kind === "network",
+            );
+            if (network === undefined)
+              return yield* new StackPreparationError({
+                message: "Stack network is unavailable for catalog initialization",
+                workload: workload.id,
+              });
+            if (artifact.image === undefined)
+              return yield* new StackPreparationError({
+                message: "Container catalog artifact image is unavailable",
+                workload: workload.id,
+              });
+            const initWorkloadId = `${workload.id}:init:${input.operation.id}`;
+            const startups = spec.containerStartupProcesses(input.state, workload, inputs);
+            if (startups.length === 0)
+              return yield* new StackPreparationError({
+                message: `Catalog workload has no initialization process for ${recipe.service}`,
+                workload: workload.id,
+              });
+            const image = artifact.image;
+            yield* Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                const startup = Effect.gen(function* () {
+                  const envFile = yield* envFiles.write({
+                    instanceId: input.instance.id,
+                    workloadId: initWorkloadId,
+                    values: environment,
+                  });
+                  yield* Effect.forEach(
+                    startups,
+                    (process) =>
+                      runContainerStartupProcess({
+                        engine: containerEngine,
+                        key,
+                        timeout: "5 minutes",
+                        specification: {
+                          name: catalogInitContainerName(
+                            key,
+                            `${input.operation.id}-${recipe.recipeId}`,
+                          ),
+                          image,
+                          labels: {
+                            stackId: input.stackId,
+                            ownerSessionId: options.ownerSessionId,
+                            instanceId: input.instance.id,
+                            workloadId: workload.id,
+                            recipeId: workload.recipeId,
+                            role: "workload",
+                            startup: true,
+                          },
+                          network: network.id,
+                          mounts: spec.containerMounts?.(input.state, workload, inputs) ?? [],
+                          volumeMounts: [],
+                          publications: [],
+                          role: "workload",
+                          entrypoint: process.entrypoint,
+                          command: process.command,
+                          envFile,
+                        },
+                      }),
+                    { discard: true },
+                  );
+                });
+                const startupResult = yield* Effect.exit(restore(startup));
+                const cleanupResult = yield* Effect.exit(
+                  envFiles.cleanupFile({
+                    instanceId: input.instance.id,
+                    workloadId: initWorkloadId,
+                  }),
+                );
+                if (Exit.isFailure(startupResult) && Exit.isFailure(cleanupResult))
+                  return yield* Effect.failCause(
+                    Cause.combine(startupResult.cause, cleanupResult.cause),
+                  );
+                if (Exit.isFailure(startupResult))
+                  return yield* Effect.failCause(startupResult.cause);
+                if (Exit.isFailure(cleanupResult))
+                  return yield* Effect.failCause(cleanupResult.cause);
+              }),
+            );
+          }
+          return {
+            artifactIdentity: artifact.image ?? `${workload.recipeId}@${artifact.version}`,
+          };
+        }).pipe(
+          Effect.mapError((error) => instanceFailure(input, error)),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+        ),
+      );
+    const snapshotVolume = (input: InstanceRuntimeInput, workload: PlannedWorkload) => {
+      if (containerEngine === undefined)
+        return Effect.fail(
+          new StackPreparationError({
+            message: "Container engine is unavailable for PostgreSQL snapshot transfer",
+            workload: input.instance.id,
+          }),
+        );
+      const key = {
+        stackId: input.stackId,
+        instanceId: input.instance.id,
+        workloadId: workload.id,
+      } satisfies RuntimeWorkloadKey;
+      const name = workloadVolumeName(key);
+      const labels = {
+        stackId: input.stackId,
+        instanceId: input.instance.id,
+        workloadId: workload.id,
+        role: "volume",
+      } satisfies ContainerVolumeLabels;
+      return containerEngine.listResources(input.stackId).pipe(
+        Effect.flatMap((resources) => {
+          const volume = resources.find(
+            (resource) =>
+              resource.kind === "volume" &&
+              resource.name === name &&
+              resource.labels.role === "volume" &&
+              resource.labels.instanceId === input.instance.id &&
+              resource.labels.workloadId === workload.id,
+          );
+          return volume === undefined
+            ? containerEngine.createVolume({ name, labels })
+            : Effect.succeed(volume);
+        }),
+      );
+    };
+    const withSnapshotContainer = <A>(
+      input: InstanceRuntimeInput,
+      workload: PlannedWorkload,
+      action: (containerId: string) => Effect.Effect<A, ContainerEngineFailure>,
+      readOnly = false,
+    ) => {
+      if (containerEngine === undefined)
+        return Effect.fail(
+          new StackPreparationError({
+            message: "Container engine is unavailable for PostgreSQL snapshot transfer",
+            workload: input.instance.id,
+          }),
+        );
+      const copyImage = prepare(input.state.runtime, workload).pipe(
+        Effect.flatMap((artifact) =>
+          artifact.image === undefined
+            ? Effect.fail(
+                new StackPreparationError({
+                  message: "PostgreSQL snapshot helper image is unavailable",
+                  workload: workload.id,
+                }),
+              )
+            : Effect.succeed(artifact.image),
+        ),
+      );
+      const key = {
+        stackId: input.stackId,
+        instanceId: input.instance.id,
+        workloadId: workload.id,
+      } satisfies RuntimeWorkloadKey;
+      const volume = workloadVolumeName(key);
+      return Effect.gen(function* () {
+        const image = yield* copyImage;
+        return yield* Effect.acquireUseRelease(
+          containerEngine.createContainer({
+            name: `${volume}-snapshot-${input.operation.id}`.replace(/[^A-Za-z0-9_.-]/g, "-"),
+            image,
+            labels: {
+              stackId: input.stackId,
+              ownerSessionId: options.ownerSessionId,
+              instanceId: input.instance.id,
+              workloadId: workload.id,
+              recipeId: workload.recipeId,
+              role: "workload",
+              startup: true,
+            },
+            network: "none",
+            mounts: [],
+            volumeMounts: [{ volume, target: "/var/lib/postgresql/data", readOnly }],
+            publications: [],
+            role: "workload",
+            entrypoint: "/bin/sh",
+            command: [
+              "-c",
+              readOnly
+                ? "tail -f /dev/null"
+                : "chmod 700 /var/lib/postgresql/data && tail -f /dev/null",
+            ],
+          }),
+          (helper) =>
+            containerEngine.startContainer(helper.id).pipe(Effect.andThen(action(helper.id))),
+          (helper) =>
+            Effect.gen(function* () {
+              const stopped = yield* Effect.exit(containerEngine.stopContainer(helper.id));
+              const removed = yield* Effect.exit(containerEngine.removeContainer(helper.id));
+              if (Exit.isFailure(stopped) && Exit.isFailure(removed))
+                return yield* new StackCleanupError({
+                  message: "Unable to stop and remove PostgreSQL snapshot helper",
+                  cause: Cause.combine(stopped.cause, removed.cause),
+                });
+              if (Exit.isFailure(stopped))
+                return yield* new StackCleanupError({
+                  message: "Unable to stop PostgreSQL snapshot helper",
+                  cause: stopped.cause,
+                });
+              if (Exit.isFailure(removed))
+                return yield* new StackCleanupError({
+                  message: "Unable to remove PostgreSQL snapshot helper",
+                  cause: removed.cause,
+                });
+            }),
+        );
+      });
+    };
+    const restoreContainerOwnership = (
+      input: InstanceRuntimeInput,
+      workload: PlannedWorkload,
+    ): Effect.Effect<void, StackError> => {
+      if (containerEngine === undefined)
+        return Effect.fail(
+          new StackPreparationError({
+            message: "Container engine is unavailable for PostgreSQL snapshot ownership",
+            workload: input.instance.id,
+          }),
+        );
+      const key = {
+        stackId: input.stackId,
+        instanceId: input.instance.id,
+        workloadId: workload.id,
+      } satisfies RuntimeWorkloadKey;
+      const volume = workloadVolumeName(key);
+      return prepare(input.state.runtime, workload).pipe(
+        Effect.flatMap((artifact): Effect.Effect<void, StackError> => {
+          if (artifact.image === undefined)
+            return Effect.fail(
+              new StackPreparationError({
+                message: "PostgreSQL snapshot helper image is unavailable",
+                workload: workload.id,
+              }),
+            );
+          return runContainerStartupProcess({
+            engine: containerEngine,
+            key,
+            timeout: "5 minutes",
+            specification: {
+              name: `${volume}-ownership-${input.operation.id}`.replace(/[^A-Za-z0-9_.-]/g, "-"),
+              image: artifact.image,
+              labels: {
+                stackId: input.stackId,
+                ownerSessionId: options.ownerSessionId,
+                instanceId: input.instance.id,
+                workloadId: workload.id,
+                recipeId: workload.recipeId,
+                role: "workload",
+                startup: true,
+              },
+              network: "none",
+              mounts: [],
+              volumeMounts: [{ volume, target: "/var/lib/postgresql/data", readOnly: false }],
+              publications: [],
+              role: "workload",
+              entrypoint: "/bin/sh",
+              command: [
+                "-c",
+                "chown -R postgres:postgres /var/lib/postgresql/data && chmod 700 /var/lib/postgresql/data",
+              ],
+            },
+          }).pipe(Effect.mapError((error) => instanceFailure(input, error)));
+        }),
+      );
+    };
+    const postgres = makePostgresInstanceRuntime({
+      runtime: state.runtime,
+      paths,
+      driver: baseDriver,
+      artifactPreparer: {
+        prepare: (runtime, workload) =>
+          prepare(runtime, workload).pipe(
+            Effect.mapError(
+              (error) =>
+                new StackPreparationError({
+                  message: error.message,
+                  workload: workload.id,
+                  cause: error,
+                }),
+            ),
+          ),
+      },
+      context: runtimeContext,
+      snapshotData: {
+        exists: (input) =>
+          state.runtime.kind === "native"
+            ? resolveServiceInstancePaths(paths, input.instance.id).pipe(
+                Effect.provideService(Path.Path, pathService),
+                Effect.flatMap((instancePaths) => fileSystem.exists(instancePaths.postgresData)),
+                Effect.mapError((error) => instanceFailure(input, error)),
+              )
+            : Effect.gen(function* () {
+                const workload = input.plan.workloads.find(
+                  (entry) =>
+                    entry.instanceId === input.instance.id && entry.capability === "database",
+                );
+                if (workload === undefined) return false;
+                if (containerEngine === undefined) return false;
+                const key = {
+                  stackId: input.stackId,
+                  instanceId: input.instance.id,
+                  workloadId: workload.id,
+                } satisfies RuntimeWorkloadKey;
+                const name = workloadVolumeName(key);
+                const resources = yield* containerEngine.listResources(input.stackId);
+                return resources.some(
+                  (resource) =>
+                    resource.kind === "volume" &&
+                    resource.name === name &&
+                    resource.labels.role === "volume" &&
+                    resource.labels.instanceId === input.instance.id &&
+                    resource.labels.workloadId === workload.id,
+                );
+              }).pipe(Effect.mapError((error) => instanceFailure(input, error))),
+        readVersion: (input) =>
+          state.runtime.kind === "native"
+            ? resolveServiceInstancePaths(paths, input.instance.id).pipe(
+                Effect.provideService(Path.Path, pathService),
+                Effect.flatMap((instancePaths) =>
+                  fileSystem.readFileString(
+                    pathService.join(instancePaths.postgresData, "PG_VERSION"),
+                  ),
+                ),
+                Effect.flatMap((value) => {
+                  const version = Number.parseInt(value.trim(), 10);
+                  return Number.isSafeInteger(version) && version > 0
+                    ? Effect.succeed(version)
+                    : Effect.fail(
+                        new StackPreparationError({
+                          message: "PostgreSQL PG_VERSION is invalid",
+                          workload: input.instance.id,
+                        }),
+                      );
+                }),
+                Effect.mapError((error) => instanceFailure(input, error)),
+              )
+            : Effect.gen(function* () {
+                const workload = input.plan.workloads.find(
+                  (entry) =>
+                    entry.instanceId === input.instance.id && entry.capability === "database",
+                );
+                if (workload === undefined)
+                  return yield* new StackPreparationError({
+                    message: "Database workload is missing",
+                    workload: input.instance.id,
+                  });
+                const copy = containerEngine?.copyFromContainer;
+                if (copy === undefined)
+                  return yield* new StackPreparationError({
+                    message: "Container engine cannot read PostgreSQL PG_VERSION",
+                    workload: input.instance.id,
+                  });
+                return yield* Effect.acquireUseRelease(
+                  fileSystem.makeTempDirectory({
+                    prefix: `supabase-pg-version-${input.instance.id}-`,
+                  }),
+                  (temporary) => {
+                    const target = pathService.join(temporary, "PG_VERSION");
+                    return withSnapshotContainer(
+                      input,
+                      workload,
+                      (helperId) => copy(helperId, "/var/lib/postgresql/data/PG_VERSION", target),
+                      true,
+                    ).pipe(Effect.andThen(fileSystem.readFileString(target)));
+                  },
+                  (temporary) =>
+                    fileSystem.remove(temporary, { recursive: true }).pipe(Effect.ignore),
+                ).pipe(
+                  Effect.flatMap((value) => {
+                    const version = Number.parseInt(value.trim(), 10);
+                    return Number.isSafeInteger(version) && version > 0
+                      ? Effect.succeed(version)
+                      : Effect.fail(
+                          new StackPreparationError({
+                            message: "PostgreSQL PG_VERSION is invalid",
+                            workload: input.instance.id,
+                          }),
+                        );
+                  }),
+                );
+              }).pipe(Effect.mapError((error) => instanceFailure(input, error))),
+        restoreTargetEmpty: (input) =>
+          state.runtime.kind === "native"
+            ? resolveServiceInstancePaths(paths, input.instance.id).pipe(
+                Effect.provideService(Path.Path, pathService),
+                Effect.flatMap((instancePaths) =>
+                  fileSystem
+                    .exists(instancePaths.data)
+                    .pipe(
+                      Effect.flatMap((exists) =>
+                        exists
+                          ? fileSystem
+                              .readDirectory(instancePaths.data)
+                              .pipe(Effect.map((entries) => entries.length === 0))
+                          : Effect.succeed(true),
+                      ),
+                    ),
+                ),
+                Effect.mapError((error) => instanceFailure(input, error)),
+              )
+            : Effect.gen(function* () {
+                const workload = input.plan.workloads.find(
+                  (entry) =>
+                    entry.instanceId === input.instance.id && entry.capability === "database",
+                );
+                if (workload === undefined || containerEngine === undefined) return false;
+                const key = {
+                  stackId: input.stackId,
+                  instanceId: input.instance.id,
+                  workloadId: workload.id,
+                } satisfies RuntimeWorkloadKey;
+                const resources = yield* containerEngine.listResources(input.stackId);
+                return !resources.some(
+                  (resource) =>
+                    resource.kind === "volume" && resource.name === workloadVolumeName(key),
+                );
+              }).pipe(Effect.mapError((error) => instanceFailure(input, error))),
+        export: (input, destination) =>
+          Effect.gen(function* () {
+            const instancePaths = yield* resolveServiceInstancePaths(paths, input.instance.id).pipe(
+              Effect.provideService(Path.Path, pathService),
+            );
+            if (state.runtime.kind === "native") {
+              yield* fileSystem.copy(instancePaths.postgresData, destination, { overwrite: false });
+              return;
+            }
+            const copy = containerEngine?.copyFromContainer;
+            if (copy === undefined)
+              return yield* new StackPreparationError({
+                message: "Container engine does not support PostgreSQL volume export",
+                workload: input.instance.id,
+              });
+            const workload = input.plan.workloads.find(
+              (entry) => entry.instanceId === input.instance.id && entry.capability === "database",
+            );
+            if (workload === undefined)
+              return yield* new StackPreparationError({ message: "Database workload is missing" });
+            yield* withSnapshotContainer(input, workload, (helperId) =>
+              copy(helperId, "/var/lib/postgresql/data/.", destination),
+            );
+          }).pipe(Effect.mapError((error) => instanceFailure(input, error))),
+        restore: (input, source, destination) =>
+          Effect.gen(function* () {
+            if (state.runtime.kind === "container") {
+              const engine = containerEngine;
+              const copy = engine?.copyToContainer;
+              const workload = input.plan.workloads.find(
+                (entry) =>
+                  entry.instanceId === input.instance.id && entry.capability === "database",
+              );
+              if (engine === undefined || copy === undefined || workload === undefined)
+                return yield* new StackPreparationError({
+                  message: "Container engine cannot restore PostgreSQL volume",
+                  workload: input.instance.id,
+                });
+              const volume = yield* snapshotVolume(input, workload);
+              const restored = yield* Effect.exit(
+                Effect.gen(function* () {
+                  yield* withSnapshotContainer(input, workload, (helperId) =>
+                    copy(helperId, `${source}/.`, "/var/lib/postgresql/data/."),
+                  );
+                  yield* restoreContainerOwnership(input, workload);
+                }),
+              );
+              if (Exit.isFailure(restored)) {
+                const removed = yield* Effect.exit(engine.removeVolume(volume.id));
+                if (Exit.isFailure(removed))
+                  return yield* new StackCleanupError({
+                    message: "Unable to remove PostgreSQL snapshot volume after restore failure",
+                    cause: Cause.combine(restored.cause, removed.cause),
+                  });
+                return yield* Effect.failCause(restored.cause);
+              }
+              return;
+            }
+            const parent = pathService.dirname(destination);
+            yield* fileSystem.makeDirectory(parent, { recursive: true });
+            const temporary = `${destination}.restore-${input.operation.id}`;
+            yield* Effect.acquireUseRelease(
+              Effect.succeed(temporary),
+              (staging) =>
+                fileSystem
+                  .copy(source, staging, { overwrite: false })
+                  .pipe(Effect.andThen(fileSystem.rename(staging, destination))),
+              (staging) =>
+                fileSystem.remove(staging, { recursive: true }).pipe(
+                  Effect.catchTag("PlatformError", (error) =>
+                    Predicate.isTagged(error.reason, "NotFound")
+                      ? Effect.void
+                      : Effect.fail(
+                          new StackCleanupError({
+                            message: "Unable to clean up native PostgreSQL restore staging",
+                            cause: error,
+                          }),
+                        ),
+                  ),
+                ),
+            );
+          }).pipe(Effect.mapError((error) => instanceFailure(input, error))),
+        rollbackRestore: (input) =>
+          state.runtime.kind === "native"
+            ? resolveServiceInstancePaths(paths, input.instance.id).pipe(
+                Effect.provideService(Path.Path, pathService),
+                Effect.flatMap((instancePaths) =>
+                  fileSystem
+                    .remove(instancePaths.postgresData, { recursive: true })
+                    .pipe(
+                      Effect.catchTag("PlatformError", (error) =>
+                        Predicate.isTagged(error.reason, "NotFound")
+                          ? Effect.void
+                          : Effect.fail(error),
+                      ),
+                    ),
+                ),
+                Effect.mapError((error) => instanceCleanupFailure(input, error)),
+              )
+            : Effect.gen(function* () {
+                const workload = input.plan.workloads.find(
+                  (entry) =>
+                    entry.instanceId === input.instance.id && entry.capability === "database",
+                );
+                if (containerEngine === undefined || workload === undefined)
+                  return yield* new StackPreparationError({
+                    message: "Container engine cannot roll back PostgreSQL volume",
+                    workload: input.instance.id,
+                  });
+                const resources = yield* containerEngine.listResources(input.stackId);
+                const volume = resources.find(
+                  (resource) =>
+                    resource.kind === "volume" &&
+                    resource.name ===
+                      workloadVolumeName({
+                        stackId: input.stackId,
+                        instanceId: input.instance.id,
+                        workloadId: workload.id,
+                      }),
+                );
+                if (volume !== undefined) yield* containerEngine.removeVolume(volume.id);
+              }).pipe(Effect.mapError((error) => instanceCleanupFailure(input, error))),
+      },
+      snapshotMetadata: (input, workload) =>
+        prepare(input.state.runtime, workload).pipe(
+          Effect.flatMap((artifact) =>
+            input.state.runtime.kind === "container" && artifact.image === undefined
+              ? Effect.fail(
+                  new StackPreparationError({
+                    message: "Container PostgreSQL artifact image is unavailable",
+                    workload: workload.id,
+                  }),
+                )
+              : Effect.succeed({
+                  artifactIdentity:
+                    input.state.runtime.kind === "container"
+                      ? `container:${artifact.image}`
+                      : `native:${artifact.version}`,
+                  runtimeIdentity:
+                    input.state.runtime.kind === "native"
+                      ? `native:${workload.capability}:${input.instance.config.version}`
+                      : `container:${workload.capability}:${input.instance.config.version}`,
+                  majorVersion: Number.parseInt(
+                    input.instance.config.version.match(/^(\d+)/u)?.[1] ?? "0",
+                    10,
+                  ),
+                }),
+          ),
+          Effect.mapError((error) => instanceFailure(input, error)),
+        ),
+      reconcileManaged: (input, endpoint, workload) =>
+        (options.bootstrapDatabase === undefined
+          ? databaseBootstrapPlan(input.state, input.instance).pipe(
+              Effect.flatMap((plan) =>
+                readinessDeadlineFor(input.state, workload).pipe(
+                  Effect.flatMap((deadline) =>
+                    Effect.timeoutOrElse(
+                      Effect.retry(
+                        Effect.suspend(() =>
+                          bootstrapManagedPostgres({
+                            ...plan,
+                            host: endpoint.host,
+                            port: endpoint.port,
+                          }),
+                        ),
+                        {
+                          schedule: Schedule.spaced("100 millis"),
+                          while: (error) =>
+                            error instanceof DatabaseBootstrapError && error.retryable === true,
+                        },
+                      ),
+                      {
+                        duration: deadline,
+                        orElse: () =>
+                          Effect.fail(
+                            new StackRuntimeError({
+                              stackId: input.stackId,
+                              workloadId: workload.id,
+                              message: `Database credential reconciliation deadline exceeded for ${workload.id}`,
+                            }),
+                          ),
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            )
+          : options.bootstrapDatabase(input.state)
+        ).pipe(Effect.mapError((error) => instanceFailure(input, error))),
+      reconcileCatalogRecipe: (input, recipe, endpoint) => {
+        return (
+          options.reconcileCatalogRecipe?.(input, recipe, endpoint) ??
+          defaultCatalogReconcile(input, recipe, endpoint)
+        );
+      },
+      publishInitialization: (input, evidence) =>
+        options.stateStore
+          .update(options.stackId, (current) => {
+            const instance = current.registry.instances.find(
+              (entry) => entry.id === input.instance.id,
+            );
+            if (
+              instance === undefined ||
+              instance.pendingOperation?.id !== input.operation.id ||
+              instance.pendingOperation.generation !== input.operation.generation
+            )
+              return Effect.fail(
+                new StackLifecycleConflictError({
+                  stackId: options.stackId,
+                  message: `Instance operation ${input.operation.id} is no longer current`,
+                }),
+              );
+            return Effect.succeed({
+              ...current,
+              registry: {
+                ...current.registry,
+                instances: current.registry.instances.map((entry) =>
+                  entry.id === input.instance.id ? { ...entry, initialization: evidence } : entry,
+                ),
+              },
+            });
+          })
+          .pipe(Effect.provideContext(options.context), Effect.asVoid),
+      publishFreshData: (input, lineageId) =>
+        publishData(
+          input,
+          { origin: "fresh", lineageId },
+          (entry) => entry.data.origin === "absent" || entry.data.origin === "incomplete",
+        ),
+      publishIncompleteData: (input) =>
+        publishData(input, { origin: "incomplete", operationId: input.operation.id }),
+      publishAbsentData: (input) => publishData(input, { origin: "absent" }),
+      journal: journalInstance,
+    });
+    const instanceStart = (input: InstanceRuntimeInput) =>
+      input.instance.service === "database"
+        ? postgres.start(input).pipe(Effect.mapError((error) => instanceFailure(input, error)))
+        : startWorkloads(input);
+    const instanceStop = (input: InstanceRuntimeInput) =>
+      input.instance.service === "database" ? postgres.stop(input) : stopWorkloads(input);
+    const instanceDestroy = (input: InstanceRuntimeInput) =>
+      Effect.gen(function* () {
+        const runtime =
+          input.instance.service === "database" ? postgres.destroy(input) : destroyWorkloads(input);
+        const runtimeResult = yield* Effect.exit(runtime);
+        if (Exit.isFailure(runtimeResult)) return yield* Effect.failCause(runtimeResult.cause);
+        const instancePaths = yield* resolveServiceInstancePaths(paths, input.instance.id).pipe(
+          Effect.provideService(Path.Path, pathService),
+          Effect.mapError(
+            (error) =>
+              new StackCleanupError({
+                message: "Unable to resolve destroyed instance paths",
+                cause: error,
+              }),
+          ),
+        );
+        yield* removeOwnedInstancePaths(fileSystem, instancePaths);
+      });
+    const unsupportedSnapshot = (input: InstanceRuntimeInput) =>
+      Effect.fail(
+        new UnsupportedSnapshotError({
+          instanceId: input.instance.id,
+          message: `Snapshots are unsupported for ${input.instance.service} instances`,
+        }),
+      );
     return {
       driver: baseDriver,
       preflight,
-      prepare: prepareFor,
+      prepare: instancePrepare,
+      prepareArtifacts: prepareFor,
+      start: instanceStart,
+      stop: instanceStop,
+      destroy: instanceDestroy,
+      exportSnapshot: (input, snapshot) =>
+        input.instance.service === "database"
+          ? postgres.exportSnapshot(input, snapshot)
+          : unsupportedSnapshot(input),
+      restoreSnapshot: (input, snapshot) =>
+        input.instance.service === "database"
+          ? postgres.restoreSnapshot(input, snapshot)
+          : unsupportedSnapshot(input),
+      recoverSnapshot: (input, operation) =>
+        input.instance.service === "database"
+          ? postgres.recoverSnapshot(input, operation)
+          : Effect.map(Effect.void, () => undefined),
       prefetch,
       artifacts: Effect.sync(() => [...preparationStatuses.values()]),
       activate,

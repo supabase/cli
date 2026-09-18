@@ -1,15 +1,4 @@
-import {
-  Cause,
-  Config,
-  ConfigProvider,
-  Console,
-  Data,
-  Effect,
-  Exit,
-  Option,
-  Schema,
-  Stream,
-} from "effect";
+import { Config, ConfigProvider, Console, Data, Effect, Option, Schema, Stream } from "effect";
 
 interface DenoErrorConstructors {
   readonly InvalidWorkerCreation?: abstract new (...args: never[]) => Error;
@@ -142,15 +131,10 @@ interface AuthFailure {
 const FunctionOverrideSchema = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   verifyJWT: Schema.optionalKey(Schema.Boolean),
-  verify_jwt: Schema.optionalKey(Schema.Boolean),
   entrypointPath: Schema.optionalKey(Schema.String),
-  entrypoint: Schema.optionalKey(Schema.String),
   importMapPath: Schema.optionalKey(Schema.String),
-  import_map: Schema.optionalKey(Schema.String),
   importMapRoot: Schema.optionalKey(Schema.String),
-  import_map_root: Schema.optionalKey(Schema.String),
   staticFiles: Schema.optionalKey(Schema.Array(Schema.String)),
-  static_files: Schema.optionalKey(Schema.Array(Schema.String)),
   env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 const FunctionOverridesSchema = Schema.Record(Schema.String, FunctionOverrideSchema);
@@ -358,82 +342,91 @@ export function prepareUserRequest(request: Request): Request {
   return forwarded;
 }
 
+const requestEffect = (request: Request) =>
+  Effect.gen(function* () {
+    const { pathname } = new URL(request.url);
+    if (pathname === "/_internal/health") return getResponse({ message: "ok" }, STATUS_CODE.OK);
+    if (pathname === "/_internal/metric")
+      return Response.json(yield* foreign(() => EdgeRuntime.getRuntimeMetrics()));
+    const functionName = pathname.split("/")[1];
+    if (!functionName) return getResponse("Function not found", STATUS_CODE.NotFound);
+    const config = yield* functionConfig(functionName);
+    if (!config) return getResponse("Function not found", STATUS_CODE.NotFound);
+    if (request.method !== "OPTIONS" && config.verifyJWT) {
+      const token = getAuthToken(request);
+      if (typeof token !== "string") return getAuthErrorResponse(token);
+      const authFailure = yield* verifyHybridJWT(JWT_SECRET, token);
+      if (Option.isSome(authFailure)) return getAuthErrorResponse(authFailure.value);
+    }
+    const envVarsObj: Record<string, string> = {
+      ...Deno.env.toObject(),
+      ...Object.fromEntries(
+        Object.entries(config.env ?? {}).filter(([name]) => !name.startsWith("SUPABASE_")),
+      ),
+      SUPABASE_FUNCTION_SLUG: functionName,
+    };
+    if (SUPABASE_PUBLISHABLE_KEY)
+      envVarsObj.SUPABASE_PUBLISHABLE_KEYS = yield* Schema.encodeEffect(
+        Schema.fromJsonString(Schema.Unknown),
+      )({ default: SUPABASE_PUBLISHABLE_KEY });
+    if (SUPABASE_SECRET_KEY)
+      envVarsObj.SUPABASE_SECRET_KEYS = yield* Schema.encodeEffect(
+        Schema.fromJsonString(Schema.Unknown),
+      )({ default: SUPABASE_SECRET_KEY });
+    const envVars = Object.entries(envVarsObj).filter(
+      ([name]) => !EXCLUDED_ENVS.has(name) && !name.startsWith("SUPABASE_INTERNAL_"),
+    );
+    const noNpm = !(yield* shouldUsePackageJsonDiscovery(config));
+    const workerRequest = Effect.gen(function* () {
+      const worker = yield* foreign(() =>
+        EdgeRuntime.userWorkers.create({
+          servicePath: workerServicePath(functionName, config),
+          memoryLimitMb: 256,
+          workerTimeoutMs: Number.isFinite(WALLCLOCK_LIMIT_SEC)
+            ? WALLCLOCK_LIMIT_SEC * 1000
+            : 400_000,
+          noModuleCache: true,
+          noNpm,
+          importMapPath: config.importMapPath,
+          envVars,
+          forceCreate: true,
+          customModuleRoot: "",
+          cpuTimeSoftLimitMs: 1000,
+          cpuTimeHardLimitMs: 2000,
+          decoratorType: "tc39",
+          maybeEntrypoint: toFileUrl(config.entrypointPath).href,
+          context: { useReadSyncFileAPI: true },
+          staticPatterns: config.staticFiles,
+        }),
+      );
+      return yield* foreign(() => worker.fetch(prepareUserRequest(request)));
+    });
+    return yield* workerRequest.pipe(
+      Effect.catchTag("BootstrapOperationError", ({ cause }) =>
+        Console.error("[functions] worker error", cause).pipe(
+          Effect.andThen(Effect.succeed(getWorkerErrorResponse(cause))),
+        ),
+      ),
+    );
+  });
+
+class RequestCancelled extends Data.TaggedError("RequestCancelled") {}
+
+const requestCancellation = (request: Request) =>
+  Effect.callback<never, RequestCancelled>((resume) => {
+    const abort = () => resume(Effect.fail(new RequestCancelled()));
+    if (request.signal.aborted) abort();
+    else request.signal.addEventListener("abort", abort, { once: true });
+    return Effect.sync(() => request.signal.removeEventListener("abort", abort));
+  });
+
+const handleRequest = (request: Request) =>
+  Effect.raceFirst(requestCancellation(request), requestEffect(request)).pipe(
+    Effect.catchTag("RequestCancelled", () => Effect.succeed(new Response(null, { status: 499 }))),
+  );
+
 Deno.serve({
-  handler: (request: Request) =>
-    Effect.runPromiseExit(
-      Effect.gen(function* () {
-        const { pathname } = new URL(request.url);
-        if (pathname === "/_internal/health") return getResponse({ message: "ok" }, STATUS_CODE.OK);
-        if (pathname === "/_internal/metric")
-          return Response.json(yield* foreign(() => EdgeRuntime.getRuntimeMetrics()));
-        const functionName = pathname.split("/")[1];
-        if (!functionName) return getResponse("Function not found", STATUS_CODE.NotFound);
-        const config = yield* functionConfig(functionName);
-        if (!config) return getResponse("Function not found", STATUS_CODE.NotFound);
-        if (request.method !== "OPTIONS" && config.verifyJWT) {
-          const token = getAuthToken(request);
-          if (typeof token !== "string") return getAuthErrorResponse(token);
-          const authFailure = yield* verifyHybridJWT(JWT_SECRET, token);
-          if (Option.isSome(authFailure)) return getAuthErrorResponse(authFailure.value);
-        }
-        const envVarsObj: Record<string, string> = {
-          ...Deno.env.toObject(),
-          ...Object.fromEntries(
-            Object.entries(config.env ?? {}).filter(([name]) => !name.startsWith("SUPABASE_")),
-          ),
-          SUPABASE_FUNCTION_SLUG: functionName,
-        };
-        if (SUPABASE_PUBLISHABLE_KEY)
-          envVarsObj.SUPABASE_PUBLISHABLE_KEYS = yield* Schema.encodeEffect(
-            Schema.fromJsonString(Schema.Unknown),
-          )({ default: SUPABASE_PUBLISHABLE_KEY });
-        if (SUPABASE_SECRET_KEY)
-          envVarsObj.SUPABASE_SECRET_KEYS = yield* Schema.encodeEffect(
-            Schema.fromJsonString(Schema.Unknown),
-          )({ default: SUPABASE_SECRET_KEY });
-        const envVars = Object.entries(envVarsObj).filter(
-          ([name]) => !EXCLUDED_ENVS.has(name) && !name.startsWith("SUPABASE_INTERNAL_"),
-        );
-        const noNpm = !(yield* shouldUsePackageJsonDiscovery(config));
-        const workerRequest = Effect.gen(function* () {
-          const worker = yield* foreign(() =>
-            EdgeRuntime.userWorkers.create({
-              servicePath: workerServicePath(functionName, config),
-              memoryLimitMb: 256,
-              workerTimeoutMs: Number.isFinite(WALLCLOCK_LIMIT_SEC)
-                ? WALLCLOCK_LIMIT_SEC * 1000
-                : 400_000,
-              noModuleCache: true,
-              noNpm,
-              importMapPath: config.importMapPath,
-              envVars,
-              forceCreate: true,
-              customModuleRoot: "",
-              cpuTimeSoftLimitMs: 1000,
-              cpuTimeHardLimitMs: 2000,
-              decoratorType: "tc39",
-              maybeEntrypoint: toFileUrl(config.entrypointPath).href,
-              context: { useReadSyncFileAPI: true },
-              staticPatterns: config.staticFiles,
-            }),
-          );
-          return yield* foreign(() => worker.fetch(prepareUserRequest(request)));
-        });
-        return yield* workerRequest.pipe(
-          Effect.catchTag("BootstrapOperationError", ({ cause }) =>
-            Console.error("[functions] worker error", cause).pipe(
-              Effect.andThen(Effect.succeed(getWorkerErrorResponse(cause))),
-            ),
-          ),
-        );
-      }),
-      { signal: request.signal },
-    ).then((exit) => {
-      if (Exit.isSuccess(exit)) return exit.value;
-      if (request.signal.aborted && Cause.hasInterruptsOnly(exit.cause))
-        return new Response(null, { status: 499 });
-      throw Cause.squash(exit.cause);
-    }),
+  handler: (request: Request) => Effect.runPromise(handleRequest(request)),
   onListen: () => {
     const names = Object.keys(configured);
     const examples = names

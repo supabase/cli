@@ -5,10 +5,14 @@
 import { resolve } from "node:path";
 import { Effect, Option, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { spawnContainerCli } from "../../command-internal/container-cli.ts";
+import {
+  describeContainerCliFailure,
+  spawnContainerCli,
+} from "../../command-internal/container-cli.ts";
 import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
+import { FunctionsDockerError } from "./functions-docker.errors.ts";
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
 const MAX_PROJECT_ID_LENGTH = 40;
@@ -86,18 +90,26 @@ export function toDockerPath(hostPath: string) {
  * container root. `Bun.Archive` exposes no per-entry mode option, so entries
  * carry its `0644` default.
  */
-export function containerArchiveBytes(
+export const containerArchiveBytes = Effect.fnUntraced(function* (
   files: Readonly<Record<string, string>>,
-): Promise<Uint8Array> {
-  return new Bun.Archive(
-    Object.fromEntries(
-      Object.entries(files).map(([containerPath, content]) => [
-        containerPath.replace(/^\/+/, ""),
-        content,
-      ]),
-    ),
-  ).bytes();
-}
+) {
+  return yield* Effect.tryPromise({
+    try: () =>
+      new Bun.Archive(
+        Object.fromEntries(
+          Object.entries(files).map(([containerPath, content]) => [
+            containerPath.replace(/^\/+/, ""),
+            content,
+          ]),
+        ),
+      ).bytes(),
+    catch: (cause) =>
+      new FunctionsDockerError({
+        message: "failed to create container archive",
+        cause,
+      }),
+  });
+});
 
 export interface FunctionsDockerRunSpec {
   /** Already registry/pull-resolved image reference. */
@@ -215,6 +227,14 @@ export const runChildProcess = Effect.fnUntraced(function* (
       );
       return { exitCode, stdout, stderr };
     }),
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new FunctionsDockerError({
+          message: describeContainerCliFailure(cause),
+          cause,
+        }),
+    ),
   );
 });
 
@@ -276,7 +296,9 @@ export const ensureDockerNetwork = Effect.fnUntraced(function* (
     },
   );
   if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* Effect.fail(new Error(`failed to create docker network: ${networkMode}`));
+    return yield* new FunctionsDockerError({
+      message: `failed to create docker network: ${networkMode}`,
+    });
   }
 });
 
@@ -307,7 +329,9 @@ export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
     },
   );
   if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* Effect.fail(new Error(`failed to create docker volume: ${volumeName}`));
+    return yield* new FunctionsDockerError({
+      message: `failed to create docker volume: ${volumeName}`,
+    });
   }
 });
 
@@ -352,5 +376,12 @@ export const resolveFunctionsDockerImage = Effect.fnUntraced(function* (
   projectEnvValues?: Readonly<Record<string, string>>,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  return yield* makeDockerImageResolver(spawner, projectEnvValues)(image);
+  return yield* makeDockerImageResolver(
+    spawner,
+    projectEnvValues,
+  )(image).pipe(
+    Effect.mapError(
+      (cause) => new FunctionsDockerError({ message: "failed to resolve Docker image", cause }),
+    ),
+  );
 });

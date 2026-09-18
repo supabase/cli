@@ -1,54 +1,68 @@
 import { describe, expect, it } from "@effect/vitest";
-import { databaseBootstrapIdentity } from "@supabase/stack/effect";
 import {
   stackShadowBaselineTarFileName,
   stackShadowCacheKey,
   isStackShadowBaselinePartial,
 } from "./stack-shadow.ts";
 
-const overlay = {
+const base = {
+  artifactIdentity: "native:17.6.1",
+  runtimeIdentity: "native:database:17.6.1",
+  bootstrapRecipeId: "database-bootstrap-v1",
+  bootstrapInputsId: "inputs:shadow",
+  initializationProfileId: "profile:shadow",
+  initialization: { profileId: "profile:shadow", recipes: [] },
+  rolesSql: "",
   webhooksEnabled: false,
   apiGrantsKept: true,
   vault: [] as const,
   jwks: "",
   storageTargetMigration: "",
-  authEnabled: false,
-  storageEnabled: false,
-  realtimeEnabled: false,
-  authArtifact: "",
-  storageArtifact: "",
-  realtimeArtifact: "",
-};
-
-const base = {
-  artifactIdentity: "native:17.6.1",
-  majorVersion: 17,
-  runtimeKind: "native",
-  jwtSecret: "jwt",
-  jwtExpiry: 3600,
-  dbPassword: "postgres",
-  dbSettings: {},
-  rolesSql: "",
-  bootstrapIdentity: databaseBootstrapIdentity,
-  ...overlay,
 };
 
 describe("stackShadowCacheKey", () => {
-  it("changes when the artifact identity or runtime kind changes", () => {
+  it("changes when authoritative runtime or artifact metadata changes", () => {
     const native = stackShadowCacheKey(base);
-    const otherArtifact = stackShadowCacheKey({
-      ...base,
-      artifactIdentity: "native:17.6.2",
-    });
-    const container = stackShadowCacheKey({
-      ...base,
-      artifactIdentity: "container:docker:example",
-      runtimeKind: "container:docker",
-    });
     expect(native).toMatch(/^[0-9a-f]{16}$/u);
-    expect(native).not.toBe(otherArtifact);
-    expect(native).not.toBe(container);
+    expect(stackShadowCacheKey({ ...base, artifactIdentity: "native:17.6.2" })).not.toBe(native);
+    expect(
+      stackShadowCacheKey({ ...base, runtimeIdentity: "container:docker:database:17.6.1" }),
+    ).not.toBe(native);
     expect(stackShadowBaselineTarFileName(native)).toBe(`stack-shadow-baseline-${native}.tar`);
+  });
+
+  it("includes resolved bootstrap and initialization identities", () => {
+    const baseKey = stackShadowCacheKey(base);
+    expect(stackShadowCacheKey({ ...base, bootstrapRecipeId: "database-bootstrap-v2" })).not.toBe(
+      baseKey,
+    );
+    expect(stackShadowCacheKey({ ...base, bootstrapInputsId: "inputs:changed" })).not.toBe(baseKey);
+    expect(stackShadowCacheKey({ ...base, initializationProfileId: "profile:changed" })).not.toBe(
+      baseKey,
+    );
+    expect(
+      stackShadowCacheKey({
+        ...base,
+        initialization: {
+          profileId: "profile:shadow",
+          recipes: [{ service: "auth", recipeId: "auth", artifactIdentity: "auth" }],
+        },
+      }),
+    ).not.toBe(baseKey);
+  });
+
+  it("changes for CLI overlay inputs", () => {
+    const baseKey = stackShadowCacheKey(base);
+    expect(stackShadowCacheKey({ ...base, rolesSql: "create role x;" })).not.toBe(baseKey);
+    expect(stackShadowCacheKey({ ...base, webhooksEnabled: true })).not.toBe(baseKey);
+    expect(stackShadowCacheKey({ ...base, apiGrantsKept: false })).not.toBe(baseKey);
+    expect(
+      stackShadowCacheKey({ ...base, vault: [{ name: "a", value: "secret", resolved: true }] }),
+    ).not.toBe(baseKey);
+    expect(stackShadowCacheKey({ ...base, jwks: '{"keys":[]}' })).not.toBe(baseKey);
+    expect(stackShadowCacheKey({ ...base, storageTargetMigration: "20240101000000" })).not.toBe(
+      baseKey,
+    );
   });
 
   it("recognizes only this module's own partial temp files as abandoned-sweep candidates", () => {
@@ -65,59 +79,5 @@ describe("stackShadowCacheKey", () => {
     ]) {
       expect(isStackShadowBaselinePartial(other), other).toBe(false);
     }
-  });
-
-  it("changes when roles.sql, db settings, or bootstrap identity change", () => {
-    const withRoles = stackShadowCacheKey({ ...base, rolesSql: "create role x;" });
-    expect(stackShadowCacheKey(base)).not.toBe(withRoles);
-    expect(stackShadowCacheKey({ ...base, dbSettings: { max_connections: 20 } })).not.toBe(
-      stackShadowCacheKey(base),
-    );
-    expect(stackShadowCacheKey({ ...base, bootstrapIdentity: "bootstrap-v2" })).not.toBe(
-      stackShadowCacheKey(base),
-    );
-  });
-
-  it("changes when overlay or schema-init membership changes", () => {
-    expect(stackShadowCacheKey({ ...base, webhooksEnabled: true })).not.toBe(
-      stackShadowCacheKey(base),
-    );
-    expect(stackShadowCacheKey({ ...base, apiGrantsKept: false })).not.toBe(
-      stackShadowCacheKey(base),
-    );
-    expect(
-      stackShadowCacheKey({
-        ...base,
-        vault: [{ name: "a", value: "secret", resolved: true }],
-      }),
-    ).not.toBe(stackShadowCacheKey(base));
-    expect(stackShadowCacheKey({ ...base, authEnabled: true })).not.toBe(stackShadowCacheKey(base));
-    expect(
-      stackShadowCacheKey({
-        ...base,
-        realtimeEnabled: true,
-        jwks: '{"keys":[]}',
-      }),
-    ).not.toBe(stackShadowCacheKey({ ...base, realtimeEnabled: true, jwks: "{}" }));
-    expect(
-      stackShadowCacheKey({
-        ...base,
-        storageEnabled: true,
-        storageTargetMigration: "20240101000000",
-      }),
-    ).not.toBe(stackShadowCacheKey({ ...base, storageEnabled: true }));
-    expect(
-      stackShadowCacheKey({
-        ...base,
-        authEnabled: true,
-        authArtifact: "v2.196.0:ghcr.io/supabase/cli/auth:v2.196.0",
-      }),
-    ).not.toBe(
-      stackShadowCacheKey({
-        ...base,
-        authEnabled: true,
-        authArtifact: "v2.197.0:ghcr.io/supabase/cli/auth:v2.197.0",
-      }),
-    );
   });
 });

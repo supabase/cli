@@ -196,10 +196,6 @@ export const catalogReleaseFor = (
   return containerImage === undefined ? undefined : { version: selected, containerImage };
 };
 
-/** Resolves the container alias for a catalog workload identity. */
-export const containerAliasFor = (workloadId: WorkloadId): string =>
-  workloadCatalog[workloadId].containerAlias;
-
 const artifactFor = (
   entry: WorkloadCatalogEntry,
   release: WorkloadCatalogRelease,
@@ -227,17 +223,17 @@ const artifactFor = (
 
 /** Effect-native resolver used by preparation/runtime boundaries. */
 export const resolveNativeArtifactForWorkload = (
-  workload: Pick<PlannedWorkload, "id" | "artifacts">,
+  workload: Pick<PlannedWorkload, "id" | "recipeId" | "artifacts">,
   platform: { readonly os: string; readonly arch: string } = {
     os: process.platform,
     arch: process.arch,
   },
 ): Effect.Effect<NativeWorkloadArtifact, StackPreparationError> => {
-  const entry = catalogEntryFor(workload.id);
+  const entry = catalogEntryFor(workload.recipeId);
   if (entry === undefined)
     return Effect.fail(
       new StackPreparationError({
-        message: `Unknown workload catalog entry: ${workload.id}`,
+        message: `Unknown workload catalog entry: ${workload.recipeId}`,
         workload: workload.id,
       }),
     );
@@ -250,7 +246,7 @@ export const resolveNativeArtifactForWorkload = (
         platform: `${platform.os}/${platform.arch}`,
       }),
     );
-  const release = catalogReleaseFor(workload.id, workload.artifacts.native.release);
+  const release = catalogReleaseFor(workload.recipeId, workload.artifacts.native.release);
   if (release === undefined)
     return Effect.fail(
       new StackPreparationError({

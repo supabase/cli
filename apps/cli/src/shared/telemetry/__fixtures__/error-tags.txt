@@ -41,6 +41,7 @@ BranchesUpdateNetworkError
 BranchesUpdateUnexpectedStatusError
 CliConfigParseError
 CliConfigWriteError
+CliEntrypointError
 CliProjectEnvParseError
 CliProjectHomeNotDirectoryError
 ComputeAlreadyConfiguredError
@@ -254,11 +255,13 @@ FeedbackMessageTooLongError
 FeedbackNotFoundError
 FileWatcherError
 FunctionDeployCancelledError
+FunctionDeployError
 FunctionDownloadNotFoundError
 FunctionImportNotDirectoryError
 FunctionNotFoundError
 FunctionsApiStatusError
 FunctionsApiTransportError
+FunctionsDockerError
 FunctionsEnvNotSupportedError
 FunctionsListNetworkError
 FunctionsListUnexpectedStatusError
@@ -266,6 +269,7 @@ FunctionsNewFileExistsError
 FunctionsNewInvalidSlugError
 FunctionsNewWorkdirError
 FunctionsNewWriteError
+FunctionsServeError
 GenBearerJwtConfigParseError
 GenBearerJwtDecodeError
 GenBearerJwtKeyNotFoundError
@@ -456,6 +460,7 @@ SeedMutuallyExclusiveFlagsError
 SeedWorkdirError
 ServeLocalDbInspectError
 ServeLocalDbNotRunningError
+ServeMainBundleError
 ServiceVersionNotFoundError
 ServicesEnvNotSupportedError
 ShadowDbError

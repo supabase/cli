@@ -272,26 +272,6 @@ const functionRelativePath = (
   return path.relative(functionRoot, target).replaceAll(path.sep, "/");
 };
 
-const functionPathError = (
-  path: Path.Path,
-  projectRoot: string,
-  name: string,
-  field: string,
-  value: string,
-): string | undefined => {
-  if (value.length === 0) return undefined;
-  const functionsRoot = path.join(projectRoot, "supabase", "functions");
-  const target = path.isAbsolute(value)
-    ? path.normalize(value)
-    : path.normalize(
-        path.join(projectRoot, "supabase", value.startsWith("./") ? value.slice(2) : value),
-      );
-  const relative = path.relative(functionsRoot, target);
-  if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`))
-    return `functions.${name}.${field} path must be inside supabase/functions`;
-  return undefined;
-};
-
 const apiListener = (
   document: Readonly<Record<string, unknown>> | undefined,
   config: CliConfig,
@@ -1280,6 +1260,17 @@ const configInput = (
         max_client_conn: poolerResolved.max_client_conn,
       }),
     },
+    // The default database receives platform catalog setup only when the stack is first
+    // registered. Subsequent opens retain the resolved profile in the registry.
+    initialization: {
+      database: {
+        catalog: {
+          auth: {},
+          storage: {},
+          realtime: {},
+        },
+      },
+    },
     listeners: {
       api: apiListener(
         document,
@@ -1362,8 +1353,6 @@ const decryptConsumedSecrets = (
   });
 
 const configValidationError = (
-  path: Path.Path,
-  projectRoot: string,
   config: CliConfig,
   projectEnvValues: Readonly<Record<string, string>>,
   effectiveEdgeEnabled: boolean,
@@ -1374,15 +1363,6 @@ const configValidationError = (
   if (!effectiveEdgeEnabled) return undefined;
   for (const [name, functionConfig] of Object.entries(config.functions)) {
     if (functionConfig.enabled === false) continue;
-    for (const [field, value] of [
-      ["import_map", functionConfig.import_map],
-      ["entrypoint", functionConfig.entrypoint],
-      ...functionConfig.static_files.map((path) => ["static_files", path] as const),
-    ] as const) {
-      if (typeof value !== "string") continue;
-      const pathError = functionPathError(path, projectRoot, name, field, value);
-      if (pathError !== undefined) return pathError;
-    }
     for (const value of Object.values(functionConfig.env)) {
       if (typeof value !== "string") continue;
       const match = /^env\(([A-Za-z_][A-Za-z0-9_]*)\)$/.exec(value);
@@ -1435,8 +1415,6 @@ export const loadStackConfig = (
     const validationError = yield* Effect.try({
       try: () =>
         configValidationError(
-          path,
-          projectRoot,
           validatedConfig,
           context.projectEnvValues,
           validatedConfig.edge_runtime.enabled,

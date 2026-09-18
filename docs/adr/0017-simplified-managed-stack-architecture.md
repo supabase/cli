@@ -14,17 +14,19 @@ unproven destroy leaves durable intent `destroying`. Public
 handles communicate with it through same-release Effect RPC and a small
 release-stable maintenance protocol for probe and stop. The package runs independently
 of the CLI and accepts normalized `StackConfig` values without reading `config.toml`.
-CLI integration belongs to M5 in separate PRs, including Functions command wiring.
-Future CLI handlers will call this facade without maintaining a second metadata or
-PID-based liveness path.
+CLI stack commands, Functions serving, and shadow-database consumers call the
+Effect facade without maintaining a second metadata or PID-based liveness path.
 
 The public API has two deliberate entrypoints: Effect-native operations are
 available from `@supabase/stack/effect`, while the package root exposes the
 Promise handle and root Promise functions (`createStack`, `openStack`,
 `findStack`, `listStacks`, and `inspectStack`). Test callers use the public
-`createTestStack` helper from `@supabase/stack/testing`; it owns a unique
-temporary project root and exact-identity cleanup through `await using`, while
-using the same managed state root as ordinary package callers. All
+Effect-native `createTestStack` helper from `@supabase/stack/testing`; it owns a
+unique temporary project root and removes that root after successful whole-stack
+destruction. Tests compose acquisition and cleanup with `Effect.acquireUseRelease`,
+or use its package-root Promise adapter with `await using`. The implementation
+uses Effect directly in both cases, with Promise conversion confined to the root
+facade. Test stacks use the same managed state root as ordinary package callers. All
 default callers therefore coordinate automatic ports through one registry;
 helper project roots and identities remain isolated. Temporary test stacks are
 excluded from listings scoped to another project root because their project roots
@@ -73,12 +75,20 @@ network, socket, listener, or gateway. Status and retained logs are read from
 durable files only when owner metadata and the ownership lock are both absent.
 The same handle lazily launches a fresh Supervisor on its next start.
 
-A Supervisor launched for a mutation also exits when that mutation cannot leave
-running intent behind. In particular, a failed start before the running state is
-committed releases its control endpoint and ownership lease after reporting the
-failure. A successful start keeps the Supervisor alive; a sequential idempotent
-start returns the current status without resetting lazy activation or publishing
-a synthetic starting transition.
+A Supervisor launched for a mutation owns its process and lease independently of
+the launching handle. Interrupting that handle, or losing its RPC connection,
+never sends a whole-stack maintenance stop; another client may already be using
+the same owner. The launcher only cancels its readiness observation once the
+detached child exists. The child reports startup failure and cleans up its own
+pre-publication resources, while a launch whose caller disconnects before the
+first connection may remain discoverable until a later explicit lifecycle
+operation retires it.
+The owner manages failed lifecycle work that cannot leave running intent behind:
+a failed start before the running state is committed releases its control
+endpoint and ownership lease after reporting the failure. A successful start
+keeps the Supervisor alive; a sequential idempotent start returns the current
+status without resetting lazy activation or publishing a synthetic starting
+transition.
 
 If exact runtime cleanup cannot be proven, status remains `stopping` and the
 owner stays available for a retryable `stop()`; a cleaned stopped stack never

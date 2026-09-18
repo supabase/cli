@@ -1,112 +1,123 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Redacted } from "effect";
-import { compileStack } from "../model/Compiler.ts";
+import { Cause, Effect, Exit, Option, Path, Redacted } from "effect";
+import { compileServiceInstance } from "../model/Compiler.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { StackPreparationError } from "../public/Errors.ts";
 import { databaseBootstrapPlan } from "./DatabaseBootstrapCatalog.ts";
 
-const stateFrom = (definition: PersistedStackState["definition"]): PersistedStackState => ({
-  format: "supabase-stack-state-v1",
-  identity: {
-    projectRoot: "/tmp/project",
-    branchContext: "ordinary-workspace",
-    stackName: "default",
-  },
-  runtime: { kind: "native" },
-  desiredLifecycle: "stopped",
-  definition,
-  ports: [],
-  privatePorts: [{ workloadId: "database:database", binding: "primary", port: 54_321 }],
-  secrets: {
-    "secret:database.internal.password": { policy: "managed", value: "database-secret" },
-    "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
-  },
-});
-
-const compileDefinition = compileStack({
-  projectRoot: "/tmp/project",
-  runtime: { kind: "native" },
-}).pipe(
-  Effect.provide(NodeServices.layer),
-  Effect.map((result) => stateFrom(result.definition)),
-);
+const makeFixture = () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const compiled = yield* compileServiceInstance(
+      {
+        service: "database",
+        config: { password: Redacted.make("database-secret"), settings: {} },
+      },
+      { projectRoot: "/tmp/database-bootstrap", path, runtime: { kind: "native" } },
+    );
+    const instance = compiled.instance;
+    if (instance.service !== "database") return yield* Effect.die("database fixture missing");
+    const passwordSlot = instance.config.passwordSecretRef;
+    if (passwordSlot === undefined) return yield* Effect.die("database password slot missing");
+    const state: PersistedStackState = {
+      format: "supabase-stack-state-v2",
+      identity: {
+        projectRoot: "/tmp/database-bootstrap",
+        branchContext: "test",
+        stackName: "database-bootstrap",
+      },
+      runtime: { kind: "native" },
+      preparation: "on-demand",
+      security: {
+        jwt: {
+          issuer: null,
+          expirySeconds: 3600,
+          signing: { kind: "symmetric", secret: { slot: "secret:auth.jwt" } },
+        },
+      },
+      listeners: {},
+      registry: {
+        initialized: true,
+        instances: [instance],
+        defaultInstanceIds: { database: instance.id },
+      },
+      ports: [],
+      privatePorts: [
+        {
+          instanceId: instance.id,
+          workloadId: `${instance.id}:database`,
+          binding: "sql:internal",
+          port: 5432,
+        },
+      ],
+      secrets: {
+        [passwordSlot]: { policy: "managed", value: "database-secret" },
+        "secret:auth.jwt": { policy: "managed", value: "jwt-secret" },
+      },
+    };
+    return { state, instance };
+  });
 
 const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
 describe("database bootstrap catalog", () => {
-  it.live("returns the managed database material required for reconciliation", () =>
+  it.live("returns managed material for the requested database instance", () =>
     Effect.gen(function* () {
-      const state = yield* compileDefinition;
-      const plan = yield* databaseBootstrapPlan(state);
+      const { state, instance } = yield* makeFixture();
+      const plan = yield* databaseBootstrapPlan(state, instance);
       expect(Redacted.value(plan.databasePassword)).toBe("database-secret");
       expect(Redacted.value(plan.jwtSecret)).toBe("jwt-secret");
       expect(plan.jwtExpiry).toBe(3600);
-    }),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("rejects database bootstrap when the managed database password is absent", () =>
+  it.live("rejects a missing instance password", () =>
     Effect.gen(function* () {
-      const state = yield* compileDefinition;
-      const missing = yield* databaseBootstrapPlan({
-        ...state,
-        secrets: Object.fromEntries(
-          Object.entries(state.secrets).filter(
-            ([slot]) => slot !== "secret:database.internal.password",
-          ),
-        ),
-      }).pipe(Effect.exit);
-      const missingError = errorOf(missing);
-      expect(missingError).toMatchObject({
+      const { state, instance } = yield* makeFixture();
+      const missing = yield* databaseBootstrapPlan(
+        { ...state, secrets: { "secret:auth.jwt": { policy: "managed", value: "jwt-secret" } } },
+        instance,
+      ).pipe(Effect.exit);
+      const error = errorOf(missing);
+      expect(error).toBeInstanceOf(StackPreparationError);
+      expect(error).toMatchObject({
         message: "Managed database password is unavailable for bootstrap",
       });
-      expect(missingError).toBeInstanceOf(StackPreparationError);
-    }),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("rejects database bootstrap when the managed JWT secret is absent", () =>
+  it.live("rejects a missing shared JWT secret", () =>
     Effect.gen(function* () {
-      const state = yield* compileDefinition;
-      const missing = yield* databaseBootstrapPlan({
-        ...state,
-        secrets: Object.fromEntries(
-          Object.entries(state.secrets).filter(
-            ([slot]) => slot !== "secret:auth.settings.jwt_secret",
+      const { state, instance } = yield* makeFixture();
+      const missing = yield* databaseBootstrapPlan(
+        {
+          ...state,
+          secrets: Object.fromEntries(
+            Object.entries(state.secrets).filter(([slot]) => slot !== "secret:auth.jwt"),
           ),
-        ),
-      }).pipe(Effect.exit);
-      const missingError = errorOf(missing);
-      expect(missingError).toMatchObject({
+        },
+        instance,
+      ).pipe(Effect.exit);
+      const error = errorOf(missing);
+      expect(error).toBeInstanceOf(StackPreparationError);
+      expect(error).toMatchObject({
         message: "Managed JWT secret is unavailable for database bootstrap",
       });
-      expect(missingError).toBeInstanceOf(StackPreparationError);
-    }),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("rejects database bootstrap when the Auth JWT expiry is invalid", () =>
+  it.live("rejects an invalid shared JWT expiry", () =>
     Effect.gen(function* () {
-      const state = yield* compileDefinition;
-      if (state.definition === undefined) throw new Error("compiled state has no definition");
-      const invalidDefinition = {
-        ...state.definition,
-        capabilities: {
-          ...state.definition.capabilities,
-          auth: {
-            ...state.definition.capabilities.auth,
-            settings: { ...state.definition.capabilities.auth.settings, jwt_expiry: 0 },
-          },
-        },
-      };
-      const invalid = yield* databaseBootstrapPlan({
-        ...state,
-        definition: invalidDefinition,
-      }).pipe(Effect.exit);
-      const invalidError = errorOf(invalid);
-      expect(invalidError).toMatchObject({
-        message: "Auth JWT expiry must be a finite positive integer",
-      });
-      expect(invalidError).toBeInstanceOf(StackPreparationError);
-    }),
+      const { state, instance } = yield* makeFixture();
+      const invalid = yield* databaseBootstrapPlan(
+        { ...state, security: { jwt: { ...state.security.jwt, expirySeconds: 0 } } },
+        instance,
+      ).pipe(Effect.exit);
+      const error = errorOf(invalid);
+      expect(error).toBeInstanceOf(StackPreparationError);
+      expect(error).toMatchObject({ message: "Auth JWT expiry must be a finite positive integer" });
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

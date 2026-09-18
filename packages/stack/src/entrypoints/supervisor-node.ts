@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node";
+import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Crypto, Data, Effect, FileSystem, Path, Schema } from "effect";
 // Node's fd3 readiness channel has no FileSystem abstraction, so it's used directly here.
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness uses inherited fd3 directly, which has no FileSystem service abstraction.
@@ -24,6 +24,7 @@ import { openSupervisorBootstrapLog } from "../supervisor/BootstrapLog.ts";
 class SupervisorReadinessError extends Data.TaggedError("SupervisorReadinessError")<{
   readonly message: string;
   readonly cause?: unknown;
+  readonly phase: "encode" | "write";
 }> {}
 
 interface ReadinessState {
@@ -60,19 +61,28 @@ const writeReadiness = (
           new SupervisorReadinessError({
             message: "Unable to encode supervisor readiness",
             cause,
+            phase: "encode",
           }),
       ),
     );
     yield* Effect.try({
       try: () => {
-        NodeFs.writeSync(3, `${encoded}\n`, undefined, "utf8");
-        NodeFs.closeSync(3);
-        readiness.written = true;
+        try {
+          NodeFs.writeSync(3, `${encoded}\n`, undefined, "utf8");
+          readiness.written = true;
+        } finally {
+          try {
+            NodeFs.closeSync(3);
+          } catch {
+            // The launcher may have already closed the readiness descriptor.
+          }
+        }
       },
       catch: (cause) =>
         new SupervisorReadinessError({
           message: "Unable to write supervisor readiness",
           cause,
+          phase: "write",
         }),
     });
   });
@@ -123,9 +133,14 @@ const runSupervisor = (args: SupervisorArgs, readiness: ReadinessState) =>
         maintenanceHandlers: supervisor.maintenanceHandlers,
         rpcHandlers: supervisor.rpcHandlers,
         onShutdownReady: supervisor.shutdownIfIdle,
+        onRpcPreface: () => supervisor.acquireRpcPreface,
       });
       yield* publishOwnership(lease);
-      yield* writeReadiness({ ok: true, stackId: args.stackId, ownerSessionId }, readiness);
+      yield* writeReadiness({ ok: true, stackId: args.stackId, ownerSessionId }, readiness).pipe(
+        Effect.catchTag("SupervisorReadinessError", (error) =>
+          error.phase === "write" ? Effect.void : Effect.fail(error),
+        ),
+      );
       yield* supervisor.shutdown;
     }),
   ).pipe(Effect.provide(NodeServices.layer));
@@ -133,10 +148,10 @@ const runSupervisor = (args: SupervisorArgs, readiness: ReadinessState) =>
 const parseSupervisorArgs = (argv: ReadonlyArray<string>) =>
   Schema.decodeEffect(Schema.fromJsonString(SupervisorArgsSchema))(argv[0] ?? "{}");
 
-export const runSupervisorProcess = (argv: ReadonlyArray<string>): Promise<void> => {
-  const readiness = { written: false } satisfies ReadinessState;
-  return Effect.runPromise(
-    parseSupervisorArgs(argv).pipe(
+export const runSupervisorProcess = (argv: ReadonlyArray<string>): Effect.Effect<void> =>
+  Effect.suspend(() => {
+    const readiness = { written: false } satisfies ReadinessState;
+    return parseSupervisorArgs(argv).pipe(
       Effect.tap((args) =>
         Effect.sync(() => {
           const log = openSupervisorBootstrapLog(args.stateRoot, args.stackId);
@@ -158,10 +173,12 @@ export const runSupervisorProcess = (argv: ReadonlyArray<string>): Promise<void>
         }),
       ),
       Effect.flatMap((args) => runSupervisor(args, readiness)),
-    ),
-  ).catch((error) => reportSupervisorFailure(error, readiness));
-};
+      Effect.catch((error) => Effect.sync(() => reportSupervisorFailure(error, readiness))),
+    );
+  });
 
 if (import.meta.main) {
-  await runSupervisorProcess(process.argv.slice(2));
+  NodeRuntime.runMain(runSupervisorProcess(process.argv.slice(2)), {
+    disableErrorReporting: true,
+  });
 }

@@ -12,7 +12,7 @@ import {
   Redacted,
   Schema,
 } from "effect";
-import { compileStack, type StackDefinition } from "../model/Compiler.ts";
+import { compileStack, seedServiceRegistry } from "../model/Compiler.ts";
 import { deriveStackId } from "../identity/Identity.ts";
 import { StackStateFormatUnsupportedError, StackStateInvalidError } from "../public/Errors.ts";
 import {
@@ -22,6 +22,8 @@ import {
   type PersistedStackState,
 } from "./StackStateStore.ts";
 import { removeLeaseIfHeld } from "./Ownership.ts";
+import { AUTH_JWT_SECRET_SLOT, resolveSecrets } from "./SecretStore.ts";
+import { ServiceInstanceIdSchema } from "../public/ServiceInstanceId.ts";
 
 const layer = NodeServices.layer;
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -33,16 +35,25 @@ const identity = {
   stackName: "default",
 } as const;
 
-const state = (definition?: StackDefinition): PersistedStackState => ({
-  format: "supabase-stack-state-v1",
+const state = (): PersistedStackState => ({
+  format: "supabase-stack-state-v2",
   identity,
   runtime: { kind: "native" },
-  desiredLifecycle: "stopped",
-  definition,
+  preparation: "on-demand",
+  security: {
+    jwt: {
+      issuer: null,
+      expirySeconds: 3600,
+      signing: { kind: "symmetric", secret: { slot: AUTH_JWT_SECRET_SLOT } },
+    },
+  },
+  listeners: {},
+  registry: { initialized: true, instances: [], defaultInstanceIds: {} },
   ports: [],
   privatePorts: [],
   secrets: {},
 });
+const instanceId = ServiceInstanceIdSchema.make("11111111-1111-4111-8111-111111111111");
 
 const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
@@ -76,7 +87,22 @@ const completeStateFixture = Effect.gen(function* () {
       },
     },
   });
-  const complete = state(compiled.definition);
+  const seeded = yield* seedServiceRegistry(
+    compiled.definition,
+    { projectRoot: identity.projectRoot, path, runtime: { kind: "native" } },
+    compiled.sourceConfig,
+    compiled.secrets,
+  );
+  const resolved = yield* resolveSecrets(
+    { declarations: seeded.secretSlots },
+    undefined,
+    "unconfigured",
+  );
+  const complete: PersistedStackState = {
+    ...state(),
+    registry: seeded.registry,
+    secrets: resolved.persisted,
+  };
   yield* store.initialize(stackId, complete);
   const encoded = yield* Schema.encodeEffect(PersistedStackStateSchema)(complete);
   return { fs, path, store, root, stackId, complete, encoded };
@@ -151,195 +177,80 @@ describe("atomic stack state", () => {
     ),
   );
 
-  it.live("round-trips a compiled complete definition", () =>
+  it.live("round-trips an initialized registry and its resolved secrets", () =>
     withPlatform(
       Effect.gen(function* () {
         const { store, stackId, complete } = yield* completeStateFixture;
-        expect(complete.definition?.preparation).toBe("on-demand");
+        expect(complete.preparation).toBe("on-demand");
         expect(yield* store.read(stackId)).toEqual(complete);
       }),
     ),
   );
 
-  it.live("normalizes legacy definitions without idle timeout fields", () =>
+  it.live("rejects malformed nested state documents without rewriting them", () =>
     withPlatform(
       Effect.gen(function* () {
         const { fs, path, store, root, stackId, encoded } = yield* completeStateFixture;
-        const legacy = structuredClone(encoded) as unknown as {
-          definition: { capabilities: Record<string, { idleTimeoutSeconds?: unknown }> };
-        };
-        for (const capability of Object.values(legacy.definition.capabilities))
-          delete capability.idleTimeoutSeconds;
-        yield* fs.writeFileString(path.join(root, stackId, "state.json"), jsonTextSync(legacy));
-
-        const result = yield* store.read(stackId);
-        if (result?.definition === undefined) return yield* Effect.die("definition missing");
-        for (const capability of Object.values(result.definition.capabilities))
-          expect(capability.idleTimeoutSeconds).toBe(false);
-      }),
-    ),
-  );
-
-  it.live("rejects malformed nested state documents", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const { fs, path, store, root, stackId, complete, encoded } = yield* completeStateFixture;
         const statePath = path.join(root, stackId, "state.json");
-        const persisted = yield* Schema.decodeEffect(
-          Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
-        )(yield* fs.readFileString(statePath));
-        expect(persisted).not.toHaveProperty("identity.stackId");
-        const nestedUnknown = {
-          ...encoded,
-          definition: {
-            ...encoded.definition,
-            capabilities: {
-              ...encoded.definition?.capabilities,
-              auth: {
-                ...encoded.definition?.capabilities.auth,
-                settings: {
-                  ...encoded.definition?.capabilities.auth.settings,
-                  email: {
-                    ...encoded.definition?.capabilities.auth.settings.email,
-                    template: {
-                      ...encoded.definition?.capabilities.auth.settings.email?.template,
-                      confirm: {
-                        ...encoded.definition?.capabilities.auth.settings.email?.template?.confirm,
-                        unknown: true,
+        const invalidDocuments = [
+          {
+            ...encoded,
+            registry: {
+              ...encoded.registry,
+              instances: encoded.registry.instances.map((instance) =>
+                instance.service === "auth"
+                  ? {
+                      ...instance,
+                      config: {
+                        ...instance.config,
+                        settings: { ...instance.config.settings, unknown: true },
                       },
-                    },
-                  },
-                },
-              },
+                    }
+                  : instance,
+              ),
             },
           },
-        };
-        yield* fs.writeFileString(statePath, yield* jsonText(nestedUnknown));
-        const unknownExit = yield* store.read(stackId).pipe(Effect.exit);
-        expect(errorOf(unknownExit)).toBeInstanceOf(StackStateInvalidError);
-
-        const oldSnapshot = {
-          ...encoded,
-          identity: { ...encoded.identity, stackId },
-          secrets: { preserved: { policy: "managed", value: "secret-value" } },
-          definition: {
-            ...encoded.definition,
-            capabilities: {
-              ...encoded.definition?.capabilities,
-              database: {
-                ...encoded.definition?.capabilities.database,
-                settings: {
-                  ...encoded.definition?.capabilities.database.settings,
-                  network_restrictions: { enabled: true, allowed_cidrs: ["10.0.0.0/8"] },
-                  ssl_enforcement: { enabled: true },
-                  vault: {},
-                },
-              },
-              rest: {
-                ...encoded.definition?.capabilities.rest,
-                settings: {
-                  ...encoded.definition?.capabilities.rest.settings,
-                  auto_expose_new_tables: true,
-                  tls: { enabled: false },
-                },
-              },
-              storage: {
-                ...encoded.definition?.capabilities.storage,
-                settings: {
-                  ...encoded.definition?.capabilities.storage.settings,
-                  analytics: { enabled: false },
-                },
-              },
-              analytics: {
-                ...encoded.definition?.capabilities.analytics,
-                settings: {
-                  ...encoded.definition?.capabilities.analytics.settings,
-                  vector_port: 9001,
-                },
-              },
+          {
+            ...encoded,
+            registry: {
+              ...encoded.registry,
+              instances: encoded.registry.instances.map((instance) =>
+                instance.service === "functions"
+                  ? {
+                      ...instance,
+                      config: {
+                        ...instance.config,
+                        settings: {
+                          ...instance.config.settings,
+                          functions: {
+                            "bad.slug": {
+                              enabled: true,
+                              verify_jwt: true,
+                              import_map: null,
+                              entrypoint: null,
+                              static_files: null,
+                              env: {},
+                            },
+                          },
+                        },
+                      },
+                    }
+                  : instance,
+              ),
             },
           },
-        };
-        yield* fs.writeFileString(statePath, yield* jsonText(oldSnapshot));
-        const recovered = yield* store.read(stackId);
-        expect(recovered).toEqual({ ...complete, secrets: oldSnapshot.secrets });
-        if (recovered === undefined) throw new Error("Expected recovered state");
-        yield* store.replace(stackId, recovered);
-        const rewritten = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
-          yield* fs.readFileString(statePath),
-        );
-        expect(rewritten).toEqual({ ...encoded, secrets: oldSnapshot.secrets });
-
-        const missingDefault = {
-          ...encoded,
-          definition: {
-            ...encoded.definition,
-            capabilities: {
-              ...encoded.definition?.capabilities,
-              functions: {
-                ...encoded.definition?.capabilities.functions,
-                settings: {
-                  ...encoded.definition?.capabilities.functions.settings,
-                  functions: {
-                    ...encoded.definition?.capabilities.functions.settings.functions,
-                    hello: {
-                      ...encoded.definition?.capabilities.functions.settings.functions?.hello,
-                      verify_jwt: undefined,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        };
-        yield* fs.writeFileString(statePath, yield* jsonText(missingDefault));
-        const missingDefaultExit = yield* store.read(stackId).pipe(Effect.exit);
-        expect(errorOf(missingDefaultExit)).toBeInstanceOf(StackStateInvalidError);
-
-        const invalidPreparation = {
-          ...encoded,
-          definition: { ...encoded.definition, preparation: "invalid" },
-        };
-        yield* fs.writeFileString(statePath, yield* jsonText(invalidPreparation));
-        const invalidPreparationExit = yield* store.read(stackId).pipe(Effect.exit);
-        expect(errorOf(invalidPreparationExit)).toBeInstanceOf(StackStateInvalidError);
-
-        const invalidRecordKey = {
-          ...encoded,
-          definition: {
-            ...encoded.definition,
-            capabilities: {
-              ...encoded.definition?.capabilities,
-              functions: {
-                ...encoded.definition?.capabilities.functions,
-                settings: {
-                  ...encoded.definition?.capabilities.functions.settings,
-                  functions: {
-                    "bad.slug": {
-                      enabled: true,
-                      verify_jwt: true,
-                      import_map: null,
-                      entrypoint: null,
-                      static_files: null,
-                      env: {},
-                    },
-                  },
-                },
-              },
-            },
-          },
-        };
-        yield* fs.writeFileString(statePath, yield* jsonText(invalidRecordKey));
-        const recordExit = yield* store.read(stackId).pipe(Effect.exit);
-        expect(errorOf(recordExit)).toBeInstanceOf(StackStateInvalidError);
-
-        const invalidSecret = {
-          ...encoded,
-          secrets: { "": { policy: "managed", value: "x" } },
-        };
-        yield* fs.writeFileString(statePath, yield* jsonText(invalidSecret));
-        const secretExit = yield* store.read(stackId).pipe(Effect.exit);
-        expect(errorOf(secretExit)).toBeInstanceOf(StackStateInvalidError);
+          { ...encoded, preparation: "invalid" },
+          { ...encoded, identity: { ...encoded.identity, stackId } },
+          { ...encoded, secrets: { "": { policy: "managed", value: "x" } } },
+        ];
+        for (const invalid of invalidDocuments) {
+          const text = yield* jsonText(invalid);
+          yield* fs.writeFileString(statePath, text);
+          expect(errorOf(yield* store.read(stackId).pipe(Effect.exit))).toBeInstanceOf(
+            StackStateInvalidError,
+          );
+          expect(yield* fs.readFileString(statePath)).toBe(text);
+        }
       }),
     ),
   );
@@ -359,8 +270,18 @@ describe("atomic stack state", () => {
         yield* store.initialize(stackId, before);
         const candidate = {
           ...before,
-          ports: [{ field: "api" as const, port: 23_100, intent: "exact" as const }],
-          privatePorts: [{ workloadId: "database:database", binding: "primary", port: 23_100 }],
+          ports: [
+            {
+              owner: "stack" as const,
+              binding: "api" as const,
+              address: "127.0.0.1",
+              port: 23_100,
+              intent: "exact" as const,
+            },
+          ],
+          privatePorts: [
+            { instanceId, workloadId: `${instanceId}:database`, binding: "primary", port: 23_100 },
+          ],
         };
         const result = yield* store.replace(stackId, candidate).pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
@@ -453,7 +374,7 @@ describe("atomic stack state", () => {
         yield* store.initialize(stackId, state());
         yield* fs.writeFileString(
           path.join(root, stackId, "state.json"),
-          yield* jsonText({ ...state(), format: "supabase-stack-state-v2" }),
+          yield* jsonText({ ...state(), format: "supabase-stack-state-v1" }),
         );
         const unsupported = yield* store.read(stackId).pipe(Effect.exit);
         expect(errorOf(unsupported)).toBeInstanceOf(StackStateFormatUnsupportedError);
@@ -462,7 +383,7 @@ describe("atomic stack state", () => {
           yield* jsonText({ ...state(), format: 1 }),
         );
         const malformed = yield* store.read(stackId).pipe(Effect.exit);
-        expect(errorOf(malformed)).toBeInstanceOf(StackStateInvalidError);
+        expect(errorOf(malformed)).toBeInstanceOf(StackStateFormatUnsupportedError);
       }),
     ),
   );
@@ -498,8 +419,16 @@ describe("atomic stack state", () => {
         const oldValue = state();
         const newValue = {
           ...oldValue,
-          desiredLifecycle: "running" as const,
-          ports: [{ field: "api" as const, port: 24_321, intent: "exact" as const }],
+          preparation: "background" as const,
+          ports: [
+            {
+              owner: "stack" as const,
+              binding: "api" as const,
+              address: "127.0.0.1",
+              port: 24_321,
+              intent: "exact" as const,
+            },
+          ],
           secrets: { "secret:test": { policy: "managed" as const, value: "new-value" } },
         };
         yield* store.initialize(stackId, oldValue);
@@ -514,6 +443,84 @@ describe("atomic stack state", () => {
         for (const observation of observations) {
           expect([oldValue, newValue]).toContainEqual(observation);
         }
+      }),
+    ),
+  );
+
+  it.live("serializes concurrent read-modify-write updates without losing fields", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+          prefix: "supabase-stack-update-",
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const stackId = yield* deriveStackId(identity);
+        yield* store.initialize(stackId, state());
+
+        yield* Effect.all(
+          [
+            store.update(stackId, (current) =>
+              Effect.succeed({
+                ...current,
+                ports: [
+                  {
+                    owner: "stack",
+                    binding: "api",
+                    address: "127.0.0.1",
+                    port: 24_321,
+                    intent: "exact",
+                  },
+                ],
+              }),
+            ),
+            store.update(stackId, (current) =>
+              Effect.succeed({
+                ...current,
+                privatePorts: [
+                  { instanceId, workloadId: `${instanceId}:rest`, binding: "http", port: 24_322 },
+                ],
+              }),
+            ),
+          ],
+          { concurrency: 2 },
+        );
+
+        expect(yield* store.read(stackId)).toMatchObject({
+          ports: [
+            { owner: "stack", binding: "api", address: "127.0.0.1", port: 24_321, intent: "exact" },
+          ],
+          privatePorts: [
+            { instanceId, workloadId: `${instanceId}:rest`, binding: "http", port: 24_322 },
+          ],
+        });
+      }),
+    ),
+  );
+
+  it.live("does not write when an update transform fails or state is missing", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+          prefix: "supabase-stack-update-invalid-",
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const stackId = yield* deriveStackId(identity);
+        const original = state();
+        yield* store.initialize(stackId, original);
+
+        const failed = yield* store
+          .update(stackId, () =>
+            Effect.fail(new StackStateInvalidError({ message: "invalid update" })),
+          )
+          .pipe(Effect.exit);
+        expect(errorOf(failed)).toBeInstanceOf(StackStateInvalidError);
+        expect(yield* store.read(stackId)).toEqual(original);
+
+        yield* store.cleanup(stackId);
+        const missing = yield* store
+          .update(stackId, (current) => Effect.succeed(current))
+          .pipe(Effect.exit);
+        expect(errorOf(missing)).toBeInstanceOf(StackStateInvalidError);
       }),
     ),
   );

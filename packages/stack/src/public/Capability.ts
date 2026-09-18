@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { ServiceInstanceIdSchema } from "./ServiceInstanceId.ts";
 
 export const CAPABILITY_NAMES = [
   "database",
@@ -31,6 +32,7 @@ export const ActivationModeSchema = Schema.Literals(["eager", "lazy"] as const);
 export type ActivationMode = Schema.Schema.Type<typeof ActivationModeSchema>;
 
 export const CapabilityStatusSchema = Schema.Struct({
+  id: ServiceInstanceIdSchema,
   name: CapabilityNameSchema,
   activation: ActivationModeSchema,
   state: CapabilityStateSchema,

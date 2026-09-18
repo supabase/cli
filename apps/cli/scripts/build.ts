@@ -4,7 +4,9 @@ import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
+import { Effect } from "effect";
+import { bundleServeMainTemplate as bundleCliServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
+import { bundleServeMainTemplate as bundleStackServeMainTemplate } from "../../../packages/stack/src/functions/serve-main-bundler.ts";
 import { OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "./bundle-externals.ts";
 import { darwinBinaries, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
@@ -88,7 +90,12 @@ const entrypoint = path.join(root, "apps/cli/src/main.ts");
 const distDir = path.join(root, "dist");
 const goSource = path.resolve(root, "apps/cli-go");
 const buildDefines = {
-  SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleServeMainTemplate()),
+  SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(
+    await Effect.runPromise(bundleCliServeMainTemplate),
+  ),
+  SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(
+    await Effect.runPromise(bundleStackServeMainTemplate),
+  ),
   "process.env.SUPABASE_CLI_POSTHOG_KEY": JSON.stringify(process.env.POSTHOG_API_KEY ?? ""),
   "process.env.SUPABASE_CLI_POSTHOG_HOST": JSON.stringify(process.env.POSTHOG_ENDPOINT ?? ""),
 };

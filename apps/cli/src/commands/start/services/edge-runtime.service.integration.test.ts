@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { edgeRuntimeNofileUlimit } from "../../../shared/stack-constants.ts";
-import { ConfigProvider, Deferred, Effect, Exit, Sink, Stream } from "effect";
+import { ConfigProvider, Deferred, Effect, Exit, Layer, Sink, Stream } from "effect";
 import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { afterEach, beforeEach, vi } from "vitest";
 
@@ -100,6 +101,12 @@ function baseInput(workdir: string): EdgeRuntimeBringUpInput {
   };
 }
 
+function startEdgeRuntimeContainerForTest(input: EdgeRuntimeBringUpInput) {
+  return startStackEdgeRuntimeContainer(input).pipe(
+    Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+  );
+}
+
 function envEntries(runCall: {
   args: ReadonlyArray<string>;
   env?: Readonly<Record<string, string>>;
@@ -133,7 +140,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         ...baseInput(tempWorkdir.current),
         projectEnvValues: { BITBUCKET_CLONE_DIR: tempWorkdir.current },
       };
-      yield* startStackEdgeRuntimeContainer(input).pipe(
+      yield* startEdgeRuntimeContainerForTest(input).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
         Effect.provide(out.layer),
         Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnvRecord({})),
@@ -151,7 +158,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startEdgeRuntimeContainerForTest(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -168,7 +175,7 @@ describe("startStackEdgeRuntimeContainer", () => {
       const mock = mockDockerSpawner();
       const out = mockOutput();
 
-      yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+      yield* startEdgeRuntimeContainerForTest(baseInput(tempWorkdir.current)).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
         Effect.provide(out.layer),
       );
@@ -193,7 +200,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startEdgeRuntimeContainerForTest(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -211,7 +218,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startEdgeRuntimeContainerForTest(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -242,7 +249,7 @@ describe("startStackEdgeRuntimeContainer", () => {
       const out = mockOutput();
       const input = baseInput(tempWorkdir.current);
 
-      yield* startStackEdgeRuntimeContainer({
+      yield* startEdgeRuntimeContainerForTest({
         ...input,
         configDeclaredFunctions: { [slug]: fnConfig },
         configFunctions: { [slug]: fnConfig },
@@ -262,7 +269,7 @@ describe("startStackEdgeRuntimeContainer", () => {
       const mock = mockDockerSpawner();
       const out = mockOutput();
 
-      yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+      yield* startEdgeRuntimeContainerForTest(baseInput(tempWorkdir.current)).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
         Effect.provide(out.layer),
       );
@@ -278,7 +285,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startEdgeRuntimeContainerForTest(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -300,7 +307,7 @@ describe("startStackEdgeRuntimeContainer", () => {
           image: "registry.example.com/supabase/edge-runtime:v1.99.9",
         };
 
-        yield* startStackEdgeRuntimeContainer(input).pipe(
+        yield* startEdgeRuntimeContainerForTest(input).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -319,7 +326,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startEdgeRuntimeContainerForTest(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -370,7 +377,7 @@ describe("startStackEdgeRuntimeContainer", () => {
           image: "ghcr.io/supabase/cli/edge-runtime:v1.74.2",
         };
 
-        yield* startStackEdgeRuntimeContainer(input).pipe(
+        yield* startEdgeRuntimeContainerForTest(input).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -413,7 +420,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         );
         const out = mockOutput();
 
-        const error = yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        const error = yield* startEdgeRuntimeContainerForTest(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
           Effect.flip,
@@ -441,7 +448,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         );
         const out = mockOutput();
 
-        const error = yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        const error = yield* startEdgeRuntimeContainerForTest(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
           Effect.flip,
@@ -463,7 +470,9 @@ describe("startStackEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        const started = yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        const started = yield* startEdgeRuntimeContainerForTest(
+          baseInput(tempWorkdir.current),
+        ).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -500,7 +509,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         };
 
         const exit = yield* Effect.exit(
-          startStackEdgeRuntimeContainer(input).pipe(
+          startEdgeRuntimeContainerForTest(input).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
             Effect.provide(out.layer),
           ),
@@ -518,7 +527,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startEdgeRuntimeContainerForTest(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -536,7 +545,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startEdgeRuntimeContainerForTest(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );

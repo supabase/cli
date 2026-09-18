@@ -30,8 +30,11 @@ removed `DeclarativeSeam.execInherit` seam — see those commands' own
 
 When the `experimental.stack` feature flag is on (`SUPABASE_EXPERIMENTAL_STACK=1|0` env
 precedence, same rules as [`docs/stack-commands.md`](../../../../docs/stack-commands.md)), the
-local path calls `resetDatabase` on the project stack instead of the container recreate
-described above. After the reset, buckets are seeded — reusing the `seed buckets` local path —
+local path uses the project stack's registered-instance reset instead of the container recreate
+described above. The reset keeps the designated primary instance identity, creates a matching
+temporary database baseline, replaces the primary databases through managed SQL, and resumes the
+same previously started dependent instances after migrations and seed complete. After the reset,
+buckets are seeded — reusing the `seed buckets` local path —
 when Storage is `ready`, `dormant`, `starting`, or `stopping`; the gateway holds requests during
 lazy activation and wakes a stopping capability after cleanup, so neither state waits. The command
 never fails the reset for a Storage problem: an unusable capability state
@@ -51,7 +54,8 @@ the stack runtime's own storage workload/catalog setup responsibility; bucket cr
 `objects_path` upload from `[storage.buckets]` remain this command's (via `seed buckets`)
 responsibility — the runtime never creates buckets itself. Durable stack state lives under
 `$SUPABASE_HOME/managed/stacks/<stackId>/`. A missing stack reports "The local stack is not
-running." Config, including `functions/.env`, is validated before the wipe.
+running." Config, including `functions/.env`, is validated before the wipe. Storage files and
+unrelated registered instances remain in place.
 
 ## Files Read
 
@@ -66,7 +70,7 @@ running." Config, including `functions/.env`, is validated before the wipe.
 | seed files from `--sql-paths` or `[db.seed].sql_paths`                                       | SQL        | when seeding is enabled (not `--no-seed`); `--sql-paths` overrides config                                                                      |
 | schema files from `[db.migrations].schema_paths`                                             | SQL        | when the `--experimental` schema-files branch is taken, either target (see Notes)                                                              |
 | `<workdir>/supabase/buckets/`                                                                | files      | local path, when storage is up and `[storage.buckets]` configure objects                                                                       |
-| `<workdir>/supabase/roles.sql`                                                               | SQL        | local PG15 path only, via the reused `startSetupLocalDatabase` pipeline — missing file tolerated                                               |
+| `<workdir>/supabase/roles.sql`                                                               | SQL        | local PG15 path and stack baseline setup — missing file tolerated                                                                              |
 | `~/.docker/config.json` + Docker context store (`contexts/meta/<sha256(context)>/meta.json`) | JSON       | resolving the daemon endpoint for the local path's running probe (in-process); also read by the `docker`/`podman` CLI itself for registry auth |
 
 ## Files Written
@@ -76,10 +80,18 @@ running." Config, including `functions/.env`, is validated before the wipe.
 | `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | `--linked` (post-run cache)       |
 | `~/.supabase/telemetry.json`                     | JSON   | always (post-run telemetry flush) |
 
-On the local path, the native recreate additionally recreates the
+On the non-stack local path, the native recreate additionally recreates the
 `supabase_db_<project>` container/volume (PG15) or the `postgres`/`_supabase`
 databases in place (PG14), and applies the initial schema (`SetupLocalDatabase`
 equivalent, PG15) or `InitSchema14`/`ApplyApiPrivileges` (PG14).
+
+On the stack local path, reset keeps the registered primary instance and its
+owned storage. It creates a fresh registered database baseline, uses managed
+SQL to recreate the primary `postgres` and `_supabase` databases, then streams
+the baseline into `postgres` with matching PostgreSQL clients. The catalog
+overlay, migrations, and seed run against the same primary instance afterward.
+Managed cluster roles remain owned by the primary instance across this logical reset;
+custom roles declared in `roles.sql` are dropped before the catalog overlay reapplies that file.
 
 ## Subprocesses
 
@@ -93,6 +105,7 @@ equivalent, PG15) or `InitSchema14`/`ApplyApiPrivileges` (PG14).
 | `docker restart <storage\|auth\|realtime\|pooler container>`                                                                 | local path, both PG14 and PG15        | concurrent satellite-container restart, not-found tolerated per service                                                                                                                                                                                   |
 | `docker container inspect <kong container>` + `docker exec <kong> kong reload --nginx-conf /home/kong/custom_nginx.template` | local path, both PG14 and PG15        | reload Kong so it re-resolves the restarted containers' addresses (issue #6016) — the `--nginx-conf` flag is load-bearing: a bare `kong reload` regenerates nginx.conf from Kong's default template and drops the custom `email_templates` server (#6059) |
 | `docker container inspect supabase_storage_<project>`                                                                        | local path                            | storage-health gate before bucket seeding                                                                                                                                                                                                                 |
+| `pg_dump --format=plain ... \| psql ...`                                                                                     | stack local path                      | stream the fresh registered baseline into the designated primary through managed SQL endpoints; native clients are version-checked, container tools use host networking                                                                                   |
 
 No subprocess delegation remains on either target — the remote path's
 `--experimental` schema-files apply (formerly delegated to a `supabase-go db reset`
@@ -113,13 +126,13 @@ child) is fully native as of CLI-1958.
 
 ### Local path (native, in TS)
 
-**PG15+:** the container/volume are removed and recreated (see "Subprocesses"), then
+**Non-stack PG15+:** the container/volume are removed and recreated (see "Subprocesses"), then
 the reused `startSetupLocalDatabase` pipeline runs the initial schema (as
 one-shot Docker jobs, not SQL over a session), `ApplyApiPrivileges`, a vault upsert,
 a `roles.sql` seed, and `MigrateAndSeed` (migrations `≤ --version`, seed unless
 `--no-seed`) — over a fresh host-facing Postgres connection.
 
-**PG14:** connects as `supabase_admin` to `template1` and disconnects other clients
+**Non-stack PG14:** connects as `supabase_admin` to `template1` and disconnects other clients
 (`ALTER DATABASE ... ALLOW_CONNECTIONS false` ×2, `pg_terminate_backend`, then polls
 `pg_replication_slots` on a 1-second backoff up to 10 times — a failure here is
 swallowed unless it's a PgError whose code isn't `3D000`/`invalid_catalog_name`), then
@@ -130,7 +143,7 @@ path) + `ApplyApiPrivileges`. After the container itself is restarted (see below
 reconnects as `postgres`/`postgres` for `MigrateAndSeed` (migrations `≤ --version`,
 seed unless `--no-seed`).
 
-**Both branches** then restart the storage/auth/realtime/pooler containers
+**Non-stack branches** then restart the storage/auth/realtime/pooler containers
 concurrently (per-service "not found" tolerated, no health wait afterward — "those
 services may be excluded from starting"), then reload Kong (`docker exec <kong> kong
 reload`; skipped, not failed, when the gateway is absent or stopped) so its nginx
@@ -138,11 +151,12 @@ re-resolves the restarted containers' addresses — otherwise routes to a moved
 container keep returning 502 after the reset succeeds (issue #6016). **A Kong reload
 failure fails the WHOLE command** (unlike `functions serve`'s best-effort reload),
 with an actionable `Suggestion:` line (`docker restart <kong>` / `docker logs <kong>`).
-Bucket objects are then seeded over the Storage gateway (reusing the `seed buckets`
-local path), gated on a native storage-health check: absent (any inspect error, not
-just "not found") skips buckets without failing; present-but-unhealthy waits up to a
-**hardcoded 30 seconds** (independent of `db.health_timeout`) and, on timeout, **fails
-the whole reset** (not just "skip buckets").
+For the non-stack local path, bucket objects are then seeded over the Storage gateway (reusing the
+`seed buckets` local path), gated on a native storage-health check: absent (any inspect error, not
+just "not found") skips buckets without failing; present-but-unhealthy waits up to a **hardcoded
+30 seconds** (independent of `db.health_timeout`) and, on timeout, **fails the whole reset** (not
+just "skip buckets"). The stack path uses the gateway's lazy activation and wake-up behavior
+described above instead of this container health wait.
 
 ## API Routes
 

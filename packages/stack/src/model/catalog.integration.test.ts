@@ -1,7 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
-import { compileStack } from "./Compiler.ts";
+import { Cause, Effect, Exit, Option, Path } from "effect";
+import { compileStack, seedServiceRegistry, createExecutionPlan } from "./Compiler.ts";
 import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import { workload } from "./CapabilityModule.ts";
 import {
@@ -16,17 +16,25 @@ import { StackPreparationError } from "../public/Errors.ts";
 const databaseCatalog = catalogEntryFor("database:database");
 const defaultDatabaseMajor = databaseCatalog.defaultVersion.split(".")[0];
 
-const compile = (config: Parameters<typeof compileStack>[0]["config"]) =>
-  compileStack({ projectRoot: "/tmp/catalog-project", runtime: { kind: "native" }, config }).pipe(
-    Effect.provide(NodeServices.layer),
-  );
+const compile = (
+  config: Parameters<typeof compileStack>[0]["config"],
+  runtime: Parameters<typeof compileStack>[0]["runtime"] = { kind: "native" },
+) =>
+  Effect.gen(function* () {
+    const context = { projectRoot: "/tmp/catalog-project", runtime, path: yield* Path.Path };
+    const compiled = yield* compileStack({ ...context, config });
+    const seeded = yield* seedServiceRegistry(
+      compiled.definition,
+      context,
+      config ?? {},
+      compiled.secrets,
+    );
+    const executionPlan = yield* createExecutionPlan(runtime, seeded.registry);
+    return { ...compiled, registry: seeded.registry, executionPlan };
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const compileContainer = (config: Parameters<typeof compileStack>[0]["config"]) =>
-  compileStack({
-    projectRoot: "/tmp/catalog-project",
-    runtime: { kind: "container", engine: "docker" },
-    config,
-  }).pipe(Effect.provide(NodeServices.layer));
+  compile(config, { kind: "container", engine: "docker" });
 
 const expectWorkload = <T>(value: T | undefined, description: string): T => {
   expect(value, description).toBeDefined();
@@ -100,7 +108,7 @@ describe("complete workload catalog", () => {
         const capability = defaults.definition.capabilities[name];
         if (!capability.enabled) continue;
         const workload =
-          defaults.executionPlan.workloads.find((entry) => entry.id === `${name}:${name}`) ??
+          defaults.executionPlan.workloads.find((entry) => entry.recipeId === `${name}:${name}`) ??
           defaults.executionPlan.workloads.find((entry) => entry.capability === name);
         const selected = expectWorkload(workload, `${name} workload`);
         expect(selected.artifacts.native.release).toBe(capability.version);
@@ -110,7 +118,7 @@ describe("complete workload catalog", () => {
         capabilities: { database: { version: defaultDatabaseMajor } },
       });
       const database = databaseAlias.executionPlan.workloads.find(
-        (entry) => entry.id === "database:database",
+        (entry) => entry.recipeId === "database:database",
       );
       const selected = expectWorkload(database, "database workload");
       expect(databaseAlias.definition.capabilities.database.version).toBe(
@@ -152,7 +160,7 @@ describe("complete workload catalog", () => {
       for (const id of ["studio:pgmeta", "analytics:vector"] as const) {
         const catalog = WORKLOAD_CATALOG[id];
         const selectedCatalog = expectWorkload(catalog, `${id} catalog entry`);
-        const workload = result.executionPlan.workloads.find((entry) => entry.id === id);
+        const workload = result.executionPlan.workloads.find((entry) => entry.recipeId === id);
         const selectedWorkload = expectWorkload(workload, `${id} workload`);
         expect(selectedWorkload.artifacts.native.release).toBe(selectedCatalog.defaultVersion);
         const artifact = yield* resolveNativeArtifactForWorkload(selectedWorkload, {
@@ -172,16 +180,27 @@ describe("complete workload catalog", () => {
   it.live("enables companion workloads by default and honors explicit disablement", () =>
     Effect.gen(function* () {
       const defaults = yield* compile({});
-      expect(defaults.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy")).toBe(
-        true,
-      );
-      expect(defaults.executionPlan.workloads.some(({ id }) => id === "analytics:vector")).toBe(
-        true,
-      );
-      expect(defaults.executionPlan.workloads).toEqual(
+      expect(
+        defaults.executionPlan.workloads.some(({ recipeId }) => recipeId === "storage:imgproxy"),
+      ).toBe(true);
+      expect(
+        defaults.executionPlan.workloads.some(({ recipeId }) => recipeId === "analytics:vector"),
+      ).toBe(true);
+      expect(
+        defaults.executionPlan.workloads.map((entry) => ({
+          recipeId: entry.recipeId,
+          dependencies: entry.dependencies.map(
+            (id) =>
+              expectWorkload(
+                defaults.executionPlan.workloads.find((dependency) => dependency.id === id),
+                "workload dependency",
+              ).recipeId,
+          ),
+        })),
+      ).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            id: "storage:storage",
+            recipeId: "storage:storage",
             dependencies: ["database:database", "storage:imgproxy"],
           }),
         ]),
@@ -193,25 +212,36 @@ describe("complete workload catalog", () => {
           analytics: { settings: {} },
         },
       });
-      expect(enabled.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy")).toBe(
-        true,
-      );
-      expect(enabled.executionPlan.workloads.some(({ id }) => id === "analytics:vector")).toBe(
-        true,
-      );
-      expect(enabled.executionPlan.workloads).toEqual(
+      expect(
+        enabled.executionPlan.workloads.some(({ recipeId }) => recipeId === "storage:imgproxy"),
+      ).toBe(true);
+      expect(
+        enabled.executionPlan.workloads.some(({ recipeId }) => recipeId === "analytics:vector"),
+      ).toBe(true);
+      expect(
+        enabled.executionPlan.workloads.map((entry) => ({
+          recipeId: entry.recipeId,
+          dependencies: entry.dependencies.map(
+            (id) =>
+              expectWorkload(
+                enabled.executionPlan.workloads.find((dependency) => dependency.id === id),
+                "workload dependency",
+              ).recipeId,
+          ),
+        })),
+      ).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            id: "storage:storage",
+            recipeId: "storage:storage",
             dependencies: ["database:database", "storage:imgproxy"],
           }),
-          expect.objectContaining({ id: "storage:imgproxy", dependencies: [] }),
+          expect.objectContaining({ recipeId: "storage:imgproxy", dependencies: [] }),
           expect.objectContaining({
-            id: "analytics:analytics",
+            recipeId: "analytics:analytics",
             dependencies: ["database:database"],
           }),
           expect.objectContaining({
-            id: "analytics:vector",
+            recipeId: "analytics:vector",
             dependencies: ["analytics:analytics"],
           }),
         ]),
@@ -224,12 +254,12 @@ describe("complete workload catalog", () => {
           studio: { enabled: false },
         },
       });
-      expect(disabled.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy")).toBe(
-        false,
-      );
-      expect(disabled.executionPlan.workloads.some(({ id }) => id === "analytics:vector")).toBe(
-        false,
-      );
+      expect(
+        disabled.executionPlan.workloads.some(({ recipeId }) => recipeId === "storage:imgproxy"),
+      ).toBe(false);
+      expect(
+        disabled.executionPlan.workloads.some(({ recipeId }) => recipeId === "analytics:vector"),
+      ).toBe(false);
     }),
   );
 
@@ -242,7 +272,10 @@ describe("complete workload catalog", () => {
         },
       });
       const images = new Map(
-        result.executionPlan.workloads.map((entry) => [entry.id, entry.artifacts.container.image]),
+        result.executionPlan.workloads.map((entry) => [
+          entry.recipeId,
+          entry.artifacts.container.image,
+        ]),
       );
       expect(images.get("mail:mail")).toBe(catalogReleaseFor("mail:mail")?.containerImage);
       expect(images.get("storage:imgproxy")).toBe(
@@ -260,7 +293,7 @@ describe("complete workload catalog", () => {
         capabilities: { database: { version: defaultDatabaseMajor } },
       });
       const database = compiled.executionPlan.workloads.find(
-        ({ id }) => id === "database:database",
+        ({ recipeId }) => recipeId === "database:database",
       );
       const artifact = yield* resolveNativeArtifactForWorkload(
         expectWorkload(database, "database workload"),
@@ -280,7 +313,7 @@ describe("complete workload catalog", () => {
     Effect.gen(function* () {
       const compiled = yield* compile({});
       const database = compiled.executionPlan.workloads.find(
-        ({ id }) => id === "database:database",
+        ({ recipeId }) => recipeId === "database:database",
       );
       const selected = expectWorkload(database, "database workload");
       const unsupported = {
@@ -307,7 +340,7 @@ describe("complete workload catalog", () => {
     return Effect.gen(function* () {
       const compiled = yield* compile({});
       const database = compiled.executionPlan.workloads.find(
-        ({ id }) => id === "database:database",
+        ({ recipeId }) => recipeId === "database:database",
       );
       const failed = yield* resolveNativeArtifactForWorkload(
         expectWorkload(database, "database workload"),

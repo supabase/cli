@@ -1,16 +1,13 @@
 import { Config, Context, Crypto, Effect, FileSystem, Option, Path, Stream } from "effect";
 import { ChildProcess } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
-import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
+import type { RuntimeArtifactInput } from "../preparation/RuntimeArtifacts.ts";
 import {
   ContainerEngineError,
   PostgresClientError,
   type PostgresClientRunError,
 } from "../public/Errors.ts";
-import {
-  resolveEphemeralPostgresRelease,
-  type EphemeralPostgresRelease,
-} from "../public/EphemeralPostgres.ts";
+import { resolvePostgresRelease, type PostgresRelease } from "../model/PostgresRelease.ts";
 import type { StackRuntime, StackRuntimePreference } from "../public/Runtime.ts";
 import {
   makeProductionRuntimeArtifactPreparer,
@@ -60,7 +57,7 @@ export class PostgresClientPreparer extends Context.Service<
   {
     readonly prepare: (
       runtime: StackRuntime,
-      release: EphemeralPostgresRelease,
+      release: PostgresRelease,
     ) => Effect.Effect<PreparedPostgresClient, RuntimeArtifactPreparationError>;
   }
 >()("@supabase/stack/PostgresClientPreparer") {}
@@ -69,12 +66,10 @@ const plannedWorkload = (
   version: string,
   image: string,
   runtime: StackRuntime,
-): PlannedWorkload => ({
+): RuntimeArtifactInput => ({
   id: DATABASE_WORKLOAD_ID,
+  recipeId: DATABASE_WORKLOAD_ID,
   capability: "database",
-  bootstrap: "database",
-  dependencies: [],
-  readiness: { portField: "database" },
   artifacts: {
     native: { kind: "native", release: version },
     container: { kind: "container", image },
@@ -109,7 +104,7 @@ const resolvedRuntime = (
 
 const defaultPrepare = (
   runtime: StackRuntime,
-  release: EphemeralPostgresRelease,
+  release: PostgresRelease,
 ): Effect.Effect<
   PreparedPostgresClient,
   RuntimeArtifactPreparationError,
@@ -137,7 +132,7 @@ const defaultPrepare = (
 
 const prepareClient = (
   runtime: StackRuntime,
-  release: EphemeralPostgresRelease,
+  release: PostgresRelease,
 ): Effect.Effect<
   PreparedPostgresClient,
   RuntimeArtifactPreparationError,
@@ -321,7 +316,7 @@ export const runPostgresClient = <E>(
   Effect.gen(function* () {
     if (options.argv.length === 0)
       return yield* new PostgresClientError({ message: "Postgres client argv must not be empty." });
-    const release = yield* resolveEphemeralPostgresRelease(options.version);
+    const release = yield* resolvePostgresRelease(options.version);
     const runtime = yield* resolvedRuntime(options.runtime);
     const prepared = yield* prepareClient(runtime, release);
     return runtime.kind === "native"

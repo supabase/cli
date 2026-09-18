@@ -29,11 +29,11 @@ inspection available, appears as `Config warning:` in text output, and as
 `config_drift.message` with `status: "unavailable"` in JSON.
 
 Text output includes identity, runtime, owner, lifecycle, readiness,
-endpoints, and config drift. JSON output nests only the identity fields under
+endpoints, registered service instance IDs/names and phases, and config drift. JSON output nests only the identity fields under
 `identity`; runtime, lifecycle, readiness, endpoints, and config drift remain
 top-level fields.
 
-Each capability includes its current state and may include a diagnostic when
+Each registered service instance includes its ID, optional name, service kind, intent, and phase. Each capability includes its current state and may include a diagnostic when
 cleanup or runtime readiness failed. When recovery is required, JSON adds a
 `recovery` object with the `operation` (`stop` or `destroy`) and its message.
 Text output includes that message and the matching recovery command; stop

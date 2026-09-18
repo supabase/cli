@@ -1,27 +1,39 @@
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- Effect FileSystem exposes stat but no no-follow lstat; the resolver fixture must verify symlink rejection.
-import { lstat } from "node:fs/promises";
 import { NodeServices } from "@effect/platform-node";
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Path, PlatformError } from "effect";
 import { describe, expect, it } from "@effect/vitest";
 import {
   createWorkerServicePathResolver,
   packageJsonContainedFor,
+  resolveFunctionConfigs,
   resolveFunctionConfig,
   type FunctionFileSystem,
   FunctionFileSystemError,
 } from "./serve-main-resolver.ts";
 const makeNodeFileSystem = (fs: FileSystem.FileSystem): FunctionFileSystem => ({
   lstat: (path) =>
-    Effect.tryPromise({
-      try: () => lstat(path),
-      catch: (cause) => new FunctionFileSystemError({ cause }),
-    }).pipe(
-      Effect.map((info) => ({
-        isDirectory: info.isDirectory(),
-        isFile: info.isFile(),
-        isSymbolicLink: info.isSymbolicLink(),
-      })),
-    ),
+    Effect.gen(function* () {
+      const info = yield* fs.stat(path);
+      const isSymbolicLink = yield* fs.readLink(path).pipe(
+        Effect.as(true),
+        Effect.catchTag("PlatformError", (error) => {
+          if (
+            error.reason instanceof PlatformError.SystemError &&
+            error.reason._tag === "Unknown" &&
+            typeof error.reason.cause === "object" &&
+            error.reason.cause !== null &&
+            "code" in error.reason.cause &&
+            error.reason.cause.code === "EINVAL"
+          )
+            return Effect.succeed(false);
+          return Effect.fail(error);
+        }),
+      );
+      return {
+        isDirectory: info.type === "Directory",
+        isFile: info.type === "File",
+        isSymbolicLink,
+      };
+    }).pipe(Effect.mapError((cause) => new FunctionFileSystemError({ cause }))),
   realPath: (path) =>
     fs.realPath(path).pipe(Effect.mapError((cause) => new FunctionFileSystemError({ cause }))),
   readDirectory: (path) =>
@@ -49,6 +61,36 @@ describe("Edge Runtime worker service paths", () => {
   });
 });
 describe("Edge Runtime request-time function resolver", () => {
+  it.live("resolves mapless and jsonc functions while omitting disabled missing functions", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const nodeFileSystem = makeNodeFileSystem(fs);
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-functions-resolver-maps-" });
+      const mapless = path.join(root, "mapless");
+      const jsonc = path.join(root, "jsonc");
+      yield* fs.makeDirectory(mapless, { recursive: true });
+      yield* fs.makeDirectory(jsonc, { recursive: true });
+      yield* fs.writeFileString(path.join(mapless, "index.ts"), "export default 1");
+      yield* fs.writeFileString(path.join(jsonc, "index.ts"), "export default 2");
+      yield* fs.writeFileString(path.join(jsonc, "deno.jsonc"), "{ /* comment */ }");
+      const canonicalRoot = yield* fs.realPath(root);
+      const resolved = yield* resolveFunctionConfigs({
+        root,
+        overrides: { $default: { verifyJWT: false }, disabled: { enabled: false } },
+        fs: nodeFileSystem,
+      });
+      expect(resolved.map(({ slug }) => slug).sort()).toEqual(["jsonc", "mapless"]);
+      expect(resolved.find(({ slug }) => slug === "mapless")?.config).toMatchObject({
+        importMapPath: "",
+        verifyJWT: false,
+      });
+      expect(resolved.find(({ slug }) => slug === "jsonc")?.config.importMapPath).toBe(
+        path.join(canonicalRoot, "jsonc", "deno.jsonc"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("resolves current filesystem paths for create/delete", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -89,6 +131,69 @@ describe("Edge Runtime request-time function resolver", () => {
       expect(
         yield* resolveFunctionConfig({ root, slug: "hello", overrides: {}, fs: nodeFileSystem }),
       ).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+  it.live("accepts explicitly configured files outside the functions root", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const nodeFileSystem = makeNodeFileSystem(fs);
+      const path = yield* Path.Path;
+      const project = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-functions-resolver-external-",
+      });
+      const root = path.join(project, "supabase", "functions");
+      const hello = path.join(root, "hello");
+      const external = path.join(project, "functions-extra");
+      yield* fs.makeDirectory(hello, { recursive: true });
+      yield* fs.makeDirectory(external, { recursive: true });
+      yield* fs.writeFileString(path.join(external, "index.ts"), "export default 1");
+      yield* fs.writeFileString(path.join(external, "deno.json"), "{}");
+      yield* fs.writeFileString(path.join(external, "asset.txt"), "asset");
+      const canonicalProject = yield* fs.realPath(project);
+      const config = yield* resolveFunctionConfig({
+        root,
+        slug: "hello",
+        overrides: {
+          hello: {
+            entrypointPath: "../../../functions-extra/index.ts",
+            importMapPath: "../../../functions-extra/deno.json",
+            staticFiles: ["../../../functions-extra/asset.txt"],
+          },
+        },
+        fs: nodeFileSystem,
+      });
+      expect(config).toMatchObject({
+        entrypointPath: path.join(canonicalProject, "functions-extra", "index.ts"),
+        importMapPath: path.join(canonicalProject, "functions-extra", "deno.json"),
+        staticFiles: [path.join(canonicalProject, "functions-extra", "asset.txt")],
+      });
+      const configOnly = yield* resolveFunctionConfig({
+        root,
+        slug: "config-only",
+        overrides: {
+          "config-only": {
+            entrypointPath: "../../../functions-extra/index.ts",
+          },
+        },
+        fs: nodeFileSystem,
+      });
+      expect(configOnly?.entrypointPath).toBe(
+        path.join(canonicalProject, "functions-extra", "index.ts"),
+      );
+      const globalExternal = yield* resolveFunctionConfig({
+        root,
+        slug: "global-external",
+        overrides: {
+          $default: { importMapRoot: "../../functions-extra/deno.json" },
+          "global-external": {
+            entrypointPath: "../../../functions-extra/index.ts",
+          },
+        },
+        fs: nodeFileSystem,
+      });
+      expect(globalExternal?.importMapPath).toBe(
+        path.join(canonicalProject, "functions-extra", "deno.json"),
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
   it.live("discovers a contained package.json for a function without an import map", () =>
@@ -138,10 +243,10 @@ describe("Edge Runtime request-time function resolver", () => {
         overrides: {
           hello: {
             enabled: true,
-            verify_jwt: false,
-            import_map: "",
-            entrypoint: "",
-            static_files: [],
+            verifyJWT: false,
+            importMapPath: "",
+            entrypointPath: "",
+            staticFiles: [],
             env: {},
           },
         },
@@ -159,11 +264,10 @@ describe("Edge Runtime request-time function resolver", () => {
         overrides: {
           hello: {
             enabled: true,
-            verify_jwt: false,
-            import_map: "",
+            verifyJWT: false,
+            importMapPath: "",
             entrypointPath: "custom.ts",
-            entrypoint: "index.ts",
-            static_files: [],
+            staticFiles: [],
             env: {},
           },
         },
@@ -214,12 +318,12 @@ describe("Edge Runtime request-time function resolver", () => {
       yield* fs.writeFileString(path.join(created, "index.ts"), "export default 2");
       yield* fs.writeFileString(path.join(root, "shared-deno.json"), "{}");
       const defaults = {
-        verify_jwt: false,
-        import_map_root: "shared-deno.json",
+        verifyJWT: false,
+        importMapRoot: "shared-deno.json",
       };
       const overrides = {
         $default: defaults,
-        hello: { verify_jwt: true },
+        hello: { verifyJWT: true },
       };
       expect(
         yield* resolveFunctionConfig({ root, slug: "created", overrides, fs: nodeFileSystem }),
@@ -254,8 +358,8 @@ describe("Edge Runtime request-time function resolver", () => {
           root,
           slug: "hello",
           overrides: {
-            $default: { import_map_root: "shared-deno.json" },
-            hello: { import_map: "custom-deno.json" },
+            $default: { importMapRoot: "shared-deno.json" },
+            hello: { importMapPath: "custom-deno.json" },
           },
           fs: nodeFileSystem,
         }),
@@ -338,7 +442,7 @@ describe("Edge Runtime request-time function resolver", () => {
         yield* resolveFunctionConfig({
           root,
           slug: "safe",
-          overrides: { safe: { entrypoint: "../outside.ts" } },
+          overrides: { safe: { entrypointPath: "../outside.ts" } },
           fs: nodeFileSystem,
         }),
       ).toBeUndefined();
@@ -382,7 +486,7 @@ describe("Edge Runtime request-time function resolver", () => {
         yield* resolveFunctionConfig({
           root,
           slug: "hello",
-          overrides: { hello: { static_files: ["public/*.txt"] } },
+          overrides: { hello: { staticFiles: ["public/*.txt"] } },
           fs: nodeFileSystem,
         }),
       ).toMatchObject({ staticFiles: [path.join(canonicalRoot, "hello", "public", "*.txt")] });
@@ -392,7 +496,7 @@ describe("Edge Runtime request-time function resolver", () => {
         yield* resolveFunctionConfig({
           root,
           slug: "hello",
-          overrides: { hello: { static_files: ["public/*.txt"] } },
+          overrides: { hello: { staticFiles: ["public/*.txt"] } },
           fs: nodeFileSystem,
         }),
       ).toBeUndefined();

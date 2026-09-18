@@ -436,6 +436,11 @@ describe("test db integration", () => {
   ) => {
     const stack: EffectStack = {
       id: PROVE_STACK_ID,
+      services: {
+        create: unusedProve,
+        get: unusedProve,
+        list: Effect.succeed([]),
+      },
       status: Effect.succeed({
         id: PROVE_STACK_ID,
         lifecycle: "running",
@@ -445,13 +450,16 @@ describe("test db integration", () => {
         versions: { database: databaseVersion },
         capabilities: [],
         artifacts: [],
+        instances: [],
       }),
       credentials: Effect.die("unused"),
+      followStatus: Stream.empty,
       prepare: unusedProve,
       start: unusedProve,
-      stop: Effect.die("unused"),
-      destroy: Effect.die("unused"),
-      resetDatabase: Effect.die("unused"),
+      sleep: () => Effect.die("unused"),
+      stop: () => Effect.die("unused"),
+      restart: () => Effect.die("unused"),
+      destroy: () => Effect.die("unused"),
       logs: unusedProve,
       followLogs: () => Stream.empty,
     };

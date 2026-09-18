@@ -51,6 +51,7 @@ import {
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
+import { stackApiLayer } from "../../../command-internal/stack-api.ts";
 import type { MigrationSquashFlags } from "./squash.command.ts";
 import { migrationSquash } from "./squash.handler.ts";
 
@@ -345,6 +346,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
     debugLogger,
     alwaysReadyHttpClientLayer,
+    stackApiLayer.pipe(Layer.provide(BunServices.layer)),
     mockCommandSettings({ workdir }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(DebugFlag, false),

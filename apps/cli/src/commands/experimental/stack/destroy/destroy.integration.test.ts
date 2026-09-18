@@ -60,15 +60,23 @@ function setup(options: {
     status: Effect.die("unused"),
     credentials: Effect.die("unused"),
     prepare: () => Effect.die("unused"),
+    services: {
+      create: () => Effect.die("services.create not used"),
+      get: () => Effect.die("services.get not used"),
+      list: Effect.succeed([]),
+    },
     start: () => Effect.die("unused"),
-    stop: Effect.die("unused"),
-    destroy: options.destroyContainerFailure
-      ? Effect.fail(new ContainerEngineError({ message: "container engine unavailable" }))
-      : options.destroyFailure
-        ? Effect.fail(new StackDestructionError({ message: "destroy failed" }))
-        : Effect.sync(() => void state.destroyed++),
-    resetDatabase: Effect.die("unused"),
+    sleep: () => Effect.die("sleep not used"),
+    stop: () => Effect.die("unused"),
+    restart: () => Effect.die("restart not used"),
+    destroy: () =>
+      options.destroyContainerFailure
+        ? Effect.fail(new ContainerEngineError({ message: "container engine unavailable" }))
+        : options.destroyFailure
+          ? Effect.fail(new StackDestructionError({ message: "destroy failed" }))
+          : Effect.sync(() => void state.destroyed++),
     logs: () => Effect.die("unused"),
+    followStatus: Stream.empty,
     followLogs: () => Stream.empty,
   };
   return {

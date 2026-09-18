@@ -2,9 +2,11 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Path } from "effect";
 import { StackIdSchema } from "../public/StackId.ts";
+import { ServiceInstanceIdSchema } from "../public/ServiceInstanceId.ts";
 import { makeRuntimeEnvFileOwner } from "./RuntimeEnvFile.ts";
 
 const stackId = StackIdSchema.make("e".repeat(64));
+const instanceId = ServiceInstanceIdSchema.make("primary");
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
@@ -24,6 +26,7 @@ describe("runtime environment file owner", () => {
         const path = yield* Path.Path;
         const { fs, owner } = yield* setupEnvOwner("stack-env-");
         const first = yield* owner.write({
+          instanceId,
           workloadId: "database:database",
           values: { Z_LAST: "two", A_FIRST: "one" },
         });
@@ -39,10 +42,12 @@ describe("runtime environment file owner", () => {
       Effect.gen(function* () {
         const { fs, owner } = yield* setupEnvOwner("stack-env-replace-");
         const first = yield* owner.write({
+          instanceId,
           workloadId: "database:database",
           values: { A_FIRST: "one" },
         });
         const second = yield* owner.write({
+          instanceId,
           workloadId: "database:database",
           values: { A_FIRST: "updated" },
         });
@@ -59,6 +64,7 @@ describe("runtime environment file owner", () => {
         const secret = "very-secret-value";
         const invalid = yield* owner
           .write({
+            instanceId,
             workloadId: "database:database",
             values: { VALID: `${secret}\nINJECTED` },
           })
@@ -75,7 +81,7 @@ describe("runtime environment file owner", () => {
       Effect.gen(function* () {
         const { owner } = yield* setupEnvOwner("stack-env-invalid-name-");
         const invalid = yield* owner
-          .write({ workloadId: "database:database", values: { "BAD-NAME": "ok" } })
+          .write({ instanceId, workloadId: "database:database", values: { "BAD-NAME": "ok" } })
           .pipe(Effect.exit);
         expect(Exit.isFailure(invalid)).toBe(true);
       }),
@@ -87,7 +93,7 @@ describe("runtime environment file owner", () => {
       Effect.gen(function* () {
         const { owner } = yield* setupEnvOwner("stack-env-invalid-workload-");
         const invalid = yield* owner
-          .write({ workloadId: "../escape", values: { SAFE: "ok" } })
+          .write({ instanceId, workloadId: "../escape", values: { SAFE: "ok" } })
           .pipe(Effect.exit);
         expect(Exit.isFailure(invalid)).toBe(true);
       }),
@@ -100,6 +106,7 @@ describe("runtime environment file owner", () => {
         const path = yield* Path.Path;
         const { fs, root, owner } = yield* setupEnvOwner("stack-env-cleanup-");
         const file = yield* owner.write({
+          instanceId,
           workloadId: "rest:rest",
           values: { X: "y" },
         });
@@ -115,15 +122,49 @@ describe("runtime environment file owner", () => {
     ),
   );
 
+  it.live("cleans one exact workload file", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const { fs, owner } = yield* setupEnvOwner("stack-env-file-cleanup-");
+        const first = yield* owner.write({
+          instanceId,
+          workloadId: "rest:rest:init-operation",
+          values: { X: "first" },
+        });
+        const second = yield* owner.write({
+          instanceId,
+          workloadId: "auth:auth:init-operation",
+          values: { X: "second" },
+        });
+
+        yield* owner.cleanupFile({
+          instanceId,
+          workloadId: "rest:rest:init-operation",
+        });
+
+        expect(yield* fs.exists(first)).toBe(false);
+        expect(yield* fs.exists(second)).toBe(true);
+      }),
+    ),
+  );
+
   it.live("recreates a workload file after cleanup", () =>
     withPlatform(
       Effect.gen(function* () {
         const { fs, owner } = yield* setupEnvOwner("stack-env-recreate-");
-        const original = yield* owner.write({ workloadId: "rest:rest", values: { X: "y" } });
+        const original = yield* owner.write({
+          instanceId,
+          workloadId: "rest:rest",
+          values: { X: "y" },
+        });
         expect(yield* fs.exists(original)).toBe(true);
         yield* owner.cleanupAll;
         expect(yield* fs.exists(original)).toBe(false);
-        const recreated = yield* owner.write({ workloadId: "rest:rest", values: { X: "z" } });
+        const recreated = yield* owner.write({
+          instanceId,
+          workloadId: "rest:rest",
+          values: { X: "z" },
+        });
         expect(yield* fs.readFileString(recreated)).toBe("X=z\n");
       }),
     ),
@@ -135,8 +176,8 @@ describe("runtime environment file owner", () => {
         const { fs, owner } = yield* setupEnvOwner("stack-env-concurrent-");
         const files = yield* Effect.all(
           [
-            owner.write({ workloadId: "rest:rest", values: { A: "one" } }),
-            owner.write({ workloadId: "auth:auth", values: { B: "two" } }),
+            owner.write({ instanceId, workloadId: "rest:rest", values: { A: "one" } }),
+            owner.write({ instanceId, workloadId: "auth:auth", values: { B: "two" } }),
           ],
           { concurrency: "unbounded" },
         );

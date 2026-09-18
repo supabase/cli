@@ -137,11 +137,7 @@ export const stackRestart = Effect.fn("experimental.stack.restart")(function* (
       });
     const stack = yield* api.openStack(id).pipe(Effect.mapError(mapStackError));
     const task = yield* output.task("Restarting local Supabase stack...");
-    yield* stack.stop.pipe(
-      Effect.mapError(mapStackError),
-      Effect.tapError((error) => task.fail(error.message)),
-    );
-    const status = yield* stack.start().pipe(
+    const status = yield* stack.restart().pipe(
       Effect.mapError(mapStackError),
       Effect.tapError((error) => task.fail(error.message)),
       Effect.tap(() => task.clear()),
