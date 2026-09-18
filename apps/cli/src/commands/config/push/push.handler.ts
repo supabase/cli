@@ -309,7 +309,8 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     const cost = yield* getCostMatrix(ref);
 
     // `promptYesNo` scans piped stdin on a non-TTY before falling back to the default.
-    const defaultProceed = tty.stdinIsTty && output.interactive && output.format === "text";
+    const defaultProceed =
+      yes || (tty.stdinIsTty && output.interactive && output.format === "text");
     const keep = (name: string) =>
       Effect.gen(function* () {
         const item = cost.get(name);
@@ -318,9 +319,11 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
             ? `Do you want to push ${name} config to remote?`
             : `Enabling ${item.name} will cost you ${item.price}. Keep it enabled?`;
         const confirmed = yield* confirm(title, defaultProceed);
-        if (!confirmed && output.format === "text" && tty.stdinIsTty && !output.interactive) {
+        if (!confirmed && output.format === "text" && (!tty.stdinIsTty || !output.interactive)) {
           yield* output.raw(
-            `Skipped ${name}: confirmation unavailable with redirected output. Pass --yes (or set SUPABASE_YES) to approve.\n`,
+            tty.stdinIsTty
+              ? `Skipped ${name}: confirmation unavailable with redirected output. Pass --yes (or set SUPABASE_YES) to approve.\n`
+              : `Skipped ${name}: no affirmative confirmation received. Pass --yes (or set SUPABASE_YES) to approve.\n`,
             "stderr",
           );
         }

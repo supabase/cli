@@ -217,11 +217,14 @@ own; `[group-write]` is an undeclared companion the endpoint required alongside 
 declared change, sent at its schema default because the read didn't report the
 project's current value for it. Secret values never appear in output. Every block ends
 on a blank line. Experimental prints `Enabling webhooks for project: <ref>`. The
-per-service confirmations render `<title> [Y/n] ` in interactive text output and
-`<title> [y/N] ` for piped text input. `--yes` echoes `y` after the applicable
-prompt. Piped answers also echo the question and answer to stderr in machine modes,
+per-service confirmations use a clack confirm widget with a yes default in interactive
+text output; piped text input renders `<title> [y/N] `. For resource confirmations,
+`--yes` renders `<title> [Y/n] y` in every output mode and TTY shape. Piped answers also echo the question and answer to stderr in machine modes,
 matching `--yes`; stdout remains structured. With TTY stdin and redirected text stdout,
 no prompt is rendered and a skipped message explains how to approve with `--yes`.
+Non-TTY text declines also print `Skipped <name>: no affirmative confirmation received.
+Pass --yes (or set SUPABASE_YES) to approve.` on stderr, including empty/invalid input.
+Interactive declines do not print this unattended recovery hint.
 Resource declines still exit **0**; only the branch confirmation gate
 described above fails.
 

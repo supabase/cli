@@ -561,6 +561,39 @@ max_rows = 1000
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("interactive text decline skips without an unattended recovery hint", () => {
+    const { layer, out, api } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 2000\n',
+      confirm: [false],
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ projectRef: Option.none() });
+      expect(api.requests.some((r) => r.method === "PATCH")).toBe(false);
+      expect(out.promptConfirmCalls).toHaveLength(1);
+      expect(out.stderrText).not.toContain("Skipped api:");
+    }).pipe(Effect.provide(layer));
+  });
+
+  for (const format of ["text", "json", "stream-json"] as const) {
+    it.live(`${format} --yes keeps the affirmative echo on piped stdin`, () => {
+      const { layer, out, api } = setup({
+        toml: 'project_id = "test"\n[api]\nmax_rows = 2000\n',
+        format,
+        yes: true,
+        stdinIsTty: false,
+        pipedAnswers: ["n"],
+      });
+      return Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
+        expect(out.stderrText).toContain("Do you want to push api config to remote? [Y/n] y\n");
+        expect(out.stderrText).not.toContain("Skipped api:");
+      }).pipe(Effect.provide(layer));
+    });
+  }
+
   it.live("skips changes on empty non-TTY stdin, echoing the prompt", () => {
     const { layer, api, out } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
@@ -572,6 +605,9 @@ max_rows = 1000
         false,
       );
       expect(out.stderrText).toContain("Do you want to push api config to remote? [y/N] \n");
+      expect(out.stderrText).toContain(
+        "Skipped api: no affirmative confirmation received. Pass --yes",
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -587,6 +623,9 @@ max_rows = 1000
         false,
       );
       expect(out.stderrText).toContain("Do you want to push api config to remote? [y/N] n");
+      expect(out.stderrText).toContain(
+        "Skipped api: no affirmative confirmation received. Pass --yes",
+      );
     }).pipe(Effect.provide(layer));
   });
 
