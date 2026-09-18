@@ -359,6 +359,7 @@ MigrationVaultError
 MigrationsReadError
 MissingComputeExposureError
 MissingComputeNameError
+NativeFailure
 NetworkBansEnvNotSupportedError
 NetworkBansGetNetworkError
 NetworkBansGetUnexpectedStatusError

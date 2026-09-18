@@ -6,6 +6,11 @@
   },
   "ignorePatterns": [
     "**",
+    "!apps/cli/src/shared/functions/functions-docker.ts",
+    "!apps/cli/src/shared/functions/functions-docker.unit.test.ts",
+    "!apps/cli/src/shared/functions/serve.ts",
+    "!apps/cli/src/shared/functions/serve.unit.test.ts",
+
     "!packages/stack/**",
     "!apps/cli/src/commands/backups/**",
     "!apps/cli/src/commands/bootstrap/**",

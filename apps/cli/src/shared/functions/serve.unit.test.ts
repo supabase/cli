@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { nativeFailure } from "./functions-docker.ts";
+import { it } from "@effect/vitest";
+import { Effect } from "effect";
+import { describe, expect } from "vitest";
 
 import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
 import { buildServeEntrypointCommand } from "./serve.ts";
@@ -15,10 +18,15 @@ describe("buildServeEntrypointCommand", () => {
     expect(script).toContain(". /root/env.sh\nexec edge-runtime start");
   });
 
-  it("keeps the spawned command short even with the real bundled template", async () => {
-    const bundled = await bundleServeMainTemplate();
-    const script = buildServeEntrypointCommand(["edge-runtime", "start"]);
-    expect(bundled.length).toBeGreaterThan(20_000);
-    expect(script.length).toBeLessThan(128);
+  it.effect("keeps the spawned command short even with the real bundled template", () => {
+    return Effect.gen(function* () {
+      const bundled = yield* Effect.tryPromise({
+        try: () => bundleServeMainTemplate(),
+        catch: nativeFailure,
+      });
+      const script = buildServeEntrypointCommand(["edge-runtime", "start"]);
+      expect(bundled.length).toBeGreaterThan(20_000);
+      expect(script.length).toBeLessThan(128);
+    });
   });
 });
