@@ -1,3 +1,4 @@
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -6,7 +7,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { Data, Effect, Exit } from "effect";
+import { Data, Effect, Exit, Stream } from "effect";
 import {
   noteStackCliProjectHome,
   registerTempHome,
@@ -745,3 +746,44 @@ export function requireCliSuccess(
     );
   }
 }
+
+class DockerCommandError extends Data.TaggedError("DockerCommandError")<{
+  readonly message: string;
+  readonly stdout: string;
+  readonly stderr: string;
+}> {}
+
+/** Owns a Docker CLI process and drains its output while it runs. */
+export const runDockerEffect = (
+  args: ReadonlyArray<string>,
+  options: { readonly timeout?: number } = {},
+) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make("docker", args, {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    );
+    const [exitCode, stdout, stderr] = yield* Effect.all(
+      [
+        child.exitCode,
+        Stream.mkString(Stream.decodeText(child.stdout)),
+        Stream.mkString(Stream.decodeText(child.stderr)),
+      ],
+      { concurrency: "unbounded" },
+    );
+    if (exitCode !== 0) {
+      return yield* new DockerCommandError({
+        message: `docker ${args.join(" ")} exited ${exitCode}: ${stderr}`,
+        stdout,
+        stderr,
+      });
+    }
+    return { stdout, stderr };
+  }).pipe(
+    (effect) => (options.timeout === undefined ? effect : Effect.timeout(effect, options.timeout)),
+    Effect.scoped,
+  );

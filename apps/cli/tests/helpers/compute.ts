@@ -353,6 +353,7 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       return CommandSettings.of({
+        startContainerEnvValues: {},
         profile: "supabase",
         profileEnvValue: Option.none(),
         supabaseHome: path.join(workdir, ".supabase"),
