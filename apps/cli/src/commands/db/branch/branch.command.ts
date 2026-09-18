@@ -3,6 +3,7 @@ import { removedCommand } from "../../../command-internal/removed-command.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 
 const REMOVED_SUGGESTION =
   "Local database branches are no longer supported. For hosted preview branches, see `supabase branches --help`.";
@@ -21,6 +22,7 @@ function removedBranchLeaf(name: string, argDescription: string) {
       removedCommand(REMOVED_SUGGESTION).pipe(withCommandTelemetry(), withJsonErrorHandling),
     ),
     Command.provide(commandRuntimeLayer(["db", "branch", name])),
+    Command.provide(telemetryStateLayer),
   );
 }
 
@@ -35,6 +37,7 @@ const dbBranchListCommand = Command.make("list", {}).pipe(
     removedCommand(REMOVED_SUGGESTION).pipe(withCommandTelemetry(), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["db", "branch", "list"])),
+  Command.provide(telemetryStateLayer),
 );
 
 export const dbBranchCommand = Command.make("branch").pipe(

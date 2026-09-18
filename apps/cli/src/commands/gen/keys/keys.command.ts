@@ -3,6 +3,7 @@ import { removedCommand } from "../../../command-internal/removed-command.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -24,4 +25,5 @@ export const genKeysCommand = Command.make("keys", config).pipe(
     ).pipe(withCommandTelemetry(), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["gen", "keys"])),
+  Command.provide(telemetryStateLayer),
 );

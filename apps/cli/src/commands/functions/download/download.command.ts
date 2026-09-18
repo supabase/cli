@@ -24,9 +24,11 @@ const config = {
     Flag.withDefault(true),
     Flag.withHidden,
   ),
+  // Kept parsed (and hidden) only so using it produces an actionable removal error instead of
+  // an unknown-flag parse error; see download.handler.ts.
   legacyBundle: Flag.boolean("legacy-bundle").pipe(
-    Flag.withDescription("Use legacy bundling."),
-    Flag.withDefault(false),
+    Flag.withDescription("Removed: use --use-api instead."),
+    Flag.optional,
     Flag.withHidden,
   ),
 } as const;

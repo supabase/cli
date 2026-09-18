@@ -16,7 +16,7 @@ import type { FunctionsDownloadFlags } from "./download.command.ts";
 export const functionsDownload = Effect.fn("functions.download")(function* (
   flags: FunctionsDownloadFlags,
 ) {
-  if (flags.legacyBundle) {
+  if (Option.isSome(flags.legacyBundle)) {
     return yield* removedFlag(
       "--legacy-bundle",
       "Retry with `supabase functions download --use-api <slug>` to unbundle server-side without Docker.",

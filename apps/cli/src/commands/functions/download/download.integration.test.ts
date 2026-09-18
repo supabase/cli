@@ -153,7 +153,7 @@ const baseFlags: FunctionsDownloadFlags = {
   projectRef: Option.none(),
   useApi: false,
   useDocker: false,
-  legacyBundle: false,
+  legacyBundle: Option.none(),
 };
 
 function multipartResponse(request: Parameters<typeof HttpClientResponse.fromWeb>[0]) {
@@ -1638,7 +1638,7 @@ describe("functions download", () => {
       return Effect.gen(function* () {
         const error = yield* functionsDownload({
           ...baseFlags,
-          legacyBundle: true,
+          legacyBundle: Option.some(true),
         }).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(RemovedSurfaceError);
@@ -1651,6 +1651,35 @@ describe("functions download", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.live("rejects --legacy-bundle=false the same as an explicit true value", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi();
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      }),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "download", "hello-world", "--legacy-bundle=false"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* functionsDownload({
+        ...baseFlags,
+        legacyBundle: Option.some(false),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(RemovedSurfaceError);
+      if (!(error instanceof RemovedSurfaceError)) {
+        throw new Error(`unexpected error: ${String(error)}`);
+      }
+      expect(error.kind).toBe("flag");
+      expect(api.requests).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
 
   describe("Config.Validate / dotenv / env-override parity (CLI-1963)", () => {
     it.live(

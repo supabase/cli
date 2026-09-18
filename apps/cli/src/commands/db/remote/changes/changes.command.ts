@@ -3,6 +3,7 @@ import { removedCommand } from "../../../../command-internal/removed-command.ts"
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
 
 const config = {
   schema: Flag.string("schema").pipe(
@@ -35,4 +36,5 @@ export const dbRemoteChangesCommand = Command.make("changes", config).pipe(
     ),
   ),
   Command.provide(commandRuntimeLayer(["db", "remote", "changes"])),
+  Command.provide(telemetryStateLayer),
 );

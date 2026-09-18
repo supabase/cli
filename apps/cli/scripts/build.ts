@@ -282,7 +282,7 @@ async function buildMuslBinaries() {
       });
 
       // The Go binary is fully static (CGO_ENABLED=0), so the glibc build works on musl too;
-      // copy it into the musl package so GoProxy finds supabase-go there.
+      // copy it into the musl package since musl has no native Go build of its own.
       const glibcTarget = TARGETS.find(
         (candidate) => "nfpmArch" in candidate && candidate.nfpmArch === target.nfpmArch,
       );

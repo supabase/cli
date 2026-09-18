@@ -81,7 +81,7 @@ interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies 
   readonly styleEmphasis?: (text: string) => string;
   /**
    * Optional shell-specific styling hook for the command suggested inside
-   * {@link suggestLegacyBundle} — same isolation rationale as {@link styleEmphasis}.
+   * {@link suggestUseApiRetry} — same isolation rationale as {@link styleEmphasis}.
    */
   readonly styleAqua?: (text: string) => string;
   /**
@@ -803,7 +803,7 @@ const downloadEszipBody = Effect.fnUntraced(function* (
   );
 });
 
-function suggestLegacyBundle(
+function suggestUseApiRetry(
   slug: string,
   styleAqua: (text: string) => string = (text) => text,
 ): string {
@@ -827,7 +827,7 @@ function suggestDenoV2(styleEmphasis: (text: string) => string = (text) => text)
 function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
     Object.assign(new Error(describeContainerCliFailure(cause)), {
-      suggestion: suggestLegacyBundle(slug, styleAqua),
+      suggestion: suggestUseApiRetry(slug, styleAqua),
     });
 }
 
@@ -840,7 +840,7 @@ function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => 
 function withDockerStepFailure(step: string, slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
     Object.assign(new Error(`${step}: ${describeContainerCliFailure(cause)}`), {
-      suggestion: suggestLegacyBundle(slug, styleAqua),
+      suggestion: suggestUseApiRetry(slug, styleAqua),
     });
 }
 
@@ -1015,7 +1015,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
           .split(/\r?\n/)
           .some((line) => line.trim().toLowerCase() === "invalid eszip v2");
       const suggestion =
-        (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") + suggestLegacyBundle(slug, styleAqua);
+        (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") + suggestUseApiRetry(slug, styleAqua);
       return yield* Effect.fail(
         Object.assign(new Error(`error running container: exit ${result.exitCode}`), {
           suggestion,

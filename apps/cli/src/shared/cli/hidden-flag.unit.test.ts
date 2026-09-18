@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { BunServices } from "@effect/platform-bun";
 import { CliOutput, Command, type HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
@@ -17,7 +17,13 @@ import { startCommand } from "../../commands/start/start.command.ts";
 import { stopCommand } from "../../commands/stop/stop.command.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { RemovedSurfaceError } from "../../command-internal/removed-command.ts";
-import { mockAnalytics, mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
+import {
+  mockAnalytics,
+  mockOutput,
+  mockProcessControl,
+  mockTelemetryRuntime,
+} from "../../../tests/helpers/mocks.ts";
+import { useTempWorkdir, withEnvVar } from "../../../tests/helpers/command-mocks.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 
 interface CommandImpl {
@@ -42,7 +48,11 @@ const testRoot = Command.make("supabase").pipe(
   Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
-/** Satisfies a tombstoned command's `withCommandTelemetry`/`withJsonErrorHandling` requirements. */
+/**
+ * Satisfies a tombstoned command's `withCommandTelemetry`/`withJsonErrorHandling` requirements,
+ * plus the `TelemetryRuntime` its own `Command.provide(telemetryStateLayer)` needs to construct
+ * `TelemetryState`.
+ */
 function tombstoneRuntimeLayer() {
   const out = mockOutput({ format: "text" });
   const analytics = mockAnalytics();
@@ -51,6 +61,7 @@ function tombstoneRuntimeLayer() {
     out.layer,
     analytics.layer,
     processControl.layer,
+    mockTelemetryRuntime(),
     BunServices.layer,
     CliOutput.layer(textCliOutputFormatter()),
   );
@@ -182,7 +193,7 @@ describe("native hidden flags", () => {
       expect.objectContaining({ preview: true }),
       expect.objectContaining({ backup: false }),
       expect.objectContaining({ useDocker: false }),
-      expect.objectContaining({ legacyBundle: true }),
+      expect.objectContaining({ legacyBundle: Option.some(true) }),
       expect.objectContaining({ useDocker: false }),
       expect.objectContaining({ legacyBundle: true }),
       expect.objectContaining({ all: false }),
@@ -209,6 +220,10 @@ describe("native hidden flags", () => {
 });
 
 describe("hidden subcommands", () => {
+  // Pins the tombstoned commands' real `telemetryStateLayer` flush (`Command.provide`) to a temp
+  // dir, so it never touches the host machine's `~/.supabase/telemetry.json`.
+  const tombstoneHome = useTempWorkdir("supabase-hidden-flag-tombstone-");
+
   it("omits hidden branch and db subcommands from help docs", () => {
     const branchesHelp = buildHelpDoc(branchesCommand);
     expect(branchesHelp.subcommands?.[0]?.commands.map((command) => command.name)).toEqual([
@@ -242,17 +257,22 @@ describe("hidden subcommands", () => {
     const causeOf = (exit: unknown) =>
       (exit as { cause: { reasons: Array<{ _tag: string; error?: unknown }> } }).cause;
 
+    const runTombstone = (args: ReadonlyArray<string>) =>
+      withEnvVar(
+        "SUPABASE_HOME",
+        tombstoneHome.current,
+        Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        ),
+      ) as Effect.Effect<unknown, never, never>;
+
     for (const args of [
       ["db", "branch", "list"],
       ["db", "remote", "changes"],
       ["gen", "keys"],
     ]) {
-      const exit = await Effect.runPromise(
-        Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
-          Effect.provide(layer),
-          Effect.exit,
-        ) as Effect.Effect<unknown, never, never>,
-      );
+      const exit = await Effect.runPromise(runTombstone(args));
       expect((exit as { _tag: string })._tag).toBe("Failure");
       expect(causeOf(exit).reasons[0]?.error).toBeInstanceOf(RemovedSurfaceError);
     }
