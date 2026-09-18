@@ -38,7 +38,7 @@ describe("migration command integration", () => {
     );
     // No subcommand is proxied, so the plural alias is proven at the parser:
     // `migrations squash --nope` must fail with squash's own unknown-flag error,
-    // before the command's runtime layer ever builds.
+    // scoped to the squash subcommand rather than the root.
     return Effect.gen(function* () {
       const exit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })([
         "migrations",
