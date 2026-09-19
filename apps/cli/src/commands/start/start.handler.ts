@@ -5,7 +5,7 @@
 import { BunPath } from "@effect/platform-bun";
 import { inferFunctionsManifest } from "@supabase/config/effect";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
-import { Effect, FileSystem, Option, Path, Result } from "effect";
+import { Config, Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -182,6 +182,17 @@ import { buildImgproxyContainerSpec } from "./services/imgproxy.service.ts";
 import { buildPgMetaContainerSpec } from "./services/pg-meta.service.ts";
 import { buildStudioContainerSpec } from "./services/studio.service.ts";
 import { buildSupavisorContainerSpec } from "./services/supavisor.service.ts";
+
+const resolveAmbientEnvValues = Effect.fnUntraced(function* (keys: ReadonlyArray<string>) {
+  const entries = yield* Effect.forEach(keys, (key) =>
+    Config.option(Config.string(key)).pipe(
+      Effect.map((value) => [key, Option.getOrUndefined(value)] as const),
+    ),
+  );
+  return Object.fromEntries(
+    entries.filter((entry): entry is readonly [string, string] => entry[1] !== undefined),
+  );
+});
 
 /** The analytics API key's only possible value; never configurable. */
 const ANALYTICS_API_KEY = "api-key";
@@ -1158,6 +1169,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         }
 
         case "kong": {
+          const ambientEnvValues = yield* resolveAmbientEnvValues(["KONG_NGINX_WORKER_PROCESSES"]);
           return {
             spec: buildKongContainerSpec(
               {
@@ -1186,7 +1198,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                 poolerId: poolerContainerName,
                 nginxWorkerProcesses: resolveKongNginxWorkerProcesses(
                   projectEnvValues,
-                  cliSettings.startContainerEnvValues,
+                  ambientEnvValues,
                 ),
                 emailTemplateMounts: kongEmailTemplateMounts,
               },
@@ -1253,7 +1265,13 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             }),
           };
 
-        case "storage":
+        case "storage": {
+          const ambientEnvValues = yield* resolveAmbientEnvValues([
+            "VECTOR_ENABLED",
+            "VECTOR_BUCKET_PROVIDER",
+            "VECTOR_STORE_MIGRATIONS_ENABLED",
+            "VECTOR_DATABASE_URL",
+          ]);
           return {
             spec: buildStorageContainerSpec({
               projectId,
@@ -1273,9 +1291,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               anonKey: values.anonKey,
               serviceRoleKey: values.serviceRoleKey,
               projectEnvValues,
-              ambientEnvValues: cliSettings.startContainerEnvValues,
+              ambientEnvValues,
             }),
           };
+        }
 
         case "imgproxy":
           return { spec: buildImgproxyContainerSpec({ projectId, networkId, image }) };

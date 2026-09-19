@@ -616,36 +616,4 @@ describe("commandSettingsLayer", () => {
       expect(config.userAgent).toMatch(/^SupabaseCLI\//);
     }).pipe(Effect.provide(makeLayer({ cwd: tempRoot }))),
   );
-  it.effect("captures raw start-container overrides, including empty strings", () =>
-    Effect.gen(function* () {
-      const settings = yield* CommandSettings;
-      expect(settings.startContainerEnvValues).toEqual({
-        KONG_NGINX_WORKER_PROCESSES: "",
-        VECTOR_ENABLED: "false",
-        VECTOR_BUCKET_PROVIDER: "custom",
-        VECTOR_STORE_MIGRATIONS_ENABLED: "",
-        VECTOR_DATABASE_URL: "postgres://custom",
-      });
-    }).pipe(
-      Effect.provide(
-        makeLayer({
-          cwd: tempRoot,
-          env: {
-            KONG_NGINX_WORKER_PROCESSES: "",
-            VECTOR_ENABLED: "false",
-            VECTOR_BUCKET_PROVIDER: "custom",
-            VECTOR_STORE_MIGRATIONS_ENABLED: "",
-            VECTOR_DATABASE_URL: "postgres://custom",
-          },
-        }),
-      ),
-    ),
-  );
-
-  it.effect("keeps absent start-container overrides absent", () =>
-    Effect.gen(function* () {
-      const settings = yield* CommandSettings;
-      expect(settings.startContainerEnvValues).toEqual({});
-    }).pipe(Effect.provide(makeLayer({ cwd: tempRoot, env: {} }))),
-  );
 });

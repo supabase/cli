@@ -1,5 +1,3 @@
-import { cliConfigProviderLayer } from "../../shared/config/cli-config-provider.layer.ts";
-import { resolveStartContainerEnvValues } from "../../config/command-settings.layer.ts";
 import { generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -22,6 +20,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { vi } from "vitest";
+import { cliConfigProviderLayer } from "../../shared/config/cli-config-provider.layer.ts";
 
 import {
   mockAnalytics,
@@ -452,7 +451,6 @@ function fakeDbSession() {
 }
 
 interface SetupOpts {
-  readonly startContainerEnvValues?: Readonly<Record<string, string>>;
   readonly format?: "text" | "json" | "stream-json";
   /** Piped stdin for the seeding confirmations; `start` must never consume it. */
   readonly stdinInput?: string;
@@ -486,10 +484,7 @@ function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockTelemetryStateTracked();
   const analytics = mockAnalytics();
-  const cliSettings = mockCommandSettings({
-    workdir,
-    startContainerEnvValues: opts.startContainerEnvValues ?? {},
-  });
+  const cliSettings = mockCommandSettings({ workdir });
   const child = mockStartContainerCliSpawner(opts.route ?? defaultRoute(), {
     failSpawn: opts.failSpawn,
     onSecretCopy: opts.onSecretCopy,
@@ -528,13 +523,6 @@ function setup(opts: SetupOpts = {}) {
 
   return { workdir, out, telemetry, analytics, child, dbSession, layer };
 }
-
-const setupWithCapturedEnv = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
-  const startContainerEnvValues = yield* resolveStartContainerEnvValues().pipe(
-    Effect.provide(cliConfigProviderLayer),
-  );
-  return setup({ ...opts, startContainerEnvValues });
-});
 
 /**
  * Maps each of the 13 valid `--exclude` keys to the container-name suffix(es) that key skips,
@@ -3749,20 +3737,6 @@ content_path = "./supabase/templates/custom_notice.html"
     );
     for (const scenario of [
       {
-        name: "forwards captured ambient values",
-        snapshot: true,
-        ambient,
-        project: undefined,
-        expected: ambient,
-      },
-      {
-        name: "preserves captured empty ambient values",
-        snapshot: true,
-        ambient: empty,
-        project: undefined,
-        expected: empty,
-      },
-      {
         name: "preserves shell precedence over project dotenv values",
         ambient,
         project,
@@ -3797,7 +3771,7 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const { layer, workdir, child } = yield* setupWithCapturedEnv();
+          const { layer, workdir, child } = setup();
           if (scenario.project !== undefined) {
             yield* fs.writeFileString(
               path.join(workdir, "supabase", ".env"),
@@ -3806,10 +3780,7 @@ content_path = "./supabase/templates/custom_notice.html"
                 .join(""),
             );
           }
-          const run = start(flags()).pipe(Effect.provide(layer));
-          yield* "snapshot" in scenario
-            ? Object.keys(ambient).reduce((effect, key) => withEnvVar(key, undefined, effect), run)
-            : run;
+          yield* start(flags()).pipe(Effect.provide(layer));
           const kong = child.spawned.find(
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
           );
@@ -3835,6 +3806,45 @@ content_path = "./supabase/templates/custom_notice.html"
         ),
       );
     }
+
+    it.live("reads ambient values added after project environment loading", () =>
+      Effect.gen(function* () {
+        const baseRoute = defaultRoute();
+        let injected = false;
+        const { layer, child } = setup({
+          route: (args) => {
+            if (!injected) {
+              Object.assign(process.env, ambient);
+              injected = true;
+            }
+            return baseRoute(args);
+          },
+        });
+
+        yield* start(flags()).pipe(Effect.provide(layer), Effect.provide(cliConfigProviderLayer));
+        expect(injected).toBe(true);
+        const kong = child.spawned.find(
+          (spawn) =>
+            spawn.args[0] === "create" &&
+            containerNameFromCreateArgs(spawn.args).includes("_kong_"),
+        );
+        const storage = child.spawned.find(
+          (spawn) =>
+            spawn.args[0] === "create" &&
+            containerNameFromCreateArgs(spawn.args).includes("_storage_"),
+        );
+        for (const [key, value] of Object.entries(ambient)) {
+          expect(
+            key === "KONG_NGINX_WORKER_PROCESSES" ? kong?.env[key] : storage?.env[key],
+            key,
+          ).toBe(value);
+        }
+      }).pipe(
+        (effect) =>
+          Object.keys(ambient).reduce((body, key) => withEnvVar(key, undefined, body), effect),
+        Effect.provide(BunServices.layer),
+      ),
+    );
   });
 
   describe("storage migration pin", () => {

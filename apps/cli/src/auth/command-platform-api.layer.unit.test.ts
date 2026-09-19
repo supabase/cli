@@ -33,7 +33,6 @@ function mockCliSettings(opts: {
   projectHost?: string;
 }) {
   return Layer.succeed(CommandSettings, {
-    startContainerEnvValues: {},
     dbPassword: Option.none(),
     githubToken: Option.none(),
     workdirEnvValue: Option.none(),

@@ -87,7 +87,6 @@ function setup(
       Layer.succeed(
         CommandSettings,
         CommandSettings.of({
-          startContainerEnvValues: {},
           dbPassword: Option.none(),
           githubToken: Option.none(),
           workdirEnvValue: Option.none(),

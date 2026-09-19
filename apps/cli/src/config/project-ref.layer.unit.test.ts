@@ -20,7 +20,6 @@ const ANOTHER_REF = "qrstuvwxyzabcdefghij";
 
 function mockCliSettings(opts: { workdir: string; projectId?: string }) {
   return Layer.succeed(CommandSettings, {
-    startContainerEnvValues: {},
     dbPassword: Option.none(),
     githubToken: Option.none(),
     workdirEnvValue: Option.none(),

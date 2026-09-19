@@ -42,7 +42,6 @@ function fakeDocker(result: { exitCode: number; stdout?: string; stderr?: string
 // falls back to the default tag.
 function makeCliSettings(workdir = "/nonexistent-workdir") {
   return Layer.succeed(CommandSettings, {
-    startContainerEnvValues: {},
     dbPassword: Option.none(),
     githubToken: Option.none(),
     workdirEnvValue: Option.none(),

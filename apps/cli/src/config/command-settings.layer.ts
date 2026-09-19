@@ -10,22 +10,8 @@ import {
 } from "../command-internal/profile-load.ts";
 import { DebugLogger, type DebugLoggerShape } from "../command-internal/debug-logger.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
-import {
-  CommandSettings,
-  START_CONTAINER_ENV_KEYS,
-  type StartContainerEnvValues,
-} from "./command-settings.service.ts";
+import { CommandSettings } from "./command-settings.service.ts";
 import { resolveSupabaseHomeValue } from "../shared/config/supabase-home.ts";
-
-/** Captures raw start-container overrides through the configured environment provider. */
-export const resolveStartContainerEnvValues = Effect.fnUntraced(function* () {
-  const values: StartContainerEnvValues = {};
-  for (const key of START_CONTAINER_ENV_KEYS) {
-    const value = yield* Config.option(Config.string(key));
-    if (Option.isSome(value)) values[key] = value.value;
-  }
-  return values;
-});
 
 function unknownMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -184,10 +170,7 @@ export const commandSettingsLayer = Layer.unwrap(
 
         const userAgent = `SupabaseCLI/${CLI_VERSION}`;
 
-        const startContainerEnvValues = yield* resolveStartContainerEnvValues();
-
         return CommandSettings.of({
-          startContainerEnvValues,
           profile,
           profileEnvValue,
           supabaseHome: resolvedSupabaseHome,
