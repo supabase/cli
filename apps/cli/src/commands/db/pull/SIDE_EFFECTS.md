@@ -14,8 +14,13 @@ runs the same in-process declarative export (`supabase/schemas` plus
 `--declarative`. `--experimental --declarative` does not print that line:
 `--declarative` already selected the export.
 
-When `[experimental].stack` is on, the shadow is a temporary database owned by the stack runtime. Migra (`--diff-engine migra`) is rejected
-because that shadow is always stack.
+When `[experimental].stack` is on, each shadow is a fresh database in an invocation-owned,
+unique temporary stack namespace. The command applies the catalog and project migrations as needed,
+then destroys its namespace when the Effect scope closes. Shadow baselines are not cached;
+the snapshot cache described below belongs to the legacy container backend. Native artifacts
+are shared through `$SUPABASE_HOME/cache/stack`; shadow state and data use the normal stack registry, so `stack list` and `stack destroy` can
+find a shadow left by an abrupt CLI exit. Each shadow owns a unique temporary project root
+and uses an automatically assigned port; `db.shadow_port` applies only to the legacy backend. Migra (`--diff-engine migra`) is rejected in stack mode.
 
 Pg-delta runs in-process. Coverage gaps warn; `--strict-coverage` makes them
 fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under
