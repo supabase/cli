@@ -30,6 +30,7 @@ import {
 } from "./Recipe.ts";
 import { makeProcessRecipe, type ProcessDependencies } from "./ProcessRecipe.ts";
 import type { ServiceKind } from "../Artifacts.ts";
+import type { ServiceInstanceContext } from "../Service.ts";
 
 export type { CatalogLog } from "./Recipe.ts";
 
@@ -158,7 +159,7 @@ const catalogRecipe = <C extends ServiceCreation>(
 const databaseRecipe = (
   creation: Schema.Schema.Type<typeof DatabaseCreation>,
   component: DatabaseComponent,
-): RecipeCatalogRecipe<ServiceCreation> => ({
+): CatalogRecipe => ({
   creation,
   definition: {
     prepare: (candidate) =>
@@ -174,6 +175,18 @@ const databaseRecipe = (
         ? component.definition.removeData({ ...context, config: context.config.config })
         : Effect.fail(serviceError("destroy", "Service kind cannot change during restart")),
   },
+  resetDatabaseData: (context) =>
+    context.config.service === "database"
+      ? component
+          .resetData({ ...context, config: context.config.config })
+          .pipe(
+            Effect.mapError(
+              (cause) => new CatalogError({ operation: "reset", message: cause.message, cause }),
+            ),
+          )
+      : Effect.fail(
+          new CatalogError({ operation: "reset", message: "Service kind cannot change" }),
+        ),
   endpoint: (name) =>
     name === "sql"
       ? component.endpoint.pipe(
@@ -326,4 +339,8 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
     }),
 );
 
-export type CatalogRecipe = RecipeCatalogRecipe<ServiceCreation>;
+export type CatalogRecipe = RecipeCatalogRecipe<ServiceCreation> & {
+  readonly resetDatabaseData?: (
+    context: ServiceInstanceContext<ServiceCreation>,
+  ) => Effect.Effect<void, CatalogError>;
+};

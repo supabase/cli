@@ -1616,6 +1616,7 @@ describe("db start stack backend", () => {
       }),
     exportSnapshot: () => Effect.die("unused"),
     restoreSnapshot: () => Effect.die("unused"),
+    resetData: Effect.die("unused"),
   });
 
   const stackFixture = (existing: boolean, running = false, standalone = false) => {

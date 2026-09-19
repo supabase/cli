@@ -74,6 +74,8 @@ export interface DatabaseInstance extends ServiceInstance<"database"> {
     source: string,
     options?: CallOptions,
   ) => Promise<import("./services/DatabaseSnapshot.ts").DatabaseSnapshot>;
+  /** Removes database-owned data while preserving the instance registration. */
+  readonly resetData: (options?: CallOptions) => Promise<void>;
 }
 /** Creation preserves the selected service's available operations. */
 export type ServiceInstances = {
@@ -156,6 +158,7 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
           exportSnapshot: (destination, options) =>
             run(service.exportSnapshot(destination), options),
           restoreSnapshot: (source, options) => run(service.restoreSnapshot(source), options),
+          resetData: (options) => run(service.resetData, options),
         };
       case "rest":
         return common(service);

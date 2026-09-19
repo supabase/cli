@@ -103,6 +103,7 @@ function syncStackApi(workdir: string, port: number) {
     credentials: unusedSyncFn,
     exportSnapshot: unusedSyncFn,
     restoreSnapshot: unusedSyncFn,
+    resetData: unusedSync,
     logs: Stream.empty,
     followStatus: Stream.empty,
     status: Effect.succeed({

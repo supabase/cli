@@ -100,6 +100,9 @@ export interface DatabaseOptions {
 
 export interface DatabaseComponent {
   readonly definition: ServiceDefinition<DatabaseConfig>;
+  readonly resetData: (
+    context: ServiceInstanceContext<DatabaseConfig>,
+  ) => Effect.Effect<void, ServiceError>;
   readonly endpoint: Effect.Effect<BackendEndpoint, DatabaseError>;
   readonly logs: Stream.Stream<DatabaseLog, DatabaseError>;
 }
@@ -753,8 +756,25 @@ export const makeDatabase = (
           }).pipe(Effect.mapError((cause) => errorFor("destroy", cause))),
         ),
     };
+    const resetData = Effect.fn("Database.resetData")(
+      (context: ServiceInstanceContext<DatabaseConfig>) =>
+        definition
+          .removeData(context)
+          .pipe(
+            Effect.andThen(
+              ensureOwnedRoot(
+                fs,
+                path,
+                instanceRoot,
+                String(options.stackId),
+                options.instanceId,
+              ).pipe(Effect.mapError((cause) => errorFor("reset", cause))),
+            ),
+          ),
+    );
     return {
       definition,
+      resetData,
       endpoint: Ref.get(endpoint).pipe(
         Effect.flatMap((value) =>
           value === undefined

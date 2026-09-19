@@ -265,6 +265,10 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           owner.snapshots
             .restoreSnapshot(id, source)
             .pipe(Effect.mapError((cause) => stackError("restoreSnapshot", cause))),
+        resetData: ({ id }: { readonly id: string }) =>
+          owner.snapshots
+            .resetData(id)
+            .pipe(Effect.mapError((cause) => stackError("resetData", cause))),
         supabaseComposition: ({
           services,
           reuseIds,

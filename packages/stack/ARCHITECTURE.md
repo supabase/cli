@@ -639,6 +639,12 @@ Keep the contract narrow:
 
 These are physical database snapshots for the cache use case. A `pg_dump` invocation remains an ordinary client tool for logical exports. CLI code owns cache keys, eviction, migrations and the decision to fall back to rebuilding a baseline. The snapshot API does not acquire those policies.
 
+### Resetting database data
+
+`DatabaseInstance.resetData` removes the selected database instance's owned data and initialization metadata while retaining its registration, configuration, composition bindings, and public port assignments. It is database-specific, alongside snapshot export and restore; other service types do not expose a reset operation.
+
+The caller must stop the database with wake disabled first. Reset runs through the same serialized storage-operation gate as snapshots and leaves the database stopped. Deletion uses the database's ownership checks and runtime-specific filesystem handling. The next normal start initializes a fresh PostgreSQL cluster using the retained configuration. Reset does not apply project migrations or seeds, stop other services, or resume the composition; those decisions belong to the CLI. It adds no lifecycle state or persisted recovery phase.
+
 ## 9. What changes for the CLI
 
 Make lifecycle and health explicit in status instead of forcing them into the old single `phase` enum. Update repo consumers together; do not add a historical compatibility projection. A presentation label can be derived as follows:
@@ -672,6 +678,14 @@ Update actual consumers together:
 | Tools                | Select identity/artifact → execute/stream → await exit and cleanup                                       |
 
 A Functions runtime exit must reach `followStatus` so serve can report it.
+
+### Established CLI integration boundaries
+
+The Stack package remains the owner of identity semantics. It canonicalizes `projectRoot`, resolves the Git branch context (or ordinary-workspace fallback), and validates the stack name in [`Identity.ts`](./src/identity/Identity.ts); it also owns `deriveStackId` from that complete tuple. The CLI currently calls `resolveStackIdentity` through the internal [`identity` entrypoint](./src/identity/Identity.ts), then uses the result when matching `discover` records for status and related read operations. Resolving identity is read-only and does not create a stack. A follow-up recommendation is to expose an equivalent public, read-only `resolveIdentity` operation so the CLI need not import an internal entrypoint; this is a recommended public API, not an existing export.
+
+When `stack start` includes Functions, the CLI uses the existing package export `@supabase/stack/internal/functions/serve-main`, whose source is [`serve.main.ts`](./src/functions/serve.main.ts), as the bootstrap entrypoint for esbuild bundling in [`stack-functions-bundler.ts`](../../apps/cli/src/command-internal/stack-functions-bundler.ts). This reuses the stack runtime's bootstrap; it is not a migration of `functions serve`. Configured embedded templates may satisfy the same bootstrap input before bundling is needed.
+
+PostgreSQL artifact knowledge remains in Stack and is exposed through [`postgres-artifact.ts`](./src/internal/postgres-artifact.ts), including catalog resolution and native artifact preparation and verification. A remote `db dump --db-url` can use those existing helpers and run without creating a local or dummy stack: the CLI owns the external process or container execution, as shown by [`bundled-postgres-client.ts`](../../apps/cli/src/command-internal/bundled-postgres-client.ts), while managed jobs continue to use `stack.tools.run`.
 
 Changing internal and public-to-repository contracts is acceptable when callers are updated; preserving valuable data is still required. Keep per-instance configuration replacement through `service.restart({ config })`. Validate the candidate configuration and prepare its artifacts before stopping the existing runtime; invalid input must leave it running. The admitted restart then performs ordinary stop and launch without waiting for application health inside the gate. Adding or removing a companion means explicitly adding or removing an ordinary instance and updating composition edges. Validate the graph using the same rules as registration; do not implement private-child expansion or group replacement logic. Defer live shared configuration changes and config-bearing whole-stack restart.
 

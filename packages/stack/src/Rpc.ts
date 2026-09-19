@@ -110,6 +110,7 @@ export const StackRpc = RpcGroup.make(
     success: Snapshot,
     error: StackErrorSchema,
   }),
+  Rpc.make("resetData", { payload: Instance, error: StackErrorSchema }),
   Rpc.make("supabaseComposition", {
     payload: {
       services: Schema.Array(ServiceCreation),

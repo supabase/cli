@@ -85,6 +85,7 @@ const instance = (
           Effect.succeed({ databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres" }),
         exportSnapshot: () => Effect.die("unused"),
         restoreSnapshot: () => Effect.die("unused"),
+        resetData: Effect.die("unused"),
       };
     case "rest":
       return { ...base, service: "rest" };

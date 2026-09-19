@@ -121,6 +121,7 @@ export interface Interface {
       id: string,
       source: string,
     ) => Effect.Effect<DatabaseSnapshot, OwnerError>;
+    readonly resetData: (id: string) => Effect.Effect<void, OwnerError>;
   };
   readonly namespace: {
     readonly stop: Effect.Effect<void, OwnerError>;
@@ -918,6 +919,31 @@ const makeOwnerWithDependencies = (
         ),
       ),
     );
+    const resetData = Effect.fn("Owner.resetData")((id: string) =>
+      get(id).pipe(
+        Effect.flatMap(({ creation }) =>
+          creation.service === "database"
+            ? storage(
+                id,
+                Effect.gen(function* () {
+                  const current = yield* getRecipe(id);
+                  const reset = current.resetDatabaseData;
+                  if (reset === undefined)
+                    return yield* errorFor("resetData", "Database reset is unavailable");
+                  return yield* Effect.acquireUseRelease(
+                    Scope.make("parallel"),
+                    (scope) =>
+                      reset({ id, config: current.creation, scope }).pipe(
+                        Effect.mapError((cause) => errorFor("resetData", cause)),
+                      ),
+                    (scope, exit) => Scope.close(scope, exit),
+                  );
+                }),
+              )
+            : Effect.fail(errorFor("resetData", "Reset is only supported for databases")),
+        ),
+      ),
+    );
     const stopNamespace = operation("stopNamespace", orchestrator.stopNamespace).pipe(
       Effect.withSpan("Owner.stopNamespace"),
     );
@@ -982,6 +1008,7 @@ const makeOwnerWithDependencies = (
       snapshots: {
         exportSnapshot,
         restoreSnapshot,
+        resetData,
       },
       namespace: {
         stop: stopNamespace,

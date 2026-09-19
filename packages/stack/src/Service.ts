@@ -50,6 +50,7 @@ export class ServiceNotRunning extends Data.TaggedError("ServiceNotRunning")<{
 class ServiceNotStopped extends Data.TaggedError("ServiceNotStopped")<{
   readonly id: string;
   readonly lifecycle: ServiceLifecycle;
+  readonly message: string;
 }> {}
 
 export class ServiceStaleLaunch extends Data.TaggedError("ServiceStaleLaunch")<{
@@ -583,6 +584,7 @@ export const makeService = <Config>(
             return yield* new ServiceNotStopped({
               id: options.id,
               lifecycle: observation.lifecycle,
+              message: `Service ${options.id} must be stopped with wake disabled before modifying data`,
             });
           }
           yield* coordinate("storage", setOperation("storage"));

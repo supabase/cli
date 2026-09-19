@@ -86,6 +86,8 @@ export interface ServiceInstance<K extends Kind = Kind> {
 export interface DatabaseInstance extends ServiceInstance<"database"> {
   readonly exportSnapshot: (destination: string) => Effect.Effect<DatabaseSnapshot, StackError>;
   readonly restoreSnapshot: (source: string) => Effect.Effect<DatabaseSnapshot, StackError>;
+  /** Removes database-owned data while preserving the instance registration. */
+  readonly resetData: Effect.Effect<void, StackError>;
 }
 /** Maps creation discriminators to their supported instance operations. */
 export type ServiceInstances = {
@@ -211,6 +213,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
             call("exportSnapshot", (rpc) => rpc.exportSnapshot({ id, destination })),
           restoreSnapshot: (source) =>
             call("restoreSnapshot", (rpc) => rpc.restoreSnapshot({ id, source })),
+          resetData: call("resetData", (rpc) => rpc.resetData({ id })),
         };
       case "rest":
         return common(id, "rest");

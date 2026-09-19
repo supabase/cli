@@ -216,6 +216,7 @@ export function buildStorageStackApi(
     ...instance("database-id", databaseCreation, Effect.succeed(dbObservation)),
     exportSnapshot: () => Effect.die("unused"),
     restoreSnapshot: () => Effect.die("unused"),
+    resetData: Effect.die("unused"),
   } satisfies DatabaseInstance;
   const storage = instance("storage-id", storageCreation, Effect.succeed(storageObservation));
   const members = storageEnabled

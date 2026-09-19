@@ -93,6 +93,7 @@ const makeService = (input: {
       : Effect.succeed(input.credentials ?? {}),
   exportSnapshot: () => Effect.die("unused"),
   restoreSnapshot: () => Effect.die("unused"),
+  resetData: Effect.die("unused"),
 });
 
 const makeStack = (

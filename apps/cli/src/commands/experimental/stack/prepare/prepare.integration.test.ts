@@ -90,6 +90,7 @@ const makeFixture = (root: string, failPreparation = false) => {
     credentials: () => Effect.succeed({}),
     exportSnapshot: () => Effect.die("unused"),
     restoreSnapshot: () => Effect.die("unused"),
+    resetData: Effect.die("unused"),
   };
   function create<Input extends ServiceCreation>(
     creation: Input,
