@@ -27,7 +27,7 @@ export interface ArtifactSource {
     expectedSha256: string,
     onProgress?: (state: "downloading" | "preparing") => void,
   ) => Effect.Effect<
-    void,
+    string | void,
     StackPreparationError | ArtifactIntegrityError,
     FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawner.ChildProcessSpawner
   >;
@@ -722,14 +722,26 @@ const makeArtifactOperation = (
     const published = yield* Effect.gen(function* () {
       yield* ensureDirectory(fs, path, temporary, cacheRoot);
       const temporaryRoot = yield* ensureSafeRoot(fs, path, temporary, cacheRoot);
-      yield* source.materialize(request, temporary, expectedSha256, onProgress).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-        Effect.provideService(Crypto.Crypto, crypto),
-        // The source owns the exact tar process boundary; the store only supplies the
-        // already-owned process service captured by its constructor.
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-      );
+      const verifiedSha256 = yield* source
+        .materialize(request, temporary, expectedSha256, onProgress)
+        .pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(Crypto.Crypto, crypto),
+          // The source owns the exact tar process boundary; the store only supplies the
+          // already-owned process service captured by its constructor.
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+        );
+      const publishedSha256 = yield* typeof verifiedSha256 === "string" && verifiedSha256.length > 0
+        ? validateSha256(verifiedSha256).pipe(
+            Effect.mapError((cause) =>
+              metadataError("Artifact source returned an invalid SHA-256", {
+                key: request.key,
+                cause,
+              }),
+            ),
+          )
+        : Effect.succeed(expectedSha256);
       const runtimePaths = yield* validateFreshRuntimePaths(
         fs,
         path,
@@ -743,7 +755,7 @@ const makeArtifactOperation = (
       yield* writeMetadataSync(
         fs,
         path.join(temporary, METADATA_NAME),
-        metadataFor(request, expectedSha256, runtimeKinds),
+        metadataFor(request, publishedSha256, runtimeKinds),
       );
       if (request.executablePath !== undefined) {
         const executable = runtimePaths[request.executablePath];
@@ -771,17 +783,18 @@ const makeArtifactOperation = (
         });
       const recovered: Effect.Effect<PreparedArtifact | undefined, ArtifactStoreError> =
         rename.pipe(Effect.catch(recoverPublish));
-      return yield* recovered;
+      const raced = yield* recovered;
+      if (raced !== undefined) return raced;
+      return {
+        key: request.key,
+        path: target,
+        sha256: publishedSha256,
+        requiredRuntimePaths: [...request.requiredRuntimePaths],
+        ...(request.executablePath === undefined ? {} : { executablePath: request.executablePath }),
+        outcome: "downloaded" as const,
+      };
     }).pipe(Effect.onExit(() => cleanup(fs, temporary)));
-    if (published !== undefined) return published;
-    return {
-      key: request.key,
-      path: target,
-      sha256: expectedSha256,
-      requiredRuntimePaths: [...request.requiredRuntimePaths],
-      ...(request.executablePath === undefined ? {} : { executablePath: request.executablePath }),
-      outcome: "downloaded" as const,
-    };
+    return published;
   });
 
 export const makeArtifactStore = (

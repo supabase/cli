@@ -110,6 +110,14 @@ type FetchLike = (
 const requestUrl = (input: Parameters<typeof fetch>[0]): string =>
   typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 
+/** GitHub fixture hosts only; registry URLs 404 so fail-through reaches example.test. */
+const githubOnly =
+  (inner: FetchLike): FetchLike =>
+  (input, init) =>
+    requestUrl(input).startsWith("https://example.test/")
+      ? inner(input, init)
+      : Promise.resolve(new Response("oci unavailable", { status: 404 }));
+
 describe("slim-services artifact source", () => {
   it.live("verifies checksums and extracts a manifest-matched archive using injected fetch", () =>
     Effect.scoped(
@@ -129,8 +137,8 @@ describe("slim-services artifact source", () => {
             );
           return Promise.resolve(new Response(archive));
         };
-        expect(yield* slimServicesChecksum(artifact, fetcher)).toBe(expected);
-        const source = makeSlimServicesSource(() => artifact, fetcher);
+        expect(yield* slimServicesChecksum(artifact, githubOnly(fetcher))).toBe(expected);
+        const source = makeSlimServicesSource(() => artifact, githubOnly(fetcher));
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-source-" });
         yield* source.materialize(request, destination, expected);
@@ -157,7 +165,7 @@ describe("slim-services artifact source", () => {
             );
           return Promise.resolve(new Response(archive));
         };
-        const source = makeSlimServicesSource(() => artifact, fetcher);
+        const source = makeSlimServicesSource(() => artifact, githubOnly(fetcher));
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-unsafe-" });
         const failed = yield* source.materialize(request, destination, expected).pipe(Effect.exit);
@@ -192,7 +200,7 @@ describe("slim-services artifact source", () => {
         };
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-links-" });
-        yield* makeSlimServicesSource(() => artifact, fetcher).materialize(
+        yield* makeSlimServicesSource(() => artifact, githubOnly(fetcher)).materialize(
           request,
           destination,
           expected,
@@ -215,7 +223,7 @@ describe("slim-services artifact source", () => {
             );
           return Promise.resolve(new Response(malformed));
         };
-        const failed = yield* makeSlimServicesSource(() => artifact, malformedFetcher)
+        const failed = yield* makeSlimServicesSource(() => artifact, githubOnly(malformedFetcher))
           .materialize(request, destination, malformedDigest)
           .pipe(Effect.exit);
         expect(errorOf(failed)).toBeInstanceOf(StackPreparationError);
@@ -250,7 +258,7 @@ describe("slim-services artifact source", () => {
         const destination = yield* fs.makeTempDirectoryScoped({
           prefix: "slim-services-link-escape-",
         });
-        const failed = yield* makeSlimServicesSource(() => artifact, fetcher)
+        const failed = yield* makeSlimServicesSource(() => artifact, githubOnly(fetcher))
           .materialize(request, destination, expected)
           .pipe(Effect.exit);
         expect(errorOf(failed)).toBeInstanceOf(StackPreparationError);
@@ -285,7 +293,7 @@ describe("slim-services artifact source", () => {
           prefix: "slim-services-interrupt-",
         });
         const fiber = yield* Effect.forkChild(
-          makeSlimServicesSource(() => artifact, fetcher).materialize(
+          makeSlimServicesSource(() => artifact, githubOnly(fetcher)).materialize(
             request,
             destination,
             "0".repeat(64),
@@ -327,7 +335,7 @@ describe("slim-services artifact source", () => {
         const root = yield* fs.makeTempDirectoryScoped({
           prefix: "slim-services-store-integrity-",
         });
-        const source = makeSlimServicesSource(() => artifact, fetcher);
+        const source = makeSlimServicesSource(() => artifact, githubOnly(fetcher));
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
         const failed = yield* store.prepare(request).pipe(Effect.exit);
         expect(Exit.isFailure(failed)).toBe(true);
@@ -381,7 +389,7 @@ describe("slim-services artifact source", () => {
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-stream-" });
         const fiber = yield* Effect.forkChild(
-          makeSlimServicesSource(() => artifact, fetcher).materialize(
+          makeSlimServicesSource(() => artifact, githubOnly(fetcher)).materialize(
             request,
             destination,
             "0".repeat(64),
@@ -431,7 +439,7 @@ describe("slim-services artifact source", () => {
         const fiber = yield* Effect.forkChild(
           makeSlimServicesSource(
             () => artifact,
-            fetcher,
+            githubOnly(fetcher),
             systemTarBoundary,
             decompressor,
           ).materialize(request, destination, expected),
@@ -466,7 +474,7 @@ describe("slim-services artifact source", () => {
         };
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-pax-" });
-        yield* makeSlimServicesSource(() => artifact, fetcher).materialize(
+        yield* makeSlimServicesSource(() => artifact, githubOnly(fetcher)).materialize(
           request,
           destination,
           expected,
@@ -483,13 +491,9 @@ describe("slim-services artifact source", () => {
         const crypto = yield* Crypto.Crypto;
         const expected = digestHex(yield* crypto.digest("SHA-256", archive));
         const checksums = `${expected}  demo-v1.0.0-linux-amd64.tar.zst\n`;
-        let checksumRequests = 0;
         const fetcher: FetchLike = (input) => {
           const url = requestUrl(input);
-          if (url.endsWith("SHA256SUMS")) {
-            checksumRequests += 1;
-            return Promise.resolve(new Response(checksums));
-          }
+          if (url.endsWith("SHA256SUMS")) return Promise.resolve(new Response(checksums));
           if (url.endsWith("manifest.json"))
             return Promise.resolve(
               new Response(
@@ -498,16 +502,138 @@ describe("slim-services artifact source", () => {
             );
           return Promise.resolve(new Response(archive));
         };
-        const source = makeSlimServicesSource(() => artifact, fetcher);
+        const source = makeSlimServicesSource(() => artifact, githubOnly(fetcher));
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-store-" });
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
         const prepared = yield* store.prepare(request);
         expect(prepared.outcome).toBe("downloaded");
+        expect(prepared.sha256).toBe(expected);
         expect(yield* fs.readFileString(`${prepared.path}/bin/demo`)).toBe("demo");
         expect(yield* fs.exists(`${prepared.path}/.artifact.json`)).toBe(true);
-        expect(checksumRequests).toBe(1);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
+  );
+
+  it.live("materializes from an OCI native artifact using a registry bearer token", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const archive = yield* compress(tar("bin/demo", "demo"));
+        const crypto = yield* Crypto.Crypto;
+        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
+        const manifestJson = JSON.stringify({
+          service: "demo",
+          version: "v1.0.0",
+          target: "linux-amd64",
+        });
+        const checksums = `${expected}  demo-v1.0.0-linux-amd64.tar.zst\n`;
+        const archiveDigest = `sha256:${"a".repeat(64)}`;
+        const manifestDigest = `sha256:${"b".repeat(64)}`;
+        const checksumDigest = `sha256:${"c".repeat(64)}`;
+        const fetcher: FetchLike = (input) => {
+          const url = requestUrl(input);
+          if (url.includes("/token"))
+            return Promise.resolve(new Response(JSON.stringify({ token: "oci-test-token" })));
+          if (url.includes("/manifests/"))
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  layers: [
+                    {
+                      mediaType: "application/vnd.supabase.slim.archive.v1.tar+zstd",
+                      digest: archiveDigest,
+                    },
+                    {
+                      mediaType: "application/vnd.supabase.slim.manifest.v1+json",
+                      digest: manifestDigest,
+                    },
+                    {
+                      mediaType: "application/vnd.supabase.slim.checksum.v1",
+                      digest: checksumDigest,
+                    },
+                  ],
+                }),
+              ),
+            );
+          if (url.endsWith(manifestDigest)) return Promise.resolve(new Response(manifestJson));
+          if (url.endsWith(checksumDigest)) return Promise.resolve(new Response(checksums));
+          if (url.endsWith(archiveDigest)) return Promise.resolve(new Response(archive));
+          return Promise.resolve(new Response("missing", { status: 404 }));
+        };
+        const fs = yield* FileSystem.FileSystem;
+        const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-oci-" });
+        yield* makeSlimServicesSource(() => artifact, fetcher).materialize(
+          request,
+          destination,
+          expected,
+        );
+        expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live(
+    "pairs checksum and archive per candidate so a stale first host cannot pin later ones",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const archive = yield* compress(tar("bin/demo", "demo"));
+          const crypto = yield* Crypto.Crypto;
+          const expected = digestHex(yield* crypto.digest("SHA-256", archive));
+          const stale = "0".repeat(64);
+          const manifestJson = JSON.stringify({
+            service: "demo",
+            version: "v1.0.0",
+            target: "linux-amd64",
+          });
+          const staleChecksums = `${stale}  demo-v1.0.0-linux-amd64.tar.zst\n`;
+          const githubChecksums = `${expected}  demo-v1.0.0-linux-amd64.tar.zst\n`;
+          const archiveDigest = `sha256:${"a".repeat(64)}`;
+          const manifestDigest = `sha256:${"b".repeat(64)}`;
+          const checksumDigest = `sha256:${"c".repeat(64)}`;
+          const fetcher: FetchLike = (input) => {
+            const url = requestUrl(input);
+            if (url.includes("/token"))
+              return Promise.resolve(new Response(JSON.stringify({ token: "oci-stale-token" })));
+            if (url.includes("/manifests/"))
+              return Promise.resolve(
+                new Response(
+                  JSON.stringify({
+                    layers: [
+                      {
+                        mediaType: "application/vnd.supabase.slim.archive.v1.tar+zstd",
+                        digest: archiveDigest,
+                      },
+                      {
+                        mediaType: "application/vnd.supabase.slim.manifest.v1+json",
+                        digest: manifestDigest,
+                      },
+                      {
+                        mediaType: "application/vnd.supabase.slim.checksum.v1",
+                        digest: checksumDigest,
+                      },
+                    ],
+                  }),
+                ),
+              );
+            if (url.endsWith(manifestDigest)) return Promise.resolve(new Response(manifestJson));
+            if (url.endsWith(checksumDigest)) return Promise.resolve(new Response(staleChecksums));
+            if (url.endsWith(archiveDigest)) return Promise.resolve(new Response(archive));
+            if (url.endsWith("SHA256SUMS")) return Promise.resolve(new Response(githubChecksums));
+            if (url.endsWith("manifest.json")) return Promise.resolve(new Response(manifestJson));
+            if (url.startsWith("https://example.test/"))
+              return Promise.resolve(new Response(archive));
+            return Promise.resolve(new Response("missing", { status: 404 }));
+          };
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-pair-" });
+          const source = makeSlimServicesSource(() => artifact, fetcher);
+          const store = yield* makeArtifactStore({ cacheRoot: root, source });
+          const prepared = yield* store.prepare(request);
+          expect(prepared.outcome).toBe("downloaded");
+          expect(prepared.sha256).toBe(expected);
+          expect(yield* fs.readFileString(`${prepared.path}/bin/demo`)).toBe("demo");
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ),
   );
 });

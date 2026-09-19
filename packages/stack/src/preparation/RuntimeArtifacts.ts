@@ -20,6 +20,7 @@ import {
 } from "./ArtifactStore.ts";
 import { makeSlimServicesSource } from "./SlimServicesSource.ts";
 import type { ContainerEngine } from "../runtime/ContainerEngine.ts";
+import { resolveAvailableContainerImage } from "../runtime/resolve-container-image.ts";
 import {
   resolveContainerEngine,
   type ContainerEngineResolverShape,
@@ -157,46 +158,36 @@ export const makeRuntimeArtifactPreparer = (
         );
       const image = workload.selected.image;
       return engine.probe.pipe(
-        Effect.andThen(engine.inspectImage(image)),
-        Effect.flatMap((inspection) =>
-          inspection.present
-            ? Effect.succeed<PreparedWorkloadArtifact>({
-                workloadId: workload.id,
-                capability: workload.capability,
-                version: containerVersion(image),
-                outcome: "cached",
-                image,
-              })
-            : Effect.sync(() => report("downloading")).pipe(
-                Effect.andThen(engine.pullImage(image)),
-                Effect.mapError(
-                  (cause) =>
-                    new ContainerPullError({
-                      message: `Unable to pull container image ${image}`,
-                      workload: workload.id,
-                      cause,
-                    }),
-                ),
-                Effect.as({
-                  workloadId: workload.id,
-                  capability: workload.capability,
-                  version: containerVersion(image),
-                  outcome: "pulled" as const,
-                  image,
+        Effect.mapError(
+          (cause) =>
+            new ContainerEngineError({
+              message: cause instanceof Error ? cause.message : "Container engine operation failed",
+              engine: runtime.engine,
+              cause,
+            }),
+        ),
+        Effect.andThen(
+          resolveAvailableContainerImage(engine, image, process.env, () =>
+            report("downloading"),
+          ).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ContainerPullError({
+                  message: `Unable to pull container image ${image}`,
+                  workload: workload.id,
+                  cause,
                 }),
-              ),
+            ),
+          ),
         ),
+        Effect.map((resolved) => ({
+          workloadId: workload.id,
+          capability: workload.capability,
+          version: containerVersion(resolved.image),
+          outcome: resolved.outcome,
+          image: resolved.image,
+        })),
         Effect.tap(() => Effect.sync(() => report("ready"))),
-        Effect.mapError((cause) =>
-          cause instanceof ContainerPullError
-            ? cause
-            : new ContainerEngineError({
-                message:
-                  cause instanceof Error ? cause.message : "Container engine operation failed",
-                engine: runtime.engine,
-                cause,
-              }),
-        ),
         Effect.tapError((cause) => Effect.sync(() => report("failed", cause))),
       );
     });

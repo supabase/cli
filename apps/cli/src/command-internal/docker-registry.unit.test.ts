@@ -24,13 +24,28 @@ describe("getRegistryImageUrl", () => {
     );
   const withRegistry = <T>(value: string | undefined, fn: () => T): T => {
     const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+    const hintKeys = [
+      "CLAUDE_CODE_REMOTE",
+      "CLAUDECODE",
+      "CLAUDE_CODE",
+      "CODEX_SANDBOX",
+      "CODEX_THREAD_ID",
+      "CODEX_CI",
+      "CURSOR_AGENT",
+    ] as const;
+    const hintPrev = hintKeys.map((key) => [key, process.env[key]] as const);
     if (value === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
     else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = value;
+    for (const key of hintKeys) delete process.env[key];
     try {
       return fn();
     } finally {
       if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
       else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
+      for (const [key, saved] of hintPrev) {
+        if (saved === undefined) delete process.env[key];
+        else process.env[key] = saved;
+      }
     }
   };
 
@@ -122,33 +137,42 @@ describe("getRegistryImageUrl", () => {
     ).toBe("merged.example/supabase/pg_prove:3.36");
   });
 
-  // Published only under ghcr.io/supabase/cli; rewriting by last path segment would misroute it.
+  // Published under ghcr.io/supabase/cli and mirrored to public.ecr.aws/supabase/cli.
   const SLIM_IMAGE = "ghcr.io/supabase/cli/postgres:17.6.1.165";
+  const SLIM_ECR = "public.ecr.aws/supabase/cli/postgres:17.6.1.165";
+  const SLIM_PINNED = `${SLIM_IMAGE}@sha256:${"a".repeat(64)}`;
+  const SLIM_ECR_PINNED = `${SLIM_ECR}@sha256:${"a".repeat(64)}`;
 
-  it("leaves a slim image unrewritten, whatever the registry override says", () => {
-    for (const registry of [undefined, "public.ecr.aws", "docker.io", "my.mirror.example"]) {
-      expect(withRegistry(registry, () => resolveImage(SLIM_IMAGE))).toBe(SLIM_IMAGE);
-    }
-    expect(
-      withRegistry(undefined, () =>
-        resolveImage(SLIM_IMAGE, {
-          SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.mirror.example",
-        }),
-      ),
-    ).toBe(SLIM_IMAGE);
+  it("rewrites a slim image onto the ECR Public mirror by default", () => {
+    expect(withRegistry(undefined, () => resolveImage(SLIM_IMAGE))).toBe(SLIM_ECR);
+    expect(withRegistry(undefined, () => resolveCandidates(SLIM_IMAGE))).toEqual([
+      SLIM_ECR,
+      SLIM_IMAGE,
+    ]);
   });
 
-  it("plans a single pull candidate for a slim image", () => {
-    for (const registry of [undefined, "public.ecr.aws", "docker.io", "my.mirror.example"]) {
-      expect(withRegistry(registry, () => resolveCandidates(SLIM_IMAGE))).toEqual([SLIM_IMAGE]);
-    }
+  it("keeps @sha256 when swapping a slim image host", () => {
+    expect(withRegistry(undefined, () => resolveCandidates(SLIM_PINNED))).toEqual([
+      SLIM_ECR_PINNED,
+      SLIM_PINNED,
+    ]);
+  });
+
+  it("honors a registry override for slim images", () => {
+    expect(withRegistry("ghcr.io", () => resolveCandidates(SLIM_IMAGE))).toEqual([SLIM_IMAGE]);
+    expect(withRegistry("public.ecr.aws", () => resolveCandidates(SLIM_IMAGE))).toEqual([SLIM_ECR]);
+    expect(withRegistry("my.mirror.example", () => resolveImage(SLIM_IMAGE))).toBe(
+      "my.mirror.example/supabase/cli/postgres:17.6.1.165",
+    );
+  });
+
+  it("prefers GHCR for slim images when a Cursor or Codex hint is set", () => {
     expect(
-      withRegistry(undefined, () =>
-        resolveCandidates(SLIM_IMAGE, {
-          SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.mirror.example",
-        }),
-      ),
-    ).toEqual([SLIM_IMAGE]);
+      withRegistry(undefined, () => {
+        process.env["CURSOR_AGENT"] = "1";
+        return resolveCandidates(SLIM_IMAGE);
+      }),
+    ).toEqual([SLIM_IMAGE, SLIM_ECR]);
   });
 
   it("still rewrites the non-slim ghcr.io/supabase namespace", () => {

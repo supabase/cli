@@ -1,5 +1,6 @@
+import { isSlimCatalogImage, SLIM_GHCR_PREFIX as SLIM_IMAGE_PREFIX } from "@supabase/stack/effect";
+
 const SLIM_IMAGES_ENV = "SUPABASE_USE_SLIM_IMAGES";
-const SLIM_IMAGE_PREFIX = "ghcr.io/supabase/cli/";
 
 /**
  * Maps embedded-Dockerfile aliases onto the slim service catalog. Aliases with
@@ -145,13 +146,13 @@ export function slimImageForCurrentPin(
   return toSlimImage(alias, tagged);
 }
 
-/** Slim images are published only under this prefix; single home for the check. */
+/** Slim images live under GHCR or the ECR Public mirror of that namespace. */
 export function isSlimImageRef(image: string): boolean {
-  return image.startsWith(SLIM_IMAGE_PREFIX);
+  return isSlimCatalogImage(image);
 }
 
 /**
- * True when the flag is on AND `image` is a slim ghcr ref. Spec builders and
+ * True when the flag is on AND `image` is a slim catalog ref. Spec builders and
  * one-shot jobs use this so a ghcr-shaped override with the flag off stays on
  * the docker.io contract.
  */

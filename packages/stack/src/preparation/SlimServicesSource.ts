@@ -1,4 +1,15 @@
-import { Effect, FileSystem, Layer, Path, Schema, Stream } from "effect";
+import {
+  Config,
+  ConfigProvider,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Result,
+  Schema,
+  Stream,
+} from "effect";
 import { NodeStream } from "@effect/platform-node";
 import {
   FetchHttpClient,
@@ -11,6 +22,11 @@ import { createHash } from "node:crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ArtifactRequest, ArtifactSource } from "./ArtifactStore.ts";
 import type { NativeWorkloadArtifact } from "../model/WorkloadCatalog.ts";
+import {
+  nativeArtifactCandidates,
+  type NativeFetchCandidate,
+} from "../model/SlimArtifactMirrors.ts";
+import { fetchOciNativeTriplet } from "./SlimNativeOci.ts";
 import { StackPreparationError } from "../public/Errors.ts";
 
 type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
@@ -88,8 +104,8 @@ const transport = (fetchRequest?: Fetcher) =>
         ),
       );
 
-const responseFor = (url: string) =>
-  HttpClient.get(url).pipe(
+const responseFor = (url: string, headers?: Readonly<Record<string, string>>) =>
+  HttpClient.get(url, headers === undefined ? undefined : { headers }).pipe(
     Effect.flatMap((response) =>
       Effect.gen(function* () {
         if (response.status < 200 || response.status >= 300)
@@ -143,10 +159,11 @@ const downloadToFile = (
   destination: string,
   request: Fetcher | undefined,
   expectedSha256: string,
+  headers?: Readonly<Record<string, string>>,
 ): Effect.Effect<void, StackPreparationError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const response = yield* responseFor(url);
+    const response = yield* responseFor(url, headers);
     const hash = yield* Effect.try({
       try: () => createHash("sha256"),
       catch: (cause) =>
@@ -185,24 +202,95 @@ const checksumFor = (contents: string, archiveName: string): string | undefined 
     .map((line) => line.trim().match(/^([a-f0-9]{64})\s+[* ]?(.+)$/iu))
     .find((match) => match?.[2] === archiveName || match?.[2]?.endsWith(`/${archiveName}`))?.[1];
 
+const CANDIDATE_ENV_KEYS = [
+  "SUPABASE_INTERNAL_IMAGE_REGISTRY",
+  "CLAUDE_CODE_REMOTE",
+  "CLAUDECODE",
+  "CLAUDE_CODE",
+  "CODEX_SANDBOX",
+  "CODEX_THREAD_ID",
+  "CODEX_CI",
+  "CURSOR_AGENT",
+] as const;
+
+const candidateOptions = Effect.gen(function* () {
+  const env: Record<string, string | undefined> = {};
+  const provider = ConfigProvider.fromEnv();
+  for (const key of CANDIDATE_ENV_KEYS) {
+    const value = yield* Config.option(Config.string(key)).parse(provider);
+    if (Option.isSome(value) && value.value.trim() !== "") env[key] = value.value;
+  }
+  const override = env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+  return {
+    env,
+    ...(override === undefined ? {} : { registryOverride: override }),
+  };
+}).pipe(
+  Effect.mapError(
+    (cause) =>
+      new StackPreparationError({
+        message: "Unable to read slim artifact host configuration",
+        cause,
+      }),
+  ),
+);
+
+const tryCandidates = <A, R>(
+  candidates: ReadonlyArray<NativeFetchCandidate>,
+  tryOne: (candidate: NativeFetchCandidate) => Effect.Effect<A, StackPreparationError, R>,
+): Effect.Effect<A, StackPreparationError, R> =>
+  Effect.gen(function* () {
+    const failures: Array<string> = [];
+    for (const candidate of candidates) {
+      const result = yield* Effect.result(tryOne(candidate));
+      if (Result.isSuccess(result)) return result.success;
+      failures.push(result.failure.message);
+    }
+    return yield* new StackPreparationError({
+      message: `Unable to download from all slim artifact sources: ${failures.join("; ")}`,
+    });
+  });
+
+const parseChecksum = (
+  contents: string,
+  archiveName: string,
+): Effect.Effect<string, StackPreparationError> => {
+  const checksum = checksumFor(contents, archiveName);
+  return checksum === undefined || !/^[a-f0-9]{64}$/iu.test(checksum)
+    ? Effect.fail(new StackPreparationError({ message: "Slim-services checksum is missing" }))
+    : Effect.succeed(checksum.toLowerCase());
+};
+
 export const slimServicesChecksum = (
   artifact: NativeWorkloadArtifact,
   request?: Fetcher,
 ): Effect.Effect<string, StackPreparationError> =>
-  fetchBytes(artifact.checksumUrl, request).pipe(
-    Effect.map((bytes) => new TextDecoder().decode(bytes)),
-    Effect.flatMap((contents) => {
-      const checksum = checksumFor(contents, `${artifact.assetName}.tar.zst`);
-      return checksum === undefined || !/^[a-f0-9]{64}$/iu.test(checksum)
-        ? Effect.fail(
-            new StackPreparationError({
-              message: "Slim-services checksum is missing",
-              service: artifact.service,
-              version: artifact.version,
-            }),
-          )
-        : Effect.succeed(checksum.toLowerCase());
-    }),
+  candidateOptions.pipe(
+    Effect.flatMap((options) =>
+      tryCandidates(nativeArtifactCandidates(artifact, options), (candidate) => {
+        const contents =
+          candidate.kind === "github"
+            ? fetchBytes(candidate.checksumUrl, request).pipe(
+                Effect.map((bytes) => new TextDecoder().decode(bytes)),
+              )
+            : fetchOciNativeTriplet(candidate).pipe(
+                Effect.provide(transport(request)),
+                Effect.map((triplet) => triplet.checksumText),
+              );
+        return contents.pipe(
+          Effect.flatMap((text) => parseChecksum(text, `${artifact.assetName}.tar.zst`)),
+          Effect.mapError(
+            (cause) =>
+              new StackPreparationError({
+                message: "Slim-services checksum is missing",
+                service: artifact.service,
+                version: artifact.version,
+                cause,
+              }),
+          ),
+        );
+      }),
+    ),
   );
 
 const unsafeArchivePath = (value: string): boolean => {
@@ -295,7 +383,7 @@ export const makeSlimServicesSource = (
       resolveArtifact(request).pipe(
         Effect.flatMap((artifact) => slimServicesChecksum(artifact, fetchRequest)),
       ),
-    materialize: (request, destination, expectedSha256, onProgress) =>
+    materialize: (request, destination, _expectedSha256, onProgress) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -307,65 +395,104 @@ export const makeSlimServicesSource = (
         ]);
         return yield* Effect.gen(function* () {
           const artifact = yield* resolveArtifact(request);
-          const manifestBytes = yield* fetchBytes(artifact.manifestUrl, fetchRequest);
-          const manifestText = new TextDecoder().decode(manifestBytes);
-          const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
-            manifestText,
-          ).pipe(
-            Effect.mapError(
-              (cause) =>
-                new StackPreparationError({
-                  message: "Slim-services manifest is invalid",
-                  cause,
-                }),
-            ),
-          );
-          if (
-            typeof manifest !== "object" ||
-            manifest === null ||
-            !("service" in manifest) ||
-            !("version" in manifest) ||
-            !("target" in manifest) ||
-            manifest.service !== artifact.service ||
-            manifest.version !== artifact.version ||
-            manifest.target !== artifact.target
-          )
-            return yield* new StackPreparationError({
-              message: "Slim-services manifest does not match the catalog artifact",
-              service: artifact.service,
-              version: artifact.version,
-              target: artifact.target,
-            });
-          const entrypoint = "entrypoint" in manifest ? manifest.entrypoint : undefined;
-          const command = "cmd" in manifest ? manifest.cmd : undefined;
-          if (
-            (entrypoint !== undefined &&
-              (!Array.isArray(entrypoint) ||
-                !entrypoint.every((value) => typeof value === "string") ||
-                entrypoint.some(unsafeManifestCommand))) ||
-            (command !== undefined &&
-              (!Array.isArray(command) ||
-                !command.every((value) => typeof value === "string") ||
-                command.some(unsafeManifestCommand)))
-          )
-            return yield* new StackPreparationError({
-              message: "Slim-services manifest command is invalid",
-              service: artifact.service,
-              version: artifact.version,
-            });
-          yield* Effect.sync(() => onProgress?.("downloading")).pipe(
-            Effect.andThen(
-              downloadToFile(artifact.downloadUrl, compressedPath, fetchRequest, expectedSha256),
-            ),
-            Effect.mapError(
-              (cause) =>
-                new StackPreparationError({
-                  message: "Unable to download slim-services archive",
-                  service: artifact.service,
-                  version: artifact.version,
-                  cause,
-                }),
-            ),
+          const options = yield* candidateOptions;
+          const archiveName = `${artifact.assetName}.tar.zst`;
+          const selectedSha256 = yield* tryCandidates(
+            nativeArtifactCandidates(artifact, options),
+            (candidate) =>
+              Effect.gen(function* () {
+                const fetched =
+                  candidate.kind === "github"
+                    ? {
+                        manifestBytes: yield* fetchBytes(candidate.manifestUrl, fetchRequest),
+                        checksumText: new TextDecoder().decode(
+                          yield* fetchBytes(candidate.checksumUrl, fetchRequest),
+                        ),
+                        download: (sha256: string) =>
+                          downloadToFile(
+                            candidate.downloadUrl,
+                            compressedPath,
+                            fetchRequest,
+                            sha256,
+                          ),
+                      }
+                    : yield* fetchOciNativeTriplet(candidate).pipe(
+                        Effect.provide(transport(fetchRequest)),
+                        Effect.map((triplet) => ({
+                          manifestBytes: triplet.manifestBytes,
+                          checksumText: triplet.checksumText,
+                          download: (sha256: string) =>
+                            downloadToFile(
+                              triplet.archiveUrl,
+                              compressedPath,
+                              fetchRequest,
+                              sha256,
+                              triplet.headers,
+                            ),
+                        })),
+                      );
+                // Pair checksum and archive on the same candidate so a stale first-host
+                // digest cannot reject a later host's matching bytes.
+                const sha256 = yield* parseChecksum(fetched.checksumText, archiveName);
+                const manifestText = new TextDecoder().decode(fetched.manifestBytes);
+                const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+                  manifestText,
+                ).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new StackPreparationError({
+                        message: "Slim-services manifest is invalid",
+                        cause,
+                      }),
+                  ),
+                );
+                if (
+                  typeof manifest !== "object" ||
+                  manifest === null ||
+                  !("service" in manifest) ||
+                  !("version" in manifest) ||
+                  !("target" in manifest) ||
+                  manifest.service !== artifact.service ||
+                  manifest.version !== artifact.version ||
+                  manifest.target !== artifact.target
+                )
+                  return yield* new StackPreparationError({
+                    message: "Slim-services manifest does not match the catalog artifact",
+                    service: artifact.service,
+                    version: artifact.version,
+                    target: artifact.target,
+                  });
+                const entrypoint = "entrypoint" in manifest ? manifest.entrypoint : undefined;
+                const command = "cmd" in manifest ? manifest.cmd : undefined;
+                if (
+                  (entrypoint !== undefined &&
+                    (!Array.isArray(entrypoint) ||
+                      !entrypoint.every((value) => typeof value === "string") ||
+                      entrypoint.some(unsafeManifestCommand))) ||
+                  (command !== undefined &&
+                    (!Array.isArray(command) ||
+                      !command.every((value) => typeof value === "string") ||
+                      command.some(unsafeManifestCommand)))
+                )
+                  return yield* new StackPreparationError({
+                    message: "Slim-services manifest command is invalid",
+                    service: artifact.service,
+                    version: artifact.version,
+                  });
+                yield* Effect.sync(() => onProgress?.("downloading")).pipe(
+                  Effect.andThen(fetched.download(sha256)),
+                  Effect.mapError(
+                    (cause) =>
+                      new StackPreparationError({
+                        message: "Unable to download slim-services archive",
+                        service: artifact.service,
+                        version: artifact.version,
+                        cause,
+                      }),
+                  ),
+                );
+                return sha256;
+              }),
           );
           yield* Effect.sync(() => onProgress?.("preparing"));
           yield* decompressor.decompress(compressedPath, archivePath);
@@ -427,6 +554,7 @@ export const makeSlimServicesSource = (
               message: `Slim-services archive extraction exited with code ${exitCode}`,
             });
           yield* validateExtractedTree(fs, path, destination);
+          return selectedSha256;
         }).pipe(Effect.ensuring(cleanup));
       }),
   };

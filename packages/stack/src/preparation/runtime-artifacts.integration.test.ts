@@ -22,6 +22,7 @@ import {
 import { ContainerEngineError, StackPreparationError } from "../public/Errors.ts";
 import { ContainerEngineProtocolError } from "../runtime/ContainerEngine.ts";
 import { catalogReleaseFor } from "../model/WorkloadCatalog.ts";
+import { slimImagePullCandidates } from "../model/SlimArtifactMirrors.ts";
 
 const databaseRelease = catalogReleaseFor("database:database");
 if (databaseRelease === undefined) throw new Error("Missing default database release");
@@ -315,6 +316,7 @@ describe("runtime artifact preparation", () => {
       native: { store: { prepare: () => Effect.die("unused") } },
       containerEngine: engine,
     });
+    const progress: Array<string> = [];
     const result = Effect.runSync(
       runtime.prepare(
         { kind: "container", engine: "docker" },
@@ -322,14 +324,22 @@ describe("runtime artifact preparation", () => {
           kind: "container",
           image: databaseRelease.containerImage,
         }),
+        (status) => {
+          progress.push(status.state);
+        },
       ),
     );
     expect(result.outcome).toBe("pulled");
+    const candidates = slimImagePullCandidates(databaseRelease.containerImage, {
+      env: process.env,
+    });
     expect(calls).toEqual([
       "probe",
-      `inspect:${databaseRelease.containerImage}`,
-      `pull:${databaseRelease.containerImage}`,
+      ...candidates.map((candidate) => `inspect:${candidate}`),
+      `pull:${candidates[0]}`,
     ]);
+    expect(result.image).toBe(candidates[0]);
+    expect(progress).toEqual(["preparing", "downloading", "ready"]);
   });
 
   it("uses the persisted container engine identity", () => {

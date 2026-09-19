@@ -51,6 +51,7 @@ import { makeControlClient, startControlServer } from "../control/ControlServer.
 import { resolveStackPaths } from "../state/Paths.ts";
 import { STACK_RPC_RELEASE, type StackRpcHandlers } from "../control/StackRpc.ts";
 import { catalogReleaseFor } from "../model/WorkloadCatalog.ts";
+import { slimImagePullCandidates } from "../model/SlimArtifactMirrors.ts";
 import {
   StackOwnershipConflictError,
   StackPreparationError,
@@ -369,7 +370,10 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
         const prepared = yield* stack.prepare({ capabilities: ["database"] });
         expect(prepared.capabilities).toHaveLength(1);
-        expect(calls).toEqual(["podman:probe", `podman:inspect:${databaseRelease.containerImage}`]);
+        const candidates = slimImagePullCandidates(databaseRelease.containerImage, {
+          env: process.env,
+        });
+        expect(calls).toEqual(["podman:probe", `podman:inspect:${candidates[0]}`]);
         expect(dockerCalls).toEqual([]);
       }),
     ),

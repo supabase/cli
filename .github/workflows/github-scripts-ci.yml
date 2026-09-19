@@ -11,6 +11,7 @@ on:
       - ".github/scripts/**"
       - ".github/workflows/ai-review.yml"
       - ".github/workflows/github-scripts-ci.yml"
+      - ".github/workflows/mirror-slim-image.yml"
 
 permissions: {}
 
