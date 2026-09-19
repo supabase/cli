@@ -47,6 +47,6 @@ export const testDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
     identityStitchLayer,
     telemetryStateLayer,
     stackApiLayer,
-    bundledPostgresClientLayer,
+    bundledPostgresClientLayer.pipe(Layer.provide(dockerRunLayer), Layer.provide(cliSettings)),
     commandRuntimeLayer(commandPath),
   );

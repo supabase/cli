@@ -1,12 +1,14 @@
 import * as nodePath from "node:path";
 import { Effect, FileSystem, Option, Path } from "effect";
+import { postgres, type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { readDbToml } from "./db-config.toml-read.ts";
-import { DbConnection } from "./db-connection.service.ts";
+import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
+import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { DockerRun } from "./docker-run.service.ts";
 import { resolveDbTargetFlags } from "./db-target-flags.ts";
 import { DebugFlag, DnsResolverFlag, NetworkIdFlag } from "./global-flags.ts";
@@ -21,13 +23,14 @@ import {
 } from "./test-db.errors.ts";
 import { buildPgProveArgs } from "./test-db.pg-prove-args.ts";
 import { currentStackBackend } from "./stack-backend.ts";
-import { stackProjectDatabaseVersion, stackRequireProjectRuntime } from "./stack-local-database.ts";
 import {
   rewriteDumpHostForToolContainer,
   toolContainerUsesHostNetwork,
 } from "./postgres-client.run.ts";
 import { isBitbucketPipeline } from "./bitbucket-pipeline.ts";
 import { BundledPostgresClient, resolveBundledPostgresRuntime } from "./bundled-postgres-client.ts";
+import { parseConnectionString } from "./db-config.parse.ts";
+import { stackOpenReadyProject } from "./stack-local-database.ts";
 
 const ENABLE_PGTAP = "create extension if not exists pgtap with schema extensions";
 const DISABLE_PGTAP = "drop extension if exists pgtap";
@@ -45,6 +48,66 @@ const MAX_PROJECT_ID_LENGTH = 40;
 const VERDICT_PREFIX = "Result: ";
 const NO_TESTS_VERDICT = "Result: NOTESTS";
 const FILES_SUMMARY = /^Files=(\d+),/;
+
+type ManagedStack = {
+  readonly stack: Stack;
+  readonly database: DatabaseInstance;
+  readonly connection: PgConnInput;
+  readonly major: 15 | 17;
+};
+
+const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
+  const opened = yield* stackOpenReadyProject;
+  if (Option.isNone(opened))
+    return yield* new LocalDbRunningError({
+      message:
+        "The local stack database is unavailable or not running; start it with `supabase start`.",
+    });
+  const { stack, database } = opened.value;
+  const status = yield* database.status.pipe(
+    Effect.mapError(
+      (cause) =>
+        new LocalDbRunningError({
+          message: `unable to inspect the local database: ${cause.message}`,
+        }),
+    ),
+  );
+  if (status.lifecycle !== "running")
+    return yield* new LocalDbRunningError({ message: "The local stack database is not running." });
+  if (status.config.service !== "database")
+    return yield* new LocalDbRunningError({
+      message: "The local stack primary service is not a database.",
+    });
+  const major =
+    status.config.config.version === "15"
+      ? 15
+      : status.config.config.version === "17"
+        ? 17
+        : undefined;
+  if (major === undefined)
+    return yield* new LocalDbRunningError({
+      message: `The local database major version ${status.config.config.version} is not supported by pg_prove.`,
+    });
+  const credentials = yield* database.credentials({ from: "runtime" }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LocalDbRunningError({
+          message: `unable to read local database credentials: ${cause.message}`,
+        }),
+    ),
+  );
+  const databaseUrl = credentials.databaseUrl;
+  if (databaseUrl === undefined)
+    return yield* new LocalDbRunningError({
+      message: "The local database did not provide runtime credentials.",
+    });
+  const connection = parseConnectionString(databaseUrl);
+  if (connection === undefined)
+    return yield* new LocalDbRunningError({
+      message: "The local database returned malformed runtime credentials.",
+    });
+  return { stack, database, connection, major } satisfies ManagedStack;
+});
 
 function sanitizeProjectId(src: string): string {
   return src
@@ -109,36 +172,43 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
     });
 
     const backend = yield* currentStackBackend;
-    const stackRuntime =
-      backend.kind === "stack" && connType === "local"
-        ? yield* stackRequireProjectRuntime
-        : undefined;
+    const managedStack =
+      backend.kind === "stack" && connType === "local" ? yield* managedStackFor() : undefined;
     const proveRuntime =
-      backend.kind === "stack"
-        ? yield* resolveBundledPostgresRuntime(stackRuntime, runtimeInfo.platform, runtimeInfo.arch)
+      backend.kind === "stack" && managedStack === undefined
+        ? yield* resolveBundledPostgresRuntime(undefined, runtimeInfo.platform, runtimeInfo.arch)
         : undefined;
     const useNativeProve = proveRuntime?.kind === "native";
     const stackPublishedProve = backend.kind === "stack" && !useNativeProve;
 
     const networkId = Option.getOrUndefined(networkIdFlag);
     const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);
+    const proveConnection = managedStack?.connection ?? conn;
     const runEnv = {
-      PGHOST: useNativeProve
-        ? connType === "local"
-          ? "127.0.0.1"
-          : conn.host
-        : stackPublishedProve
-          ? rewriteDumpHostForToolContainer(conn.host, {
-              platform: runtimeInfo.platform,
-              usesHostNetwork: dumpUsesHostNetwork,
-            })
-          : isLocal
-            ? "db"
-            : conn.host,
-      PGPORT: isLocal && backend.kind !== "stack" ? "5432" : String(conn.port),
-      PGUSER: conn.user,
-      PGPASSWORD: conn.password,
-      PGDATABASE: conn.database,
+      PGHOST:
+        managedStack !== undefined
+          ? proveConnection.host
+          : useNativeProve
+            ? connType === "local"
+              ? "127.0.0.1"
+              : conn.host
+            : stackPublishedProve
+              ? rewriteDumpHostForToolContainer(conn.host, {
+                  platform: runtimeInfo.platform,
+                  usesHostNetwork: dumpUsesHostNetwork,
+                })
+              : isLocal
+                ? "db"
+                : conn.host,
+      PGPORT:
+        managedStack !== undefined
+          ? String(proveConnection.port)
+          : isLocal && backend.kind !== "stack"
+            ? "5432"
+            : String(conn.port),
+      PGUSER: managedStack === undefined ? proveConnection.user : conn.user,
+      PGPASSWORD: managedStack === undefined ? proveConnection.password : conn.password,
+      PGDATABASE: managedStack === undefined ? proveConnection.database : conn.database,
     };
 
     // A non-empty `--network-id` overrides everything (even host mode);
@@ -218,12 +288,36 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
             }
             return output.rawBytes(chunk, "stdout");
           });
+        if (managedStack !== undefined) {
+          const hostPath = args.hostPaths[0];
+          const hostWorkingDir =
+            hostPath === undefined
+              ? undefined
+              : nodePath.extname(hostPath) !== ""
+                ? nodePath.dirname(hostPath)
+                : hostPath;
+          return yield* managedStack.stack.tools
+            .run(postgres.pgProve({ major: managedStack.major }), {
+              args: args.cmd.slice(1),
+              env: runEnv,
+              pgProve: {
+                mounts: args.mounts,
+                ...(hostWorkingDir === undefined ? {} : { cwd: hostWorkingDir }),
+                ...(Option.isSome(args.workingDir) ? { workingDir: args.workingDir.value } : {}),
+              },
+              stdout: onStdout,
+              stderr: (bytes) => output.rawBytes(bytes, "stderr"),
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) => new TestDbRunError({ message: `pg_prove run failed: ${cause.message}` }),
+              ),
+            );
+        }
         if (backend.kind === "stack") {
           const bundled = yield* BundledPostgresClient;
           const toml = yield* readDbToml(fs, path, cliSettings.workdir);
-          const version =
-            (connType === "local" ? yield* stackProjectDatabaseVersion : undefined) ??
-            String(toml.majorVersion);
+          const version = String(toml.majorVersion);
           const hostPath = args.hostPaths[0];
           const hostWorkingDir =
             hostPath === undefined
@@ -277,7 +371,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
     if (exitCode !== 0) {
       return yield* Effect.fail(
         new TestDbRunError({
-          message: `error running ${useNativeProve ? "pg_prove" : "container"}: exit ${exitCode}`,
+          message: `error running ${managedStack !== undefined || useNativeProve ? "pg_prove" : "container"}: exit ${exitCode}`,
         }),
       );
     }

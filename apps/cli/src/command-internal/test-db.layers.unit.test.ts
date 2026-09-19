@@ -20,7 +20,6 @@ import {
 } from "../../tests/helpers/mocks.ts";
 import {
   isolatedHomeLayer,
-  mockCommandSettings,
   mockTelemetryStateLayer,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
@@ -76,8 +75,6 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the real commandSettingsLayer against
-    // the real filesystem — see isolatedHomeLayer's docs.
     isolatedHomeLayer(tempRoot.current),
     mockTty(),
     mockProcessControl().layer,
@@ -85,7 +82,6 @@ function ambientStubs() {
     mockTelemetryRuntime(),
     out.layer,
     flagLayers,
-    mockCommandSettings({ workdir: "/tmp/test-db-layers-test" }),
     mockTelemetryStateLayer,
     heavyServiceStubs,
   );
