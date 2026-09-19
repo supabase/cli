@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
-import { setupStorage } from "../../../../tests/helpers/storage.ts";
+import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
 import {
   StackStorageCapabilityError,
   StackStorageUnavailableError,
@@ -11,6 +11,7 @@ import {
 import { StorageGatewayStatusError } from "../../../command-internal/storage-gateway.errors.ts";
 import { storageLs } from "./ls.handler.ts";
 import type { StorageLsFlags } from "./ls.command.ts";
+import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 
 const BUCKET = "/storage/v1/bucket";
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
@@ -454,7 +455,6 @@ describe("stack backend", () => {
       toml: 'project_id = "test"\n[api]\nport = 65000\n',
       local: true,
       stackBackend: true,
-      stackApi: { apiEndpoint: "http://127.0.0.1:59999", serviceRoleJwt: "stack-jwt" },
       routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
     });
     return Effect.gen(function* () {
@@ -462,8 +462,9 @@ describe("stack backend", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
-      expect(requests[0]?.headers["apikey"]).toBe("stack-jwt");
-      expect(requests[0]?.headers["authorization"]).toBe("Bearer stack-jwt");
+      const serviceRoleJwt = generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role");
+      expect(requests[0]?.headers["apikey"]).toBe(serviceRoleJwt);
+      expect(requests[0]?.headers["authorization"]).toBe(`Bearer ${serviceRoleJwt}`);
     });
   });
 
@@ -474,7 +475,6 @@ describe("stack backend", () => {
         toml: 'project_id = "test"\n[api]\nport = 65000\n',
         local: true,
         stackBackend: true,
-        stackApi: { apiEndpoint: "http://127.0.0.1:59999", serviceRoleJwt: "stack-jwt" },
         files: {
           "supabase/.env":
             "SUPABASE_API_PORT=65001\n" +
@@ -492,7 +492,9 @@ describe("stack backend", () => {
         expect(url).not.toContain("65001");
         expect(url).not.toContain("legacy.invalid");
         expect(url.startsWith("http://127.0.0.1:59999")).toBe(true);
-        expect(requests[0]?.headers["apikey"]).toBe("stack-jwt");
+        expect(requests[0]?.headers["apikey"]).toBe(
+          generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+        );
       });
     },
   );
@@ -513,7 +515,7 @@ describe("stack backend", () => {
           (error) => error instanceof StackStorageCapabilityError,
         );
         expect(capability).toBeInstanceOf(StackStorageCapabilityError);
-        expect(capability?.suggestion).toContain("-x storage");
+        expect(capability?.suggestion).toContain("--exclude storage");
         expect(requests).toHaveLength(0);
       });
     },
@@ -560,58 +562,55 @@ describe("stack backend", () => {
     });
   });
 
-  it.live(
-    "fails with StackStorageUnavailableError when the StackApi service is unavailable",
-    () => {
-      const { layer, requests } = setupStorage(tmp.current, {
-        toml: 'project_id = "test"\n',
-        local: true,
-        stackBackend: true,
-        stackApi: { present: false },
-      });
-      return Effect.gen(function* () {
-        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain("StackStorageUnavailableError");
-        }
-        expect(requests).toHaveLength(0);
-      });
-    },
-  );
-
-  it.live(
-    "fails with StackStorageUnavailableError when the stack exposes no API credentials",
-    () => {
-      const { layer, requests } = setupStorage(tmp.current, {
-        toml: 'project_id = "test"\n',
-        local: true,
-        stackBackend: true,
-        stackApi: { omitApiCredentials: true },
-      });
-      return Effect.gen(function* () {
-        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain("StackStorageUnavailableError");
-        }
-        expect(requests).toHaveLength(0);
-      });
-    },
-  );
-
-  it.live("fails with StackStorageUnavailableError when the stack exposes no api endpoint", () => {
+  it.live("fails when the required StackApi service is unavailable", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       stackBackend: true,
-      stackApi: { apiEndpoint: null },
+      stackApi: { present: false },
     });
     return Effect.gen(function* () {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("StackStorageUnavailableError");
+        expect(Cause.pretty(exit.cause)).toContain("Service not found: supabase/stack/StackApi");
+      }
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live(
+    "derives Storage credentials from the primary database when Auth credentials are unavailable",
+    () => {
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(requests).toHaveLength(1);
+        expect(requests[0]?.headers["apikey"]).toBe(
+          generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+        );
+      });
+    },
+  );
+
+  it.live("fails with StackStorageCapabilityError when the stack exposes no api endpoint", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { storageEndpoint: false },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("StackStorageCapabilityError");
       }
       expect(requests).toHaveLength(0);
     });
@@ -647,6 +646,38 @@ describe("stack backend", () => {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stdoutText).toBe("test/\n");
+    });
+  });
+
+  it.live("proceeds to the gateway while Storage is stopping with wake retained", () => {
+    const { layer, out } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { storageState: "stopping" },
+      routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stdoutText).toBe("test/\n");
+    });
+  });
+
+  it.live("fails when Storage is stopping after a manual stop disabled wake", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { storageState: "stopping", storageWakeEnabled: false },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Storage is stopped");
+      }
+      expect(requests).toHaveLength(0);
     });
   });
 
@@ -749,7 +780,7 @@ describe("stack backend", () => {
     },
   );
 
-  it.live("suggests stopping and starting the stack when Storage is disabled", () => {
+  it.live("suggests starting without excluding Storage when it is disabled", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -763,8 +794,7 @@ describe("stack backend", () => {
         (error) => error instanceof StackStorageCapabilityError,
       );
       expect(capability).toBeInstanceOf(StackStorageCapabilityError);
-      expect(capability?.suggestion).toContain("supabase stack stop");
-      expect(capability?.suggestion).toContain("supabase stack start without -x storage");
+      expect(capability?.suggestion).toContain("supabase start without --exclude storage");
       expect(capability?.suggestion).not.toContain("supabase stack restart");
     });
   });

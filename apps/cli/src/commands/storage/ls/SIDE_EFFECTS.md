@@ -54,15 +54,15 @@ Auth: `apikey` header always; `Authorization: Bearer <key>` unless the key is `s
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                          |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                            |
-| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard                       |
-| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`)                          |
-| `1`  | invalid URL / url-parse error / API non-2xx / network / auth / config parse                                                                        |
-| `1`  | `--project-ref` set with `--local` (see Notes)                                                                                                     |
-| `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                    |
-| `1`  | stack backend: stack not registered/running, missing API endpoint or credentials, or the stack API is unavailable (`StackStorageUnavailableError`) |
+| Code | Condition                                                                                                                                                                                                                   |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                     |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard                                                                                                |
+| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`)                                                                                                   |
+| `1`  | invalid URL / url-parse error / API non-2xx / network / auth / config parse                                                                                                                                                 |
+| `1`  | `--project-ref` set with `--local` (see Notes)                                                                                                                                                                              |
+| `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                             |
+| `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`) |
 
 ## Output
 
@@ -106,29 +106,21 @@ No custom storage telemetry events.
   unique tree-wide and `seed` already owns `linked`/`local`; the only behavioural cost
   is that they must follow the subcommand token
   (`storage ls --local`, not `storage --local ls`) — the same shape the `db` family uses.
-- **Stack backend (`--local`).** The Storage endpoint is the selected stack's API
-  gateway URL (`status.endpoints.api.url`) + `/storage/v1/...`; the credential is the
-  stack's service-role JWT read from the stack's credentials. The stack is located by
-  the project root (workdir realpath) via the `@supabase/stack` API, which reads stack
-  state under `SUPABASE_HOME`. `ls` never creates a stack.
-- **Stack backend — capability policy.** Storage `disabled` (e.g.
-  `stack start -x storage`) errors with `StackStorageCapabilityError` ("Storage is
-  disabled for this stack.") with guidance to enable `[storage]`, then run
-  `supabase stack stop` followed by `supabase stack start` without `-x storage`;
-  `failed`/`stopped` raises the same error class ("Storage failed to start for this
-  stack"/"Storage is stopped for this stack."), with the capability error appended
-  when present, and guidance to run `supabase stack restart`.
-  `dormant`/`starting`/`ready`/`stopping` all proceed — the
-  gateway activates a lazily-configured Storage on the first request and holds that
-  request, and wakes a stopping Storage once its cleanup completes; there is no
-  client-side polling. A stack that is not registered, not running, missing
-  its API endpoint or credentials, or whose stack API is unavailable errors with
-  `StackStorageUnavailableError` and guidance to run `supabase stack status` or
-  `supabase stack restart` (or `supabase start` when the stack was never configured). A
-  stack-gateway 502/503 during Storage activation is reported as
-  `StackStorageCapabilityError` with guidance to run `supabase stack logs` then
-  `supabase stack restart`, instead of a raw status body — for a `--local` target only;
-  a `--linked` failure passes through unchanged. No HTTP request is sent when Storage is
-  disabled or the stack is not running.
+- **Stack backend (`--local`).** The Storage endpoint comes from the selected composition's
+  Storage member observation, and the service-role JWT is generated from the primary database's
+  observed JWT secret. The stack is opened by project identity through the `@supabase/stack` API,
+  which reads stack state under `SUPABASE_HOME`; `ls` opens saved state without launching
+  the owner or any service member.
+- **Stack backend — capability policy.** Storage excluded from the composition errors with
+  `StackStorageCapabilityError` and guidance to enable `[storage]`, then run `supabase start`
+  without `--exclude storage`. Failed or manually stopped Storage is unusable. Dormant, starting, and ready Storage
+  proceed; stopping Storage proceeds only when idle shutdown retains wake-up. The gateway
+  wakes lazy members on the first request. The primary database must be running and healthy
+  before Storage requests are attempted. A stack that is
+  not registered, has no primary database composition member, is not ready, or has no Storage
+  HTTP endpoint errors with `StackStorageUnavailableError` or `StackStorageCapabilityError`.
+  A stack-gateway 502/503 during Storage activation is reported as `StackStorageCapabilityError`
+  with guidance to inspect logs and restart; linked failures pass through unchanged. No HTTP
+  request is sent when Storage is disabled or the primary database is not ready.
 - **Secrets.** The stack's service-role JWT is never printed or logged; error messages
   contain only lifecycle/capability state text.

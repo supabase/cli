@@ -5,14 +5,12 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option, Redacted, Stream } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import {
-  CAPABILITY_NAMES,
-  InvalidProjectRootError,
-  StackIdSchema,
-  StackNotFoundError,
-  type CapabilityState,
-  type EffectStack,
-  type StackLifecycle,
+import type {
+  DatabaseInstance,
+  Observation,
+  ServiceCreation,
+  ServiceInstance,
+  Stack,
 } from "@supabase/stack/effect";
 
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
@@ -25,6 +23,7 @@ import { StackApi } from "../../src/command-internal/stack-api.ts";
 import { stackBackendLayer } from "../../src/command-internal/stack-backend.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";
+import { unusedStackServices } from "./unused-stack.ts";
 import {
   VALID_REF,
   jsonResponse,
@@ -35,28 +34,15 @@ import {
   mockTelemetryStateTracked,
 } from "./command-mocks.ts";
 
-/**
- * One Storage gateway / Management API mock route.
- *
- * Routes match in registration order and are consumed once matched, so pagination
- * or recursive flows need one route per expected call unless `persist` is set.
- * `when` narrows a match by the parsed request body.
- */
 interface StorageRoute {
   readonly method: string;
-  /** Substring matched against the request URL. */
   readonly match: string;
   readonly status?: number;
-  /** Response JSON body. */
   readonly body?: unknown;
-  /** Raw (non-JSON) response body, for streamed object downloads. */
   readonly rawBody?: string;
-  /** When true, fail with a transport error instead of responding. */
   readonly transport?: boolean;
   readonly transportDescription?: string;
-  /** Narrow the match by the parsed request body. */
   readonly when?: (reqBody: unknown) => boolean;
-  /** Keep this route matchable on every call instead of consuming it. */
   readonly persist?: boolean;
 }
 
@@ -72,158 +58,222 @@ export interface SetupStorageOptions {
   readonly routes?: ReadonlyArray<StorageRoute>;
   readonly files?: Readonly<Record<string, string>>;
   readonly format?: OutputFormat;
-  /** Routing is driven by the `local` field on each command's flags, not here. */
   readonly local?: boolean;
   readonly yes?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
   readonly promptConfirmFail?: boolean;
-  /** stdin interactivity; defaults to a TTY so `confirm`-driven tests reach clack. */
   readonly stdinIsTty?: boolean;
-  /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
   readonly pipedAnswers?: ReadonlyArray<string>;
-  /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
   readonly cliArgs?: ReadonlyArray<string>;
-  /** Project ref returned by the resolver for the linked path. */
   readonly projectRef?: string;
-  /** api-keys list returned by the Management API mock (linked path). */
   readonly apiKeys?: ReadonlyArray<{
     name: string;
     api_key?: string | null;
     type?: string | null;
     secret_jwt_template?: Record<string, unknown> | null;
   }>;
-  /** When true, `loadProjectRef` fails with `ProjectRefNotLinkedError`. */
   readonly linkedFails?: boolean;
-  /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
   readonly explicitWorkdir?: boolean;
-  /** Selects the `stack` backend (`StackBackendContext`); omitted/false keeps the legacy default. */
   readonly stackBackend?: boolean;
-  /** Configures the fake `StackApi` consulted by the stack backend's credential resolution. */
   readonly stackApi?: SetupStorageStackApiOptions;
 }
 
 export interface SetupStorageStackApiOptions {
-  /** Whether the `StackApi` service is provided at all. Defaults to `true`. */
   readonly present?: boolean;
-  /** Whether `findStack` resolves a descriptor for the workdir. Defaults to `true`. */
   readonly found?: boolean;
-  readonly lifecycle?: StackLifecycle;
-  /** The stack's `api` gateway endpoint URL, or `null` to omit it entirely. */
-  readonly apiEndpoint?: string | null;
-  readonly storageState?: CapabilityState;
+  readonly lifecycle?: "running" | "starting" | "stopping" | "stopped";
+  readonly storageEndpoint?: boolean;
+  readonly storageWakeEnabled?: boolean;
+  readonly storageState?:
+    | "dormant"
+    | "starting"
+    | "ready"
+    | "stopping"
+    | "stopped"
+    | "failed"
+    | "disabled";
   readonly storageError?: string;
-  readonly serviceRoleJwt?: string;
-  /** Omits `credentials.api` from the fake stack's credentials effect. */
-  readonly omitApiCredentials?: boolean;
-  /** Makes `findStack` fail with `InvalidProjectRootError({ message })`. */
-  readonly findStackFails?: string;
-  /** Makes `status` fail with `StackNotFoundError({ message })`. */
-  readonly statusFails?: string;
 }
 
-const STORAGE_STACK_ID = StackIdSchema.make("e".repeat(64));
+const STORAGE_STACK_ID = "e".repeat(64);
+export const STORAGE_TEST_JWT_SECRET = "storage-test-jwt-secret-with-at-least-32-chars";
+const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
+  service: "database",
+  config: {
+    version: "17",
+    databasePassword: Redacted.make("postgres"),
+    jwtSecret: Redacted.make(STORAGE_TEST_JWT_SECRET),
+    jwtExpiry: 3600,
+  },
+  endpoints: { sql: { port: 54329 } },
+};
+const storageCreation: Extract<ServiceCreation, { service: "storage" }> = {
+  service: "storage",
+  config: {
+    databaseUrl: "postgresql://placeholder",
+    jwtSecret: STORAGE_TEST_JWT_SECRET,
+    filePath: "/tmp/storage",
+  },
+  endpoints: { http: { port: 59999 } },
+};
 
-/**
- * Builds the fake `EffectStack`/`StackApi` consulted by `resolveStorageCredentials` under the
- * stack backend. Every method besides `findStack`/`openStack`/`status`/`credentials` dies —
- * `storage`/`seed buckets` never call them.
- */
+const observation = (
+  id: string,
+  config: ServiceCreation,
+  lifecycle: "running" | "starting" | "stopping" | "stopped",
+  health: "starting" | "healthy" | "unhealthy" | undefined,
+  wakeEnabled: boolean,
+  endpoint?: {
+    readonly name: string;
+    readonly protocol: "tcp" | "http";
+    readonly host: string;
+    readonly port: number;
+  },
+  error?: string,
+): Observation => ({
+  id,
+  config,
+  endpoints: endpoint === undefined ? [] : [endpoint],
+  lifecycle,
+  health,
+  error:
+    error === undefined ? undefined : { _tag: "ServiceError", operation: "status", message: error },
+  cleanupError: undefined,
+  exit: undefined,
+  currentOperation: undefined,
+  launchId: undefined,
+  intentRevision: 1,
+  wakeEnabled,
+  registered: true,
+});
+
+const instance = <K extends ServiceCreation["service"]>(
+  id: string,
+  creation: Extract<ServiceCreation, { service: K }>,
+  status: Effect.Effect<Observation, never>,
+): ServiceInstance<K> => ({
+  id,
+  service: creation.service,
+  start: Effect.void,
+  ready: Effect.void,
+  stop: Effect.void,
+  restart: () => Effect.void,
+  destroy: Effect.void,
+  prepare: Effect.void,
+  status,
+  followStatus: Stream.empty,
+  logs: Stream.empty,
+  credentials: () => Effect.succeed({}),
+});
+
 export function buildStorageStackApi(
   workdir: string,
   opts: SetupStorageStackApiOptions | undefined,
 ) {
   const options = opts ?? {};
-  const apiEndpointUrl =
-    options.apiEndpoint === undefined ? "http://127.0.0.1:59999" : options.apiEndpoint;
-  const lifecycle = options.lifecycle ?? "running";
   const storageState = options.storageState ?? "dormant";
-  const serviceRoleJwt = options.serviceRoleJwt ?? "stack-service-role-jwt";
-  const findStackCalls: Array<{ readonly projectRoot: string }> = [];
-  const unused = Effect.die("unused in storage stack-backend tests");
-  const unusedFn = () => unused;
-
-  const stack: EffectStack = {
+  const lifecycle = options.lifecycle ?? "running";
+  const storageEnabled = storageState !== "disabled";
+  const storageLifecycle =
+    storageState === "disabled"
+      ? "stopped"
+      : storageState === "dormant"
+        ? "stopped"
+        : storageState === "ready" || storageState === "failed"
+          ? "running"
+          : storageState;
+  const storageHealth =
+    storageState === "ready" || storageState === "dormant"
+      ? "healthy"
+      : storageState === "failed"
+        ? "unhealthy"
+        : storageState === "starting"
+          ? "starting"
+          : undefined;
+  const storageWakeEnabled =
+    options.storageWakeEnabled ?? (storageState === "dormant" || storageState === "stopping");
+  const dbObservation = observation(
+    "database-id",
+    databaseCreation,
+    lifecycle,
+    lifecycle === "running" ? "healthy" : undefined,
+    false,
+    { name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54329 },
+    undefined,
+  );
+  const storageObservation = observation(
+    "storage-id",
+    storageCreation,
+    storageLifecycle,
+    storageHealth,
+    storageWakeEnabled,
+    options.storageEndpoint === false
+      ? undefined
+      : { name: "http", protocol: "http", host: "127.0.0.1", port: 59999 },
+    options.storageError,
+  );
+  const database = {
+    ...instance("database-id", databaseCreation, Effect.succeed(dbObservation)),
+    exportSnapshot: () => Effect.die("unused"),
+    restoreSnapshot: () => Effect.die("unused"),
+  } satisfies DatabaseInstance;
+  const storage = instance("storage-id", storageCreation, Effect.succeed(storageObservation));
+  const members = storageEnabled
+    ? [
+        { id: database.id, activation: "eager" as const },
+        { id: storage.id, activation: "lazy" as const },
+      ]
+    : [{ id: database.id, activation: "eager" as const }];
+  const stack: Stack = {
     id: STORAGE_STACK_ID,
-    status:
-      options.statusFails !== undefined
-        ? Effect.fail(new StackNotFoundError({ message: options.statusFails }))
-        : Effect.succeed({
-            id: STORAGE_STACK_ID,
-            lifecycle,
-            desiredLifecycle: lifecycle === "running" ? "running" : "stopped",
-            runtime: { kind: "native" },
-            endpoints:
-              apiEndpointUrl === null
-                ? {}
-                : {
-                    api: {
-                      protocol: "http" as const,
-                      address: "127.0.0.1",
-                      port: 59999,
-                      url: apiEndpointUrl,
-                    },
-                  },
-            versions: {},
-            capabilities: CAPABILITY_NAMES.map((name) => ({
-              name,
-              activation: name === "database" ? ("eager" as const) : ("lazy" as const),
-              state: name === "storage" ? storageState : ("ready" as const),
-              error: name === "storage" ? options.storageError : undefined,
-            })),
-            artifacts: [],
-          }),
-    credentials: Effect.succeed({
-      database: {
-        url: Redacted.make("postgresql://postgres:postgres@127.0.0.1:54329/postgres"),
-        password: Redacted.make("postgres"),
-      },
-      api:
-        options.omitApiCredentials === true
-          ? undefined
-          : {
-              publishableKey: "anon",
-              secretKey: Redacted.make("secret"),
-              anonJwt: "anon",
-              serviceRoleJwt: Redacted.make(serviceRoleJwt),
-            },
-    }),
-    prepare: unusedFn,
-    start: unusedFn,
-    stop: unused,
-    destroy: unused,
-    resetDatabase: unused,
-    logs: unusedFn,
-    followLogs: () => Stream.empty,
+    services: {
+      create: () => Effect.die("unused"),
+      get: (id: string) =>
+        id === database.id ? Effect.succeed(database) : Effect.succeed(storage),
+      list: Effect.succeed(storageEnabled ? [database, storage] : [database]),
+    },
+    composition: {
+      supabase: () => Effect.die("unused"),
+      configure: () => Effect.die("unused"),
+      describe: Effect.succeed({ members, dependencies: [] }),
+      start: Effect.die("unused"),
+      stop: Effect.die("unused"),
+      restart: Effect.die("unused"),
+    },
+    stop: Effect.die("unused"),
+    destroy: Effect.die("unused"),
+    tools: { run: () => Effect.die("unused") },
   };
-
+  const definition = {
+    id: STORAGE_STACK_ID,
+    identity: { projectRoot: workdir, branchContext: "main", stackName: "default" },
+    runtime: "native" as const,
+    instances: [
+      { id: database.id, creation: databaseCreation },
+      ...(storageEnabled ? [{ id: storage.id, creation: storageCreation }] : []),
+    ],
+    composition: { members, dependencies: [] },
+    ports: [],
+  };
+  const findStackCalls: Array<{ readonly projectRoot: string }> = [];
   const layer =
     options.present === false
-      ? Layer.empty
+      ? Layer.succeed(StackApi, {
+          create: () => Effect.die("Service not found: supabase/stack/StackApi"),
+          open: () => Effect.die("Service not found: supabase/stack/StackApi"),
+          discover: () => Effect.die("Service not found: supabase/stack/StackApi"),
+          resolveIdentity: () => Effect.die("Service not found: supabase/stack/StackApi"),
+        })
       : Layer.succeed(StackApi, {
-          createStack: unusedFn,
-          findStack: (input: { readonly projectRoot: string }) => {
-            findStackCalls.push({ projectRoot: input.projectRoot });
-            if (options.findStackFails !== undefined) {
-              return Effect.fail(new InvalidProjectRootError({ message: options.findStackFails }));
-            }
-            return Effect.succeed(
-              options.found === false
-                ? Option.none()
-                : Option.some({
-                    id: STORAGE_STACK_ID,
-                    projectRoot: workdir,
-                    name: "default",
-                    branchContext: "main",
-                    runtime: { kind: "native" as const },
-                    desiredLifecycle: "running" as const,
-                  }),
-            );
+          create: () => Effect.die("unused"),
+          resolveIdentity: () => Effect.succeed(definition.identity),
+          discover: () =>
+            Effect.succeed(options.found === false ? [] : [{ definition, host: undefined }]),
+          open: () => {
+            findStackCalls.push({ projectRoot: workdir });
+            return Effect.succeed(stack);
           },
-          openStack: () => Effect.succeed(stack),
-          discoverStacks: unusedFn,
-          inspectStack: unusedFn,
         });
-
   return { layer, stackCalls: { findStack: findStackCalls } };
 }
 
@@ -367,7 +417,9 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     mockRuntimeInfo({ cwd: workdir }),
     // `resolveYes` scans the raw argv for an explicit `--yes=false`.
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
-    ...(opts.stackBackend === true ? [stackBackendLayer("stack"), stackApi.layer] : []),
+    unusedStackServices,
+    stackApi.layer,
+    ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),
   );
 
   return { layer, out, requests, telemetry, linkedCache, stackCalls: stackApi.stackCalls };
