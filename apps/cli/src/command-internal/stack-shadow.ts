@@ -65,7 +65,11 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
 ) {
   const settings = yield* Schema.decodeEffect(
     Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Finite, Schema.Boolean])),
-  )(input.db.settings ?? {}).pipe(Effect.mapError(shadowError));
+  )(
+    Object.fromEntries(
+      Object.entries(input.db.settings ?? {}).filter(([, value]) => value !== undefined),
+    ),
+  ).pipe(Effect.mapError(shadowError));
   const database = yield* stack.services.create({
     service: "database",
     config: {

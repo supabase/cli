@@ -49,6 +49,7 @@ export const migraRuntimeLayer = Layer.mergeAll(
 const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
 const localDockerEngine = localDockerEngineLayer.pipe(Layer.provide(debugLoggerLayer));
 const seam = declarativeSeamLayer.pipe(
+  Layer.provide(stackCatalogSetupLayer),
   Layer.provide(pgDeltaCommandSettingsRuntimeLayer),
   Layer.provide(dbConnectionLayer),
   Layer.provide(dockerRunLayer),
@@ -83,6 +84,9 @@ export const pgDeltaCommandRuntimeLayer = Layer.mergeAll(
   // Exposed for handlers' own direct `isLocalDbRunning` calls (`db diff --use-pgadmin`).
   localDockerEngine,
   stackApiLayer,
-  bundledPostgresClientLayer,
+  bundledPostgresClientLayer.pipe(
+    Layer.provide(dockerRunLayer),
+    Layer.provide(pgDeltaCommandSettingsRuntimeLayer),
+  ),
   stackCatalogSetupLayer,
 );
