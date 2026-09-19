@@ -956,33 +956,31 @@ describe("start integration", () => {
       withEnvVar(
         "BITBUCKET_CLONE_DIR",
         "/opt/atlassian/pipelines/agent/build",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup({
-              route: (args) => {
-                if (args[0] === "container" && args[1] === "inspect") {
-                  return { stdout: [STOPPED_STATE] };
-                }
-                return { exitCode: 0 };
-              },
-            });
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({
+            route: (args) => {
+              if (args[0] === "container" && args[1] === "inspect") {
+                return { stdout: [STOPPED_STATE] };
+              }
+              return { exitCode: 0 };
+            },
+          });
 
-            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-            expect(Exit.isFailure(exit)).toBe(true);
-            if (Exit.isFailure(exit)) {
-              expect(Cause.pretty(exit.cause)).toContain("StatusDbNotRunningError");
-            }
-            expect(
-              child.spawned.some(
-                (spawn) =>
-                  (spawn.args[0] === "ps" && spawn.args.includes("--all")) ||
-                  spawn.args[0] === "stop" ||
-                  spawn.args[1] === "prune" ||
-                  spawn.args[0] === "create",
-              ),
-            ).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain("StatusDbNotRunningError");
+          }
+          expect(
+            child.spawned.some(
+              (spawn) =>
+                (spawn.args[0] === "ps" && spawn.args.includes("--all")) ||
+                spawn.args[0] === "stop" ||
+                spawn.args[1] === "prune" ||
+                spawn.args[0] === "create",
+            ),
+          ).toBe(false);
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -1055,13 +1053,12 @@ describe("start integration", () => {
             'project_id = "demo"\n[api.tls]\nenabled = true\ncert_path = "certs/server.crt"\nkey_path = "certs/server.key"\n',
           route: (args) =>
             Effect.gen(function* () {
-              const fs = yield* FileSystem.FileSystem;
               if (args[0] === "container" && args[1] === "inspect") {
                 if (yield* fs.exists(certPath)) yield* fs.remove(certPath);
                 return { stdout: [STOPPED_STATE] };
               }
               return { exitCode: 0 };
-            }).pipe(Effect.provide(BunServices.layer)),
+            }),
         });
 
         const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
@@ -1098,13 +1095,12 @@ describe("start integration", () => {
             'project_id = "demo"\n[functions.foo]\nentrypoint = "./functions/foo/index.ts"\n',
           route: (args) =>
             Effect.gen(function* () {
-              const fs = yield* FileSystem.FileSystem;
               if (args[0] === "container" && args[1] === "inspect") {
                 if (yield* fs.exists(entrypointPath)) yield* fs.remove(entrypointPath);
                 return { stdout: [STOPPED_STATE] };
               }
               return { exitCode: 0 };
-            }).pipe(Effect.provide(BunServices.layer)),
+            }),
         });
 
         const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
@@ -1836,22 +1832,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
           "not-a-bool",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(
-                start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
-              );
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for storage.s3_protocol.enabled");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(
+              start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for storage.s3_protocol.enabled");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -1861,22 +1855,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_STORAGE_ANALYTICS_ENABLED",
           "not-a-bool",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(
-                start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
-              );
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for storage.analytics.enabled");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(
+              start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for storage.analytics.enabled");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -1886,22 +1878,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES",
           "not-a-uint",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(
-                start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
-              );
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for storage.analytics.max_namespaces");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(
+              start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for storage.analytics.max_namespaces");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -1911,22 +1901,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_STORAGE_ANALYTICS_MAX_TABLES",
           "not-a-uint",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(
-                start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
-              );
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for storage.analytics.max_tables");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(
+              start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for storage.analytics.max_tables");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -1936,22 +1924,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS",
           "not-a-uint",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(
-                start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
-              );
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for storage.analytics.max_catalogs");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(
+              start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for storage.analytics.max_catalogs");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -1961,22 +1947,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_STORAGE_VECTOR_MAX_BUCKETS",
           "not-a-uint",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(
-                start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
-              );
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for storage.vector.max_buckets");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(
+              start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for storage.vector.max_buckets");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -1986,22 +1970,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_STORAGE_VECTOR_MAX_INDEXES",
           "not-a-uint",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(
-                start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
-              );
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for storage.vector.max_indexes");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(
+              start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for storage.vector.max_indexes");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2031,22 +2013,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS",
           "not-a-uint",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
+            });
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for auth.rate_limit");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for auth.rate_limit");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2056,22 +2036,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_AUTH_WEB3_SOLANA_ENABLED",
           "not-a-bool",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
+            });
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for auth.web3");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for auth.web3");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2081,22 +2059,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_AUTH_OAUTH_SERVER_ENABLED",
           "not-a-bool",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
+            });
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for auth.oauth_server");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for auth.oauth_server");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2106,22 +2082,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
           "not-a-bool",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
+            });
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for auth.third_party");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for auth.third_party");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2191,22 +2165,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_EDGE_RUNTIME_POLICY",
           "not-a-policy",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(
-                start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer)),
-              );
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for edge_runtime.policy");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(
+              start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer)),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for edge_runtime.policy");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2216,22 +2188,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
           "not-a-port",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(
-                start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer)),
-              );
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for edge_runtime.inspector_port");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(
+              start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer)),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for edge_runtime.inspector_port");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2241,17 +2211,17 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "DOCKER_HOST",
           "npipe:////./pipe/docker_engine",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, out } = yield* setup();
+          Effect.gen(function* () {
+            // DOCKER_HOST is read before docker context inspect, so this reaches the npipe branch
+            // without requiring a Windows Docker context.
+            const { layer, out } = yield* setup();
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              expect(out.stderrText).toContain(
-                "Analytics on Windows requires Docker daemon exposed on tcp://localhost:2375.",
-              );
-              expect(out.stderrText).toContain("Started");
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags()).pipe(Effect.provide(layer));
+            expect(out.stderrText).toContain(
+              "Analytics on Windows requires Docker daemon exposed on tcp://localhost:2375.",
+            );
+            expect(out.stderrText).toContain("Started");
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -2299,16 +2269,14 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
           "true",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              const createdNames = createdContainerNames(child.spawned);
-              expect(createdNames.some((name) => name.includes("_storage_"))).toBe(true);
-              expect(createdNames.some((name) => name.includes("_imgproxy_"))).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags()).pipe(Effect.provide(layer));
+            const createdNames = createdContainerNames(child.spawned);
+            expect(createdNames.some((name) => name.includes("_storage_"))).toBe(true);
+            expect(createdNames.some((name) => name.includes("_imgproxy_"))).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2339,29 +2307,25 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(new Set(START_EXCLUDABLE_KEYS)).toEqual(
             new Set(Object.keys(CONTAINER_SUFFIX_BY_EXCLUDE_KEY)),
           );
-          return yield* Effect.gen(function* () {
-            for (const excludeKey of START_EXCLUDABLE_KEYS) {
-              const { layer, child } = yield* setup({
-                configContents:
-                  'project_id = "demo"\n[storage.image_transformation]\nenabled = true\n[db.pooler]\nenabled = true\n',
-              });
-              yield* start(flags({ exclude: [excludeKey] })).pipe(Effect.provide(layer));
+          for (const excludeKey of START_EXCLUDABLE_KEYS) {
+            const { layer, child } = yield* setup({
+              configContents:
+                'project_id = "demo"\n[storage.image_transformation]\nenabled = true\n[db.pooler]\nenabled = true\n',
+            });
+            yield* start(flags({ exclude: [excludeKey] })).pipe(Effect.provide(layer));
 
-              const createdNames = createdContainerNames(child.spawned);
-              expect(
-                createdNames.filter((name) => name.includes("_db_")),
-                excludeKey,
-              ).toHaveLength(1);
-              const missing = missingSuffixesForExcludeKey(excludeKey);
-              for (const suffix of ALL_EXCLUDABLE_SUFFIXES) {
-                const shouldExist = !missing.includes(suffix);
-                const actuallyExists = createdNames.some((name) => name.includes(`_${suffix}_`));
-                expect(actuallyExists, `excludeKey=${excludeKey} suffix=${suffix}`).toBe(
-                  shouldExist,
-                );
-              }
+            const createdNames = createdContainerNames(child.spawned);
+            expect(
+              createdNames.filter((name) => name.includes("_db_")),
+              excludeKey,
+            ).toHaveLength(1);
+            const missing = missingSuffixesForExcludeKey(excludeKey);
+            for (const suffix of ALL_EXCLUDABLE_SUFFIXES) {
+              const shouldExist = !missing.includes(suffix);
+              const actuallyExists = createdNames.some((name) => name.includes(`_${suffix}_`));
+              expect(actuallyExists, `excludeKey=${excludeKey} suffix=${suffix}`).toBe(shouldExist);
             }
-          });
+          }
         }).pipe(Effect.provide(BunServices.layer)),
       15_000,
     );
@@ -2453,23 +2417,21 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "DOTENV_PRIVATE_KEY",
           undefined,
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const encrypted =
-                "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
-              const { layer, child } = yield* setup({
-                configContents: `project_id = "demo"\n[db.vault]\nmy_secret = "${encrypted}"\n`,
-              });
+          Effect.gen(function* () {
+            const encrypted =
+              "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+            const { layer, child } = yield* setup({
+              configContents: `project_id = "demo"\n[db.vault]\nmy_secret = "${encrypted}"\n`,
+            });
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("failed to parse config: missing private key");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("failed to parse config: missing private key");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2664,20 +2626,18 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_API_PORT",
         "65432",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const http = mockStorageBucketHttpClient();
-            const { layer } = yield* setup({
-              configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
-              route: freshVolumeRoute(defaultRoute()),
-              httpClientLayer: http.layer,
-            });
+        Effect.gen(function* () {
+          const http = mockStorageBucketHttpClient();
+          const { layer } = yield* setup({
+            configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
+            route: freshVolumeRoute(defaultRoute()),
+            httpClientLayer: http.layer,
+          });
 
-            yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
-            expect(http.createdBucketRequests).toHaveLength(1);
-            expect(http.createdBucketRequests[0]).toContain(":65432/");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
+          expect(http.createdBucketRequests).toHaveLength(1);
+          expect(http.createdBucketRequests[0]).toContain(":65432/");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2687,20 +2647,18 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_API_EXTERNAL_URL",
           "http://override.example.com:9999",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const http = mockStorageBucketHttpClient();
-              const { layer } = yield* setup({
-                configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
-                route: freshVolumeRoute(defaultRoute()),
-                httpClientLayer: http.layer,
-              });
+          Effect.gen(function* () {
+            const http = mockStorageBucketHttpClient();
+            const { layer } = yield* setup({
+              configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
+              route: freshVolumeRoute(defaultRoute()),
+              httpClientLayer: http.layer,
+            });
 
-              yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
-              expect(http.createdBucketRequests).toHaveLength(1);
-              expect(http.createdBucketRequests[0]).toContain("override.example.com:9999");
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
+            expect(http.createdBucketRequests).toHaveLength(1);
+            expect(http.createdBucketRequests[0]).toContain("override.example.com:9999");
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2710,22 +2668,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
           "10MiB",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const http = mockStorageBucketHttpClient();
-              const { layer } = yield* setup({
-                configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
-                route: freshVolumeRoute(defaultRoute()),
-                httpClientLayer: http.layer,
-              });
+          Effect.gen(function* () {
+            const http = mockStorageBucketHttpClient();
+            const { layer } = yield* setup({
+              configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
+              route: freshVolumeRoute(defaultRoute()),
+              httpClientLayer: http.layer,
+            });
 
-              yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
-              expect(http.createdBucketBodies).toHaveLength(1);
-              expect(
-                (http.createdBucketBodies[0] as { file_size_limit?: number })?.file_size_limit,
-              ).toBe(10 * 1024 * 1024);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
+            expect(http.createdBucketBodies).toHaveLength(1);
+            expect(
+              (http.createdBucketBodies[0] as { file_size_limit?: number })?.file_size_limit,
+            ).toBe(10 * 1024 * 1024);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -3016,29 +2972,25 @@ content_path = "./supabase/templates/custom_notice.html"
               return route(args);
             },
           });
-          return yield* Effect.gen(function* () {
-            const fiber = yield* start(flags()).pipe(
-              Effect.provide(layer),
-              Effect.forkChild({ startImmediately: true }),
-            );
-            // Wait until the health check has actually probed the never-healthy `db` container,
-            // proving the fiber is suspended inside the retry loop, not merely past `create`.
-            while (
-              dbContainerId === undefined ||
-              !child.spawned.some(
-                (s) =>
-                  s.args[0] === "container" &&
-                  s.args[1] === "inspect" &&
-                  s.args[2] === dbContainerId,
-              )
-            ) {
-              yield* Effect.sleep("5 millis");
-            }
-            // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
-            // including the `Effect.onError` rollback) has fully completed.
-            yield* Fiber.interrupt(fiber);
-            expect(rollbackWasAttempted(child.spawned)).toBe(true);
-          });
+          const fiber = yield* start(flags()).pipe(
+            Effect.provide(layer),
+            Effect.forkChild({ startImmediately: true }),
+          );
+          // Wait until the health check has actually probed the never-healthy `db` container,
+          // proving the fiber is suspended inside the retry loop, not merely past `create`.
+          while (
+            dbContainerId === undefined ||
+            !child.spawned.some(
+              (s) =>
+                s.args[0] === "container" && s.args[1] === "inspect" && s.args[2] === dbContainerId,
+            )
+          ) {
+            yield* Effect.sleep("5 millis");
+          }
+          // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
+          // including the `Effect.onError` rollback) has fully completed.
+          yield* Fiber.interrupt(fiber);
+          expect(rollbackWasAttempted(child.spawned)).toBe(true);
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -3064,30 +3016,28 @@ content_path = "./supabase/templates/custom_notice.html"
             // exercises the Docker-inspect health path.
             httpClientLayer: unusedHttpClientLayer,
           });
-          return yield* Effect.gen(function* () {
-            const fiber = yield* start(flags({ exclude: ["postgrest", "edge-runtime"] })).pipe(
-              Effect.provide(layer),
-              Effect.forkChild({ startImmediately: true }),
-            );
-            // Wait until the bulk health check has probed the never-healthy `auth` container,
-            // proving the fiber is suspended inside the retry loop, not merely past the "Waiting
-            // for health checks..." message.
-            while (
-              authContainerId === undefined ||
-              !child.spawned.some(
-                (s) =>
-                  s.args[0] === "container" &&
-                  s.args[1] === "inspect" &&
-                  s.args[2] === authContainerId,
-              )
-            ) {
-              yield* Effect.sleep("5 millis");
-            }
-            // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
-            // including the `Effect.onError` rollback) has fully completed.
-            yield* Fiber.interrupt(fiber);
-            expect(rollbackWasAttempted(child.spawned)).toBe(true);
-          });
+          const fiber = yield* start(flags({ exclude: ["postgrest", "edge-runtime"] })).pipe(
+            Effect.provide(layer),
+            Effect.forkChild({ startImmediately: true }),
+          );
+          // Wait until the bulk health check has probed the never-healthy `auth` container,
+          // proving the fiber is suspended inside the retry loop, not merely past the "Waiting
+          // for health checks..." message.
+          while (
+            authContainerId === undefined ||
+            !child.spawned.some(
+              (s) =>
+                s.args[0] === "container" &&
+                s.args[1] === "inspect" &&
+                s.args[2] === authContainerId,
+            )
+          ) {
+            yield* Effect.sleep("5 millis");
+          }
+          // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
+          // including the `Effect.onError` rollback) has fully completed.
+          yield* Fiber.interrupt(fiber);
+          expect(rollbackWasAttempted(child.spawned)).toBe(true);
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -3197,21 +3147,19 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_AUTH_EMAIL_OTP_LENGTH",
           "abc",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
+            });
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-              }
-              expect(child.spawned).toHaveLength(0);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+            }
+            expect(child.spawned).toHaveLength(0);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -3221,21 +3169,19 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
           "bad",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
+            });
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-              }
-              expect(child.spawned).toHaveLength(0);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+            }
+            expect(child.spawned).toHaveLength(0);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -3524,6 +3470,7 @@ content_path = "./supabase/templates/custom_notice.html"
             const serialized = Cause.pretty(exit.cause);
             expect(serialized).toContain("StorageGatewayStatusError");
             // The seed error replaces the original health-check timeout entirely.
+            expect(serialized).not.toContain("HealthCheckTimeoutError");
             const failures = exit.cause.reasons.filter(Cause.isFailReason);
             expect(failures.length).toBeGreaterThan(0);
             expect(
@@ -3622,17 +3569,15 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_NETWORK_ID",
         "env-net",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup();
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup();
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const networkCreate = child.spawned.find(
-              (s) => s.args[0] === "network" && s.args[1] === "create",
-            );
-            expect(networkCreate?.args.at(-1)).toBe("env-net");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const networkCreate = child.spawned.find(
+            (s) => s.args[0] === "network" && s.args[1] === "create",
+          );
+          expect(networkCreate?.args.at(-1)).toBe("env-net");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -3642,19 +3587,16 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_API_PORT",
         "61234",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup();
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup();
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const kongCreate = child.spawned.find(
-              (s) =>
-                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
-            );
-            expect(kongCreate?.args).toContain("61234:8000");
-            expect(kongCreate?.args).not.toContain("54321:8000");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const kongCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+          );
+          expect(kongCreate?.args).toContain("61234:8000");
+          expect(kongCreate?.args).not.toContain("54321:8000");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -3981,21 +3923,17 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_LOCAL_SMTP_SENDER_NAME",
           "Override Sender",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              const gotrueCreate = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-              );
-              expect(gotrueCreate?.env["GOTRUE_SMTP_ADMIN_EMAIL"]).toBe(
-                "override-admin@example.com",
-              );
-              expect(gotrueCreate?.env["GOTRUE_SMTP_SENDER_NAME"]).toBe("Override Sender");
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags()).pipe(Effect.provide(layer));
+            const gotrueCreate = child.spawned.find(
+              (s) =>
+                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+            );
+            expect(gotrueCreate?.env["GOTRUE_SMTP_ADMIN_EMAIL"]).toBe("override-admin@example.com");
+            expect(gotrueCreate?.env["GOTRUE_SMTP_SENDER_NAME"]).toBe("Override Sender");
+          }).pipe(Effect.provide(BunServices.layer)),
         ),
       ).pipe(Effect.provide(BunServices.layer)),
     );
@@ -4008,18 +3946,16 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_LOCAL_SMTP_SMTP_PORT",
           "not-a-port",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4039,6 +3975,8 @@ content_path = "./supabase/templates/custom_notice.html"
               "SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN",
               "override-auth-token",
               Effect.gen(function* () {
+                // Enabling Twilio alone leaves its required credentials unresolved, so override
+                // the complete provider set to isolate config precedence.
                 const { layer, child } = yield* setup({
                   configContents: 'project_id = "demo"\n[auth.sms.twilio]\nenabled = false\n',
                 });
@@ -4075,23 +4013,20 @@ content_path = "./supabase/templates/custom_notice.html"
           withEnvVar(
             "SUPABASE_AUTH_SMS_MAX_FREQUENCY",
             "10s",
-            Effect.suspend(() => {
-              return Effect.gen(function* () {
-                const { layer, child } = yield* setup({
-                  configContents:
-                    'project_id = "demo"\n[auth.sms.twilio]\nenabled = true\naccount_sid = "AC123"\nauth_token = "test-auth-token"\nmessage_service_sid = "MG123"\n',
-                });
+            Effect.gen(function* () {
+              const { layer, child } = yield* setup({
+                configContents:
+                  'project_id = "demo"\n[auth.sms.twilio]\nenabled = true\naccount_sid = "AC123"\nauth_token = "test-auth-token"\nmessage_service_sid = "MG123"\n',
+              });
 
-                yield* start(flags()).pipe(Effect.provide(layer));
-                const gotrueCreate = child.spawned.find(
-                  (s) =>
-                    s.args[0] === "create" &&
-                    containerNameFromCreateArgs(s.args).includes("_auth_"),
-                );
-                expect(gotrueCreate?.env["GOTRUE_EXTERNAL_PHONE_ENABLED"]).toBe("true");
-                expect(gotrueCreate?.env["GOTRUE_SMS_MAX_FREQUENCY"]).toBe("10s");
-              }).pipe(Effect.provide(BunServices.layer));
-            }),
+              yield* start(flags()).pipe(Effect.provide(layer));
+              const gotrueCreate = child.spawned.find(
+                (s) =>
+                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+              );
+              expect(gotrueCreate?.env["GOTRUE_EXTERNAL_PHONE_ENABLED"]).toBe("true");
+              expect(gotrueCreate?.env["GOTRUE_SMS_MAX_FREQUENCY"]).toBe("10s");
+            }).pipe(Effect.provide(BunServices.layer)),
           ),
         ).pipe(Effect.provide(BunServices.layer)),
     );
@@ -4102,21 +4037,19 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
           "true",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child, out } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child, out } = yield* setup();
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              const gotrueCreate = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-              );
-              expect(gotrueCreate?.env["GOTRUE_EXTERNAL_PHONE_ENABLED"]).toBe("false");
-              expect(out.stderrText).toContain(
-                "WARN: no SMS provider is enabled. Disabling phone login",
-              );
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags()).pipe(Effect.provide(layer));
+            const gotrueCreate = child.spawned.find(
+              (s) =>
+                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+            );
+            expect(gotrueCreate?.env["GOTRUE_EXTERNAL_PHONE_ENABLED"]).toBe("false");
+            expect(out.stderrText).toContain(
+              "WARN: no SMS provider is enabled. Disabling phone login",
+            );
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4131,20 +4064,17 @@ content_path = "./supabase/templates/custom_notice.html"
           withEnvVar(
             "SUPABASE_AUTH_EMAIL_OTP_LENGTH",
             "8",
-            Effect.suspend(() => {
-              return Effect.gen(function* () {
-                const { layer, child } = yield* setup();
+            Effect.gen(function* () {
+              const { layer, child } = yield* setup();
 
-                yield* start(flags()).pipe(Effect.provide(layer));
-                const gotrueCreate = child.spawned.find(
-                  (s) =>
-                    s.args[0] === "create" &&
-                    containerNameFromCreateArgs(s.args).includes("_auth_"),
-                );
-                expect(gotrueCreate?.env["GOTRUE_EXTERNAL_EMAIL_ENABLED"]).toBe("false");
-                expect(gotrueCreate?.env["GOTRUE_MAILER_OTP_LENGTH"]).toBe("8");
-              }).pipe(Effect.provide(BunServices.layer));
-            }),
+              yield* start(flags()).pipe(Effect.provide(layer));
+              const gotrueCreate = child.spawned.find(
+                (s) =>
+                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+              );
+              expect(gotrueCreate?.env["GOTRUE_EXTERNAL_EMAIL_ENABLED"]).toBe("false");
+              expect(gotrueCreate?.env["GOTRUE_MAILER_OTP_LENGTH"]).toBe("8");
+            }).pipe(Effect.provide(BunServices.layer)),
           ),
         ).pipe(Effect.provide(BunServices.layer)),
     );
@@ -4155,30 +4085,28 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT",
           "Override subject",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const fs = yield* FileSystem.FileSystem;
-              const path = yield* Path.Path;
-              const { layer, workdir, child } = yield* setup({
-                configContents:
-                  'project_id = "demo"\n[auth.email.template.confirmation]\ncontent_path = "./templates/confirmation.html"\n',
-              });
-              yield* fs.makeDirectory(path.join(workdir, "templates"), { recursive: true });
-              yield* fs.writeFileString(
-                path.join(workdir, "templates", "confirmation.html"),
-                "<html></html>",
-              );
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const { layer, workdir, child } = yield* setup({
+              configContents:
+                'project_id = "demo"\n[auth.email.template.confirmation]\ncontent_path = "./templates/confirmation.html"\n',
+            });
+            yield* fs.makeDirectory(path.join(workdir, "templates"), { recursive: true });
+            yield* fs.writeFileString(
+              path.join(workdir, "templates", "confirmation.html"),
+              "<html></html>",
+            );
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              const gotrueCreate = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-              );
-              expect(gotrueCreate?.env["GOTRUE_MAILER_SUBJECTS_CONFIRMATION"]).toBe(
-                "Override subject",
-              );
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags()).pipe(Effect.provide(layer));
+            const gotrueCreate = child.spawned.find(
+              (s) =>
+                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+            );
+            expect(gotrueCreate?.env["GOTRUE_MAILER_SUBJECTS_CONFIRMATION"]).toBe(
+              "Override subject",
+            );
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -4188,24 +4116,22 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT",
           "<html>Hi</html>",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents: 'project_id = "demo"\n[auth.email.template.confirmation]\n',
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents: 'project_id = "demo"\n[auth.email.template.confirmation]\n',
+            });
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain(
-                  "Invalid config for auth.email.template.confirmation.content: please use content_path instead",
-                );
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain(
+                "Invalid config for auth.email.template.confirmation.content: please use content_path instead",
+              );
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4215,18 +4141,16 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_DB_PORT",
         "54329",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup();
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup();
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const dbCreate = child.spawned.find(
-              (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
-            );
-            expect(dbCreate?.args).toContain("54329:5432");
-            expect(dbCreate?.args).not.toContain("54322:5432");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const dbCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
+          );
+          expect(dbCreate?.args).toContain("54329:5432");
+          expect(dbCreate?.args).not.toContain("54322:5432");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4236,19 +4160,15 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_DB_SETTINGS_SHARED_BUFFERS",
         "256MB",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup();
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup();
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const dbCreate = child.spawned.find(
-              (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
-            );
-            expect(dbCreate?.args.some((arg) => arg.includes("shared_buffers = '256MB'"))).toBe(
-              true,
-            );
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const dbCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
+          );
+          expect(dbCreate?.args.some((arg) => arg.includes("shared_buffers = '256MB'"))).toBe(true);
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4261,19 +4181,16 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_STORAGE_VECTOR_ENABLED",
           "false",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              const storageCreate = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" &&
-                  containerNameFromCreateArgs(s.args).includes("_storage_"),
-              );
-              expect(storageCreate?.env["S3_PROTOCOL_ENABLED"]).toBe("false");
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags()).pipe(Effect.provide(layer));
+            const storageCreate = child.spawned.find(
+              (s) =>
+                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
+            );
+            expect(storageCreate?.env["S3_PROTOCOL_ENABLED"]).toBe("false");
+          }).pipe(Effect.provide(BunServices.layer)),
         ),
       ).pipe(Effect.provide(BunServices.layer)),
     );
@@ -4293,26 +4210,24 @@ content_path = "./supabase/templates/custom_notice.html"
             withEnvVar(
               "SUPABASE_ANALYTICS_GCP_JWT_PATH",
               "gcp-key.json",
-              Effect.suspend(() => {
-                return Effect.gen(function* () {
-                  const { layer, child } = yield* setup();
+              Effect.gen(function* () {
+                const { layer, child } = yield* setup();
 
-                  yield* start(flags()).pipe(Effect.provide(layer));
-                  const logflareCreate = child.spawned.find(
-                    (s) =>
-                      s.args[0] === "create" &&
-                      containerNameFromCreateArgs(s.args).includes("_analytics_"),
-                  );
-                  expect(logflareCreate?.env["GOOGLE_PROJECT_ID"]).toBe("env-gcp-project");
-                  expect(logflareCreate?.env["GOOGLE_PROJECT_NUMBER"]).toBe("987654321");
-                  const studioCreate = child.spawned.find(
-                    (s) =>
-                      s.args[0] === "create" &&
-                      containerNameFromCreateArgs(s.args).includes("_studio_"),
-                  );
-                  expect(studioCreate?.env["NEXT_ANALYTICS_BACKEND_PROVIDER"]).toBe("bigquery");
-                }).pipe(Effect.provide(BunServices.layer));
-              }),
+                yield* start(flags()).pipe(Effect.provide(layer));
+                const logflareCreate = child.spawned.find(
+                  (s) =>
+                    s.args[0] === "create" &&
+                    containerNameFromCreateArgs(s.args).includes("_analytics_"),
+                );
+                expect(logflareCreate?.env["GOOGLE_PROJECT_ID"]).toBe("env-gcp-project");
+                expect(logflareCreate?.env["GOOGLE_PROJECT_NUMBER"]).toBe("987654321");
+                const studioCreate = child.spawned.find(
+                  (s) =>
+                    s.args[0] === "create" &&
+                    containerNameFromCreateArgs(s.args).includes("_studio_"),
+                );
+                expect(studioCreate?.env["NEXT_ANALYTICS_BACKEND_PROVIDER"]).toBe("bigquery");
+              }).pipe(Effect.provide(BunServices.layer)),
             ),
           ),
         ),
@@ -4325,18 +4240,15 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_AUTH_ENABLE_SIGNUP",
         "false",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup();
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup();
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const gotrueCreate = child.spawned.find(
-              (s) =>
-                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-            );
-            expect(gotrueCreate?.env["GOTRUE_DISABLE_SIGNUP"]).toBe("true");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_DISABLE_SIGNUP"]).toBe("true");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4346,22 +4258,20 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_EDGE_RUNTIME_DENO_VERSION",
         "1",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup();
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup();
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const edgeRuntimeImageInspect = child.spawned.find(
-              (s) =>
-                s.args[0] === "image" &&
-                s.args[1] === "inspect" &&
-                (s.args[2] ?? "").includes("edge-runtime"),
-            );
-            expect(edgeRuntimeImageInspect?.args[2]).toBe(
-              "public.ecr.aws/supabase/edge-runtime:v1.68.4",
-            );
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const edgeRuntimeImageInspect = child.spawned.find(
+            (s) =>
+              s.args[0] === "image" &&
+              s.args[1] === "inspect" &&
+              (s.args[2] ?? "").includes("edge-runtime"),
+          );
+          expect(edgeRuntimeImageInspect?.args[2]).toBe(
+            "public.ecr.aws/supabase/edge-runtime:v1.68.4",
+          );
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4376,31 +4286,29 @@ content_path = "./supabase/templates/custom_notice.html"
           withEnvVar(
             "SUPABASE_REALTIME_MAX_HEADER_LENGTH",
             "8192",
-            Effect.suspend(() => {
-              return Effect.gen(function* () {
-                const { layer, child } = yield* setup({
-                  route: freshVolumeRoute(defaultRoute()),
-                });
+            Effect.gen(function* () {
+              const { layer, child } = yield* setup({
+                route: freshVolumeRoute(defaultRoute()),
+              });
 
-                yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
-                const realtimeCreate = child.spawned.find(
-                  (s) =>
-                    s.args[0] === "create" &&
-                    containerNameFromCreateArgs(s.args).includes("_realtime_"),
-                );
-                expect(realtimeCreate?.env["ERL_AFLAGS"]).toBe("-proto_dist inet6_tcp");
-                expect(realtimeCreate?.env["MAX_HEADER_LENGTH"]).toBe("8192");
+              yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
+              const realtimeCreate = child.spawned.find(
+                (s) =>
+                  s.args[0] === "create" &&
+                  containerNameFromCreateArgs(s.args).includes("_realtime_"),
+              );
+              expect(realtimeCreate?.env["ERL_AFLAGS"]).toBe("-proto_dist inet6_tcp");
+              expect(realtimeCreate?.env["MAX_HEADER_LENGTH"]).toBe("8192");
 
-                // The first of the three PG15+ one-shot migrate jobs (realtime, storage, auth
-                // order) — see the "fresh volume: DB setup" describe block's own
-                // `dbSetupJobCalls` helper for the same `run --rm` shape.
-                const realtimeSetupJob = child.spawned.find(
-                  (s) => s.args[0] === "run" && s.args[1] === "--rm",
-                );
-                expect(realtimeSetupJob?.env["ERL_AFLAGS"]).toBe("-proto_dist inet6_tcp");
-                expect(realtimeSetupJob?.env["MAX_HEADER_LENGTH"]).toBe("8192");
-              }).pipe(Effect.provide(BunServices.layer));
-            }),
+              // The first of the three PG15+ one-shot migrate jobs (realtime, storage, auth
+              // order) — see the "fresh volume: DB setup" describe block's own
+              // `dbSetupJobCalls` helper for the same `run --rm` shape.
+              const realtimeSetupJob = child.spawned.find(
+                (s) => s.args[0] === "run" && s.args[1] === "--rm",
+              );
+              expect(realtimeSetupJob?.env["ERL_AFLAGS"]).toBe("-proto_dist inet6_tcp");
+              expect(realtimeSetupJob?.env["MAX_HEADER_LENGTH"]).toBe("8192");
+            }).pipe(Effect.provide(BunServices.layer)),
           ),
         ).pipe(Effect.provide(BunServices.layer)),
     );
@@ -4411,18 +4319,16 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_REALTIME_IP_VERSION",
           "IPv5",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4452,25 +4358,22 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
           "5MiB",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({ route: freshVolumeRoute(defaultRoute()) });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({ route: freshVolumeRoute(defaultRoute()) });
 
-              yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
-              const storageCreate = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" &&
-                  containerNameFromCreateArgs(s.args).includes("_storage_"),
-              );
-              expect(storageCreate?.env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
+            yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
+            const storageCreate = child.spawned.find(
+              (s) =>
+                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
+            );
+            expect(storageCreate?.env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
 
-              // Second of the three PG15+ one-shot migrate jobs (realtime, storage, auth order).
-              const migrateJobs = child.spawned.filter(
-                (s) => s.args[0] === "run" && s.args[1] === "--rm",
-              );
-              expect(migrateJobs[1]?.env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            // Second of the three PG15+ one-shot migrate jobs (realtime, storage, auth order).
+            const migrateJobs = child.spawned.filter(
+              (s) => s.args[0] === "run" && s.args[1] === "--rm",
+            );
+            expect(migrateJobs[1]?.env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4482,26 +4385,23 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
           "16.0.0.1",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              const dbImageInspect = child.spawned.find(
-                (s) =>
-                  s.args[0] === "image" &&
-                  s.args[1] === "inspect" &&
-                  (s.args[2] ?? "").includes("postgres"),
-              );
-              expect(dbImageInspect?.args[2]).toContain("16.0.0.1-orioledb");
+            yield* start(flags()).pipe(Effect.provide(layer));
+            const dbImageInspect = child.spawned.find(
+              (s) =>
+                s.args[0] === "image" &&
+                s.args[1] === "inspect" &&
+                (s.args[2] ?? "").includes("postgres"),
+            );
+            expect(dbImageInspect?.args[2]).toContain("16.0.0.1-orioledb");
 
-              const dbCreate = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
-              );
-              expect(dbCreate?.env["S3_ENABLED"]).toBe("true");
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const dbCreate = child.spawned.find(
+              (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
+            );
+            expect(dbCreate?.env["S3_ENABLED"]).toBe("true");
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -4521,22 +4421,20 @@ content_path = "./supabase/templates/custom_notice.html"
               withEnvVar(
                 "SUPABASE_EXPERIMENTAL_S3_SECRET_KEY",
                 "env-s3-secret-key",
-                Effect.suspend(() => {
-                  return Effect.gen(function* () {
-                    const { layer, child } = yield* setup();
+                Effect.gen(function* () {
+                  const { layer, child } = yield* setup();
 
-                    yield* start(flags()).pipe(Effect.provide(layer));
-                    const dbCreate = child.spawned.find(
-                      (s) =>
-                        s.args[0] === "create" &&
-                        containerNameFromCreateArgs(s.args).includes("_db_"),
-                    );
-                    expect(dbCreate?.env["S3_HOST"]).toBe("env-s3-host");
-                    expect(dbCreate?.env["S3_REGION"]).toBe("env-s3-region");
-                    expect(dbCreate?.env["S3_ACCESS_KEY"]).toBe("env-s3-access-key");
-                    expect(dbCreate?.env["S3_SECRET_KEY"]).toBe("env-s3-secret-key");
-                  }).pipe(Effect.provide(BunServices.layer));
-                }),
+                  yield* start(flags()).pipe(Effect.provide(layer));
+                  const dbCreate = child.spawned.find(
+                    (s) =>
+                      s.args[0] === "create" &&
+                      containerNameFromCreateArgs(s.args).includes("_db_"),
+                  );
+                  expect(dbCreate?.env["S3_HOST"]).toBe("env-s3-host");
+                  expect(dbCreate?.env["S3_REGION"]).toBe("env-s3-region");
+                  expect(dbCreate?.env["S3_ACCESS_KEY"]).toBe("env-s3-access-key");
+                  expect(dbCreate?.env["S3_SECRET_KEY"]).toBe("env-s3-secret-key");
+                }).pipe(Effect.provide(BunServices.layer)),
               ),
             ),
           ),
@@ -4595,39 +4493,37 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_API_TLS_KEY_PATH",
           "certs/env-server.key",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const fs = yield* FileSystem.FileSystem;
-              const path = yield* Path.Path;
-              const copied = new Map<string, string>();
-              const { layer, workdir, child } = yield* setup({
-                configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
-                onSecretCopy: (containerPath, content) => {
-                  copied.set(containerPath, content);
-                },
-              });
-              yield* fs.makeDirectory(path.join(workdir, "supabase", "certs"), {
-                recursive: true,
-              });
-              yield* fs.writeFileString(
-                path.join(workdir, "supabase", "certs", "env-server.crt"),
-                "-----BEGIN CERTIFICATE-----env-cert",
-              );
-              yield* fs.writeFileString(
-                path.join(workdir, "supabase", "certs", "env-server.key"),
-                "-----BEGIN PRIVATE KEY-----env-key",
-              );
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const copied = new Map<string, string>();
+            const { layer, workdir, child } = yield* setup({
+              configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
+              onSecretCopy: (containerPath, content) => {
+                copied.set(containerPath, content);
+              },
+            });
+            yield* fs.makeDirectory(path.join(workdir, "supabase", "certs"), {
+              recursive: true,
+            });
+            yield* fs.writeFileString(
+              path.join(workdir, "supabase", "certs", "env-server.crt"),
+              "-----BEGIN CERTIFICATE-----env-cert",
+            );
+            yield* fs.writeFileString(
+              path.join(workdir, "supabase", "certs", "env-server.key"),
+              "-----BEGIN PRIVATE KEY-----env-key",
+            );
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
-              expect(copied.get("/home/kong/localhost.crt")).toBe(
-                "-----BEGIN CERTIFICATE-----env-cert",
-              );
-              expect(copied.get("/home/kong/localhost.key")).toBe(
-                "-----BEGIN PRIVATE KEY-----env-key",
-              );
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags()).pipe(Effect.provide(layer));
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+            expect(copied.get("/home/kong/localhost.crt")).toBe(
+              "-----BEGIN CERTIFICATE-----env-cert",
+            );
+            expect(copied.get("/home/kong/localhost.key")).toBe(
+              "-----BEGIN PRIVATE KEY-----env-key",
+            );
+          }).pipe(Effect.provide(BunServices.layer)),
         ),
       ).pipe(Effect.provide(BunServices.layer)),
     );
@@ -4643,35 +4539,33 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_API_ENABLED",
           "false",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const fs = yield* FileSystem.FileSystem;
-              const path = yield* Path.Path;
-              const copied = new Map<string, string>();
-              const { layer, workdir, child } = yield* setup({
-                configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
-                onSecretCopy: (containerPath, content) => {
-                  copied.set(containerPath, content);
-                },
-              });
-              yield* fs.makeDirectory(path.join(workdir, "supabase", "certs"), {
-                recursive: true,
-              });
-              yield* fs.writeFileString(
-                path.join(workdir, "supabase", "certs", "server.crt"),
-                "-----BEGIN CERTIFICATE-----custom-cert",
-              );
-              yield* fs.writeFileString(
-                path.join(workdir, "supabase", "certs", "server.key"),
-                "-----BEGIN PRIVATE KEY-----custom-key",
-              );
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const copied = new Map<string, string>();
+            const { layer, workdir, child } = yield* setup({
+              configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
+              onSecretCopy: (containerPath, content) => {
+                copied.set(containerPath, content);
+              },
+            });
+            yield* fs.makeDirectory(path.join(workdir, "supabase", "certs"), {
+              recursive: true,
+            });
+            yield* fs.writeFileString(
+              path.join(workdir, "supabase", "certs", "server.crt"),
+              "-----BEGIN CERTIFICATE-----custom-cert",
+            );
+            yield* fs.writeFileString(
+              path.join(workdir, "supabase", "certs", "server.key"),
+              "-----BEGIN PRIVATE KEY-----custom-key",
+            );
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
-              expect(copied.get("/home/kong/localhost.crt")).toBe(KONG_LOCAL_TLS_CERT);
-              expect(copied.get("/home/kong/localhost.key")).toBe(KONG_LOCAL_TLS_KEY);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags()).pipe(Effect.provide(layer));
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+            expect(copied.get("/home/kong/localhost.crt")).toBe(KONG_LOCAL_TLS_CERT);
+            expect(copied.get("/home/kong/localhost.key")).toBe(KONG_LOCAL_TLS_KEY);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -4681,18 +4575,16 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_API_ENABLED",
           "not-a-bool",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4702,22 +4594,19 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_AUTH_JWT_EXPIRY",
         "7200",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup();
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup();
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const dbCreate = child.spawned.find(
-              (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
-            );
-            expect(dbCreate?.env["JWT_EXP"]).toBe("7200");
-            const gotrueCreate = child.spawned.find(
-              (s) =>
-                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-            );
-            expect(gotrueCreate?.env["GOTRUE_JWT_EXP"]).toBe("7200");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const dbCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
+          );
+          expect(dbCreate?.env["JWT_EXP"]).toBe("7200");
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_JWT_EXP"]).toBe("7200");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4727,20 +4616,17 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "DOTENV_PRIVATE_KEY",
         VAULT_PRIVATE_KEY,
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup({
-              configContents: `project_id = "demo"\n[auth.external.github]\nenabled = true\nclient_id = "gh-client-id"\nsecret = "${VAULT_ENCRYPTED}"\n`,
-            });
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({
+            configContents: `project_id = "demo"\n[auth.external.github]\nenabled = true\nclient_id = "gh-client-id"\nsecret = "${VAULT_ENCRYPTED}"\n`,
+          });
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const gotrueCreate = child.spawned.find(
-              (s) =>
-                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-            );
-            expect(gotrueCreate?.env["GOTRUE_EXTERNAL_GITHUB_SECRET"]).toBe("value");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_EXTERNAL_GITHUB_SECRET"]).toBe("value");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -4750,31 +4636,9 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "DOTENV_PRIVATE_KEY",
           VAULT_PRIVATE_KEY,
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents: `project_id = "demo"\n[auth.external.my_oidc]\nenabled = true\nclient_id = "custom-client-id"\nsecret = "${VAULT_ENCRYPTED}"\n`,
-              });
-
-              yield* start(flags()).pipe(Effect.provide(layer));
-              const gotrueCreate = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-              );
-              expect(gotrueCreate?.env["GOTRUE_EXTERNAL_MY_OIDC_SECRET"]).toBe("value");
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
-        ).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.live("decrypts an encrypted Twilio SMS auth_token", () =>
-      withEnvVar(
-        "DOTENV_PRIVATE_KEY",
-        VAULT_PRIVATE_KEY,
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
+          Effect.gen(function* () {
             const { layer, child } = yield* setup({
-              configContents: `project_id = "demo"\n[auth.sms.twilio]\nenabled = true\naccount_sid = "AC123"\nauth_token = "${VAULT_ENCRYPTED}"\nmessage_service_sid = "MG123"\n`,
+              configContents: `project_id = "demo"\n[auth.external.my_oidc]\nenabled = true\nclient_id = "custom-client-id"\nsecret = "${VAULT_ENCRYPTED}"\n`,
             });
 
             yield* start(flags()).pipe(Effect.provide(layer));
@@ -4782,9 +4646,26 @@ content_path = "./supabase/templates/custom_notice.html"
               (s) =>
                 s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
             );
-            expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_AUTH_TOKEN"]).toBe("value");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+            expect(gotrueCreate?.env["GOTRUE_EXTERNAL_MY_OIDC_SECRET"]).toBe("value");
+          }).pipe(Effect.provide(BunServices.layer)),
+        ).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("decrypts an encrypted Twilio SMS auth_token", () =>
+      withEnvVar(
+        "DOTENV_PRIVATE_KEY",
+        VAULT_PRIVATE_KEY,
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({
+            configContents: `project_id = "demo"\n[auth.sms.twilio]\nenabled = true\naccount_sid = "AC123"\nauth_token = "${VAULT_ENCRYPTED}"\nmessage_service_sid = "MG123"\n`,
+          });
+
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_AUTH_TOKEN"]).toBe("value");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4820,24 +4701,22 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "DOTENV_PRIVATE_KEY",
           VAULT_PRIVATE_KEY,
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents: `project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "${VAULT_ENCRYPTED}"\n`,
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents: `project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "${VAULT_ENCRYPTED}"\n`,
+            });
 
-              const fs = yield* FileSystem.FileSystem;
-              yield* start(flags()).pipe(Effect.provide(layer));
-              const edgeRuntimeRunCall = child.spawned.find((s) => isEdgeRuntimeCreate(s.args));
-              const args = edgeRuntimeRunCall?.args ?? [];
-              const envFileIndex = args.indexOf("--env-file");
-              const envFilePath = envFileIndex !== -1 ? args[envFileIndex + 1] : undefined;
-              expect(envFilePath).toBeDefined();
-              const envFileContent = yield* fs.readFileString(envFilePath ?? "");
-              expect(envFileContent).toContain("MY_SECRET=value");
-              expect(envFileContent).not.toContain("encrypted:");
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const fs = yield* FileSystem.FileSystem;
+            yield* start(flags()).pipe(Effect.provide(layer));
+            const edgeRuntimeRunCall = child.spawned.find((s) => isEdgeRuntimeCreate(s.args));
+            const args = edgeRuntimeRunCall?.args ?? [];
+            const envFileIndex = args.indexOf("--env-file");
+            const envFilePath = envFileIndex !== -1 ? args[envFileIndex + 1] : undefined;
+            expect(envFilePath).toBeDefined();
+            const envFileContent = yield* fs.readFileString(envFilePath ?? "");
+            expect(envFileContent).toContain("MY_SECRET=value");
+            expect(envFileContent).not.toContain("encrypted:");
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -4847,22 +4726,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "DOTENV_PRIVATE_KEY",
           undefined,
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents: `project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "${VAULT_ENCRYPTED}"\n`,
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents: `project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "${VAULT_ENCRYPTED}"\n`,
+            });
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("DbConfigLoadError");
-                expect(serialized).toContain("failed to parse config: missing private key");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("DbConfigLoadError");
+              expect(serialized).toContain("failed to parse config: missing private key");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4878,29 +4755,26 @@ content_path = "./supabase/templates/custom_notice.html"
           withEnvVar(
             "SUPABASE_API_MAX_ROWS",
             "500",
-            Effect.suspend(() => {
-              return Effect.gen(function* () {
-                const { layer, child } = yield* setup();
+            Effect.gen(function* () {
+              const { layer, child } = yield* setup();
 
-                yield* start(flags()).pipe(Effect.provide(layer));
-                const restCreate = child.spawned.find(
-                  (s) =>
-                    s.args[0] === "create" &&
-                    containerNameFromCreateArgs(s.args).includes("_rest_"),
-                );
-                expect(restCreate?.env["PGRST_DB_SCHEMAS"]).toBe("public,custom");
-                expect(restCreate?.env["PGRST_DB_EXTRA_SEARCH_PATH"]).toBe("extensions,other");
-                expect(restCreate?.env["PGRST_DB_MAX_ROWS"]).toBe("500");
-                const studioCreate = child.spawned.find(
-                  (s) =>
-                    s.args[0] === "create" &&
-                    containerNameFromCreateArgs(s.args).includes("_studio_"),
-                );
-                expect(studioCreate?.env["PGRST_DB_SCHEMAS"]).toBe("public,custom");
-                expect(studioCreate?.env["PGRST_DB_EXTRA_SEARCH_PATH"]).toBe("extensions,other");
-                expect(studioCreate?.env["PGRST_DB_MAX_ROWS"]).toBe("500");
-              }).pipe(Effect.provide(BunServices.layer));
-            }),
+              yield* start(flags()).pipe(Effect.provide(layer));
+              const restCreate = child.spawned.find(
+                (s) =>
+                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_rest_"),
+              );
+              expect(restCreate?.env["PGRST_DB_SCHEMAS"]).toBe("public,custom");
+              expect(restCreate?.env["PGRST_DB_EXTRA_SEARCH_PATH"]).toBe("extensions,other");
+              expect(restCreate?.env["PGRST_DB_MAX_ROWS"]).toBe("500");
+              const studioCreate = child.spawned.find(
+                (s) =>
+                  s.args[0] === "create" &&
+                  containerNameFromCreateArgs(s.args).includes("_studio_"),
+              );
+              expect(studioCreate?.env["PGRST_DB_SCHEMAS"]).toBe("public,custom");
+              expect(studioCreate?.env["PGRST_DB_EXTRA_SEARCH_PATH"]).toBe("extensions,other");
+              expect(studioCreate?.env["PGRST_DB_MAX_ROWS"]).toBe("500");
+            }).pipe(Effect.provide(BunServices.layer)),
           ),
         ),
       ).pipe(Effect.provide(BunServices.layer)),
@@ -4912,18 +4786,16 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_API_MAX_ROWS",
           "not-a-number",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4933,23 +4805,21 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_DB_POOLER_POOL_MODE",
         "session",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup({
-              configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
-            });
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({
+            configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
+          });
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const poolerCreate = child.spawned.find(
-              (s) =>
-                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_pooler_"),
-            );
-            // `db.pooler.port` defaults to 54329; the exposed-ports list always contains both 5432
-            // and 6543, so assert on the specific `hostPort:containerPort` mapping instead.
-            expect(poolerCreate?.args).toContain("54329:5432");
-            expect(poolerCreate?.args).not.toContain("54329:6543");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const poolerCreate = child.spawned.find(
+            (s) =>
+              s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_pooler_"),
+          );
+          // `db.pooler.port` defaults to 54329; the exposed-ports list always contains both 5432
+          // and 6543, so assert on the specific `hostPort:containerPort` mapping instead.
+          expect(poolerCreate?.args).toContain("54329:5432");
+          expect(poolerCreate?.args).not.toContain("54329:6543");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -4959,20 +4829,18 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_DB_POOLER_POOL_MODE",
           "bogus",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
+            });
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -4982,18 +4850,16 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_REALTIME_ENABLED",
           "maybe",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({ configContents: 'project_id = "demo"\n' });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({ configContents: 'project_id = "demo"\n' });
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(Cause.pretty(exit.cause)).toContain("StartInvalidConfigError");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -5001,23 +4867,21 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_DB_POOLER_PORT",
         "60001",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup({
-              configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
-            });
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({
+            configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
+          });
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const poolerCreate = child.spawned.find(
-              (s) =>
-                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_pooler_"),
-            );
-            // Default pool_mode ("transaction") publishes the pooler port against
-            // container port 6543 — see the SUPABASE_DB_POOLER_POOL_MODE test above.
-            expect(poolerCreate?.args).toContain("60001:6543");
-            expect(poolerCreate?.args).not.toContain("54329:6543");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const poolerCreate = child.spawned.find(
+            (s) =>
+              s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_pooler_"),
+          );
+          // Default pool_mode ("transaction") publishes the pooler port against
+          // container port 6543 — see the SUPABASE_DB_POOLER_POOL_MODE test above.
+          expect(poolerCreate?.args).toContain("60001:6543");
+          expect(poolerCreate?.args).not.toContain("54329:6543");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -5027,20 +4891,17 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_ANALYTICS_PORT",
         "60002",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup();
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup();
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const logflareCreate = child.spawned.find(
-              (s) =>
-                s.args[0] === "create" &&
-                containerNameFromCreateArgs(s.args).includes("_analytics_"),
-            );
-            expect(logflareCreate?.args).toContain("60002:4000");
-            expect(logflareCreate?.args).not.toContain("54327:4000");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const logflareCreate = child.spawned.find(
+            (s) =>
+              s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_analytics_"),
+          );
+          expect(logflareCreate?.args).toContain("60002:4000");
+          expect(logflareCreate?.args).not.toContain("54327:4000");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -5050,20 +4911,18 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_ANALYTICS_VECTOR_PORT",
           "not-a-port",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup();
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
 
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const serialized = Cause.pretty(exit.cause);
-                expect(serialized).toContain("StartInvalidConfigError");
-                expect(serialized).toContain("invalid config for analytics.vector_port");
-              }
-              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const serialized = Cause.pretty(exit.cause);
+              expect(serialized).toContain("StartInvalidConfigError");
+              expect(serialized).toContain("invalid config for analytics.vector_port");
+            }
+            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -5075,31 +4934,27 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_DB_HEALTH_TIMEOUT",
           "2s",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const neverHealthy = new Set<string>();
-              const base = defaultRoute({ neverHealthy });
-              const route = (args: ReadonlyArray<string>): RouteResult => {
-                if (args[0] === "create") {
-                  const name = containerNameFromCreateArgs(args);
-                  if (name.includes("_db_")) neverHealthy.add(name);
-                }
-                return base(args);
-              };
-              const { layer, child } = yield* setup({ route });
-
-              const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                expect(Cause.pretty(exit.cause)).toContain("HealthCheckTimeoutError");
+          Effect.gen(function* () {
+            const neverHealthy = new Set<string>();
+            const base = defaultRoute({ neverHealthy });
+            const route = (args: ReadonlyArray<string>): RouteResult => {
+              if (args[0] === "create") {
+                const name = containerNameFromCreateArgs(args);
+                if (name.includes("_db_")) neverHealthy.add(name);
               }
-              // Postgres's own health wait fails before any other service is ever created —
-              // proving the short env-overridden timeout took effect (the default is much longer).
-              expect(createdContainerNames(child.spawned)).toEqual([
-                expect.stringContaining("_db_"),
-              ]);
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+              return base(args);
+            };
+            const { layer, child } = yield* setup({ route });
+
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(Cause.pretty(exit.cause)).toContain("HealthCheckTimeoutError");
+            }
+            // Postgres's own health wait fails before any other service is ever created —
+            // proving the short env-overridden timeout took effect (the default is much longer).
+            expect(createdContainerNames(child.spawned)).toEqual([expect.stringContaining("_db_")]);
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
       10_000,
     );
@@ -5113,24 +4968,23 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI",
           "pg-functions://postgres/auth/custom-access-token-hook",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents:
-                  'project_id = "demo"\n[auth.hook.custom_access_token]\nenabled = false\n',
-              });
+          Effect.gen(function* () {
+            // pg-functions hooks do not require secrets; http(s) hooks do.
+            const { layer, child } = yield* setup({
+              configContents:
+                'project_id = "demo"\n[auth.hook.custom_access_token]\nenabled = false\n',
+            });
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              const gotrueCreate = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-              );
-              expect(gotrueCreate?.env["GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"]).toBe("true");
-              expect(gotrueCreate?.env["GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI"]).toBe(
-                "pg-functions://postgres/auth/custom-access-token-hook",
-              );
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags()).pipe(Effect.provide(layer));
+            const gotrueCreate = child.spawned.find(
+              (s) =>
+                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+            );
+            expect(gotrueCreate?.env["GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"]).toBe("true");
+            expect(gotrueCreate?.env["GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI"]).toBe(
+              "pg-functions://postgres/auth/custom-access-token-hook",
+            );
+          }).pipe(Effect.provide(BunServices.layer)),
         ),
       ).pipe(Effect.provide(BunServices.layer)),
     );
@@ -5144,22 +4998,20 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_AUTH_CAPTCHA_PROVIDER",
           "turnstile",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents:
-                  'project_id = "demo"\n[auth.captcha]\nenabled = false\nprovider = "hcaptcha"\nsecret = "test-secret"\n',
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents:
+                'project_id = "demo"\n[auth.captcha]\nenabled = false\nprovider = "hcaptcha"\nsecret = "test-secret"\n',
+            });
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              const gotrueCreate = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-              );
-              expect(gotrueCreate?.env["GOTRUE_SECURITY_CAPTCHA_ENABLED"]).toBe("true");
-              expect(gotrueCreate?.env["GOTRUE_SECURITY_CAPTCHA_PROVIDER"]).toBe("turnstile");
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags()).pipe(Effect.provide(layer));
+            const gotrueCreate = child.spawned.find(
+              (s) =>
+                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+            );
+            expect(gotrueCreate?.env["GOTRUE_SECURITY_CAPTCHA_ENABLED"]).toBe("true");
+            expect(gotrueCreate?.env["GOTRUE_SECURITY_CAPTCHA_PROVIDER"]).toBe("turnstile");
+          }).pipe(Effect.provide(BunServices.layer)),
         ),
       ).pipe(Effect.provide(BunServices.layer)),
     );
@@ -5170,18 +5022,15 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_AUTH_SESSIONS_TIMEBOX",
         "24h",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup({ configContents: 'project_id = "demo"\n' });
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({ configContents: 'project_id = "demo"\n' });
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const gotrueCreate = child.spawned.find(
-              (s) =>
-                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-            );
-            expect(gotrueCreate?.env["GOTRUE_SESSIONS_TIMEBOX"]).toBe("24h0m0s");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_SESSIONS_TIMEBOX"]).toBe("24h0m0s");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -5192,21 +5041,19 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED",
           "true",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents: 'project_id = "demo"\n[auth.mfa.totp]\nenroll_enabled = false\n',
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents: 'project_id = "demo"\n[auth.mfa.totp]\nenroll_enabled = false\n',
+            });
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              const gotrueCreate = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-              );
-              expect(gotrueCreate?.env["GOTRUE_MFA_TOTP_ENROLL_ENABLED"]).toBe("true");
-              expect(gotrueCreate?.env["GOTRUE_MFA_TOTP_VERIFY_ENABLED"]).toBe("true");
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags()).pipe(Effect.provide(layer));
+            const gotrueCreate = child.spawned.find(
+              (s) =>
+                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+            );
+            expect(gotrueCreate?.env["GOTRUE_MFA_TOTP_ENROLL_ENABLED"]).toBe("true");
+            expect(gotrueCreate?.env["GOTRUE_MFA_TOTP_VERIFY_ENABLED"]).toBe("true");
+          }).pipe(Effect.provide(BunServices.layer)),
         ),
       ).pipe(Effect.provide(BunServices.layer)),
     );
@@ -5215,18 +5062,15 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_AUTH_RATE_LIMIT_SMS_SENT",
         "99",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup({ configContents: 'project_id = "demo"\n' });
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({ configContents: 'project_id = "demo"\n' });
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const gotrueCreate = child.spawned.find(
-              (s) =>
-                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-            );
-            expect(gotrueCreate?.env["GOTRUE_RATE_LIMIT_SMS_SENT"]).toBe("99");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_RATE_LIMIT_SMS_SENT"]).toBe("99");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -5234,18 +5078,15 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_AUTH_WEB3_SOLANA_ENABLED",
         "true",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup({ configContents: 'project_id = "demo"\n' });
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({ configContents: 'project_id = "demo"\n' });
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const gotrueCreate = child.spawned.find(
-              (s) =>
-                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-            );
-            expect(gotrueCreate?.env["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"]).toBe("true");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"]).toBe("true");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -5253,18 +5094,15 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_AUTH_OAUTH_SERVER_ENABLED",
         "true",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup({ configContents: 'project_id = "demo"\n' });
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({ configContents: 'project_id = "demo"\n' });
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const gotrueCreate = child.spawned.find(
-              (s) =>
-                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-            );
-            expect(gotrueCreate?.env["GOTRUE_OAUTH_SERVER_ENABLED"]).toBe("true");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_OAUTH_SERVER_ENABLED"]).toBe("true");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -5274,21 +5112,18 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_AUTH_PASSKEY_ENABLED",
         "true",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup({
-              configContents:
-                'project_id = "demo"\n[auth.passkey]\nenabled = false\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = ["http://localhost:3000"]\n',
-            });
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({
+            configContents:
+              'project_id = "demo"\n[auth.passkey]\nenabled = false\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = ["http://localhost:3000"]\n',
+          });
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const gotrueCreate = child.spawned.find(
-              (s) =>
-                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-            );
-            expect(gotrueCreate?.env["GOTRUE_PASSKEY_ENABLED"]).toBe("true");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_PASSKEY_ENABLED"]).toBe("true");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -5302,28 +5137,23 @@ content_path = "./supabase/templates/custom_notice.html"
           withEnvVar(
             "SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS",
             "http://a.example,http://b.example",
-            Effect.suspend(() => {
-              return Effect.gen(function* () {
-                const { layer, child } = yield* setup({
-                  configContents:
-                    'project_id = "demo"\n[auth.webauthn]\nrp_id = "toml-rp-id"\nrp_display_name = "TOML Display Name"\nrp_origins = ["http://toml.example"]\n',
-                });
+            Effect.gen(function* () {
+              const { layer, child } = yield* setup({
+                configContents:
+                  'project_id = "demo"\n[auth.webauthn]\nrp_id = "toml-rp-id"\nrp_display_name = "TOML Display Name"\nrp_origins = ["http://toml.example"]\n',
+              });
 
-                yield* start(flags()).pipe(Effect.provide(layer));
-                const gotrueCreate = child.spawned.find(
-                  (s) =>
-                    s.args[0] === "create" &&
-                    containerNameFromCreateArgs(s.args).includes("_auth_"),
-                );
-                expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_ID"]).toBe("env-rp-id");
-                expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_DISPLAY_NAME"]).toBe(
-                  "Env Display Name",
-                );
-                expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_ORIGINS"]).toBe(
-                  "http://a.example,http://b.example",
-                );
-              }).pipe(Effect.provide(BunServices.layer));
-            }),
+              yield* start(flags()).pipe(Effect.provide(layer));
+              const gotrueCreate = child.spawned.find(
+                (s) =>
+                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+              );
+              expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_ID"]).toBe("env-rp-id");
+              expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_DISPLAY_NAME"]).toBe("Env Display Name");
+              expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_ORIGINS"]).toBe(
+                "http://a.example,http://b.example",
+              );
+            }).pipe(Effect.provide(BunServices.layer)),
           ),
         ),
       ).pipe(Effect.provide(BunServices.layer)),
@@ -5335,21 +5165,19 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "PASSKEY_ENABLED",
           "true",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents:
-                  'project_id = "demo"\n[auth.passkey]\nenabled = "env(PASSKEY_ENABLED)"\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = ["http://localhost:3000"]\n',
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents:
+                'project_id = "demo"\n[auth.passkey]\nenabled = "env(PASSKEY_ENABLED)"\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = ["http://localhost:3000"]\n',
+            });
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              const gotrueCreate = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-              );
-              expect(gotrueCreate?.env["GOTRUE_PASSKEY_ENABLED"]).toBe("true");
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags()).pipe(Effect.provide(layer));
+            const gotrueCreate = child.spawned.find(
+              (s) =>
+                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+            );
+            expect(gotrueCreate?.env["GOTRUE_PASSKEY_ENABLED"]).toBe("true");
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -5359,23 +5187,21 @@ content_path = "./supabase/templates/custom_notice.html"
         withEnvVar(
           "RP_ORIGINS",
           "http://a.example,http://b.example",
-          Effect.suspend(() => {
-            return Effect.gen(function* () {
-              const { layer, child } = yield* setup({
-                configContents:
-                  'project_id = "demo"\n[auth.passkey]\nenabled = true\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = "env(RP_ORIGINS)"\n',
-              });
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup({
+              configContents:
+                'project_id = "demo"\n[auth.passkey]\nenabled = true\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = "env(RP_ORIGINS)"\n',
+            });
 
-              yield* start(flags()).pipe(Effect.provide(layer));
-              const gotrueCreate = child.spawned.find(
-                (s) =>
-                  s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
-              );
-              expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_ORIGINS"]).toBe(
-                "http://a.example,http://b.example",
-              );
-            }).pipe(Effect.provide(BunServices.layer));
-          }),
+            yield* start(flags()).pipe(Effect.provide(layer));
+            const gotrueCreate = child.spawned.find(
+              (s) =>
+                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+            );
+            expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_ORIGINS"]).toBe(
+              "http://a.example,http://b.example",
+            );
+          }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -5385,19 +5211,17 @@ content_path = "./supabase/templates/custom_notice.html"
       withEnvVar(
         "SUPABASE_EDGE_RUNTIME_POLICY",
         "per_worker",
-        Effect.suspend(() => {
-          return Effect.gen(function* () {
-            const { layer, child } = yield* setup({
-              configContents: 'project_id = "demo"\n[edge_runtime]\npolicy = "oneshot"\n',
-            });
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({
+            configContents: 'project_id = "demo"\n[edge_runtime]\npolicy = "oneshot"\n',
+          });
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const runCalls = child.spawned.filter((s) => isEdgeRuntimeCreate(s.args));
-            const entrypointCommand = runCalls[0]?.args.at(-1) ?? "";
-            expect(entrypointCommand).toContain("--policy=per_worker");
-            expect(entrypointCommand).not.toContain("--policy=oneshot");
-          }).pipe(Effect.provide(BunServices.layer));
-        }),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const runCalls = child.spawned.filter((s) => isEdgeRuntimeCreate(s.args));
+          const entrypointCommand = runCalls[0]?.args.at(-1) ?? "";
+          expect(entrypointCommand).toContain("--policy=per_worker");
+          expect(entrypointCommand).not.toContain("--policy=oneshot");
+        }).pipe(Effect.provide(BunServices.layer)),
       ).pipe(Effect.provide(BunServices.layer)),
     );
   });
