@@ -3807,14 +3807,17 @@ content_path = "./supabase/templates/custom_notice.html"
       );
     }
 
-    it.live("reads ambient values added after project environment loading", () =>
+    it.live.each([
+      { label: "reads values", values: ambient },
+      { label: "preserves empty values", values: empty },
+    ])("$label added after project environment loading", ({ values }) =>
       Effect.gen(function* () {
         const baseRoute = defaultRoute();
         let injected = false;
         const { layer, child } = setup({
           route: (args) => {
             if (!injected) {
-              Object.assign(process.env, ambient);
+              Object.assign(process.env, values);
               injected = true;
             }
             return baseRoute(args);
@@ -3833,7 +3836,7 @@ content_path = "./supabase/templates/custom_notice.html"
             spawn.args[0] === "create" &&
             containerNameFromCreateArgs(spawn.args).includes("_storage_"),
         );
-        for (const [key, value] of Object.entries(ambient)) {
+        for (const [key, value] of Object.entries(values)) {
           expect(
             key === "KONG_NGINX_WORKER_PROCESSES" ? kong?.env[key] : storage?.env[key],
             key,

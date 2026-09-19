@@ -26,12 +26,12 @@ import { envOrDefault } from "../lib/env-or-default.ts";
 import { renderStartKongYml } from "../lib/template-render.ts";
 import { START_CUSTOM_NGINX_TEMPLATE } from "../templates/custom_nginx.template.ts";
 
-/** The Kong network aliases — a fixed, non-configurable constant. */
 interface KongPaths {
   readonly path: Pick<Path.Path, "extname">;
   readonly posixPath: Pick<Path.Path, "join">;
 }
 
+/** The Kong network aliases — a fixed, non-configurable constant. */
 const KONG_NETWORK_ALIASES = ["kong", "api.supabase.internal"];
 
 /** The fixed in-container directory email template mounts land in. */

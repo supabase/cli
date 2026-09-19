@@ -116,9 +116,6 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
 
   // Only needs to exist — every scenario here has zero declared functions,
   // so nothing under it is read.
-
-  // Only needs to exist — every scenario here has zero declared functions,
-  // so nothing under it is read.
   beforeEach(() => {
     return Effect.runPromise(
       Effect.gen(function* () {
@@ -151,7 +148,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
       expect(mock.runCall).toBeDefined();
       expect(mock.runCall!.args.join(" ")).not.toContain(":/root/.cache/deno");
       expect(mock.calls.some((call) => call.args[0] === "volume")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
+    });
   });
 
   it.effect(
@@ -170,7 +167,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         expect(entries).toContain(
           "SUPABASE_DB_URL=postgresql://postgres:postgres@supabase_db_proj:5432/postgres",
         );
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 
@@ -194,7 +191,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
       expect(entries).toContain("SUPABASE_INTERNAL_SECRET_KEY=sb_secret_local");
       expect(entries).toContain('SUPABASE_JWKS={"keys":[]}');
       expect(entries).toContain("SUPABASE_INTERNAL_HOST_PORT=54321");
-    }).pipe(Effect.provide(BunServices.layer));
+    });
   });
 
   it.effect(
@@ -212,7 +209,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         const runCall = mock.runCall!;
         expect(runCall.args).not.toContain("-p");
         expect(runCall.args.join(" ")).not.toContain("--inspect");
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 
@@ -232,7 +229,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         const ulimitIndex = runCall.args.indexOf("--ulimit");
         expect(runCall.args[ulimitIndex + 1]).toBe(edgeRuntimeNofileUlimit("darwin").arg);
         expect(out.messages.filter((message) => message.type === "warn")).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 
@@ -268,7 +265,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
       );
       const args = mock.runCall!.args;
       expect(args[args.indexOf("--workdir") + 1]).toBe(tempWorkdir.current);
-    }).pipe(Effect.provide(BunServices.layer));
+    });
   });
 
   it.effect(
@@ -284,7 +281,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         );
 
         expect(mock.runCall!.args).not.toContain("--workdir");
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 
@@ -302,7 +299,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
 
         const runCall = mock.runCall!;
         expect(runCall.args).toContain(`com.supabase.cli.workdir=${tempWorkdir.current}`);
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 
@@ -327,7 +324,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         const networkIndex = runCall.args.indexOf("--network");
         expect(runCall.args[networkIndex + 1]).toBe("custom_network_override");
         expect(runCall.args).toContain("registry.example.com/supabase/edge-runtime:v1.99.9");
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 
@@ -374,7 +371,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         expect(yield* Effect.promise(() => mainService.text())).toContain(
           "SUPABASE_INTERNAL_FUNCTIONS_CONFIG",
         );
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 
@@ -419,7 +416,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         }
         const files = yield* Effect.promise(() => new Bun.Archive(archiveBytes).files());
         expect([...files.keys()]).toEqual(["root/index.ts"]);
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 
@@ -445,7 +442,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         expect(mock.calls.some((call) => call.args[0] === "cp")).toBe(false);
         expect(mock.calls.some((call) => call.args[0] === "start")).toBe(false);
         expect(mock.calls.some((call) => call.args[0] === "container")).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 
@@ -475,7 +472,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         );
         expect(mock.calls.some((call) => call.args[0] === "start")).toBe(false);
         expect(mock.calls.some((call) => call.args[0] === "container")).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 
@@ -493,7 +490,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
 
         expect(started.containerId).toBe("supabase_edge_runtime_proj");
         yield* started.cleanup;
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 
@@ -531,7 +528,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         expect(yield* fs.exists(stagingDir)).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 
@@ -550,7 +547,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         expect(
           mock.calls.some((call) => call.args[0] === "exec" && call.args.includes("kong")),
         ).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 
@@ -567,7 +564,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         );
 
         expect(out.stderrText).not.toContain("Setting up Edge Functions runtime...");
-      }).pipe(Effect.provide(BunServices.layer));
+      });
     },
   );
 });
