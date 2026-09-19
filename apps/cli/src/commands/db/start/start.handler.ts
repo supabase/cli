@@ -35,7 +35,7 @@ export const dbStart = Effect.fn("db.start")(function* (flags: DbStartFlags) {
           }),
         );
       }
-      const result = yield* stackEnsurePostgresOnlyStarted;
+      const result = yield* stackEnsurePostgresOnlyStarted();
       if (result === "already-running") {
         if (output.format === "text") {
           yield* output.raw("Postgres database is already running.\n", "stderr");

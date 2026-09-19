@@ -18,6 +18,7 @@ import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
 import { stackEnsurePostgresOnlyStarted } from "../../../command-internal/stack-local-database.ts";
+import { StackCatalogSetup } from "../../../command-internal/stack-catalog-setup.ts";
 
 const shadowDockerCause = (stderr: string): { readonly docker: "daemon" } | Record<never, never> =>
   isDockerDaemonUnreachable(stderr) ? { docker: "daemon" } : {};
@@ -77,6 +78,7 @@ export const declarativeSeamLayer = Layer.effect(
     // hand-enumerating every transitive dependency.
     const experimentalFlag = yield* ExperimentalFlag;
     const cliArgs = yield* CliArgs;
+    const stackCatalogSetup = yield* StackCatalogSetup;
     const context = yield* Effect.context<StartLocalDatabaseDeps>();
 
     return DeclarativeSeam.of({
@@ -84,12 +86,13 @@ export const declarativeSeamLayer = Layer.effect(
         Effect.gen(function* () {
           const backend = yield* currentStackBackend;
           if (backend.kind === "stack") {
-            return yield* stackEnsurePostgresOnlyStarted.pipe(
+            return yield* stackEnsurePostgresOnlyStarted().pipe(
               Effect.asVoid,
               Effect.provideContext(context),
               Effect.provideService(StackApi, stackApi),
               Effect.provideService(ExperimentalFlag, experimentalFlag),
               Effect.provideService(CliArgs, cliArgs),
+              Effect.provideService(StackCatalogSetup, stackCatalogSetup),
               Effect.mapError(
                 (cause) =>
                   new DeclarativeShadowDbError({

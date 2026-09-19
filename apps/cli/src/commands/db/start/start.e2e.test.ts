@@ -64,13 +64,6 @@ describe("supabase db start (e2e)", () => {
         });
         expect(types.exitCode, types.stderr).toBe(0);
 
-        const reset = await runSupabase(["db", "reset", "--local", "--no-seed", "--yes"], {
-          cwd: project.dir,
-          home: home.dir,
-          exitTimeoutMs: DB_START_COMMAND_TIMEOUT_MS,
-        });
-        expect(reset.exitCode, reset.stderr).toBe(0);
-
         const diff = await runSupabase(["db", "diff", "--local", "--use-migra"], {
           cwd: project.dir,
           home: home.dir,

@@ -34,13 +34,19 @@ import { DbConnection, type DbSession } from "../../../command-internal/db-conne
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { dbStart } from "./start.handler.ts";
 import type { DbStartFlags } from "./start.command.ts";
+import { stackLocalDatabaseConn } from "../../../command-internal/stack-local-database.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
 import {
-  noopStackCatalogSetupLayer,
-  recordingStackCatalogSetup,
+  StackCatalogSetup,
+  StackCatalogSetupError,
 } from "../../../command-internal/stack-catalog-setup.ts";
-import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
+import {
+  StackError,
+  type DatabaseInstance,
+  type ServiceCreation,
+  type Stack,
+} from "@supabase/stack/effect";
 
 const DEFAULT_FLAGS: DbStartFlags = { fromBackup: Option.none() };
 const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
@@ -284,16 +290,12 @@ interface SetupOpts {
   readonly connectFailuresRetryable?: boolean;
   /** Record catalog apply targets instead of the default noop. */
   readonly recordCatalog?: boolean;
+  /** Fail catalog setup after the database has been created. */
+  readonly catalogFails?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
-  const catalog =
-    opts.recordCatalog === true
-      ? recordingStackCatalogSetup((input) => ({
-          kind: input.target.kind,
-          analytics: input.optionalConfig?.capabilities?.analytics?.enabled,
-        }))
-      : undefined;
+  const catalogApplied: Array<{ readonly serviceCount: number }> = [];
   const workdir = opts.workdir ?? tempRoot.current;
   if (opts.skipConfig !== true) {
     writeConfig(workdir, opts.configContents ?? 'project_id = "test"\n');
@@ -333,6 +335,13 @@ function setup(opts: SetupOpts = {}) {
       }),
   });
 
+  const unusedStackApi = Layer.succeed(StackApi, {
+    create: () => Effect.die("unused"),
+    open: () => Effect.die("unused"),
+    discover: () => Effect.die("unused"),
+    resolveIdentity: () => Effect.die("unused"),
+  });
+
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
@@ -342,6 +351,7 @@ function setup(opts: SetupOpts = {}) {
     mockLocalDockerEngineUnavailableLayer,
     alwaysReadyHttpClientLayer,
     dbConnection,
+    unusedStackApi,
     dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
     mockProcessControl().layer,
     mockRuntimeInfo({ platform: opts.platform ?? "linux", cwd: opts.cwd ?? workdir }),
@@ -352,7 +362,14 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: ["db", "start"] }),
     Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(DebugFlag, opts.debug ?? false),
-    catalog?.layer ?? noopStackCatalogSetupLayer,
+    Layer.succeed(StackCatalogSetup, {
+      apply: (input) =>
+        opts.catalogFails === true
+          ? Effect.fail(new StackCatalogSetupError({ message: "catalog setup failed" }))
+          : Effect.sync(() => {
+              catalogApplied.push({ serviceCount: input.target.databaseServices.length });
+            }),
+    }),
   );
   return {
     layer,
@@ -360,7 +377,7 @@ function setup(opts: SetupOpts = {}) {
     telemetry,
     child,
     dbSession,
-    catalogApplied: catalog?.applied ?? [],
+    catalogApplied,
     get connectAttempts() {
       return connectAttempts;
     },
@@ -1538,212 +1555,271 @@ describe("db start", () => {
 });
 
 describe("db start stack backend", () => {
-  const STACK_ID = StackIdSchema.make("b".repeat(64));
-  const unused = Effect.die("unused");
-  const unusedFn = () => unused;
+  const stackId = "b".repeat(64);
+  const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
+    service: "database",
+    config: {
+      version: "17.6.1.173",
+      databasePassword: Redacted.make("secret"),
+      jwtSecret: Redacted.make("secret"),
+      jwtExpiry: 3600,
+    },
+    endpoints: {},
+  };
 
-  function mockStackApi(opts: {
-    readonly existing?: boolean;
-    readonly unconfigured?: boolean;
-    readonly databaseReady?: boolean;
-  }) {
-    const startConfigs: Array<unknown> = [];
-    const stack: EffectStack = {
-      id: STACK_ID,
-      status: Effect.succeed({
-        id: STACK_ID,
-        lifecycle: opts.databaseReady === true ? "running" : "stopped",
-        desiredLifecycle: opts.databaseReady === true ? "running" : "stopped",
-        runtime: { kind: "native" },
-        endpoints: {},
-        versions: {},
-        capabilities: CAPABILITY_NAMES.map((name) => ({
-          name,
-          activation: name === "database" ? "eager" : "lazy",
-          state: name === "database" && opts.databaseReady === true ? "ready" : "stopped",
-        })),
-        artifacts: [],
+  const databaseInstance = (
+    state: {
+      running: boolean;
+      destroyed: boolean;
+      credentialsCalled?: boolean;
+    },
+    onDestroy: () => void = () => {},
+  ): DatabaseInstance => ({
+    id: "database-primary",
+    service: "database",
+    start: Effect.sync(() => {
+      state.running = true;
+    }),
+    ready: Effect.void,
+    stop: Effect.sync(() => {
+      state.running = false;
+    }),
+    restart: () => Effect.void,
+    destroy: Effect.sync(() => {
+      state.destroyed = true;
+      onDestroy();
+    }),
+    prepare: Effect.void,
+    status: Effect.sync(() => ({
+      id: "database-primary",
+      endpoints: state.running
+        ? [{ name: "sql", protocol: "tcp" as const, host: "127.0.0.1", port: 54329 }]
+        : [],
+      config: databaseCreation,
+      lifecycle: state.running ? ("running" as const) : ("stopped" as const),
+      health: state.running ? ("healthy" as const) : undefined,
+      error: undefined,
+      cleanupError: undefined,
+      exit: undefined,
+      currentOperation: undefined,
+      launchId: undefined,
+      intentRevision: 0,
+      wakeEnabled: state.running,
+      registered: true,
+    })),
+    followStatus: Stream.empty,
+    logs: Stream.empty,
+    credentials: () =>
+      Effect.sync(() => {
+        state.credentialsCalled = true;
+        return { databaseUrl: "postgresql://postgres:secret@127.0.0.1:54329/postgres" };
       }),
-      credentials: Effect.succeed({
-        database: {
-          url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
-          password: Redacted.make("secret"),
-        },
-        api: {
-          publishableKey: "anon",
-          secretKey: Redacted.make("service"),
-          anonJwt: "anon",
-          serviceRoleJwt: Redacted.make("service"),
-        },
-      }),
-      prepare: unusedFn,
-      start: (startOpts) =>
-        Effect.sync(() => {
-          startConfigs.push(startOpts?.config);
-          return {
-            id: STACK_ID,
-            lifecycle: "running" as const,
-            desiredLifecycle: "running" as const,
-            runtime: { kind: "native" as const },
-            endpoints: {},
-            versions: {},
-            capabilities: CAPABILITY_NAMES.map((name) => ({
-              name,
-              activation: name === "database" ? ("eager" as const) : ("lazy" as const),
-              state: name === "database" ? ("ready" as const) : ("dormant" as const),
-            })),
-            artifacts: [],
-          };
-        }),
-      stop: unused,
-      destroy: unused,
-      resetDatabase: unused,
-      logs: unusedFn,
-      followLogs: () => Stream.empty,
+    exportSnapshot: () => Effect.die("unused"),
+    restoreSnapshot: () => Effect.die("unused"),
+  });
+
+  const stackFixture = (existing: boolean, running = false, standalone = false) => {
+    const state: { running: boolean; destroyed: boolean; credentialsCalled?: boolean } = {
+      running,
+      destroyed: false,
     };
-    const api = Layer.succeed(StackApi, {
-      createStack: () => Effect.succeed(stack),
-      findStack: () =>
+    let members: ReadonlyArray<DatabaseInstance> = [];
+    let registered: ReadonlyArray<DatabaseInstance> = [];
+    const database = databaseInstance(state, () => {
+      members = [];
+      registered = [];
+    });
+    members = existing && !standalone ? [database] : [];
+    registered = existing ? [database] : [];
+    const stack: Stack = {
+      id: stackId,
+      services: {
+        create: () => Effect.die("unused: composition factory creates database"),
+        get: (id: string) =>
+          id === database.id
+            ? Effect.succeed(database)
+            : Effect.fail(new StackError({ operation: "get", message: `unknown ${id}` })),
+        list: Effect.sync(() => registered),
+      },
+      composition: {
+        describe: Effect.sync(() => ({
+          members: members.map(({ id }) => ({ id, activation: "eager" as const })),
+          dependencies: [],
+        })),
+        supabase: (creations: ReadonlyArray<ServiceCreation>) =>
+          Effect.sync(() => {
+            members = creations.map(() => database);
+            registered = [database];
+            return members;
+          }),
+        configure: () => Effect.void,
+        start: Effect.succeed([]),
+        stop: Effect.succeed([]),
+        restart: Effect.succeed([]),
+      },
+      stop: Effect.void,
+      destroy: Effect.void,
+      tools: { run: () => Effect.die("unused") },
+    };
+    return { stack, state };
+  };
+
+  const stackLayer = (root: string, fixture: ReturnType<typeof stackFixture>, existing: boolean) =>
+    Layer.succeed(StackApi, {
+      create: () => Effect.succeed(fixture.stack),
+      open: () => Effect.succeed(fixture.stack),
+      discover: () =>
         Effect.succeed(
-          opts.existing === true
-            ? Option.some({
-                id: STACK_ID,
-                projectRoot: tempRoot.current,
-                name: "default",
-                branchContext: "main",
-                runtime: { kind: "native" as const },
-                desiredLifecycle:
-                  opts.unconfigured === true ? ("unconfigured" as const) : ("stopped" as const),
-              })
-            : Option.none(),
+          existing
+            ? [
+                {
+                  definition: {
+                    id: stackId,
+                    identity: { projectRoot: root, branchContext: "main", stackName: "default" },
+                    runtime: "native",
+                    instances: [],
+                    composition: { members: [], dependencies: [] },
+                    ports: [],
+                  },
+                  host: undefined,
+                },
+              ]
+            : [],
         ),
-      discoverStacks: unusedFn,
-      openStack: () => Effect.succeed(stack),
-      inspectStack: unusedFn,
+      resolveIdentity: () =>
+        Effect.succeed({ projectRoot: root, branchContext: "main", stackName: "default" }),
     });
-    return { api, startConfigs };
-  }
 
-  it.live("starts a postgres-only stack when none exists", () => {
-    const { layer, catalogApplied, out } = setup({ recordCatalog: true });
-    mkdirSync(join(tempRoot.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(
-      join(tempRoot.current, "supabase", "migrations", "20240101000000_dogfood.sql"),
-      "create table public.dogfood ();\n",
-    );
-    const stack = mockStackApi({});
+  it.live("creates and starts only the primary database", () => {
+    const { layer, catalogApplied } = setup({ recordCatalog: true });
+    const fixture = stackFixture(false);
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, false),
+          ),
+        ),
       );
-      expect(stack.startConfigs).toHaveLength(1);
-      expect(stack.startConfigs[0]).toMatchObject({
-        capabilities: {
-          rest: { enabled: false },
-        },
-      });
-      expect(catalogApplied).toEqual([{ kind: "live", analytics: false }]);
-      expect(out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
+      expect(fixture.state.running).toBe(true);
+      expect(catalogApplied).toEqual([{ serviceCount: 3 }]);
     });
   });
 
-  it.live("honors SUPABASE_EXPERIMENTAL from project .env on first-create migrate", () => {
-    const previous = process.env["SUPABASE_EXPERIMENTAL"];
-    delete process.env["SUPABASE_EXPERIMENTAL"];
-    const { layer, out } = setup({
-      recordCatalog: true,
-      projectEnvContents: "SUPABASE_EXPERIMENTAL=true\n",
-    });
-    mkdirSync(join(tempRoot.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(
-      join(tempRoot.current, "supabase", "migrations", "20240101000000_dogfood.sql"),
-      "create table public.dogfood ();\n",
-    );
-    const stack = mockStackApi({});
+  it.live("destroys a newly created database when catalog setup fails", () => {
+    const { layer } = setup({ catalogFails: true });
+    const fixture = stackFixture(false);
     return Effect.gen(function* () {
-      yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, false),
+          ),
+        ),
+        Effect.exit,
       );
-      expect(out.stderrText).not.toContain("Applying migration 20240101000000_dogfood.sql");
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
-          else process.env["SUPABASE_EXPERIMENTAL"] = previous;
-        }),
-      ),
-    );
-  });
-
-  it.live("does not persist exclusions when a stack already exists", () => {
-    const { layer, catalogApplied, out } = setup({ recordCatalog: true });
-    mkdirSync(join(tempRoot.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(
-      join(tempRoot.current, "supabase", "migrations", "20240101000000_dogfood.sql"),
-      "create table public.dogfood ();\n",
-    );
-    const stack = mockStackApi({ existing: true });
-    return Effect.gen(function* () {
-      yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
-      );
-      expect(stack.startConfigs).toEqual([undefined]);
-      expect(catalogApplied).toEqual([]);
-      expect(out.stderrText).not.toContain("Applying migration");
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fixture.state.destroyed).toBe(true);
+      expect((yield* fixture.stack.composition.describe).members).toHaveLength(0);
     });
   });
 
-  it.live("applies the postgres-only overlay when an unconfigured identity already exists", () => {
-    const { layer, catalogApplied, out } = setup({ recordCatalog: true });
-    mkdirSync(join(tempRoot.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(
-      join(tempRoot.current, "supabase", "migrations", "20240101000000_dogfood.sql"),
-      "create table public.dogfood ();\n",
-    );
-    const stack = mockStackApi({ existing: true, unconfigured: true });
-    return Effect.gen(function* () {
-      yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
-      );
-      expect(stack.startConfigs).toHaveLength(1);
-      expect(stack.startConfigs[0]).toMatchObject({
-        capabilities: {
-          rest: { enabled: false },
-        },
-      });
-      expect(catalogApplied).toEqual([{ kind: "live", analytics: false }]);
-      expect(out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
-    });
-  });
-
-  it.live("reports an already-running stack database without starting", () => {
+  it.live("resumes the existing database without replacing its composition", () => {
     const { layer, out, catalogApplied } = setup({ recordCatalog: true });
-    const stack = mockStackApi({ existing: true, databaseReady: true });
+    const fixture = stackFixture(true);
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, true),
+          ),
+        ),
       );
-      expect(out.stderrText).toContain("Postgres database is already running.");
-      expect(stack.startConfigs).toEqual([]);
+      expect(fixture.state.running).toBe(true);
       expect(catalogApplied).toEqual([]);
+      expect(out.stderrText).not.toContain("already running");
+    });
+  });
+
+  it.live("does not select a standalone database as the composition primary", () => {
+    const { layer, catalogApplied } = setup({ recordCatalog: true });
+    const fixture = stackFixture(true, false, true);
+    return Effect.gen(function* () {
+      yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, true),
+          ),
+        ),
+      );
+      expect(fixture.state.running).toBe(true);
+      expect(catalogApplied).toEqual([{ serviceCount: 3 }]);
+    });
+  });
+
+  it.live("does not launch a stopped stack while resolving local credentials", () => {
+    const { layer } = setup();
+    const fixture = stackFixture(true, false);
+    return Effect.gen(function* () {
+      const exit = yield* stackLocalDatabaseConn.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, true),
+          ),
+        ),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fixture.state.credentialsCalled).toBeUndefined();
+    });
+  });
+
+  it.live("uses the running primary's observed connection without launching its owner", () => {
+    const { layer, out } = setup();
+    const fixture = stackFixture(true, true);
+    const provided = Layer.mergeAll(
+      layer,
+      stackBackendLayer("stack"),
+      stackLayer(tempRoot.current, fixture, true),
+    );
+    return Effect.gen(function* () {
+      const conn = yield* stackLocalDatabaseConn.pipe(Effect.provide(provided));
+      expect(conn.host).toBe("127.0.0.1");
+      expect(conn.port).toBe(54329);
+      expect(conn.password).toBe("secret");
+      expect(fixture.state.credentialsCalled).toBeUndefined();
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(provided));
+      expect(out.stderrText).toContain("already running");
+      expect(fixture.state.destroyed).toBe(false);
     });
   });
 
   it.live("refuses --from-backup", () => {
     const { layer } = setup();
-    const stack = mockStackApi({});
+    const fixture = stackFixture(false);
     return Effect.gen(function* () {
       const exit = yield* dbStart(flags("backup.sql")).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, false),
+          ),
+        ),
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
-          "db start --from-backup is not supported when the stack backend is enabled.",
-        );
-      }
-      expect(stack.startConfigs).toEqual([]);
+      expect(fixture.state.running).toBe(false);
     });
   });
 });
