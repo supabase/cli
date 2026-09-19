@@ -4,7 +4,7 @@ import process from "node:process";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Stream } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
 
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -33,12 +33,12 @@ import { DbConfigConnectTempRoleError } from "../../../command-internal/db-confi
 import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
-import { ContainerEngineResolver, type RunPostgresClientOptions } from "@supabase/stack/effect";
+import type { RunPostgresClientOptions } from "../../../command-internal/bundled-postgres-client.ts";
+import type { DatabaseInstance, ServiceCreation, Stack } from "@supabase/stack/effect";
 import type { DbDumpFlags } from "./dump.command.ts";
 import { dbDump } from "./dump.handler.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
-import { StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -54,6 +54,112 @@ const REMOTE_CONN: PgConnInput = {
   password: "secret",
   database: "postgres",
 };
+
+const managedDumpStackApi = (runtime: "native" | "docker") => {
+  const id = "m".repeat(64);
+  const creation: Extract<ServiceCreation, { service: "database" }> = {
+    service: "database",
+    config: {
+      version: "17.6.1.173",
+      databasePassword: Redacted.make("secret"),
+      jwtSecret: Redacted.make("secret"),
+      jwtExpiry: 3600,
+    },
+    endpoints: { sql: { port: 54322 } },
+  };
+  const database: DatabaseInstance = {
+    id,
+    service: "database",
+    start: Effect.void,
+    ready: Effect.void,
+    stop: Effect.void,
+    restart: () => Effect.void,
+    destroy: Effect.void,
+    prepare: Effect.void,
+    status: Effect.succeed({
+      id,
+      endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54322 }],
+      config: creation,
+      lifecycle: "running",
+      health: "healthy",
+      error: undefined,
+      cleanupError: undefined,
+      exit: undefined,
+      currentOperation: undefined,
+      launchId: undefined,
+      intentRevision: 0,
+      wakeEnabled: true,
+      registered: true,
+    }),
+    followStatus: Stream.empty,
+    logs: Stream.empty,
+    credentials: () =>
+      Effect.succeed({ databaseUrl: "postgresql://postgres:secret@127.0.0.1:54322/postgres" }),
+    exportSnapshot: () => Effect.die("unused"),
+    restoreSnapshot: () => Effect.die("unused"),
+  };
+  const stack = {
+    id,
+    services: {
+      create: () => Effect.die("unused"),
+      get: () => Effect.succeed(database),
+      list: Effect.succeed([database]),
+    },
+    composition: {
+      describe: Effect.succeed({
+        members: [{ id, activation: "eager" as const }],
+        dependencies: [],
+      }),
+      supabase: () => Effect.succeed([database]),
+      configure: () => Effect.void,
+      start: Effect.succeed([]),
+      stop: Effect.succeed([]),
+      restart: Effect.succeed([]),
+    },
+    stop: Effect.void,
+    destroy: Effect.void,
+    tools: {
+      run: <E, R>(
+        _tool: { readonly command: string; readonly major: number },
+        options: {
+          readonly stdout: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
+          readonly stderr: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
+        },
+      ): Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E, R> =>
+        Effect.gen(function* () {
+          yield* options.stdout(new TextEncoder().encode('CREATE TABLE "public" (id integer);\n'));
+          return { jobId: "job", exitCode: 0 };
+        }),
+    },
+  } satisfies Stack;
+  return Layer.succeed(StackApi, {
+    create: () => Effect.succeed(stack),
+    open: () => Effect.succeed(stack),
+    discover: () =>
+      Effect.succeed([
+        {
+          definition: {
+            id,
+            identity: { projectRoot: "/work/project", branchContext: "main", stackName: "default" },
+            runtime,
+            instances: [],
+            composition: { members: [{ id, activation: "eager" as const }], dependencies: [] },
+            ports: [],
+          },
+          host: undefined,
+        },
+      ]),
+    resolveIdentity: () =>
+      Effect.succeed({ projectRoot: "/work/project", branchContext: "main", stackName: "default" }),
+  });
+};
+
+const unusedStackApi = Layer.succeed(StackApi, {
+  create: () => Effect.die("unused"),
+  open: () => Effect.die("unused"),
+  discover: () => Effect.die("unused"),
+  resolveIdentity: () => Effect.die("unused"),
+});
 
 function mockResolver(opts: {
   conn?: PgConnInput;
@@ -251,12 +357,6 @@ function mockBundledPostgresClient(opts: {
   };
 }
 
-const containerEngineResolver = (installed: boolean) =>
-  Layer.succeed(ContainerEngineResolver, {
-    isInstalled: () => Effect.succeed(installed),
-    resolve: () => Effect.die("unused"),
-  });
-
 const runtimeInfoLayer = (platform: NodeJS.Platform, arch?: NodeJS.Architecture) =>
   Layer.succeed(RuntimeInfo, {
     cwd: "/work/project",
@@ -316,7 +416,7 @@ function setup(opts: SetupOpts = {}) {
     projectRef.layer,
     docker.layer,
     bundled.layer,
-    containerEngineResolver(opts.dockerInstalled ?? true),
+    unusedStackApi,
     mockCommandSettings({
       workdir: opts.workdir ?? "/work/project",
       projectId: opts.projectId ?? Option.none(),
@@ -652,6 +752,34 @@ describe("db dump integration", () => {
       yield* dbDump(flags({}));
       expect(resolver.calls[0]).toMatchObject({ connType: "linked" });
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("keeps an explicit local db-url on the bundled client path", () => {
+    const { layer, bundled } = setup({
+      conn: {
+        host: "127.0.0.1",
+        port: 54322,
+        user: "custom",
+        password: "secret",
+        database: "custom",
+      },
+      isLocal: true,
+      stdout: "",
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(
+        flags({
+          dbUrl: Option.some("postgresql://custom:secret@127.0.0.1:54322/custom"),
+        }),
+      );
+      expect(bundled.lastOpts?.env).toMatchObject({
+        PGHOST: "127.0.0.1",
+        PGPORT: "54322",
+        PGUSER: "custom",
+        PGPASSWORD: "secret",
+        PGDATABASE: "custom",
+      });
+    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });
 
   it.live("caches the linked project even when connection resolution fails (Go PostRun)", () => {
@@ -1029,304 +1157,19 @@ describe("db dump integration", () => {
     });
   }
 
-  const DUMP_STACK_ID = StackIdSchema.make("d".repeat(64));
-  const unusedDump = () => Effect.die("unused");
-  const unusedDumpEffect = Effect.die("unused");
-  const dumpStackApi = (
-    runtime: { kind: "native" } | { kind: "container"; engine: "docker" },
-    databaseVersion = "17.6.1.168",
-  ) => {
-    const stack: EffectStack = {
-      id: DUMP_STACK_ID,
-      status: Effect.succeed({
-        id: DUMP_STACK_ID,
-        lifecycle: "running",
-        desiredLifecycle: "running",
-        runtime,
-        endpoints: {},
-        versions: { database: databaseVersion },
-        capabilities: [],
-        artifacts: [],
-      }),
-      credentials: unusedDumpEffect,
-      prepare: unusedDump,
-      start: unusedDump,
-      stop: unusedDumpEffect,
-      destroy: unusedDumpEffect,
-      resetDatabase: unusedDumpEffect,
-      logs: unusedDump,
-      followLogs: () => Stream.empty,
-    };
-    return Layer.succeed(StackApi, {
-      createStack: unusedDump,
-      findStack: () =>
-        Effect.succeed(
-          Option.some({
-            id: DUMP_STACK_ID,
-            projectRoot: "/work/project",
-            name: "default",
-            branchContext: "main",
-            runtime,
-            desiredLifecycle: "running",
-          }),
-        ),
-      discoverStacks: unusedDump,
-      openStack: () => Effect.succeed(stack),
-      inspectStack: unusedDump,
-    });
-  };
-
-  it.live(
-    "dump --local on the stack backend fails instead of using Docker when no stack exists",
-    () => {
-      const { layer, docker } = setup({ isLocal: true, stdout: "-- schema\n" });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(dbDump(flags({ local: Option.some(true) })));
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failMessage(exit)).toContain("Could not determine the stack runtime");
-        expect(docker.lastOpts).toBeUndefined();
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            layer,
-            stackBackendLayer("stack"),
-            Layer.succeed(StackApi, {
-              createStack: unusedDump,
-              findStack: () => Effect.succeed(Option.none()),
-              discoverStacks: unusedDump,
-              openStack: unusedDump,
-              inspectStack: unusedDump,
-            }),
+  describe("managed stack dump", () => {
+    for (const runtime of ["native", "docker"] as const) {
+      it.live(`streams schema output through the ${runtime} stack tool`, () => {
+        const { layer, out } = setup({ isLocal: true, stdout: "" });
+        return Effect.gen(function* () {
+          yield* dbDump(flags({ local: Option.some(true) }));
+          expect(out.stdoutText).toContain('CREATE TABLE IF NOT EXISTS "public"');
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(layer, stackBackendLayer("stack"), managedDumpStackApi(runtime)),
           ),
-        ),
-      );
-    },
-  );
-
-  it.live(
-    "dump --db-url on the stack backend does not require a project stack even when isLocal is true",
-    () => {
-      const { layer, docker, resolver, bundled } = setup({
-        isLocal: true,
-        stdout: "-- schema\n",
-        platform: "darwin",
-      });
-      return Effect.gen(function* () {
-        yield* dbDump(
-          flags({
-            dbUrl: Option.some("postgresql://postgres:review@127.0.0.1:54322/postgres"),
-          }),
         );
-        expect(resolver.calls[0]).toMatchObject({ connType: "db-url" });
-        expect(docker.lastOpts).toBeUndefined();
-        expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("host.docker.internal");
-        expect(bundled.lastOpts?.network).toBe("host");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            layer,
-            stackBackendLayer("stack"),
-            Layer.succeed(StackApi, {
-              createStack: unusedDump,
-              findStack: () => Effect.succeed(Option.none()),
-              discoverStacks: unusedDump,
-              openStack: unusedDump,
-              inspectStack: unusedDump,
-            }),
-          ),
-        ),
-      );
-    },
-  );
-
-  it.live("dump --local on a docker stack ignores compose SUPABASE_NETWORK_ID", () => {
-    const { layer, docker, bundled } = setup({
-      isLocal: true,
-      stdout: "-- schema\n",
-      platform: "darwin",
-      env: { SUPABASE_NETWORK_ID: "supabase_network_test" },
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ local: Option.some(true) }));
-      expect(docker.lastOpts).toBeUndefined();
-      expect(bundled.lastOpts?.network).toBe("host");
-      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("host.docker.internal");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layer,
-          stackBackendLayer("stack"),
-          dumpStackApi({ kind: "container", engine: "docker" }),
-        ),
-      ),
-    );
-  });
-
-  it.live("dump --db-url native keeps the resolved host even when isLocal is true", () => {
-    const { layer, docker, bundled } = setup({
-      conn: { ...LOCAL_CONN, host: "db.internal" },
-      isLocal: true,
-      stdout: "-- schema\n",
-      dockerInstalled: false,
-      platform: "darwin",
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(
-        flags({
-          dbUrl: Option.some("postgresql://postgres:postgres@db.internal:54322/postgres"),
-        }),
-      );
-      expect(docker.lastOpts).toBeUndefined();
-      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
-      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("db.internal");
-    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
-  });
-
-  it.live("dump --linked on the stack backend keeps the remote host for a native client", () => {
-    const { layer, docker, bundled } = setup({
-      conn: REMOTE_CONN,
-      isLocal: false,
-      stdout: "-- schema\n",
-      dockerInstalled: false,
-      platform: "darwin",
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ linked: Option.some(true) }));
-      expect(docker.lastOpts).toBeUndefined();
-      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
-      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe(REMOTE_CONN.host);
-    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
-  });
-
-  it.live("dump --linked on a native-less platform uses a Docker pg_dump client", () => {
-    const { layer, docker, bundled } = setup({
-      conn: REMOTE_CONN,
-      isLocal: false,
-      stdout: "-- schema\n",
-      dockerInstalled: false,
-      platform: "darwin",
-      arch: "x64",
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ linked: Option.some(true) }));
-      expect(docker.lastOpts).toBeUndefined();
-      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
-      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe(REMOTE_CONN.host);
-    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
-  });
-
-  it.live("dump --local on a native stack uses bundled pg_dump, not a tool container", () => {
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      'project_id = "test"\n[db]\nmajor_version = 17\n',
-    );
-    const { layer, docker, bundled, out } = setup({
-      isLocal: true,
-      workdir: tmp.current,
-      stdout: "-- schema\n",
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ local: Option.some(true) }));
-      expect(docker.lastOpts).toBeUndefined();
-      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
-      expect(bundled.lastOpts?.argv).toEqual(["bash", "-c", expect.any(String), "--"]);
-      expect(out.stdoutText).toContain("-- schema");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(layer, stackBackendLayer("stack"), dumpStackApi({ kind: "native" })),
-      ),
-    );
-  });
-
-  it.live("dump --local on a native stack reports bundled pg_dump exit, not a container", () => {
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      'project_id = "test"\n[db]\nmajor_version = 17\n',
-    );
-    const { layer, docker } = setup({
-      isLocal: true,
-      workdir: tmp.current,
-      exitCode: 1,
-    });
-    return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failMessage(exit)).toBe("error running pg_dump: exit 1");
-      expect(docker.lastOpts).toBeUndefined();
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(layer, stackBackendLayer("stack"), dumpStackApi({ kind: "native" })),
-      ),
-    );
-  });
-
-  it.live("dump --local on a Windows native stack uses a Docker pg_dump client", () => {
-    const { layer, docker, bundled } = setup({
-      isLocal: true,
-      stdout: "-- schema\n",
-      platform: "win32",
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ local: Option.some(true) }));
-      expect(docker.lastOpts).toBeUndefined();
-      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
-      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("host.docker.internal");
-      expect(bundled.lastOpts?.network).toBe("host");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(layer, stackBackendLayer("stack"), dumpStackApi({ kind: "native" })),
-      ),
-    );
-  });
-
-  it.live(
-    "dump --local on a Windows native stack asks for Docker Desktop when Docker is missing",
-    () => {
-      const { layer } = setup({
-        isLocal: true,
-        platform: "win32",
-        runFails: true,
       });
-      return Effect.gen(function* () {
-        const exit = yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failMessage(exit)).toContain("failed to run docker");
-        expect(failSuggestion(exit)).toContain("Docker Desktop");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(layer, stackBackendLayer("stack"), dumpStackApi({ kind: "native" })),
-        ),
-      );
-    },
-  );
-
-  it.live(
-    "dump --local on the stack backend uses status().versions.database for the catalog pin",
-    () => {
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        'project_id = "test"\n[db]\nmajor_version = 17\n',
-      );
-      const { layer, bundled } = setup({
-        isLocal: true,
-        workdir: tmp.current,
-        stdout: "-- schema\n",
-      });
-      return Effect.gen(function* () {
-        yield* dbDump(flags({ local: Option.some(true) }));
-        expect(bundled.lastOpts?.version).toBe("15.14.1.168");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            layer,
-            stackBackendLayer("stack"),
-            dumpStackApi({ kind: "native" }, "15.14.1.168"),
-          ),
-        ),
-      );
-    },
-  );
+    }
+  });
 });
