@@ -2,10 +2,10 @@
  * Native TS implementation of `start` — see `SIDE_EFFECTS.md` for the full
  * behavior contract.
  */
-import { readFileSync } from "node:fs";
+import { BunPath } from "@effect/platform-bun";
 import { inferFunctionsManifest } from "@supabase/config/effect";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
-import { Effect, FileSystem, Option, Path, Result } from "effect";
+import { Config, Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -183,6 +183,17 @@ import { buildPgMetaContainerSpec } from "./services/pg-meta.service.ts";
 import { buildStudioContainerSpec } from "./services/studio.service.ts";
 import { buildSupavisorContainerSpec } from "./services/supavisor.service.ts";
 
+const resolveAmbientEnvValues = Effect.fnUntraced(function* (keys: ReadonlyArray<string>) {
+  const entries = yield* Effect.forEach(keys, (key) =>
+    Config.option(Config.string(key)).pipe(
+      Effect.map((value) => [key, Option.getOrUndefined(value)] as const),
+    ),
+  );
+  return Object.fromEntries(
+    entries.filter((entry): entry is readonly [string, string] => entry[1] !== undefined),
+  );
+});
+
 /** The analytics API key's only possible value; never configurable. */
 const ANALYTICS_API_KEY = "api-key";
 
@@ -329,17 +340,25 @@ function resolveGotrueEnvInput(params: {
  * would reach Docker unverified — the root-privileged daemon silently creates a directory at a
  * bind-mounted host path that doesn't exist, instead of failing.
  */
-function readKongEmailTemplateContent(
+const readKongEmailTemplateContent = Effect.fnUntraced(function* (
   section: "template" | "notification",
   name: string,
   resolvedPath: string,
-): void {
-  try {
-    readFileSync(resolvedPath, "utf8");
-  } catch (cause) {
-    throw new Error(emailContentPathReadErrorMessage(section, name, cause));
-  }
-}
+  fs: FileSystem.FileSystem,
+) {
+  yield* fs.readFileString(resolvedPath).pipe(
+    Effect.mapError(
+      (error) =>
+        new StartInvalidConfigError({
+          message: emailContentPathReadErrorMessage(
+            section,
+            name,
+            error.reason.cause ?? error.reason,
+          ),
+        }),
+    ),
+  );
+});
 
 /**
  * Kong's email template mounts: every configured template, then every enabled notification,
@@ -351,38 +370,53 @@ function readKongEmailTemplateContent(
  * Skips (never throws for) an entry whose resolver returns `undefined`, defensively, even though
  * that should be unreachable since Kong's set is built from configured entries.
  */
-function resolveKongEmailTemplateMounts(
+const resolveKongEmailTemplateMounts = Effect.fnUntraced(function* (
   email: ResolvedAuthEmail,
   workdir: string,
-): ReadonlyArray<KongEmailTemplateMount> {
+  fs: FileSystem.FileSystem,
+) {
   const mounts: Array<KongEmailTemplateMount> = [];
   for (const [id, template] of Object.entries(email.template)) {
-    const resolvedPath = resolveEmailTemplateContentPath({
-      section: "template",
-      name: id,
-      contentPath: template.content_path,
-      contentPresent: false,
-      base: workdir,
+    const resolvedPath = yield* Effect.try({
+      try: () =>
+        resolveEmailTemplateContentPath({
+          section: "template",
+          name: id,
+          contentPath: template.content_path,
+          contentPresent: false,
+          base: workdir,
+        }),
+      catch: (cause) =>
+        new StartInvalidConfigError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
     });
     if (resolvedPath === undefined) continue;
-    readKongEmailTemplateContent("template", id, resolvedPath);
+    yield* readKongEmailTemplateContent("template", id, resolvedPath, fs);
     mounts.push({ id, resolvedPath });
   }
   for (const [id, notification] of Object.entries(email.notification)) {
     if (!notification.enabled) continue;
-    const resolvedPath = resolveEmailTemplateContentPath({
-      section: "notification",
-      name: id,
-      contentPath: notification.content_path,
-      contentPresent: false,
-      base: workdir,
+    const resolvedPath = yield* Effect.try({
+      try: () =>
+        resolveEmailTemplateContentPath({
+          section: "notification",
+          name: id,
+          contentPath: notification.content_path,
+          contentPresent: false,
+          base: workdir,
+        }),
+      catch: (cause) =>
+        new StartInvalidConfigError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
     });
     if (resolvedPath === undefined) continue;
-    readKongEmailTemplateContent("notification", id, resolvedPath);
+    yield* readKongEmailTemplateContent("notification", id, resolvedPath, fs);
     mounts.push({ id: `${id}_notification`, resolvedPath, notification: true });
   }
   return mounts;
-}
+});
 
 /**
  * What `--ignore-health-check` prints when it downgrades a health-check timeout to a warning.
@@ -401,6 +435,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
   const runtimeInfo = yield* RuntimeInfo;
   // Threaded into every `dockerRemoveAll` teardown below — `--debug`
   // gates that function's `Pruned …:` stderr reports.
@@ -464,13 +499,11 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // regardless of `auth.enabled` — see {@link resolveKongEmailTemplateMounts} for why this
     // resolves and verifies each path once, here, rather than re-deriving it before Kong's
     // `docker create` call.
-    const kongEmailTemplateMounts = yield* Effect.try({
-      try: () => resolveKongEmailTemplateMounts(resolvedEmail, cliSettings.workdir),
-      catch: (cause) =>
-        new StartInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    const kongEmailTemplateMounts = yield* resolveKongEmailTemplateMounts(
+      resolvedEmail,
+      cliSettings.workdir,
+      fs,
+    );
     // Duration fields (Go duration syntax) are otherwise only parsed inside GoTrue's own env
     // builder, which never runs when auth is disabled or `gotrue` is excluded — so a malformed
     // value must be validated eagerly here or it would be silently accepted.
@@ -563,11 +596,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // other consumers, so the rejection is CLI-side, not a schema change.
     for (const [slug, func] of Object.entries(config.functions)) {
       if (Object.keys(func.env).length > 0) {
-        yield* Effect.fail(
-          new StartInvalidConfigError({
-            message: `failed to parse config: decoding failed due to the following error(s):\n\n'functions[${slug}]' has invalid keys: env`,
-          }),
-        );
+        return yield* new StartInvalidConfigError({
+          message: `failed to parse config: decoding failed due to the following error(s):\n\n'functions[${slug}]' has invalid keys: env`,
+        });
       }
     }
     // Must run unconditionally, before any Docker work: without this, a malformed
@@ -618,12 +649,12 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // stacks are recovered unless Bitbucket's lack of named volumes makes removal destructive.
     const inspectDbState = inspectContainerState(spawner, dbContainerId).pipe(
       Effect.catch((error) =>
-        isContainerNotFoundMessage(error.message) ? Effect.succeed(undefined) : Effect.fail(error),
+        isContainerNotFoundMessage(error.message) ? Effect.void : Effect.fail(error),
       ),
     );
     const dbState = yield* inspectDbState;
     const isRecoverableStoppedState = (
-      state: { readonly running: boolean; readonly status: string } | undefined,
+      state: { readonly running: boolean; readonly status: string } | void,
     ) =>
       // `created` may own a just-provisioned volume that Postgres never initialized.
       state?.running === false && state.status.length > 0 && state.status !== "created";
@@ -643,18 +674,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           Effect.mapError((cause) => new StatusDbInspectError({ message: cause.message })),
         );
         if (!state.running) {
-          return yield* Effect.fail(
-            new StatusDbNotRunningError({
-              message: `${dbContainerId} container is not running: ${state.status}`,
-            }),
-          );
+          return yield* new StatusDbNotRunningError({
+            message: `${dbContainerId} container is not running: ${state.status}`,
+          });
         }
         if (state.health !== undefined && state.health !== "healthy") {
-          return yield* Effect.fail(
-            new StatusDbNotReadyError({
-              message: `${dbContainerId} container is not ready: ${state.health}`,
-            }),
-          );
+          return yield* new StatusDbNotReadyError({
+            message: `${dbContainerId} container is not ready: ${state.health}`,
+          });
         }
       }
 
@@ -1087,21 +1114,24 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       switch (service) {
         case "logflare":
           return {
-            spec: buildLogflareContainerSpec({
-              image,
-              projectId,
-              networkId,
-              port: analyticsPort,
-              backend: values.analyticsBackend,
-              gcpProjectId: values.gcpProjectId,
-              gcpProjectNumber: values.gcpProjectNumber,
-              gcpJwtPath: values.gcpJwtPath,
-              workdir: cliSettings.workdir,
-              dbHost,
-              dbPort: START_INTERNAL_DB_PORT,
-              dbUser: "postgres",
-              dbPassword,
-            }),
+            spec: buildLogflareContainerSpec(
+              {
+                image,
+                projectId,
+                networkId,
+                port: analyticsPort,
+                backend: values.analyticsBackend,
+                gcpProjectId: values.gcpProjectId,
+                gcpProjectNumber: values.gcpProjectNumber,
+                gcpJwtPath: values.gcpJwtPath,
+                workdir: cliSettings.workdir,
+                dbHost,
+                dbPort: START_INTERNAL_DB_PORT,
+                dbUser: "postgres",
+                dbPassword,
+              },
+              path,
+            ),
           };
 
         case "vector": {
@@ -1139,34 +1169,41 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         }
 
         case "kong": {
+          const ambientEnvValues = yield* resolveAmbientEnvValues(["KONG_NGINX_WORKER_PROCESSES"]);
           return {
-            spec: buildKongContainerSpec({
-              image,
-              containerName: kongContainerName,
-              networkId,
-              apiHost: context.hostname,
-              apiPort: values.apiPort,
-              apiTlsEnabled,
-              tlsCertContent,
-              tlsKeyContent,
-              apiKeys: {
-                secretKey: values.secretKey,
-                serviceRoleKey: values.serviceRoleKey,
-                publishableKey: values.publishableKey,
-                anonKey: values.anonKey,
+            spec: buildKongContainerSpec(
+              {
+                image,
+                containerName: kongContainerName,
+                networkId,
+                apiHost: context.hostname,
+                apiPort: values.apiPort,
+                apiTlsEnabled,
+                tlsCertContent,
+                tlsKeyContent,
+                apiKeys: {
+                  secretKey: values.secretKey,
+                  serviceRoleKey: values.serviceRoleKey,
+                  publishableKey: values.publishableKey,
+                  anonKey: values.anonKey,
+                },
+                gotrueId: gotrueContainerName,
+                restId: restContainerName,
+                realtimeTenantId: REALTIME_TENANT_ID,
+                storageId: storageContainerName,
+                studioId: studioContainerName,
+                pgmetaId: pgMetaContainerName,
+                edgeRuntimeId: edgeRuntimeContainerName,
+                logflareId: logflareContainerName,
+                poolerId: poolerContainerName,
+                nginxWorkerProcesses: resolveKongNginxWorkerProcesses(
+                  projectEnvValues,
+                  ambientEnvValues,
+                ),
+                emailTemplateMounts: kongEmailTemplateMounts,
               },
-              gotrueId: gotrueContainerName,
-              restId: restContainerName,
-              realtimeTenantId: REALTIME_TENANT_ID,
-              storageId: storageContainerName,
-              studioId: studioContainerName,
-              pgmetaId: pgMetaContainerName,
-              edgeRuntimeId: edgeRuntimeContainerName,
-              logflareId: logflareContainerName,
-              poolerId: poolerContainerName,
-              nginxWorkerProcesses: resolveKongNginxWorkerProcesses(projectEnvValues),
-              emailTemplateMounts: kongEmailTemplateMounts,
-            }),
+              { path, posixPath },
+            ),
           };
         }
 
@@ -1228,7 +1265,13 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             }),
           };
 
-        case "storage":
+        case "storage": {
+          const ambientEnvValues = yield* resolveAmbientEnvValues([
+            "VECTOR_ENABLED",
+            "VECTOR_BUCKET_PROVIDER",
+            "VECTOR_STORE_MIGRATIONS_ENABLED",
+            "VECTOR_DATABASE_URL",
+          ]);
           return {
             spec: buildStorageContainerSpec({
               projectId,
@@ -1248,8 +1291,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               anonKey: values.anonKey,
               serviceRoleKey: values.serviceRoleKey,
               projectEnvValues,
+              ambientEnvValues,
             }),
           };
+        }
 
         case "imgproxy":
           return { spec: buildImgproxyContainerSpec({ projectId, networkId, image }) };
@@ -1270,42 +1315,48 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
         case "studio": {
           return {
-            spec: buildStudioContainerSpec({
-              image,
-              containerName: studioContainerName,
-              networkId,
-              port: values.studioPort,
-              // Computed whenever Studio is enabled, independently of Edge Runtime.
-              // Resolved during preflight above so recovery teardown remains reversible.
-              functionBinds: [...studioFunctionBinds],
-              env: {
-                dbPassword,
-                workdir: cliSettings.workdir,
-                cliVersion: CLI_VERSION,
-                pgMetaContainerName,
-                kongContainerName,
-                logflareContainerName,
-                studioApiUrl: resolveStudioApiUrl(
-                  envOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
-                    config.studio.api_url,
-                  context.hostname,
-                  values.apiUrl,
-                ),
-                jwtSecret: values.jwtSecret,
-                anonKey: values.anonKey,
-                serviceRoleKey: values.serviceRoleKey,
-                publishableKey: values.publishableKey,
-                secretKey: values.secretKey,
-                s3AccessKeyId: values.storageS3AccessKeyId,
-                s3SecretAccessKey: values.storageS3SecretAccessKey,
-                openaiApiKey: values.openaiApiKey,
-                apiSchemas: apiSchemas,
-                apiExtraSearchPath: apiExtraSearchPath,
-                apiMaxRows: apiMaxRows,
-                analyticsEnabled: values.analyticsEnabled,
-                analyticsBackend: values.analyticsBackend,
+            spec: buildStudioContainerSpec(
+              {
+                image,
+                containerName: studioContainerName,
+                networkId,
+                port: values.studioPort,
+                // Computed whenever Studio is enabled, independently of Edge Runtime.
+                // Resolved during preflight above so recovery teardown remains reversible.
+                functionBinds: [...studioFunctionBinds],
+                env: {
+                  dbPassword,
+                  workdir: cliSettings.workdir,
+                  cliVersion: CLI_VERSION,
+                  pgMetaContainerName,
+                  kongContainerName,
+                  logflareContainerName,
+                  studioApiUrl: resolveStudioApiUrl(
+                    envOverride(
+                      "SUPABASE_STUDIO_API_URL",
+                      config.studio.api_url,
+                      projectEnvValues,
+                    ) ?? config.studio.api_url,
+                    context.hostname,
+                    values.apiUrl,
+                  ),
+                  jwtSecret: values.jwtSecret,
+                  anonKey: values.anonKey,
+                  serviceRoleKey: values.serviceRoleKey,
+                  publishableKey: values.publishableKey,
+                  secretKey: values.secretKey,
+                  s3AccessKeyId: values.storageS3AccessKeyId,
+                  s3SecretAccessKey: values.storageS3SecretAccessKey,
+                  openaiApiKey: values.openaiApiKey,
+                  apiSchemas: apiSchemas,
+                  apiExtraSearchPath: apiExtraSearchPath,
+                  apiMaxRows: apiMaxRows,
+                  analyticsEnabled: values.analyticsEnabled,
+                  analyticsBackend: values.analyticsBackend,
+                },
               },
-            }),
+              path,
+            ),
           };
         }
 
@@ -1459,7 +1510,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           yield* output.raw(`${healthWarningText(error)}\n`, "stderr");
           return { kind: "postgresUnhealthyIgnored" as const };
         }
-        return yield* Effect.fail(error);
+        return yield* error;
       }
 
       if (output.format === "text") {
@@ -1511,11 +1562,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             }
             const decrypted = decryptSecret(secretValue, dotenvPrivateKeys);
             if (!decrypted.ok) {
-              return yield* Effect.fail(
-                new StartInvalidConfigError({
-                  message: `failed to parse config: ${decrypted.error}`,
-                }),
-              );
+              return yield* new StartInvalidConfigError({
+                message: `failed to parse config: ${decrypted.error}`,
+              });
             }
             edgeRuntimeSecrets[secretName] = decrypted.value;
           }
@@ -1628,11 +1677,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       }
       // cliProjectFilterValue("") targets every CLI-managed project; never use it here.
       if (projectId.length === 0) {
-        return yield* Effect.fail(
-          new StartInvalidConfigError({
-            message: "Invalid config: project_id must contain at least one alphanumeric character.",
-          }),
-        );
+        return yield* new StartInvalidConfigError({
+          message: "Invalid config: project_id must contain at least one alphanumeric character.",
+        });
       }
       let removedContainers: ReadonlyArray<ContainerIdName> = [];
       yield* dockerRemoveAll(
@@ -1773,7 +1820,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           } else {
             // No manual `rollbackStart` here — the outer `Effect.onError`
             // below rolls back on this failure too.
-            return yield* Effect.fail(error);
+            return yield* error;
           }
         }
 
