@@ -39,6 +39,7 @@ const makeProject = Effect.fnUntraced(function* (prefix: string) {
 const START_TIMEOUT_MS = 280_000;
 const SHORT_E2E_TIMEOUT_MS = 30_000;
 const LIFECYCLE_OVERHEAD_MS = 90_000;
+const CLEANUP_TIMEOUT_MS = 120_000;
 
 /**
  * `--exclude` values for the 3 heaviest, least-relevant services (same set the sibling Docker
@@ -195,7 +196,7 @@ describe("supabase start (e2e)", () => {
         });
         requireCliSuccess(status, "status setup");
       }).pipe(Effect.provide(BunServices.layer)),
-    START_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS,
+    START_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 
   it.live(
@@ -267,7 +268,7 @@ describe("supabase start (e2e)", () => {
         expect(start.stdout).toContain("https://127.0.0.1:");
         expect(proxyConnections).toBe(0);
       }).pipe(Effect.provide(BunServices.layer)),
-    START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS,
+    START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 
   // The health watch inspects and dumps logs by container name against a real daemon and derives
@@ -304,10 +305,12 @@ describe("supabase start (e2e)", () => {
           path.join(buildDir, "Dockerfile"),
           'FROM scratch\nCOPY mailpit /mailpit\nENTRYPOINT ["/mailpit"]\n',
         );
-        yield* runDockerEffect(["build", "-q", "-t", mailpitImage, buildDir]);
-
-        yield* Effect.addFinalizer(() =>
-          runDockerEffect(["image", "rm", "-f", mailpitImage]).pipe(Effect.ignore),
+        yield* Effect.acquireRelease(
+          runDockerEffect(["build", "-q", "-t", mailpitImage, buildDir]).pipe(
+            Effect.as(mailpitImage),
+          ),
+          (image) => runDockerEffect(["image", "rm", "-f", image]).pipe(Effect.ignore),
+          { interruptible: true },
         );
 
         // Everything except Postgres and Mailpit is excluded: this scenario only
@@ -329,6 +332,6 @@ describe("supabase start (e2e)", () => {
         expect(start.stderr).toContain(`${mailpitContainer}'s image ${mailpitImage}`);
         expect(start.stderr).toContain(`image rm -f ${mailpitImage}`);
       }).pipe(Effect.provide(BunServices.layer)),
-    START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS,
+    START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 });

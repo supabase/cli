@@ -46,6 +46,7 @@ const START_TIMEOUT_MS = 280_000;
 const SHORT_E2E_TIMEOUT_MS = 30_000;
 const PULL_TIMEOUT_MS = 240_000;
 const LIFECYCLE_OVERHEAD_MS = 90_000;
+const CLEANUP_TIMEOUT_MS = 120_000;
 
 const SLIM_ENV = { SUPABASE_USE_SLIM_IMAGES: "1" } as const;
 /** Override an inherited dogfood/CI flag so docker.io starts stay on docker.io. */
@@ -284,6 +285,6 @@ describe("supabase start slim images (e2e)", () => {
           )(body),
         ).toEqual({ message: "Hello Functions!" });
       }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
-    START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS,
+    START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 });
