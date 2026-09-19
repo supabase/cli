@@ -54,6 +54,7 @@ import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.ser
 import { runTestDbCommand } from "../../../command-internal/test-db.command-handler.ts";
 import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
 import { dbCommand } from "../db.command.ts";
+import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -165,6 +166,7 @@ function setup(opts: SetupOpts = {}) {
   const docker = mockDockerRun({ exitCode: opts.exitCode, stdout: opts.stdout });
   const args = ["db", "test"];
   const layer = Layer.mergeAll(
+    unusedStackServices,
     out.layer,
     processControl.layer,
     analytics.layer,
@@ -217,6 +219,7 @@ describe("db test (alias) integration", () => {
       const args = ["db", "test", "--local", "--linked"];
       const analytics = mockContextualAnalytics();
       const layer = Layer.mergeAll(
+        unusedStackServices,
         BunServices.layer,
         mockRuntimeInfo(),
         mockTty(),
