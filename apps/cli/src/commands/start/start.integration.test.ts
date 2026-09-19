@@ -24,6 +24,7 @@ import {
   useTempWorkdir,
   sequentialExecBatch,
 } from "../../../tests/helpers/command-mocks.ts";
+import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { classifyCliCauseActionability } from "../../shared/telemetry/error-actionability.ts";
 import {
@@ -408,6 +409,7 @@ function setup(opts: SetupOpts = {}) {
   const dbSession = fakeDbSession();
 
   const layer = Layer.mergeAll(
+    unusedStackServices,
     BunServices.layer,
     out.layer,
     cliSettings,

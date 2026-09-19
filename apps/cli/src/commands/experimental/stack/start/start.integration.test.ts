@@ -1,7 +1,12 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Stream } from "effect";
-import type { ServiceCreation, ServiceInstance, Stack } from "@supabase/stack/effect";
+import type {
+  ServiceCreation,
+  ServiceInstance,
+  ServiceInstances,
+  Stack,
+} from "@supabase/stack/effect";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -40,10 +45,12 @@ const session: DbSession = {
   queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
 };
 
-const instance = (creation: ServiceCreation, id: string): ServiceInstance =>
-  ({
+const instance = (
+  creation: ServiceCreation,
+  id: string,
+): ServiceInstances[ServiceCreation["service"]] => {
+  const base = {
     id,
-    service: creation.service,
     start: Effect.void,
     ready: Effect.void,
     stop: Effect.void,
@@ -67,21 +74,53 @@ const instance = (creation: ServiceCreation, id: string): ServiceInstance =>
     }),
     followStatus: Stream.empty,
     logs: Stream.empty,
-    credentials: () =>
-      creation.service === "database"
-        ? Effect.succeed({ databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres" })
-        : Effect.succeed({}),
-  }) as unknown as ServiceInstance;
+    credentials: () => Effect.succeed({}),
+  } satisfies Omit<ServiceInstance, "service">;
+  switch (creation.service) {
+    case "database":
+      return {
+        ...base,
+        service: "database",
+        credentials: () =>
+          Effect.succeed({ databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres" }),
+        exportSnapshot: () => Effect.die("unused"),
+        restoreSnapshot: () => Effect.die("unused"),
+      };
+    case "rest":
+      return { ...base, service: "rest" };
+    case "auth":
+      return { ...base, service: "auth" };
+    case "realtime":
+      return { ...base, service: "realtime" };
+    case "storage":
+      return { ...base, service: "storage" };
+    case "imgproxy":
+      return { ...base, service: "imgproxy" };
+    case "functions":
+      return { ...base, service: "functions" };
+    case "studio":
+      return { ...base, service: "studio" };
+    case "pgmeta":
+      return { ...base, service: "pgmeta" };
+    case "mail":
+      return { ...base, service: "mail" };
+    case "analytics":
+      return { ...base, service: "analytics" };
+    case "vector":
+      return { ...base, service: "vector" };
+    case "pooler":
+      return { ...base, service: "pooler" };
+  }
+};
 
 const fakeStack = () => {
-  let members: Array<ServiceInstance> = [];
+  let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   let stopped = 0;
   let composed = 0;
-  const stack = {
+  const stack: Stack = {
     id: "a".repeat(64),
     services: {
-      create: (creation: ServiceCreation) =>
-        Effect.succeed(instance(creation, `${creation.service}-standalone`)),
+      create: <Input extends ServiceCreation>(_creation: Input) => Effect.die("unused"),
       get: (id: string) => {
         const found = members.find((entry) => entry.id === id);
         return found === undefined ? Effect.die(`missing instance ${id}`) : Effect.succeed(found);
@@ -102,7 +141,7 @@ const fakeStack = () => {
           return members;
         }),
       configure: () => Effect.void,
-      start: Effect.void,
+      start: Effect.succeed([]),
       stop: Effect.sync(() => {
         stopped += 1;
         return [];
@@ -113,9 +152,8 @@ const fakeStack = () => {
     destroy: Effect.void,
     tools: { run: () => Effect.die("tool not used") },
   };
-  const typedStack = stack as unknown as Stack;
   return {
-    stack: typedStack,
+    stack,
     get members() {
       return members;
     },
@@ -139,7 +177,7 @@ const layers = (root: string, fixture: ReturnType<typeof fakeStack>) => {
     open: () => Effect.succeed(fixture.stack),
     discover: () => Effect.succeed([]),
     resolveIdentity: () => Effect.die("identity not used"),
-  } as never);
+  });
   return Layer.mergeAll(
     BunServices.layer,
     runtimeInfoLayer,
@@ -182,7 +220,7 @@ describe("experimental stack start", () => {
         open: () => Effect.succeed(fixture.stack),
         discover: () => Effect.succeed([]),
         resolveIdentity: () => Effect.die("identity not used"),
-      } as never);
+      });
       const result = yield* stackStart(flags()).pipe(
         Effect.flip,
         Effect.provide(Layer.merge(base, api)),
