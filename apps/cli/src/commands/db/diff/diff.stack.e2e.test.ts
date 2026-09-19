@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- e2e fixture appends experimental.stack to project config
-import { appendFile, readdir } from "node:fs/promises";
+import { appendFile } from "node:fs/promises";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- e2e fixture joins project and cache paths
 import path from "node:path";
 
@@ -16,14 +16,12 @@ const STACK_DIFF_TEST_TIMEOUT_MS =
   STACK_DIFF_TIMEOUT_MS +
   DB_START_CLEANUP_TIMEOUT_MS;
 
-const STACK_BASELINE_TAR = /^stack-shadow-baseline-[0-9a-f]{16}\.tar$/u;
-const COMPOSE_BASELINE_TAR = /^shadow-baseline-[0-9a-f]{16}\.tar$/u;
 const PROBE_FN_SQL =
   /CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION\s+"?public"?\s*\.\s*"?probe_fn"?\s*\(\)/i;
 
 describe("supabase db diff (e2e, stack shadow)", () => {
   test(
-    "stack db diff --local publishes a stack-shadow-baseline tar",
+    "diffs against a fresh shadow without changing the local database",
     async () => {
       const home = makeTempHome();
       const project = await makeTempStackProject("supabase-db-diff-stack-e2e-");
@@ -62,11 +60,12 @@ as $$ select 1; $$;`,
         expect(diff.exitCode, `${diff.stdout}\n${diff.stderr}`).toBe(0);
         expect(diff.stdout).toMatch(PROBE_FN_SQL);
 
-        const cacheDir = path.join(home.dir, "cache", "shadow-baseline");
-        const entries = await readdir(cacheDir).catch(() => [] as Array<string>);
-        expect(entries.filter((entry) => STACK_BASELINE_TAR.test(entry))).toHaveLength(1);
-        expect(entries.filter((entry) => COMPOSE_BASELINE_TAR.test(entry))).toHaveLength(0);
-        expect(entries.filter((entry) => entry.endsWith(".partial"))).toHaveLength(0);
+        const query = await runSupabase(["db", "query", "SELECT public.probe_fn()", "--local"], {
+          cwd: project.dir,
+          home: home.dir,
+          exitTimeoutMs: STACK_DB_AUX_TIMEOUT_MS,
+        });
+        expect(query.exitCode, query.stderr).toBe(0);
       } finally {
         await runSupabase(["stack", "destroy", "--yes"], {
           cwd: project.dir,
