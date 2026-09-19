@@ -58,15 +58,29 @@ export function tomlKey(key: string): string {
   return isBareKey(key) ? key : quote(key);
 }
 
+/** A value a `[compute.<name>]` key can be written as. */
+export type TomlSectionValue = string | number | ReadonlyArray<string>;
+
 /**
- * `key = "value"`, or `key = value` for a number — quoting a count would write a TOML string,
- * and the schema types `[compute.<name>] instances` as a number, so a quoted count would stop
- * `config.toml` from loading at all. Rendering doesn't validate: {@link isRenderableTomlNumber}
- * is the guard that keeps `1.5`/`-1` from reaching here, since `planComputeEntry`'s re-parse is
- * a syntax check, not a schema one.
+ * `key = "value"`, `key = value` for a number, or `key = ["a", "b"]` for a list — quoting a
+ * count would write a TOML string, and the schema types `[compute.<name>] instances` as a
+ * number, so a quoted count would stop `config.toml` from loading at all. Rendering doesn't
+ * validate: {@link isRenderableTomlNumber} is the guard that keeps `1.5`/`-1` from reaching
+ * here, since `planComputeEntry`'s re-parse is a syntax check, not a schema one.
+ *
+ * A list renders on one line, however long: the appended table is read back and re-parsed
+ * before it is written, and a single-line array is the form that check is known to survive.
  */
-function renderPair(key: string, value: string | number): string {
-  return `${tomlKey(key)} = ${typeof value === "number" ? String(value) : quote(value)}`;
+function renderPair(key: string, value: TomlSectionValue): string {
+  // Narrowed by what each branch is, not by what it isn't: `Array.isArray` does not narrow a
+  // `ReadonlyArray` out of the union, so testing for the array first left a cast behind.
+  const rendered =
+    typeof value === "number"
+      ? String(value)
+      : typeof value === "string"
+        ? quote(value)
+        : `[${value.map((entry) => quote(entry)).join(", ")}]`;
+  return `${tomlKey(key)} = ${rendered}`;
 }
 
 /**
@@ -78,7 +92,7 @@ function renderPair(key: string, value: string | number): string {
 export function appendTomlSection(
   text: string,
   header: string,
-  values: Readonly<Record<string, string | number>>,
+  values: Readonly<Record<string, TomlSectionValue>>,
 ): string {
   const block = [
     `[${header}]`,

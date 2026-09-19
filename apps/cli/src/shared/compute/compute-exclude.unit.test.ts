@@ -1,0 +1,257 @@
+import { it } from "@effect/vitest";
+import { Effect } from "effect";
+import { describe, expect } from "vitest";
+import { compileComputeExclude, NO_COMPUTE_EXCLUSIONS } from "./compute-exclude.ts";
+import { InvalidComputeExcludeError } from "./compute.errors.ts";
+import { COMPUTE_RUNTIME_EXCLUSIONS, COMPUTE_RUNTIMES } from "./compute-runtimes.ts";
+
+const compile = (patterns: ReadonlyArray<string>) =>
+  Effect.runSync(compileComputeExclude({ name: "api", patterns }));
+
+/** The refusal a pattern list earns, so each case can assert on the sentence the user reads. */
+const refusal = (patterns: ReadonlyArray<string>) =>
+  Effect.runSync(compileComputeExclude({ name: "api", patterns }).pipe(Effect.flip)).detail;
+
+describe("compileComputeExclude", () => {
+  it.effect("excludes nothing when the compute records no patterns", () =>
+    Effect.gen(function* () {
+      const absent = yield* compileComputeExclude({ name: "api", patterns: undefined });
+      const empty = yield* compileComputeExclude({ name: "api", patterns: [] });
+
+      expect(absent).toBe(NO_COMPUTE_EXCLUSIONS);
+      expect(empty).toBe(NO_COMPUTE_EXCLUSIONS);
+      expect(absent.active).toBe(false);
+      expect(absent.excludes("node_modules", true)).toBe(false);
+    }),
+  );
+
+  it.effect("reports itself active once a pattern is recorded", () =>
+    Effect.gen(function* () {
+      const matcher = yield* compileComputeExclude({ name: "api", patterns: [".env"] });
+
+      expect(matcher.active).toBe(true);
+    }),
+  );
+
+  describe("a pattern with no separator matches that name at any depth", () => {
+    const matcher = compile(["node_modules"]);
+
+    it.effect("matches at the top level", () =>
+      Effect.sync(() => {
+        expect(matcher.excludes("node_modules", true)).toBe(true);
+      }),
+    );
+
+    it.effect("matches nested", () =>
+      Effect.sync(() => {
+        expect(matcher.excludes("packages/api/node_modules", true)).toBe(true);
+      }),
+    );
+
+    it.effect("matches a file of the same name", () =>
+      Effect.sync(() => {
+        expect(matcher.excludes("node_modules", false)).toBe(true);
+      }),
+    );
+
+    it.effect("leaves a name it merely prefixes alone", () =>
+      Effect.sync(() => {
+        expect(matcher.excludes("node_modules.bak", true)).toBe(false);
+      }),
+    );
+  });
+
+  describe("a pattern with a separator is anchored at the source directory", () => {
+    const matcher = compile(["/coverage", "src/*.test.ts"]);
+
+    it.effect("matches at the root it is anchored to", () =>
+      Effect.sync(() => {
+        expect(matcher.excludes("coverage", true)).toBe(true);
+        expect(matcher.excludes("src/index.test.ts", false)).toBe(true);
+      }),
+    );
+
+    it.effect("does not match the same name deeper in the tree", () =>
+      Effect.sync(() => {
+        expect(matcher.excludes("packages/api/coverage", true)).toBe(false);
+        expect(matcher.excludes("app/src/index.test.ts", false)).toBe(false);
+      }),
+    );
+
+    it.effect("keeps a single wildcard inside one path segment", () =>
+      Effect.sync(() => {
+        expect(matcher.excludes("src/nested/index.test.ts", false)).toBe(false);
+      }),
+    );
+  });
+
+  describe("a trailing separator matches directories only", () => {
+    const matcher = compile(["dist/"]);
+
+    // Anchoring is decided after the trailing separators come off, so a doubled one does not
+    // quietly turn a match-at-any-depth pattern into a root-only one.
+    it.effect("reads a doubled trailing separator the same way", () =>
+      Effect.sync(() => {
+        const doubled = compile(["dist//"]);
+
+        expect(doubled.excludes("dist", true)).toBe(true);
+        expect(doubled.excludes("packages/api/dist", true)).toBe(true);
+        expect(doubled.excludes("dist", false)).toBe(false);
+      }),
+    );
+
+    it.effect("matches the directory", () =>
+      Effect.sync(() => {
+        expect(matcher.excludes("dist", true)).toBe(true);
+        expect(matcher.excludes("packages/api/dist", true)).toBe(true);
+      }),
+    );
+
+    it.effect("passes over a file of the same name", () =>
+      Effect.sync(() => {
+        expect(matcher.excludes("dist", false)).toBe(false);
+      }),
+    );
+  });
+
+  describe("`**` spans directories", () => {
+    const matcher = compile(["**/*.log", "build/**/cache"]);
+
+    it.effect("matches at every depth, including none", () =>
+      Effect.sync(() => {
+        expect(matcher.excludes("server.log", false)).toBe(true);
+        expect(matcher.excludes("a/b/c/server.log", false)).toBe(true);
+      }),
+    );
+
+    it.effect("spans zero or more segments between two fixed ones", () =>
+      Effect.sync(() => {
+        expect(matcher.excludes("build/cache", true)).toBe(true);
+        expect(matcher.excludes("build/x/y/cache", true)).toBe(true);
+      }),
+    );
+
+    it.effect("still requires the segments around it to match", () =>
+      Effect.sync(() => {
+        expect(matcher.excludes("build/x/cache/keep", false)).toBe(false);
+        expect(matcher.excludes("other/cache", true)).toBe(false);
+      }),
+    );
+
+    // Pruning makes this the difference between emptying a directory and deleting it: a
+    // trailing `**` that matched the parent would take the directory out of the archive too.
+    it.effect("empties a directory without removing it when trailing", () =>
+      Effect.sync(() => {
+        const trailing = compile(["cache/**"]);
+
+        expect(trailing.excludes("cache", true)).toBe(false);
+        expect(trailing.excludes("cache/blob", false)).toBe(true);
+        expect(trailing.excludes("cache/deep/blob", false)).toBe(true);
+      }),
+    );
+
+    // Repeats span exactly what one spanner spans, so they are folded rather than each
+    // retrying the same suffixes — the pathological case is a pattern, not an input path.
+    it.effect("treats repeated spanners as one", () =>
+      Effect.sync(() => {
+        const repeated = compile(["**/**/**/**/missing"]);
+
+        expect(repeated.excludes("a/b/c/d/e/f/g/h/missing", false)).toBe(true);
+        expect(repeated.excludes("a/b/c/d/e/f/g/h/present", false)).toBe(false);
+      }),
+    );
+  });
+
+  it.effect("matches a character class within one segment", () =>
+    Effect.sync(() => {
+      const matcher = compile(["*.[oa]"]);
+
+      expect(matcher.excludes("main.o", false)).toBe(true);
+      expect(matcher.excludes("lib.a", false)).toBe(true);
+      expect(matcher.excludes("main.c", false)).toBe(false);
+    }),
+  );
+
+  it.effect("refuses a re-inclusion pattern rather than reading it as a filename", () =>
+    Effect.sync(() => {
+      expect(refusal(["node_modules", "!node_modules/keep"])).toContain("re-includes a path");
+    }),
+  );
+
+  it.effect("refuses a pattern that names no path", () =>
+    Effect.sync(() => {
+      expect(refusal([""])).toContain("names no path");
+      expect(refusal(["/"])).toContain("names no path");
+    }),
+  );
+
+  // `pathMatch` reports one verdict for every malformed operator, so the message names the
+  // segment rather than claiming which operator broke.
+  it.effect.each([
+    { label: "an unterminated character class", pattern: "src/[oops" },
+    { label: "a trailing escape", pattern: "src/oops\\" },
+  ])("refuses $label", ({ pattern }) =>
+    Effect.sync(() => {
+      expect(refusal([pattern])).toContain("malformed glob syntax");
+    }),
+  );
+
+  it.effect("refuses a pattern with an empty path segment", () =>
+    Effect.sync(() => {
+      expect(refusal(["src//dist"])).toContain("empty path segment");
+    }),
+  );
+
+  it.effect("names the compute and the pattern in every refusal", () =>
+    Effect.gen(function* () {
+      const error = yield* compileComputeExclude({
+        name: "worker",
+        patterns: ["!keep"],
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(InvalidComputeExcludeError);
+      expect(error.detail).toContain("[compute.worker] exclude");
+      expect(error.detail).toContain('"!keep"');
+      expect(error.suggestion).toContain("[compute.worker] exclude");
+    }),
+  );
+});
+
+describe("COMPUTE_RUNTIME_EXCLUSIONS", () => {
+  it.effect("records a compilable list for every offered runtime", () =>
+    Effect.forEach(COMPUTE_RUNTIMES, (runtime) =>
+      compileComputeExclude({ name: "api", patterns: COMPUTE_RUNTIME_EXCLUSIONS[runtime] }),
+    ),
+  );
+
+  it.effect("keeps environment files out of every runtime's build context", () =>
+    Effect.sync(() => {
+      for (const runtime of COMPUTE_RUNTIMES) {
+        const matcher = compile(COMPUTE_RUNTIME_EXCLUSIONS[runtime]);
+
+        expect(matcher.excludes(".env", false)).toBe(true);
+        expect(matcher.excludes(".env.production", false)).toBe(true);
+      }
+    }),
+  );
+
+  it.effect("keeps version-control metadata out of a worktree checkout too", () =>
+    Effect.sync(() => {
+      for (const runtime of COMPUTE_RUNTIMES) {
+        const matcher = compile(COMPUTE_RUNTIME_EXCLUSIONS[runtime]);
+
+        expect(matcher.excludes(".git", true)).toBe(true);
+        // A worktree or submodule has `.git` as a file holding the real gitdir path.
+        expect(matcher.excludes(".git", false)).toBe(true);
+      }
+    }),
+  );
+
+  it.effect("drops the node runtime's installed tree", () =>
+    Effect.sync(() => {
+      const matcher = compile(COMPUTE_RUNTIME_EXCLUSIONS.node);
+
+      expect(matcher.excludes("node_modules", true)).toBe(true);
+    }),
+  );
+});

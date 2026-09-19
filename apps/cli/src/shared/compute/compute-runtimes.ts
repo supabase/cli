@@ -42,6 +42,38 @@ export const COMPUTE_RUNTIME_DESCRIPTIONS: Record<ComputeRuntime, string> = {
 };
 
 /**
+ * The `[compute.<name>] exclude` patterns `new` records for each runtime, read the way
+ * `.gitignore` reads them (see `./compute-exclude.ts`).
+ *
+ * Written into `config.toml` at scaffold time rather than applied silently at `push` time, so
+ * the list is visible, editable, and the same on every machine — a built-in default nobody
+ * could see would be a second, invisible source of truth for what ships. `push` therefore
+ * excludes nothing a project did not ask for, including for a compute scaffolded by an older
+ * CLI.
+ *
+ * Every runtime keeps environment files and version-control metadata out: both are secrets or
+ * noise in an image whose context is uploaded to the platform, whichever runtime builds it.
+ * `.git` carries no trailing slash because a worktree or submodule checkout has it as a file
+ * holding an absolute gitdir path, which a directory-only pattern would pass over.
+ * Beyond that the lists diverge by how each runtime resolves dependencies, so a runtime's own
+ * entry is the only place a pattern belongs.
+ */
+export const COMPUTE_RUNTIME_EXCLUSIONS: Record<ComputeRuntime, ReadonlyArray<string>> = {
+  // The context is the user's own build context and their `Dockerfile` decides what it copies,
+  // so nothing beyond secrets and VCS metadata is assumed about its shape.
+  dockerfile: [".env", ".env.*", ".git"],
+  // The build resolves dependencies, so uploading a locally installed tree only ships this
+  // machine's platform-specific binaries. `*.log` covers the crash logs npm and yarn drop into
+  // the project root on a failed install.
+  node: [".env", ".env.*", ".git", "node_modules/", "*.log"],
+  // Deno resolves remote dependencies into a cache outside the project, so there is no
+  // installed tree here to drop; `node_modules/` appears only under an opt-in `nodeModulesDir`.
+  // `*.log` is kept for the same reason as above, since a Deno compute may still be installed
+  // from npm.
+  deno: [".env", ".env.*", ".git", "*.log"],
+};
+
+/**
  * The only instance sizes offered, denominated by memory. There is no resize — a different size
  * means a new compute, not a `push` flag.
  */
