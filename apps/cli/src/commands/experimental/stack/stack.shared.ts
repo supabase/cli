@@ -59,7 +59,7 @@ export const validateStackTarget = (input: {
       )
     : Effect.void;
 
-export const validateStackId = (id: string): Effect.Effect<StackId, StackTargetError> =>
+const validateStackId = (id: string): Effect.Effect<StackId, StackTargetError> =>
   isStackId(id)
     ? Effect.succeed(id)
     : Effect.fail(

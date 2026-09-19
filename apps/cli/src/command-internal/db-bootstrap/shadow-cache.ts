@@ -148,7 +148,7 @@ export interface ShadowCacheKeyInputs {
  * PG<=14 setup SQL is excluded because that major is cache-ineligible.
  */
 let shadowBaselineEmbeddedDigestMemo: string | undefined;
-export const shadowBaselineEmbeddedDigest = (): string =>
+const shadowBaselineEmbeddedDigest = (): string =>
   (shadowBaselineEmbeddedDigestMemo ??= createHash("sha256")
     .update(
       [
@@ -171,7 +171,7 @@ export const shadowBaselineEmbeddedDigest = (): string =>
     .digest("hex"));
 
 /** JSON with recursively key-sorted objects, so `db.settings`' own property order cannot change the key. */
-export function canonicalJson(value: unknown): string {
+function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   const entries = Object.entries(value)
@@ -487,10 +487,7 @@ const sweepShadowBaselineRetention = <E>(
   });
 
 /** Refresh mtime on a warm hit so frequently used keys survive LRU/TTL. Best-effort. */
-export const touchShadowBaselineTar = (
-  fs: FileSystem.FileSystem,
-  tarPath: string,
-): Effect.Effect<void> =>
+const touchShadowBaselineTar = (fs: FileSystem.FileSystem, tarPath: string): Effect.Effect<void> =>
   Effect.gen(function* () {
     const now = new Date(yield* Clock.currentTimeMillis);
     yield* fs.utimes(tarPath, now, now);

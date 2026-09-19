@@ -311,5 +311,3 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
     ),
   );
 });
-
-export { applyStackMigrateAndSeed, applyStackWebhooksOnly } from "./stack-bootstrap.ts";

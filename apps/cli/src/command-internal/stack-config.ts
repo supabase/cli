@@ -53,7 +53,7 @@ export class StackConfigError extends Data.TaggedError("StackConfigError")<{
   }
 }
 
-export interface StackStartConfig {
+interface StackStartConfig {
   readonly jwtSecret: Redacted.Redacted<string>;
   readonly creations: (
     stackId: string,
