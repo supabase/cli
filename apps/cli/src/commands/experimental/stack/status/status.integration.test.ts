@@ -1,874 +1,552 @@
 import { BunServices } from "@effect/platform-bun";
-import { describe, expect, it } from "@effect/vitest";
-import { parse as parseDotenv } from "dotenv";
-import {
-  Cause,
-  Effect,
-  FileSystem,
-  Exit,
-  Layer,
-  Option,
-  Path,
-  Redacted,
-  Schema,
-  Stream,
-} from "effect";
-import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
-import { CliOutput, Command } from "effect/unstable/cli";
-import {
-  InvalidStackConfigError,
-  StackNotFoundError,
-  StackNotRunningError,
-  StackIdSchema,
-  StackStateFormatUnsupportedError,
-  type EffectStack,
-  type StackInspection,
-  type StackStatus,
-} from "@supabase/stack/effect";
+import { expect, it } from "@effect/vitest";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted, Stream } from "effect";
+import { type Observation, type ServiceCreation, StackError } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { GLOBAL_OUTPUT_FORMATS, OutputFlag } from "../../../../command-internal/global-flags.ts";
-import {
-  actionability,
-  ErrorActionabilityId,
-} from "../../../../shared/telemetry/error-actionability.ts";
-import { StackApi } from "../stack.shared.ts";
+import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
+import { StackApi, StackTargetResolver } from "../stack.shared.ts";
+import type { StackStatusFlags } from "./status.command.ts";
 import { stackStatus } from "./status.handler.ts";
-import { stackStatusCommand } from "./status.command.ts";
-import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 
-const id = StackIdSchema.make("a".repeat(64));
-const capabilityNames = [
-  "database",
-  "rest",
-  "auth",
-  "realtime",
-  "storage",
-  "functions",
-  "studio",
-  "mail",
-  "analytics",
-  "pooler",
-] as const;
-const flags = (stack = Option.none<string>(), stackId = Option.none<string>()) => ({
-  stack,
-  stackId,
-  env: false,
-  overrideName: [] as string[],
-});
-
-const makeStatus = (
-  stackId: typeof id,
-  desiredLifecycle: StackStatus["desiredLifecycle"] = "running",
-): StackStatus => ({
-  id: stackId,
-  lifecycle: "running",
-  desiredLifecycle,
-  runtime: { kind: "native" },
-  endpoints: {
-    api: { protocol: "http", address: "127.0.0.1", port: 54321, url: "http://127.0.0.1:54321" },
+const stackId = "a".repeat(64);
+type StatusOutputFormat = "text" | "json" | "stream-json";
+type OpenedStack = Effect.Success<ReturnType<(typeof StackApi.Service)["open"]>>;
+type StackInstance = Effect.Success<OpenedStack["services"]["list"]>[number];
+const jwtSecret = "status-test-jwt-secret-with-at-least-32-chars";
+const database: ServiceCreation = {
+  service: "database",
+  config: {
+    version: "17",
+    databasePassword: Redacted.make("postgres"),
+    jwtSecret: Redacted.make(jwtSecret),
+    jwtExpiry: 3600,
   },
-  versions: {},
-  capabilities: capabilityNames.map((name) => ({
-    name,
-    activation: "lazy" as const,
-    state: "dormant" as const,
-  })),
-  artifacts: [],
+  endpoints: { sql: { port: 54322 } },
+};
+const rest: ServiceCreation = {
+  service: "rest",
+  config: { databaseUrl: "postgresql://placeholder" },
+  endpoints: { http: { port: 54321 } },
+};
+const flags = (input?: Partial<StackStatusFlags>): StackStatusFlags => ({
+  stack: Option.none(),
+  stackId: Option.none(),
+  env: false,
+  overrideName: [],
+  ...input,
 });
 
-const runStatus = (options: {
-  readonly config?: "valid" | "missing" | "invalid";
-  readonly owner?: StackInspection["owner"];
-  readonly status?: StackStatus;
-  readonly drift?: StackInspection["configDrift"];
-  readonly flags?: ReturnType<typeof flags>;
-  readonly compareFailure?: "typed" | "defect";
-  readonly missingTarget?: boolean;
-  readonly legacyOutput?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
-  readonly outputFormat?: "text" | "json" | "stream-json";
-  readonly credentialFailure?: boolean;
-  readonly storageCredentials?: boolean;
-  readonly authDisabled?: boolean;
+const makeObservation = (
+  id: string,
+  config: ServiceCreation,
+  input: Partial<Observation> = {},
+): Observation => ({
+  id,
+  endpoints: [],
+  config,
+  lifecycle: "stopped",
+  health: undefined,
+  error: undefined,
+  cleanupError: undefined,
+  exit: undefined,
+  currentOperation: undefined,
+  launchId: undefined,
+  intentRevision: 1,
+  wakeEnabled: true,
+  registered: true,
+  ...input,
+});
+
+const makeService = (input: {
+  readonly id: string;
+  readonly creation: ServiceCreation;
+  readonly observation?: Observation;
+  readonly statusCalls: { value: number };
+  readonly statusError?: StackError;
+  readonly credentials?: Readonly<Record<string, string>>;
+  readonly rejectCredentials?: boolean;
+}): StackInstance => ({
+  id: input.id,
+  service: input.creation.service,
+  start: Effect.die("unused"),
+  ready: Effect.die("unused"),
+  stop: Effect.die("unused"),
+  restart: () => Effect.die("unused"),
+  destroy: Effect.die("unused"),
+  prepare: Effect.die("unused"),
+  status: Effect.suspend(() => {
+    input.statusCalls.value += 1;
+    if (input.statusError !== undefined) return Effect.fail(input.statusError);
+    return input.observation === undefined
+      ? Effect.die("status must not run")
+      : Effect.succeed(input.observation);
+  }),
+  followStatus: Stream.empty,
+  logs: Stream.empty,
+  credentials: () =>
+    input.rejectCredentials
+      ? Effect.die("credentials must not run")
+      : Effect.succeed(input.credentials ?? {}),
+  exportSnapshot: () => Effect.die("unused"),
+  restoreSnapshot: () => Effect.die("unused"),
+});
+
+const makeStack = (
+  services: ReadonlyArray<StackInstance>,
+  members: ReadonlyArray<{ readonly id: string; readonly activation: "eager" | "lazy" }>,
+): OpenedStack => ({
+  id: stackId,
+  services: {
+    create: (_creation) => Effect.die("unused"),
+    get: (_id) => Effect.die("unused"),
+    list: Effect.succeed([...services]),
+  },
+  composition: {
+    supabase: (_services, _options) => Effect.die("unused"),
+    configure: (_config) => Effect.die("unused"),
+    describe: Effect.succeed({ members: [...members], dependencies: [] }),
+    start: Effect.die("unused"),
+    stop: Effect.die("unused"),
+    restart: Effect.die("unused"),
+  },
+  stop: Effect.die("unused"),
+  destroy: Effect.die("unused"),
+  tools: {
+    run: (_tool, _options) => Effect.die("unused"),
+  },
+});
+
+const runStatus = (input: {
+  readonly services: ReadonlyArray<StackInstance>;
+  readonly members?: ReadonlyArray<{ readonly id: string; readonly activation: "eager" | "lazy" }>;
+  readonly reachable?: boolean;
+  readonly outputFormat?: StatusOutputFormat;
+  readonly config?: "missing" | "invalid" | "explicit";
+  readonly flags?: StackStatusFlags;
 }) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-status-" });
-    const projectRoot = path.join(root, "project");
-    yield* fs.makeDirectory(path.join(projectRoot, "supabase"), { recursive: true });
-    if (options.config !== "missing")
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-status-" });
+    if (input.config === "invalid") {
+      yield* fs.makeDirectory(`${root}/supabase`);
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "broken\n[auth\n');
+    }
+    if (input.config === "explicit") {
+      yield* fs.makeDirectory(`${root}/supabase`);
       yield* fs.writeFileString(
-        path.join(projectRoot, "supabase", "config.toml"),
-        options.config === "invalid"
-          ? 'project_id = "ok"\n\n[auth]\njwt_secret = "FAKE_STATUS_SECRET\n'
-          : 'project_id = "status-test"\n\n[auth]\njwt_secret = "candidate-secret"\n',
+        `${root}/supabase/config.toml`,
+        'project_id = "status-test"\n[db]\nport = 54322\n',
       );
-    const descriptor = {
-      id,
-      projectRoot,
-      name: "feature-a",
-      branchContext: "ordinary-workspace",
-      runtime: { kind: "native" as const },
-      desiredLifecycle: "running" as const,
+    }
+    const projectRoot = root;
+    const stack = makeStack(
+      input.services,
+      input.members ?? input.services.map(({ id }) => ({ id, activation: "lazy" as const })),
+    );
+    const definition = {
+      id: stackId,
+      identity: {
+        projectRoot,
+        branchContext: "status-branch",
+        stackName: "status-stack",
+      },
+      runtime: "native" as const,
+      instances: input.services.map(({ id, service }) => ({
+        id,
+        creation: service === "database" ? database : rest,
+      })),
+      composition: { members: input.members ?? [], dependencies: [] },
+      ports: [],
     };
-    const inspection: StackInspection = {
-      descriptor,
-      owner: options.owner ?? "running",
-      ...(options.status === undefined ? {} : { status: options.status }),
-      ...(options.drift === undefined ? {} : { configDrift: options.drift }),
-    };
-    const out = mockOutput({ format: options.outputFormat ?? "text" });
-    const telemetry = mockTelemetryStateTracked();
-    const findInputs: unknown[] = [];
-    const inspectInputs: unknown[] = [];
     const api = Layer.succeed(StackApi, {
-      createStack: () => Effect.die("create must not run"),
-      discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
-      findStack: (input) => {
-        findInputs.push(input);
-        return Effect.succeed(options.missingTarget ? Option.none() : Option.some(descriptor));
-      },
-      openStack: (openId) =>
-        Effect.succeed({
-          id: openId,
-          status: Effect.succeed(options.status ?? makeStatus(id)),
-          credentials:
-            options.credentialFailure === true
-              ? Effect.fail(
-                  new StackNotRunningError({ stackId: id, message: "Stack is not running" }),
-                )
-              : Effect.succeed({
-                  database: {
-                    url: Redacted.make("postgresql://postgres:p%40ss@127.0.0.1:54322/postgres"),
-                    password: Redacted.make("p@ss"),
+      create: () => Effect.die("create must not run"),
+      open: () => Effect.succeed(stack),
+      discover: () =>
+        Effect.succeed([
+          {
+            definition,
+            host:
+              input.reachable === false
+                ? undefined
+                : {
+                    stackId,
+                    identity: definition.identity,
+                    pid: 123,
+                    port: 4567,
                   },
-                  ...(options.authDisabled === true
-                    ? {}
-                    : {
-                        api: {
-                          anonJwt: "anon-token",
-                          serviceRoleJwt: Redacted.make("service-role-token"),
-                          publishableKey: "sb_publishable_test",
-                          secretKey: Redacted.make("sb_secret_test"),
-                        },
-                      }),
-                  ...(options.storageCredentials === true
-                    ? {
-                        storage: {
-                          endpoint: "http://127.0.0.1:54321/storage/v1/s3",
-                          region: "local",
-                          accessKeyId: "storage-access",
-                          secretAccessKey: Redacted.make("storage-secret"),
-                        },
-                      }
-                    : {}),
-                }),
-          prepare: () => Effect.die("unused"),
-          start: () => Effect.die("unused"),
-          stop: Effect.die("unused"),
-          destroy: Effect.die("unused"),
-          resetDatabase: Effect.die("unused"),
-          logs: () => Effect.die("unused"),
-          followLogs: () => Stream.empty,
-        } satisfies EffectStack),
-      inspectStack: (_stackId, inspectOptions) => {
-        inspectInputs.push(inspectOptions);
-        if (options.missingTarget === true)
-          return Effect.fail(new StackNotFoundError({ message: "stack id not found" }));
-        if (inspectOptions?.config !== undefined && options.compareFailure === "typed")
-          return Effect.fail(
-            new InvalidStackConfigError({ message: "candidate config is invalid" }),
-          );
-        if (inspectOptions?.config !== undefined && options.compareFailure === "defect")
-          return Effect.die("comparison defect");
-        return Effect.succeed(inspection);
-      },
+          },
+        ]),
+      resolveIdentity: () => Effect.succeed(definition.identity),
     });
+    const resolver = Layer.succeed(StackTargetResolver, {
+      resolve: (target) =>
+        Effect.succeed({
+          projectRoot: target.projectRoot,
+          id: stackId,
+          runtime: "native" as const,
+        }),
+    });
+    const out = mockOutput({ format: input.outputFormat ?? "text" });
+    const telemetry = mockTelemetryStateTracked();
     const layer = Layer.mergeAll(
+      api,
+      resolver,
       out.layer,
       telemetry.layer,
-      api,
-      mockCommandSettings({ workdir: root }),
-      ...(options.legacyOutput === undefined
-        ? []
-        : [Layer.succeed(OutputFlag, Option.some(options.legacyOutput))]),
+      mockCommandSettings({ workdir: projectRoot, supabaseHome: root }),
       BunServices.layer,
       runtimeInfoLayer,
     );
-    const effect = stackStatus(options.flags ?? flags()).pipe(Effect.provide(layer));
-    return { effect, out, findInputs, inspectInputs, projectRoot, root };
+    const effect = stackStatus(input.flags ?? flags()).pipe(Effect.provide(layer));
+    return { effect, out, root };
   }).pipe(Effect.provide(BunServices.layer));
 
-const withRunStatus = <A, E>(
-  options: Parameters<typeof runStatus>[0],
-  test: (run: Effect.Success<ReturnType<typeof runStatus>>) => Effect.Effect<A, E>,
-) => runStatus(options).pipe(Effect.flatMap(test));
-
-describe("stack status", () => {
-  it.effect(
-    "reports configured identity, dormant readiness, endpoint, drift, and target config",
-    () => {
-      return withRunStatus(
-        {
-          status: makeStatus(id),
-          drift: { status: "changed", paths: ["definition.listeners.api.port"] },
-        },
-        (run) =>
-          run.effect.pipe(
-            Effect.tap(() =>
-              Effect.sync(() => {
-                expect(run.findInputs).toEqual([{ projectRoot: expect.any(String) }]);
-                expect(run.inspectInputs).toHaveLength(1);
-                expect(run.inspectInputs[0]).toEqual({ config: expect.any(Object) });
-                expect(run.out.stdoutText).toContain("Runtime: native");
-                expect(run.out.stdoutText).toContain("Readiness: dormant");
-                expect(run.out.stdoutText).toContain("http://127.0.0.1:54321");
-                expect(run.out.stdoutText).toContain("definition.listeners.api.port");
-                expect(run.out.stdoutText).not.toContain("candidate-secret");
-              }),
-            ),
-          ),
-      );
-    },
-  );
-
-  it.effect("forwards a named stack target with the settings project root", () => {
-    return withRunStatus(
-      { flags: flags(Option.some("feature-a")), status: makeStatus(id) },
-      (run) =>
-        run.effect.pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              expect(run.findInputs).toEqual([{ projectRoot: run.root, name: "feature-a" }]);
-            }),
-          ),
-        ),
-    );
-  });
-
-  it.effect("uses the persisted project root for an explicit id from another cwd", () => {
-    return withRunStatus(
-      { flags: flags(Option.none(), Option.some(id)), status: makeStatus(id) },
-      (run) =>
-        run.effect.pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              expect(run.inspectInputs).toHaveLength(2);
-              expect(run.inspectInputs[1]).toEqual({ config: expect.any(Object) });
-            }),
-          ),
-        ),
-    );
-  });
-
-  it.effect("reuses the explicit id inspection when config is invalid", () => {
-    return withRunStatus(
-      {
-        config: "invalid",
-        flags: flags(Option.none(), Option.some(id)),
-        status: makeStatus(id),
-      },
-      (run) =>
-        run.effect.pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              expect(run.inspectInputs).toHaveLength(1);
-              expect(run.inspectInputs[0]).toBeUndefined();
-            }),
-          ),
-        ),
-    );
-  });
-
-  it.effect("compares an absent config.toml against default settings like stack start", () => {
-    return withRunStatus(
-      {
-        config: "missing",
-        flags: flags(Option.none(), Option.some(id)),
-        status: makeStatus(id),
-        drift: { status: "unchanged", paths: [] },
-      },
-      (run) =>
-        run.effect.pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              expect(run.inspectInputs).toHaveLength(2);
-              expect(run.inspectInputs[1]).toEqual({ config: expect.any(Object) });
-              expect(run.out.stdoutText).toContain("Config drift: unchanged");
-              expect(run.out.stdoutText).not.toContain("Config warning");
-            }),
-          ),
-        ),
-    );
-  });
-
-  it.effect("reports stopped and unreachable stacks without claiming live readiness", () => {
-    return withRunStatus({ owner: "absent" }, (run) =>
-      run.effect.pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            expect(run.out.stdoutText).toContain("Lifecycle: unavailable");
-            expect(run.out.stdoutText).toContain("Desired lifecycle: running");
-            expect(run.out.stdoutText).toContain("Readiness: unknown");
-          }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("does not claim ready when a running stack has stopped capabilities", () => {
-    const base = makeStatus(id);
-    return withRunStatus(
-      {
-        status: {
-          ...base,
-          capabilities: base.capabilities.map((capability, index) =>
-            index === 0 ? { ...capability, state: "stopped" as const } : capability,
-          ),
-        },
-      },
-      (run) =>
-        run.effect.pipe(
-          Effect.tap(() =>
-            Effect.sync(() => expect(run.out.stdoutText).toContain("Readiness: stopped")),
-          ),
-        ),
-    );
-  });
-
-  it.effect("reports a retiring capability as stopping in text and JSON", () => {
-    const base = makeStatus(id);
-    const status = {
-      ...base,
-      capabilities: base.capabilities.map((capability) =>
-        capability.name === "rest" ? { ...capability, state: "stopping" as const } : capability,
-      ),
+it.live("reports observed lifecycle and health without requesting credentials", () =>
+  Effect.gen(function* () {
+    const databaseCalls = { value: 0 };
+    const restCalls = { value: 0 };
+    const authCalls = { value: 0 };
+    const auth: ServiceCreation = {
+      service: "auth",
+      config: { databaseUrl: "postgresql://placeholder", jwtSecret },
+      endpoints: { http: { port: 54325 } },
     };
-    return Effect.all([runStatus({ status }), runStatus({ status, outputFormat: "json" })]).pipe(
-      Effect.flatMap(([text, json]) =>
-        Effect.all([text.effect, json.effect]).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              expect(text.out.stdoutText).toContain("Readiness: stopping");
-              const success = json.out.messages.find((message) => message.type === "success");
-              expect(success?.data).toMatchObject({ readiness: "stopping" });
-            }),
-          ),
-        ),
-      ),
-    );
-  });
-
-  it.effect("reports failed capability diagnostics and targeted recovery in text and JSON", () => {
-    const base = makeStatus(id);
-    const status: StackStatus = {
-      ...base,
-      capabilities: base.capabilities.map((capability) =>
-        capability.name === "rest"
-          ? {
-              ...capability,
-              state: "failed" as const,
-              error: "Unable to remove REST workload",
-            }
-          : capability,
-      ),
-      recovery: {
-        operation: "stop",
-        message: "Cleanup is incomplete; stop and start the stack to retry it.",
-      },
-    };
-    return Effect.all([runStatus({ status }), runStatus({ status, outputFormat: "json" })]).pipe(
-      Effect.flatMap(([text, json]) =>
-        Effect.all([text.effect, json.effect]).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              expect(text.out.stdoutText).toContain(
-                "rest: failed — Unable to remove REST workload",
-              );
-              expect(text.out.stdoutText).toContain(
-                `supabase stack stop --stack-id ${id} && supabase stack start --stack-id ${id}`,
-              );
-              const success = json.out.messages.find((message) => message.type === "success");
-              expect(success?.data).toMatchObject({ recovery: status.recovery });
-              expect(success?.data).toMatchObject({
-                capabilities: expect.arrayContaining([
-                  expect.objectContaining({
-                    name: "rest",
-                    state: "failed",
-                    error: "Unable to remove REST workload",
-                  }),
-                ]),
-              });
-            }),
-          ),
-        ),
-      ),
-    );
-  });
-
-  it.effect("emits the structured unavailable inspection for invalid config", () => {
-    return withRunStatus(
-      {
-        config: "invalid",
-        flags: flags(Option.none(), Option.some(id)),
-        outputFormat: "json",
-      },
-      (run) =>
-        run.effect.pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              expect(run.out.stdoutText).toBe("");
-              const success = run.out.messages.find((message) => message.type === "success");
-              expect(success?.data).toMatchObject({
-                identity: {
-                  id,
-                  name: "feature-a",
-                  project_root: run.projectRoot,
-                  branch_context: "ordinary-workspace",
-                },
-                owner: "running",
-                readiness: "unknown",
-                lifecycle: null,
-                desired_lifecycle: "running",
-                config_drift: {
-                  status: "unavailable",
-                  message:
-                    "Project configuration could not be loaded; fix it before checking drift.",
-                },
-              });
-            }),
-          ),
-        ),
-    );
-  });
-
-  it.effect("uses the live desired lifecycle consistently in text and JSON", () => {
-    return Effect.all([
-      runStatus({ status: makeStatus(id, "stopped") }),
-      runStatus({ status: makeStatus(id, "stopped"), outputFormat: "json" }),
-    ]).pipe(
-      Effect.flatMap(([text, json]) =>
-        Effect.all([text.effect, json.effect]).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              expect(text.out.stdoutText).toContain("Desired lifecycle: stopped");
-              const success = json.out.messages.find((message) => message.type === "success");
-              expect(success?.data).toMatchObject({ desired_lifecycle: "stopped" });
-            }),
-          ),
-        ),
-      ),
-    );
-  });
-
-  it.effect("reports unavailable drift for invalid config and keeps inspection", () => {
-    return Effect.all([
-      runStatus({ config: "invalid", status: makeStatus(id) }),
-      runStatus({
-        config: "invalid",
-        status: makeStatus(id),
-        outputFormat: "json",
+    const services = [
+      makeService({
+        id: "database-id",
+        creation: database,
+        statusCalls: databaseCalls,
+        observation: makeObservation("database-id", database, {
+          lifecycle: "running",
+          health: "healthy",
+          wakeEnabled: false,
+          endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54322 }],
+        }),
       }),
-    ]).pipe(
-      Effect.flatMap(([invalid, invalidJson]) =>
-        Effect.all([invalid.effect, invalidJson.effect]).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              expect(invalid.out.stdoutText).toContain("Config drift: unavailable");
-              expect(invalid.out.stdoutText).not.toContain("FAKE_STATUS_SECRET");
-              const success = invalidJson.out.messages.find(
-                (message) => message.type === "success",
-              );
-              expect(success?.data).toMatchObject({
-                config_drift: {
-                  status: "unavailable",
-                  message:
-                    "Project configuration could not be loaded; fix it before checking drift.",
-                },
-              });
-              // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- JSON.stringify checks all fields for leaked secrets; schema encoding could omit unexpected fields
-              expect(JSON.stringify(success?.data)).not.toContain("FAKE_STATUS_SECRET");
-            }),
-          ),
-        ),
-      ),
-    );
-  });
-
-  it.effect("points an empty current context to the start command", () => {
-    return withRunStatus({ missingTarget: true }, (run) =>
-      run.effect.pipe(
-        Effect.flip,
-        Effect.tap((error) =>
-          Effect.sync(() => {
-            expect(error.suggestion).toBe("Run supabase stack start first.");
-            expect(run.inspectInputs).toEqual([]);
-          }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("gives actionable guidance when an explicit stack id is missing", () => {
-    return withRunStatus(
-      {
-        flags: flags(Option.none(), Option.some(id)),
-        missingTarget: true,
-      },
-      (run) =>
-        run.effect.pipe(
-          Effect.exit,
-          Effect.tap((exit) =>
-            Effect.sync(() => {
-              expect(Exit.isFailure(exit)).toBe(true);
-              if (Exit.isFailure(exit)) {
-                const error = Cause.findErrorOption(exit.cause);
-                expect(Option.isSome(error)).toBe(true);
-                if (Option.isSome(error)) {
-                  expect(error.value.suggestion).toContain("existing --stack-id");
-                  expect(error.value[ErrorActionabilityId]).toEqual(actionability.provideFlags);
-                }
-              }
-            }),
-          ),
-        ),
-    );
-  });
-
-  it.effect("falls back only for typed comparison errors and preserves defects", () => {
-    return Effect.all([
-      runStatus({ compareFailure: "typed", status: makeStatus(id) }),
-      runStatus({
-        compareFailure: "typed",
-        status: makeStatus(id),
-        outputFormat: "json",
+      makeService({
+        id: "rest-id",
+        creation: rest,
+        statusCalls: restCalls,
+        observation: makeObservation("rest-id", rest, {
+          endpoints: [{ name: "http", protocol: "http", host: "127.0.0.1", port: 54321 }],
+        }),
       }),
-      runStatus({ compareFailure: "defect", status: makeStatus(id) }),
-    ]).pipe(
-      Effect.flatMap(([typed, typedJson, defect]) =>
-        Effect.gen(function* () {
-          yield* typed.effect;
-          expect(typed.inspectInputs).toHaveLength(2);
-          expect(typed.out.stdoutText).toContain("Config drift: unavailable");
-          expect(typed.out.stdoutText).toContain(
-            "Config warning: Project configuration could not be compared: candidate config is invalid",
-          );
-          yield* typedJson.effect;
-          const success = typedJson.out.messages.find((message) => message.type === "success");
-          expect(success?.data).toMatchObject({
-            config_drift: {
-              status: "unavailable",
-              message: "Project configuration could not be compared: candidate config is invalid",
-            },
-          });
-          const exit = yield* defect.effect.pipe(Effect.exit);
-          expect(Exit.isFailure(exit)).toBe(true);
-          expect(defect.inspectInputs).toHaveLength(1);
+      makeService({
+        id: "auth-id",
+        creation: auth,
+        statusCalls: authCalls,
+        observation: makeObservation("auth-id", auth, {
+          lifecycle: "running",
+          health: "unhealthy",
         }),
-      ),
-    );
-  });
-
-  it.effect("rejects invalid flags and legacy output before discovery", () => {
-    return Effect.all([
-      runStatus({ flags: flags(Option.some("feature-a"), Option.some(id)) }),
-      runStatus({ legacyOutput: "json" }),
-    ]).pipe(
-      Effect.flatMap(([invalid, legacy]) =>
-        Effect.gen(function* () {
-          expect(Exit.isFailure(yield* invalid.effect.pipe(Effect.exit))).toBe(true);
-          expect(Exit.isFailure(yield* legacy.effect.pipe(Effect.exit))).toBe(true);
-          expect(invalid.findInputs).toHaveLength(0);
-          expect(legacy.findInputs).toHaveLength(0);
-        }),
-      ),
-    );
-  });
-
-  it.effect("rejects the legacy -o env form with a pointer to --env", () => {
-    return withRunStatus({ legacyOutput: "env" }, (run) =>
-      run.effect.pipe(
-        Effect.flip,
-        Effect.tap((error) =>
-          Effect.sync(() => {
-            expect(error.suggestion).toContain("--env");
-            expect(run.findInputs).toHaveLength(0);
-          }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("does not retry discovery failures", () => {
-    return withRunStatus({}, (run) => {
-      const telemetry = mockTelemetryStateTracked();
-      const discovery = Layer.succeed(StackApi, {
-        createStack: () => Effect.die("create must not run"),
-        discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
-        findStack: () =>
-          Effect.fail(new StackStateFormatUnsupportedError({ message: "discovery failed" })),
-        openStack: () => Effect.die("open must not run"),
-        inspectStack: () => Effect.die("inspect must not run"),
-      });
-      const effect = stackStatus(flags()).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            run.out.layer,
-            telemetry.layer,
-            discovery,
-            mockCommandSettings({ workdir: run.projectRoot }),
-            BunServices.layer,
-            runtimeInfoLayer,
-          ),
-        ),
-        Effect.exit,
-      );
-      return effect.pipe(
-        Effect.tap((exit) =>
-          Effect.sync(() => {
-            expect(Exit.isFailure(exit)).toBe(true);
-            if (Exit.isFailure(exit)) {
-              const error = Cause.findErrorOption(exit.cause);
-              expect(Option.isSome(error)).toBe(true);
-              if (Option.isSome(error))
-                expect(error.value[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
-            }
-          }),
-        ),
-      );
-    });
-  });
-
-  it.live("parses stack name and stack id through the command", () => {
-    let parsed: { stack: Option.Option<string>; stackId: Option.Option<string> } | undefined;
-    const command = stackStatusCommand.pipe(
-      Command.withHandler((parsedFlags) =>
-        Effect.sync(() => {
-          parsed = { stack: parsedFlags.stack, stackId: parsedFlags.stackId };
-        }),
-      ),
-    );
-    return Effect.gen(function* () {
-      yield* Command.runWith(command, { version: "0.0.0-test" })(["--stack", "feature-a"]);
-      expect(parsed).toEqual({ stack: Option.some("feature-a"), stackId: Option.none() });
-    }).pipe(
-      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
-    );
-  });
-
-  it.live("parses env selection and repeated CSV variable overrides", () => {
-    let input: { env: boolean; overrideName: ReadonlyArray<string> } | undefined;
-    const command = stackStatusCommand.pipe(
-      Command.withHandler((parsedFlags) =>
-        Effect.sync(() => {
-          input = { env: parsedFlags.env, overrideName: parsedFlags.overrideName };
-        }),
-      ),
-    );
-    return Effect.gen(function* () {
-      yield* Command.runWith(command, { version: "0.0.0-test" })([
-        "--env",
-        "--override-name",
-        "API_URL=APP_URL,ANON_KEY=APP_KEY",
-        "--override-name",
-        "DB_URL=DATABASE_URL",
-      ]);
-      expect(input?.env).toBe(true);
-      expect(input?.overrideName).toEqual([
-        "API_URL=APP_URL",
-        "ANON_KEY=APP_KEY",
-        "DB_URL=DATABASE_URL",
-      ]);
-    }).pipe(
-      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
-    );
-  });
-
-  it.effect("exports the running stack credentials as dotenv with renamed variables", () => {
-    return withRunStatus(
-      {
-        config: "invalid",
-        flags: { ...flags(), env: true, overrideName: ["API_URL=NEXT_PUBLIC_SUPABASE_URL"] },
-      },
-      (run) =>
-        run.effect.pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              expect(parseDotenv(run.out.stdoutText)).toEqual({
-                NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
-                DB_URL: "postgresql://postgres:p%40ss@127.0.0.1:54322/postgres",
-                ANON_KEY: "anon-token",
-                SERVICE_ROLE_KEY: "service-role-token",
-                PUBLISHABLE_KEY: "sb_publishable_test",
-                SECRET_KEY: "sb_secret_test",
-              });
-              expect(run.inspectInputs).toHaveLength(0);
-            }),
-          ),
-        ),
-    );
-  });
-
-  const exportedVariables = {
-    API_URL: "http://127.0.0.1:54321",
-    DB_URL: "postgresql://postgres:p%40ss@127.0.0.1:54322/postgres",
-    ANON_KEY: "anon-token",
-    SERVICE_ROLE_KEY: "service-role-token",
-    PUBLISHABLE_KEY: "sb_publishable_test",
-    SECRET_KEY: "sb_secret_test",
-  };
-  const VariableMapJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
-
-  it.effect("exports a bare variable map in json", () => {
-    return withRunStatus({ flags: { ...flags(), env: true }, outputFormat: "json" }, (run) =>
-      Effect.gen(function* () {
-        yield* run.effect;
-        const variables = yield* Schema.decodeEffect(VariableMapJson)(run.out.stdoutText.trim());
-        expect(variables).toEqual(exportedVariables);
-        expect(run.out.messages).toEqual([]);
       }),
-    );
-  });
-
-  it.effect("exports a variable map as a stream-json result event", () => {
-    return withRunStatus({ flags: { ...flags(), env: true }, outputFormat: "stream-json" }, (run) =>
-      run.effect.pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            const results = run.out.events.flatMap((event) =>
-              event.type === "result" ? [event.data] : [],
-            );
-            expect(results).toEqual([exportedVariables]);
-            expect(run.out.stdoutText).toBe("");
-          }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("exports optional service URLs and storage credentials only when available", () => {
-    const status: StackStatus = {
-      ...makeStatus(id),
-      endpoints: {
-        studio: {
-          protocol: "http",
-          address: "127.0.0.1",
-          port: 54323,
-          url: "http://127.0.0.1:54323",
-        },
-        mailUi: {
-          protocol: "http",
-          address: "127.0.0.1",
-          port: 54324,
-          url: "http://127.0.0.1:54324",
-        },
-      },
-    };
-    return withRunStatus(
-      { flags: { ...flags(), env: true }, status, storageCredentials: true },
-      (run) =>
-        run.effect.pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              const values = parseDotenv(run.out.stdoutText);
-              expect(values.API_URL).toBeUndefined();
-              expect(values).toMatchObject({
-                STUDIO_URL: "http://127.0.0.1:54323",
-                INBUCKET_URL: "http://127.0.0.1:54324",
-                S3_PROTOCOL_ACCESS_KEY_SECRET: "storage-secret",
-                S3_PROTOCOL_REGION: "local",
-              });
-            }),
-          ),
-        ),
-    );
-  });
-
-  it.effect("exports a database-only stack without inventing API credentials", () => {
-    return withRunStatus(
-      {
-        flags: { ...flags(), env: true },
-        status: { ...makeStatus(id), endpoints: {} },
-        authDisabled: true,
-      },
-      (run) =>
-        run.effect.pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              expect(parseDotenv(run.out.stdoutText)).toEqual({
-                DB_URL: "postgresql://postgres:p%40ss@127.0.0.1:54322/postgres",
-              });
-            }),
-          ),
-        ),
-    );
-  });
-
-  it.effect("keeps ordinary status independent of credentials and free of secrets", () => {
-    return withRunStatus({ status: makeStatus(id), credentialFailure: true }, (run) =>
-      run.effect.pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            expect(run.out.stdoutText).toContain("Lifecycle: running");
-            expect(run.out.stdoutText).not.toContain("sb_secret_test");
-          }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("rejects invalid or colliding variable renames before discovery", () => {
-    const cases: ReadonlyArray<Partial<ReturnType<typeof flags>>> = [
-      { overrideName: ["API_URL=APP_URL"] },
-      { env: true, overrideName: ["UNKNOWN=APP_URL"] },
-      { env: true, overrideName: ["API_URL=NOT-VALID"] },
-      { env: true, overrideName: ["API_URL=DB_URL"] },
-      { env: true, overrideName: ["API_URL"] },
-      { env: true, overrideName: ["API_URL=A=B"] },
-      { env: true, overrideName: ["API_URL=A", "API_URL=B"] },
     ];
-    return Effect.forEach(cases, (overrides) => {
-      return withRunStatus({ flags: { ...flags(), ...overrides } }, (run) =>
-        run.effect.pipe(
-          Effect.exit,
-          Effect.tap((exit) =>
-            Effect.sync(() => {
-              expect(Exit.isFailure(exit)).toBe(true);
-              expect(run.findInputs).toHaveLength(0);
-              expect(run.out.stdoutText).toBe("");
-            }),
-          ),
-        ),
-      );
-    });
-  });
+    const run = yield* runStatus({ services, reachable: true });
+    yield* run.effect;
+    expect(run.out.stdoutText).toContain("Owner: reachable");
+    expect(run.out.stdoutText).toContain("database (database-id): running");
+    expect(run.out.stdoutText).toContain("rest (rest-id): sleeping");
+    expect(run.out.stdoutText).toContain("auth (auth-id): unhealthy");
+    expect(run.out.stdoutText).toContain("health=unhealthy");
+    expect(run.out.stdoutText).toContain("Readiness: unhealthy");
+    expect(databaseCalls.value).toBe(1);
+    expect(restCalls.value).toBe(1);
+    expect(authCalls.value).toBe(1);
+  }),
+);
 
-  it.effect("exports no partial secrets when the stack is stopped or credentials fail", () => {
-    return Effect.all([
-      runStatus({
-        flags: { ...flags(), env: true },
-        status: { ...makeStatus(id), lifecycle: "stopped" },
-      }),
-      runStatus({
-        flags: { ...flags(), env: true },
-        credentialFailure: true,
-      }),
-    ]).pipe(
-      Effect.flatMap(([stopped, failedCredentials]) =>
-        Effect.gen(function* () {
-          const stoppedError = yield* stopped.effect.pipe(Effect.flip);
-          expect(stoppedError.reason).toBe("lifecycle");
-          expect(stoppedError[ErrorActionabilityId]).toEqual(actionability.startStack);
-          expect(stopped.out.stdoutText).toBe("");
-          const failedExit = yield* failedCredentials.effect.pipe(Effect.exit);
-          expect(Exit.isFailure(failedExit)).toBe(true);
-          expect(failedCredentials.out.stdoutText).toBe("");
+it.live("preserves service status failures and marks aggregate readiness unavailable", () =>
+  Effect.gen(function* () {
+    const run = yield* runStatus({
+      services: [
+        makeService({
+          id: "database-id",
+          creation: database,
+          statusCalls: { value: 0 },
+          statusError: new StackError({
+            operation: "status",
+            message: "owner disconnected while observing database",
+          }),
         }),
-      ),
+      ],
+      reachable: true,
+      outputFormat: "json",
+    });
+    yield* run.effect;
+    const result = run.out.messages.find((message) => message.type === "success")?.data;
+    expect(result).toMatchObject({
+      owner: "reachable",
+      lifecycle: null,
+      readiness: "unavailable",
+      services: [{ error: "owner disconnected while observing database" }],
+    });
+  }),
+);
+
+it.live("does not label a requested stop as an unexpected process exit", () =>
+  Effect.gen(function* () {
+    const stopped = makeObservation("database-id", database, {
+      lifecycle: "stopped",
+      wakeEnabled: false,
+      exit: Exit.fail({ _tag: "ServiceError", operation: "exit", message: "SIGTERM" }),
+    });
+    const unexpected = makeObservation("rest-id", rest, {
+      lifecycle: "stopped",
+      wakeEnabled: false,
+      error: { _tag: "ServiceError", operation: "exit", message: "exit code 1" },
+    });
+    const run = yield* runStatus({
+      services: [
+        makeService({
+          id: "database-id",
+          creation: database,
+          statusCalls: { value: 0 },
+          observation: stopped,
+        }),
+        makeService({
+          id: "rest-id",
+          creation: rest,
+          statusCalls: { value: 0 },
+          observation: unexpected,
+        }),
+      ],
+      reachable: true,
+      outputFormat: "json",
+    });
+    yield* run.effect;
+    const result = run.out.messages.find((message) => message.type === "success")?.data;
+    expect(result).toMatchObject({
+      services: [
+        { id: "database-id", state: "stopped" },
+        { id: "rest-id", state: "exited" },
+      ],
+    });
+  }),
+);
+
+it.live("reports stopped readiness without treating unbound endpoints as drift", () =>
+  Effect.gen(function* () {
+    const run = yield* runStatus({
+      services: [
+        makeService({
+          id: "database-id",
+          creation: database,
+          statusCalls: { value: 0 },
+          observation: makeObservation("database-id", database, {
+            lifecycle: "stopped",
+            health: undefined,
+            wakeEnabled: false,
+          }),
+        }),
+      ],
+      reachable: true,
+      outputFormat: "json",
+    });
+    yield* run.effect;
+    const result = run.out.messages.find((message) => message.type === "success")?.data;
+    expect(result).toMatchObject({
+      readiness: "stopped",
+      config_drift: { status: "unchanged" },
+    });
+  }),
+);
+
+it.live("does not report port drift when a stopped service has no live binding", () =>
+  Effect.gen(function* () {
+    const run = yield* runStatus({
+      services: [
+        makeService({
+          id: "database-id",
+          creation: database,
+          statusCalls: { value: 0 },
+          observation: makeObservation("database-id", database, {
+            lifecycle: "stopped",
+            wakeEnabled: false,
+          }),
+        }),
+      ],
+      config: "explicit",
+      reachable: true,
+      outputFormat: "json",
+    });
+    yield* run.effect;
+    const result = run.out.messages.find((message) => message.type === "success")?.data;
+    expect(result).toMatchObject({ config_drift: { status: "unchanged" } });
+  }),
+);
+
+it.live("reports changed explicit ports even while a service is stopped", () =>
+  Effect.gen(function* () {
+    const changed = { ...database, endpoints: { sql: { port: 54329 } } };
+    const run = yield* runStatus({
+      services: [
+        makeService({
+          id: "database-id",
+          creation: changed,
+          statusCalls: { value: 0 },
+          observation: makeObservation("database-id", changed, {
+            lifecycle: "stopped",
+            wakeEnabled: false,
+          }),
+        }),
+      ],
+      config: "explicit",
+      reachable: true,
+      outputFormat: "json",
+    });
+    yield* run.effect;
+    const result = run.out.messages.find((message) => message.type === "success")?.data;
+    expect(result).toMatchObject({
+      config_drift: { status: "changed", paths: ["services.database.endpoints.sql"] },
+    });
+  }),
+);
+
+it.live("reports unavailable owner and does not query service status", () =>
+  Effect.gen(function* () {
+    const statusCalls = { value: 0 };
+    const services = [
+      makeService({
+        id: "database-id",
+        creation: database,
+        statusCalls,
+      }),
+    ];
+    const run = yield* runStatus({ services, reachable: false });
+    yield* run.effect;
+    expect(run.out.stdoutText).toContain("Owner: unavailable");
+    expect(run.out.stdoutText).toContain("Lifecycle: unavailable");
+    expect(run.out.stdoutText).toContain("database (database-id): unavailable");
+    expect(statusCalls.value).toBe(0);
+  }),
+);
+
+it.live("rejects environment export when the owner is unavailable", () =>
+  Effect.gen(function* () {
+    const run = yield* runStatus({
+      services: [makeService({ id: "database-id", creation: database, statusCalls: { value: 0 } })],
+      reachable: false,
+      flags: flags({ env: true }),
+    });
+    const exit = yield* run.effect.pipe(Effect.exit);
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
+      const error = exit.cause.reasons.find(Cause.isFailReason)?.error;
+      expect(error).toBeDefined();
+      if (error !== undefined) expect(error.reason).toBe("lifecycle");
+    }
+  }),
+);
+
+it.live("exports host variables and JWTs only for a running database", () =>
+  Effect.gen(function* () {
+    const services = [
+      makeService({
+        id: "database-id",
+        creation: database,
+        statusCalls: { value: 0 },
+        observation: makeObservation("database-id", database, {
+          lifecycle: "running",
+          health: "healthy",
+          endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54322 }],
+        }),
+        rejectCredentials: true,
+        credentials: {
+          databaseUrl: "postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres",
+        },
+      }),
+      makeService({
+        id: "rest-id",
+        creation: rest,
+        statusCalls: { value: 0 },
+        observation: makeObservation("rest-id", rest, {
+          lifecycle: "running",
+          health: "healthy",
+          endpoints: [{ name: "http", protocol: "http", host: "127.0.0.1", port: 54321 }],
+        }),
+      }),
+    ];
+    const run = yield* runStatus({
+      services,
+      reachable: true,
+      flags: flags({ env: true }),
+    });
+    yield* run.effect;
+    expect(run.out.stdoutText).toContain(
+      "DB_URL='postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres?connect_timeout=10'",
     );
-  });
-});
+    expect(run.out.stdoutText).toContain("API_URL='http://127.0.0.1:54321'");
+    expect(run.out.stdoutText).toContain("ANON_KEY=");
+    expect(run.out.stdoutText).toContain("SERVICE_ROLE_KEY=");
+  }),
+);
+
+it.live("uses only the composition database for environment export", () =>
+  Effect.gen(function* () {
+    const shadow = makeObservation("shadow-db", database, {
+      lifecycle: "running",
+      health: "healthy",
+      endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 60000 }],
+    });
+    const primary = makeObservation("primary-db", database, {
+      lifecycle: "running",
+      health: "healthy",
+      endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54322 }],
+    });
+    const run = yield* runStatus({
+      services: [
+        makeService({
+          id: "shadow-db",
+          creation: database,
+          statusCalls: { value: 0 },
+          observation: shadow,
+        }),
+        makeService({
+          id: "primary-db",
+          creation: database,
+          statusCalls: { value: 0 },
+          observation: primary,
+        }),
+      ],
+      members: [{ id: "primary-db", activation: "eager" }],
+      reachable: true,
+      flags: flags({ env: true }),
+    });
+    yield* run.effect;
+    expect(run.out.stdoutText).toContain("127.0.0.1:54322");
+    expect(run.out.stdoutText).not.toContain("127.0.0.1:60000");
+  }),
+);
+
+it.live("keeps status usable with malformed project configuration", () =>
+  Effect.gen(function* () {
+    const services = [
+      makeService({
+        id: "database-id",
+        creation: database,
+        statusCalls: { value: 0 },
+        observation: makeObservation("database-id", database, {
+          lifecycle: "running",
+          health: "healthy",
+        }),
+      }),
+    ];
+    const run = yield* runStatus({
+      services,
+      config: "invalid",
+      reachable: true,
+      outputFormat: "json",
+    });
+    yield* run.effect;
+    expect(run.out.stdoutText).toBe("");
+    expect(run.out.messages.find((message) => message.type === "success")?.data).toMatchObject({
+      owner: "reachable",
+      config_drift: { status: "unavailable" },
+    });
+  }),
+);
