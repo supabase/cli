@@ -10,21 +10,7 @@ import { Context } from "effect";
  */
 export type ProfileName = "supabase" | "supabase-staging" | "supabase-local" | "snap";
 
-export const START_CONTAINER_ENV_KEYS = [
-  "KONG_NGINX_WORKER_PROCESSES",
-  "VECTOR_ENABLED",
-  "VECTOR_BUCKET_PROVIDER",
-  "VECTOR_STORE_MIGRATIONS_ENABLED",
-  "VECTOR_DATABASE_URL",
-] as const;
-
-export type StartContainerEnvValues = Partial<
-  Record<(typeof START_CONTAINER_ENV_KEYS)[number], string>
->;
-
 interface CommandSettingsShape {
-  /** Raw container overrides; absent and empty values have different meanings. */
-  readonly startContainerEnvValues: StartContainerEnvValues;
   readonly profile: string;
   readonly apiUrl: string;
   /** Raw SUPABASE_PROFILE value; Some("") differs from an absent variable. */

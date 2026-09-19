@@ -1184,10 +1184,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                 edgeRuntimeId: edgeRuntimeContainerName,
                 logflareId: logflareContainerName,
                 poolerId: poolerContainerName,
-                nginxWorkerProcesses: resolveKongNginxWorkerProcesses(
-                  projectEnvValues,
-                  cliSettings.startContainerEnvValues,
-                ),
+                nginxWorkerProcesses: resolveKongNginxWorkerProcesses(projectEnvValues),
                 emailTemplateMounts: kongEmailTemplateMounts,
               },
               { path, posixPath },
@@ -1273,7 +1270,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               anonKey: values.anonKey,
               serviceRoleKey: values.serviceRoleKey,
               projectEnvValues,
-              ambientEnvValues: cliSettings.startContainerEnvValues,
             }),
           };
 

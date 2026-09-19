@@ -8,7 +8,6 @@ import { resolveAccessToken } from "./resolve-token.ts";
 
 const settings = (accessToken: Option.Option<Redacted.Redacted<string>>) =>
   Layer.succeed(CommandSettings, {
-    startContainerEnvValues: {},
     profile: "supabase",
     profileEnvValue: Option.none(),
     supabaseHome: "/tmp/supabase-cli-resolve-token/.supabase",
