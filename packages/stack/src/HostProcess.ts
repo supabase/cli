@@ -220,6 +220,7 @@ const isConnectionFailure = (failure: HostProcessError) => {
   return (
     failure.reason === "connection-failure" ||
     code === "ECONNREFUSED" ||
+    code === "ConnectionRefused" ||
     code === "ECONNRESET" ||
     code === "ETIMEDOUT" ||
     code === "UND_ERR_CONNECT_TIMEOUT"

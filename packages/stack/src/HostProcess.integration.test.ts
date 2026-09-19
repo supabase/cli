@@ -16,6 +16,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration verifies exact-port reopening.
 import * as Net from "node:net";
 import { fileURLToPath } from "node:url";
@@ -264,8 +265,20 @@ it.live("lets an external launcher attach, then reopens the owner port after shu
         owner.closeSignal = ownerExit.signal;
         expect(ownerExit.signal).toBeNull();
       }).pipe(Effect.ensuring(bestEffortShutdown(client, endpoint)));
-      const reopened = yield* Effect.acquireRelease(bindExact(endpoint.port), closeServer);
-      expect(reopened.listening).toBe(true);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const reopened = yield* Effect.acquireRelease(bindExact(endpoint.port), closeServer);
+          expect(reopened.listening).toBe(true);
+        }),
+      );
+      const relaunched = yield* Effect.acquireRelease(
+        launchHost(state, { stateRoot: root, cacheRoot: root, stackId: "stack", entrypoint }).pipe(
+          Effect.provide(FetchHttpClient.layer),
+        ),
+        (next) => bestEffortShutdown(client, next),
+      );
+      expect(relaunched.port).toBe(endpoint.port);
+      expect(relaunched.pid).not.toBe(endpoint.pid);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
