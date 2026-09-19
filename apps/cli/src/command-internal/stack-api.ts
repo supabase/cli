@@ -11,8 +11,6 @@ import {
 } from "@supabase/stack/effect";
 import { resolveStackIdentity } from "@supabase/stack/internal/identity";
 
-type CreateResult = Effect.Success<ReturnType<typeof create>>;
-type OpenResult = Effect.Success<ReturnType<typeof open>>;
 type DiscoverResult = Effect.Success<ReturnType<typeof discover>>;
 type StackError = Effect.Error<ReturnType<typeof create>>;
 type IdentityResult = Effect.Success<ReturnType<typeof resolveStackIdentity>>;
@@ -22,8 +20,8 @@ type IdentityError = Effect.Error<ReturnType<typeof resolveStackIdentity>>;
 export class StackApi extends Context.Service<
   StackApi,
   {
-    readonly create: (options: CreateOptions) => Effect.Effect<CreateResult, StackError>;
-    readonly open: (options: OpenOptions) => Effect.Effect<OpenResult, StackError>;
+    readonly create: (options: CreateOptions) => Effect.Effect<Stack, StackError>;
+    readonly open: (options: OpenOptions) => Effect.Effect<Stack, StackError>;
     readonly discover: (
       options: Pick<CreateOptions, "stateRoot">,
     ) => Effect.Effect<DiscoverResult, StackError>;

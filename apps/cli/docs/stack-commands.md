@@ -12,7 +12,7 @@ native runtimes.
 | `supabase stack prepare` | Download artifacts without starting services.                                     |
 | `supabase stack start`   | Create or resume the project's stack.                                             |
 | `supabase stack status`  | Show identity, readiness, and drift, or export connection variables with `--env`. |
-| `supabase stack logs`    | Read retained or live stack logs.                                                 |
+| `supabase stack logs`    | Stream live stack logs.                                                           |
 | `supabase stack restart` | Restart an existing stack using its saved effective configuration.                |
 | `supabase stack stop`    | Stop a stack while retaining its data.                                            |
 
@@ -127,68 +127,18 @@ lint transaction (always rolled back). It does not launch a client binary.
 
 ## Reading stack logs
 
-`supabase stack logs` reads retained logs without starting or stopping the selected stack. Use
-`--stack <name>` or `--stack-id <id>` to select a stack, `--service <name>` to filter services,
-and `--tail <count>` to bound retained history (`0` through `1000`, default `100`). `--service`
-accepts one capability name; it excludes supervisor and gateway entries, including their startup
-diagnostics. Omit it to include all retained sources. Retention is bounded to the newest 1000
-entries or 1 MiB, whichever is reached first.
-Add `--follow` (or `-f`) to continue with new entries; `--tail 0` starts with live entries only.
-Follow mode leaves the stack running when interrupted.
+`supabase stack logs` streams live stdout/stderr from composition members without
+starting an owner or service. Select `--stack <name>` or `--stack-id <id>`;
+`--service <kind-or-instance-id>` can include standalone services too. The command
+requires a reachable owner and streams until interrupted. Ctrl-C leaves services
+running. There is no retained history, `--tail`, or `--follow` flag.
 
-The default text output is one `<timestamp> <service>/<stream>: <message>` line per entry.
-`--output-format json` returns one bounded object. A found stack has this shape, with the raw
-entry message preserved:
-
-```json
-{
-  "found": true,
-  "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "entries": [
-    {
-      "cursor": { "opaque": "1" },
-      "timestamp": "2026-09-08T00:00:00.000Z",
-      "source": "database",
-      "stream": "stdout",
-      "message": "database ready"
-    }
-  ],
-  "cursor": { "opaque": "1" },
-  "running": false,
-  "message": ""
-}
-```
-
-When no default stack exists, JSON output is:
-
-```json
-{
-  "found": false,
-  "entries": [],
-  "message": "No managed stack found for this context."
-}
-```
-
-`--output-format stream-json` emits one bounded result event for a finite read. With `--follow`,
-it emits one `log-entry` event for each history or live entry, with the original message in
-`line`. For an absent default stack it emits the standard empty result envelope:
-
-```json
-{
-  "type": "result",
-  "data": {
-    "found": false,
-    "entries": [],
-    "message": "No managed stack found for this context."
-  },
-  "timestamp": "..."
-}
-```
-
-A found stack with no entries emits a result event for a finite stream-json read. Follow mode
-emits only log-entry events; a found stack with no retained entries emits no follow events, and a
-stopped stack exits successfully. The command is available only while `experimental.stack` is
-enabled.
+Text uses `<timestamp> <service>/<instance-id>/<stream>: <line>` and strips terminal
+control sequences. For automation use `--output-format stream-json`: each
+`log-entry` contains `timestamp`, `service`, `instance_id`, `stream`, `line`, and
+`source: "live"`. Finite JSON output is not supported. Delivery is best effort;
+stdout/stderr and different services may interleave. Missing stacks, unavailable
+owners, and unmatched services fail with status 1; interruption exits 130.
 
 ## Data and configuration
 
