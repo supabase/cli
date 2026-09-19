@@ -22,7 +22,7 @@ export type ServiceKind =
   | "vector"
   | "pooler";
 
-class ArtifactError extends Data.TaggedError("ArtifactError")<{
+export class ArtifactError extends Data.TaggedError("ArtifactError")<{
   readonly message: string;
   readonly service?: string;
   readonly version?: string;
