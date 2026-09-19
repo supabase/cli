@@ -4,6 +4,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import { connectHost, launchHost } from "./HostProcess.ts";
+import type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import * as State from "./State.ts";
 import type { SavedStack } from "./State.ts";
@@ -23,6 +24,7 @@ export { postgres } from "./Tools.ts";
 export { StackError } from "./Rpc.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
 export type { CompositionConfig } from "./Orchestrator.ts";
+export type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
 export type { Observation } from "./Rpc.ts";
 export type { DatabaseSnapshot } from "./services/DatabaseSnapshot.ts";
 export type { PgProveOptions } from "./Tools.ts";
@@ -112,6 +114,7 @@ export interface Stack {
   readonly composition: {
     readonly supabase: (
       services: ReadonlyArray<ServiceCreation>,
+      options?: SupabaseCompositionOptions,
     ) => Effect.Effect<ReadonlyArray<AnyInstance>, StackError>;
     readonly configure: (config: Orchestrator.CompositionConfig) => Effect.Effect<void, StackError>;
     readonly describe: Effect.Effect<Orchestrator.CompositionConfig, StackError>;
@@ -347,10 +350,13 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       list: definitions.pipe(Effect.map((entries) => entries.map(instance))),
     },
     composition: {
-      supabase: (services: ReadonlyArray<ServiceCreation>) =>
-        call("supabaseComposition", (rpc) => rpc.supabaseComposition({ services })).pipe(
-          Effect.map((definitions) => definitions.map(instance)),
-        ),
+      supabase: (services: ReadonlyArray<ServiceCreation>, options?: SupabaseCompositionOptions) =>
+        call("supabaseComposition", (rpc) =>
+          rpc.supabaseComposition({
+            services,
+            ...(options?.reuseIds === undefined ? {} : { reuseIds: options.reuseIds }),
+          }),
+        ).pipe(Effect.map((definitions) => definitions.map(instance))),
       configure: (config: Orchestrator.CompositionConfig) =>
         call("configureComposition", (rpc) => rpc.configureComposition(config)),
       describe: savedDefinition.pipe(

@@ -298,6 +298,19 @@ it.live(
             expect((yield* Effect.tryPromise(() => selectedMail.status())).lifecycle).toBe(
               "stopped",
             );
+            const reused = yield* Effect.tryPromise(() =>
+              client.composition.supabase(
+                [{ service: "mail", config: {}, endpoints: { http: { port: "auto" } } }],
+                { reuseIds: [selectedMail.id] },
+              ),
+            );
+            expect(reused[0]?.id).toBe(selectedMail.id);
+            yield* Effect.tryPromise(() => client.composition.start());
+            expect((yield* Effect.tryPromise(() => selectedMail.status())).wakeEnabled).toBe(true);
+            expect((yield* http.get(`${selectedUrl.url}/api/v1/messages`)).status).toBe(200);
+            expect((yield* Effect.tryPromise(() => selectedMail.status())).lifecycle).toBe(
+              "running",
+            );
             expect((yield* mail.status).lifecycle).toBe("running");
           }),
         (client) => Effect.promise(() => client.close()),

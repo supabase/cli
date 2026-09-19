@@ -37,8 +37,11 @@ import {
   outputsFor,
   publicUrl,
 } from "./host/Endpoints.ts";
-import { makeSupabaseComposition } from "./composition/Supabase.ts";
-import { SupabaseCompositionError } from "./composition/Supabase.ts";
+import {
+  makeSupabaseComposition,
+  SupabaseCompositionError,
+  type SupabaseCompositionOptions,
+} from "./composition/Supabase.ts";
 import {
   makeServiceRecipe,
   ServiceCreation,
@@ -97,6 +100,7 @@ export interface Interface {
   readonly composition: {
     readonly supabase: (
       creations: ReadonlyArray<ServiceCreation>,
+      options?: SupabaseCompositionOptions,
     ) => Effect.Effect<ReadonlyArray<{ id: string; creation: ServiceCreation }>, OwnerError>;
     readonly configure: (configuration: CompositionConfig) => Effect.Effect<void, OwnerError>;
     readonly get: Effect.Effect<CompositionConfig, OwnerError>;
@@ -284,10 +288,14 @@ const makeOwnerWithDependencies = (
 
     const getCreation = (id: string) => getRecipe(id).pipe(Effect.map((recipe) => recipe.creation));
 
-    const mergeInputs = (creation: ServiceCreation, inputs: Record<string, string>) =>
+    const mergeInputs = (creation: ServiceCreation, inputs: Record<string, string | undefined>) =>
       Schema.decodeUnknownEffect(ServiceCreation)({
         ...creation,
-        config: { ...creation.config, ...inputs },
+        config: Object.fromEntries(
+          Object.entries({ ...creation.config, ...inputs }).filter(
+            ([, value]) => value !== undefined,
+          ),
+        ),
       }).pipe(
         Effect.mapError(
           (cause) => new ServiceError({ operation: "inputs", message: String(cause) }),
@@ -731,7 +739,7 @@ const makeOwnerWithDependencies = (
 
     const updateCreation = Effect.fn("Owner.updateCreation")(function* (
       id: string,
-      inputs: Record<string, string>,
+      inputs: Record<string, string | undefined>,
     ) {
       return yield* getCreation(id).pipe(
         Effect.flatMap((creation) => mergeInputs(creation, inputs)),
@@ -742,11 +750,18 @@ const makeOwnerWithDependencies = (
     });
 
     const supabaseComposition = Effect.fn("Owner.supabaseComposition")(
-      (inputs: ReadonlyArray<ServiceCreation>) =>
+      (inputs: ReadonlyArray<ServiceCreation>, options?: SupabaseCompositionOptions) =>
         makeSupabaseComposition(
           {
             currentComposition: Ref.get(composition),
+            get: (id) => get(id).pipe(Effect.mapError(supabaseError)),
+            status: (id) =>
+              observation(id).pipe(
+                Effect.map(({ lifecycle, wakeEnabled }) => ({ lifecycle, wakeEnabled })),
+                Effect.mapError(supabaseError),
+              ),
             create: (creation) => createService(creation).pipe(Effect.mapError(supabaseError)),
+            destroy: (id) => destroy(id).pipe(Effect.mapError(supabaseError)),
             bind: (id) =>
               orchestrator.get(id).pipe(
                 Effect.flatMap((registered) => registered.bind),
@@ -780,6 +795,7 @@ const makeOwnerWithDependencies = (
               configureComposition(configuration).pipe(Effect.mapError(supabaseError)),
           },
           inputs,
+          options,
         ).pipe(
           Effect.mapError((cause) => {
             if (cause instanceof OwnerError) return cause;
@@ -856,8 +872,9 @@ const makeOwnerWithDependencies = (
         ),
       ),
     );
-    const compose = Effect.fn("Owner.compose")((creations: ReadonlyArray<ServiceCreation>) =>
-      compositionGate.withPermits(1)(supabaseComposition(creations)),
+    const compose = Effect.fn("Owner.compose")(
+      (creations: ReadonlyArray<ServiceCreation>, options?: SupabaseCompositionOptions) =>
+        compositionGate.withPermits(1)(supabaseComposition(creations, options)),
     );
     const configure = Effect.fn("Owner.configure")((input: CompositionConfig) =>
       compositionGate.withPermits(1)(configureComposition(input)),

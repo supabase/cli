@@ -29,6 +29,7 @@ export type { CompositionConfig } from "./Orchestrator.ts";
 export type { Observation } from "./Rpc.ts";
 export type { DatabaseSnapshot } from "./services/DatabaseSnapshot.ts";
 export type { PgProveOptions } from "./effect.ts";
+export type { SupabaseCompositionOptions } from "./effect.ts";
 export type { CreateOptions, OpenOptions, StackLocations } from "./effect.ts";
 
 const clientLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
@@ -39,6 +40,7 @@ type Kind = ServiceCreation["service"];
 export interface CallOptions {
   readonly signal?: AbortSignal;
 }
+export type CompositionSupabaseOptions = StackEffect.SupabaseCompositionOptions & CallOptions;
 /** An individual service; closing the client does not stop this process. */
 export interface ServiceInstance<K extends Kind = Kind> {
   readonly id: string;
@@ -206,10 +208,10 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
         run(handle.services.list.pipe(Effect.map((services) => services.map(instance))), options),
     },
     composition: {
-      supabase: (services: ReadonlyArray<ServiceCreation>, options?: CallOptions) =>
+      supabase: (services: ReadonlyArray<ServiceCreation>, options?: CompositionSupabaseOptions) =>
         run(
           Effect.forEach(services, decodeCreation).pipe(
-            Effect.flatMap(handle.composition.supabase),
+            Effect.flatMap((decoded) => handle.composition.supabase(decoded, options)),
             Effect.map((instances) => instances.map(instance)),
           ),
           options,

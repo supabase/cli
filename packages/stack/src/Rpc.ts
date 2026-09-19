@@ -111,7 +111,10 @@ export const StackRpc = RpcGroup.make(
     error: StackErrorSchema,
   }),
   Rpc.make("supabaseComposition", {
-    payload: { services: Schema.Array(ServiceCreation) },
+    payload: {
+      services: Schema.Array(ServiceCreation),
+      reuseIds: Schema.optionalKey(Schema.Array(Schema.String)),
+    },
     success: Schema.Array(Definition),
     error: StackErrorSchema,
   }),
