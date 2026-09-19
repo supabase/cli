@@ -1,9 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { CAPABILITY_NAMES } from "@supabase/stack/effect";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackPrepare } from "./prepare.handler.ts";
+import { STACK_PREPARABLE_CAPABILITIES } from "./prepare.options.ts";
 
 const config = {
   stack: Flag.string("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
@@ -16,8 +16,8 @@ const config = {
     Flag.withDefault("auto" as const),
   ),
   capability: Flag.atMost(
-    Flag.choice("capability", CAPABILITY_NAMES),
-    CAPABILITY_NAMES.length,
+    Flag.choice("capability", STACK_PREPARABLE_CAPABILITIES),
+    STACK_PREPARABLE_CAPABILITIES.length,
   ).pipe(Flag.withDescription("Capability to prepare (repeatable).")),
 } as const;
 
