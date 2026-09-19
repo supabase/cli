@@ -7,9 +7,13 @@ full schema into the target file, and deleting the merged files — then either
 suggests `migration repair` (local target) or prompts to baseline the remote
 migration-history table to match.
 
-When `[experimental].stack` is on, the shadow is a temporary database owned by the stack runtime;
-its storage location is internal to the runtime.
-On the stack backend, squash dumps through catalog `pg_dump` (native artifact or a one-shot container of the same image). There is no PATH fallback.
+When `[experimental].stack` is on, each shadow is a fresh database in an invocation-owned,
+unique temporary stack namespace. The command applies the catalog and project migrations as needed,
+then destroys its namespace when the Effect scope closes. Shadow baselines are not cached;
+the snapshot cache described below belongs to the legacy container backend. Native artifacts
+are shared through `$SUPABASE_HOME/cache/stack`; shadow state and data use the normal stack registry, so `stack list` and `stack destroy` can
+find a shadow left by an abrupt CLI exit. Each shadow owns a unique temporary project root
+and uses an automatically assigned port; `db.shadow_port` applies only to the legacy backend. Schema dumps use the namespace's catalog `pg_dump` tool and runtime database address.
 
 ## Files Read
 

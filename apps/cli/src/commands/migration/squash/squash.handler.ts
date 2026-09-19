@@ -1,7 +1,6 @@
-import { Effect, FileSystem, Option, Path, Predicate } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
-import { resolveEphemeralPostgresRelease } from "@supabase/stack/effect";
 
 import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -42,16 +41,11 @@ import type { ResolvedDbConfig } from "../../../command-internal/db-config.types
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
-import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { stackWithShadowDatabase } from "../../../command-internal/stack-shadow.ts";
-import {
-  dumpConnForHostClient,
-  rewriteDumpHostForToolContainer,
-  toolContainerUsesHostNetwork,
-} from "../../../command-internal/postgres-client.run.ts";
-import { bundledPostgresClientRuntime } from "../../../command-internal/bundled-postgres-client.ts";
+import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
+
 import { applyMigrations, MigrationApplyError } from "../../../command-internal/migration-apply.ts";
 import {
   INSERT_MIGRATION_VERSION,
@@ -122,7 +116,6 @@ const squashMigrations = Effect.fnUntraced(function* (
   const image = localInputs.bootstrapConfig.postgresImage;
 
   if (stackBackend) {
-    const runtimeInfo = yield* RuntimeInfo;
     return yield* stackWithShadowDatabase(shadowInput, (handle) =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -133,32 +126,18 @@ const squashMigrations = Effect.fnUntraced(function* (
             password: toml.password,
             database: "postgres",
           };
-          const networkIdFlag = yield* NetworkIdFlag;
-          const networkId = Option.getOrUndefined(networkIdFlag);
-          const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);
-          const dumpRuntime =
-            bundledPostgresClientRuntime(handle.runtime, runtimeInfo.platform, runtimeInfo.arch) ??
-            handle.runtime;
-          const release = yield* resolveEphemeralPostgresRelease(handle.ephemeral.version).pipe(
-            Effect.orElseSucceed(() => undefined),
-          );
-          const image = release?.image ?? localInputs.bootstrapConfig.postgresImage;
+          const credentials = yield* handle.database.credentials({ from: "runtime" });
+          const dumpConn = parseConnectionString(credentials.databaseUrl ?? "");
+          if (dumpConn === undefined)
+            return yield* new MigrationSquashDumpError({
+              message: "Shadow database tool URL is unavailable",
+            });
           const dumpClient = {
-            kind: "bundled" as const,
+            kind: "stack" as const,
+            stack: handle.stack,
             command: "pg_dump" as const,
-            version: handle.ephemeral.version,
-            runtime: dumpRuntime,
+            major: toml.majorVersion === 15 ? (15 as const) : (17 as const),
           };
-          const dumpConn: PgConnInput =
-            dumpRuntime.kind === "native"
-              ? dumpConnForHostClient(stackConn)
-              : {
-                  ...stackConn,
-                  host: rewriteDumpHostForToolContainer(handle.host, {
-                    platform: runtimeInfo.platform,
-                    usesHostNetwork: dumpUsesHostNetwork,
-                  }),
-                };
           const session = yield* connectShadowDatabase(stackConn);
           const before = yield* squashDumpSchemaToString({
             image,
@@ -221,20 +200,6 @@ const squashMigrations = Effect.fnUntraced(function* (
             }),
           );
         }),
-      ).pipe(
-        Effect.catchIf(
-          (error): error is DockerRunError =>
-            Predicate.isTagged(error, "DockerRunError") &&
-            handle.runtime.kind === "native" &&
-            runtimeInfo.platform === "win32",
-          (error) =>
-            Effect.fail(
-              new MigrationSquashDumpError({
-                message: error.message,
-                suggestion: "Install Docker Desktop to squash a native stack on Windows.",
-              }),
-            ),
-        ),
       ),
     );
   }

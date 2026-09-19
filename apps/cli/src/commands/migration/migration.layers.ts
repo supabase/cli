@@ -68,6 +68,6 @@ export const migrationSquashRuntimeLayer = Layer.mergeAll(
   httpClient,
   debugLoggerLayer,
   stackApiLayer,
-  bundledPostgresClientLayer,
+  bundledPostgresClientLayer.pipe(Layer.provide(dockerRunLayer), Layer.provide(cliSettings)),
   stackCatalogSetupLayer,
 );
