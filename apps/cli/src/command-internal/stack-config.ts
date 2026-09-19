@@ -54,8 +54,10 @@ export class StackConfigError extends Data.TaggedError("StackConfigError")<{
 }
 
 export interface StackStartConfig {
+  readonly jwtSecret: Redacted.Redacted<string>;
   readonly creations: (
     stackId: string,
+    options?: { readonly jwtSecret?: Redacted.Redacted<string> },
   ) => Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError>;
   readonly source: CliConfig;
   readonly projectEnvValues: Readonly<Record<string, string>>;
@@ -942,8 +944,18 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const storagePath = `${projectRoot}/supabase/.temp/stack-uploads`;
       const createCreations = (
         stackId: string,
+        options?: { readonly jwtSecret?: Redacted.Redacted<string> },
       ): Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError> =>
         Effect.gen(function* () {
+          const effectiveJwtSecret = options?.jwtSecret ?? jwtSecret;
+          if (
+            options?.jwtSecret !== undefined &&
+            validatedConfig.auth.jwt_secret !== undefined &&
+            Redacted.value(options.jwtSecret) !== validatedConfig.auth.jwt_secret
+          )
+            return yield* new StackConfigError({
+              message: "The configured auth.jwt_secret does not match the existing stack",
+            });
           const bootstrap = validatedConfig.edge_runtime.enabled
             ? yield* typeof SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
                 ? Effect.succeed(SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE)
@@ -969,7 +981,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               config: {
                 version: String(validatedConfig.db.major_version),
                 databasePassword: Redacted.make("postgres"),
-                jwtSecret,
+                jwtSecret: effectiveJwtSecret,
                 jwtExpiry: validatedConfig.auth.jwt_expiry,
                 settings: validatedConfig.db.settings,
               },
@@ -993,7 +1005,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     service: "pooler" as const,
                     config: {
                       databaseUrl: "postgresql://placeholder",
-                      jwtSecret: Redacted.value(jwtSecret),
+                      jwtSecret: Redacted.value(effectiveJwtSecret),
                       poolMode,
                     },
                     endpoints: { http: endpoint(undefined), sql: endpoint(poolerPort) },
@@ -1020,7 +1032,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       ...(validatedConfig.api.external_url === undefined
                         ? {}
                         : { externalApiUrl: validatedConfig.api.external_url }),
-                      jwtSecret: Redacted.value(jwtSecret),
+                      jwtSecret: Redacted.value(effectiveJwtSecret),
                     },
                     endpoints: { http: endpoint(apiPort) },
                   } satisfies ServiceCreationType,
@@ -1033,7 +1045,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     config: {
                       databaseUrl: "postgresql://placeholder",
                       siteUrl: validatedConfig.auth.site_url,
-                      jwtSecret: Redacted.value(jwtSecret),
+                      jwtSecret: Redacted.value(effectiveJwtSecret),
                       jwtExpiry: validatedConfig.auth.jwt_expiry,
                       disableSignup: !validatedConfig.auth.enable_signup,
                     },
@@ -1047,8 +1059,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     service: "realtime" as const,
                     config: {
                       databaseUrl: "postgresql://placeholder",
-                      jwtSecret: Redacted.value(jwtSecret),
-                      secretKeyBase: Redacted.value(jwtSecret),
+                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      secretKeyBase: Redacted.value(effectiveJwtSecret),
                     },
                     endpoints: {
                       http: endpoint(apiPort),
@@ -1063,7 +1075,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     service: "storage" as const,
                     config: {
                       databaseUrl: "postgresql://placeholder",
-                      jwtSecret: Redacted.value(jwtSecret),
+                      jwtSecret: Redacted.value(effectiveJwtSecret),
                       filePath: `${storagePath}/${stackId}`,
                       fileSizeLimit: storageFileSizeLimit,
                     },
@@ -1098,7 +1110,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       bootstrap,
                       policy: validatedConfig.edge_runtime.policy,
                       verifyJwt: true,
-                      jwtSecret: Redacted.value(jwtSecret),
+                      jwtSecret: Redacted.value(effectiveJwtSecret),
                     },
                     endpoints: { http: endpoint(apiPort) },
                   } satisfies ServiceCreationType,
@@ -1108,7 +1120,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "studio" as const,
-                    config: { jwtSecret: Redacted.value(jwtSecret) },
+                    config: { jwtSecret: Redacted.value(effectiveJwtSecret) },
                     endpoints: { http: endpoint(studioPort) },
                   } satisfies ServiceCreationType,
                 ]
@@ -1129,6 +1141,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           ];
         });
       return {
+        jwtSecret,
         creations: createCreations,
         source: validatedConfig,
         projectEnvValues: context.projectEnvValues,

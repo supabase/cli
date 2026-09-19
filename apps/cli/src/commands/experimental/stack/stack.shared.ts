@@ -1,3 +1,4 @@
+import type { ServiceCreation } from "@supabase/stack/effect";
 import { Context, Data, Effect, Layer, Option, Path } from "effect";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import {
@@ -172,3 +173,17 @@ export const stackTargetResolverLayer = Layer.effect(
     return StackTargetResolver.of({ resolve });
   }),
 );
+
+/** Groups companion services under their user-facing stack capability. */
+export const stackCapabilityForService = (service: ServiceCreation["service"]) => {
+  switch (service) {
+    case "imgproxy":
+      return "storage";
+    case "vector":
+      return "analytics";
+    case "pgmeta":
+      return "studio";
+    default:
+      return service;
+  }
+};
