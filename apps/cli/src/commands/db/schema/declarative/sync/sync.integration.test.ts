@@ -41,7 +41,7 @@ import { CommandPlatformApiFactory } from "../../../../../auth/command-platform-
 import { dockerRunLayer } from "../../../../../command-internal/docker-run.layer.ts";
 import { stackBackendLayer } from "../../../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../../../command-internal/stack-api.ts";
-import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
+import { StackError, type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import { DbConfigResolver } from "../../../../../command-internal/db-config.service.ts";
 import {
   type DbBatchStatement,
@@ -85,64 +85,95 @@ interface SetupOpts {
   stackBackend?: boolean;
 }
 
-const SYNC_STACK_ID = StackIdSchema.make("e".repeat(64));
+const SYNC_STACK_ID = "e".repeat(64);
 const unusedSync = Effect.die("unused");
 const unusedSyncFn = () => unusedSync;
 const STACK_APPLY_PORT = 54329;
 
 function syncStackApi(workdir: string, port: number) {
-  const stack: EffectStack = {
-    id: SYNC_STACK_ID,
+  const database: DatabaseInstance = {
+    id: "primary",
+    service: "database",
+    start: unusedSync,
+    ready: unusedSync,
+    stop: unusedSync,
+    restart: unusedSyncFn,
+    destroy: unusedSync,
+    prepare: unusedSync,
+    credentials: unusedSyncFn,
+    exportSnapshot: unusedSyncFn,
+    restoreSnapshot: unusedSyncFn,
+    logs: Stream.empty,
+    followStatus: Stream.empty,
     status: Effect.succeed({
-      id: SYNC_STACK_ID,
+      id: "primary",
+      config: {
+        service: "database",
+        config: {
+          version: "17",
+          databasePassword: Redacted.make("postgres"),
+          jwtSecret: Redacted.make("secret"),
+          jwtExpiry: 3600,
+        },
+      },
+      endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port }],
       lifecycle: "running",
-      desiredLifecycle: "running",
-      runtime: { kind: "native" },
-      endpoints: {},
-      versions: {},
-      capabilities: CAPABILITY_NAMES.map((name) => ({
-        name,
-        activation: name === "database" ? "eager" : "lazy",
-        state: name === "database" ? "ready" : "dormant",
-      })),
-      artifacts: [],
+      health: "healthy",
+      registered: true,
+      wakeEnabled: true,
+      intentRevision: 0,
+      currentOperation: undefined,
+      launchId: undefined,
+      exit: undefined,
+      error: undefined,
+      cleanupError: undefined,
     }),
-    credentials: Effect.succeed({
-      database: {
-        url: Redacted.make(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
-        password: Redacted.make("postgres"),
-      },
-      api: {
-        publishableKey: "anon",
-        secretKey: Redacted.make("service"),
-        anonJwt: "anon",
-        serviceRoleJwt: Redacted.make("service"),
-      },
-    }),
-    prepare: unusedSyncFn,
-    start: unusedSyncFn,
+  };
+  const composition = {
+    members: [{ id: database.id, activation: "eager" as const }],
+    dependencies: [],
+  };
+  const stack: Stack = {
+    id: SYNC_STACK_ID,
+    services: {
+      create: unusedSyncFn,
+      list: Effect.succeed([database]),
+      get: (id) =>
+        id === database.id
+          ? Effect.succeed(database)
+          : Effect.fail(new StackError({ operation: "get", message: "unknown instance" })),
+    },
+    composition: {
+      describe: Effect.succeed(composition),
+      supabase: unusedSyncFn,
+      configure: unusedSyncFn,
+      start: unusedSync,
+      stop: unusedSync,
+      restart: unusedSync,
+    },
     stop: unusedSync,
     destroy: unusedSync,
-    resetDatabase: unusedSync,
-    logs: unusedSyncFn,
-    followLogs: () => Stream.empty,
+    tools: { run: unusedSyncFn },
   };
+  const identity = { projectRoot: workdir, branchContext: "main", stackName: "default" };
   return Layer.succeed(StackApi, {
-    createStack: unusedSyncFn,
-    findStack: () =>
-      Effect.succeed(
-        Option.some({
-          id: SYNC_STACK_ID,
-          projectRoot: workdir,
-          name: "default",
-          branchContext: "main",
-          runtime: { kind: "native" as const },
-          desiredLifecycle: "running",
-        }),
-      ),
-    discoverStacks: unusedSyncFn,
-    openStack: () => Effect.succeed(stack),
-    inspectStack: unusedSyncFn,
+    create: unusedSyncFn,
+    open: () => Effect.succeed(stack),
+    resolveIdentity: () => Effect.succeed(identity),
+    discover: () =>
+      Effect.succeed([
+        {
+          definition: {
+            id: stack.id,
+            identity,
+            runtime: "native",
+            instances: [],
+            composition,
+            ports: [],
+          },
+          host: undefined,
+        },
+      ]),
   });
 }
 

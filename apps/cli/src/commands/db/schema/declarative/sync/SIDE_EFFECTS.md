@@ -3,8 +3,12 @@
 Diffs local migrations state against declarative schema files and writes the delta
 as a new timestamped migration.
 
-When `[experimental].stack` is on, shadows are temporary databases owned by the stack runtime;
-their storage location is internal to the runtime.
+When `[experimental].stack` is on, each shadow uses a fresh, invocation-owned stack namespace
+with an automatically assigned port. State and data live under `$SUPABASE_HOME/stacks`, and
+native artifacts are shared through `$SUPABASE_HOME/cache/stack`. The command destroys its
+shadow namespaces when its Effect scope closes. An abrupt process exit can leave a namespace
+visible to `stack list` for manual `stack destroy` cleanup. Stack shadows do not use the
+baseline snapshot cache described below; `--no-cache` affects only the legacy backend.
 
 Pg-delta runs in-process and uses two scoped shadow databases. Coverage gaps
 warn; `--strict-coverage` makes
@@ -137,7 +141,7 @@ existing SQL or creates an export manifest.
   with the same flag. A real version/tag mismatch still suggests
   `supabase stop --all --no-backup` then `supabase start`.
 
-### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
+### Legacy shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
 The bundled (pg-delta next) engine provisions both plan shadows through
 `acquireShadowDatabase` (`pgdelta-next-shadow.layer.ts`): on by default, off when
