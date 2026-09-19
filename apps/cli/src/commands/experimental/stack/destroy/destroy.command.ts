@@ -21,7 +21,9 @@ const config = {
 export type StackDestroyFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const stackDestroyCommand = Command.make("destroy", config).pipe(
-  Command.withDescription("Permanently destroy a managed local Supabase stack and its data."),
+  Command.withDescription(
+    "Permanently destroy a managed local stack and its owned data, preserving Storage uploads.",
+  ),
   Command.withShortDescription("Destroy a managed local stack"),
   Command.withExamples([
     {
