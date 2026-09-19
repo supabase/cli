@@ -60,11 +60,9 @@ export const squashDumpSchema = Effect.fnUntraced(function* <E>(params: SquashDu
     forceHostNetwork: backend.kind === "stack",
   });
   if (result.exitCode !== 0) {
-    return yield* Effect.fail(
-      new MigrationSquashDumpError({
-        message: pgDumpClientExitMessage(client, result.exitCode),
-      }),
-    );
+    return yield* new MigrationSquashDumpError({
+      message: pgDumpClientExitMessage(client, result.exitCode),
+    });
   }
 });
 

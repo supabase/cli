@@ -1,8 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import {
   VALID_REF,
@@ -133,7 +131,45 @@ const flags = (over: Partial<MigrationFetchFlags> = {}): MigrationFetchFlags => 
   projectRef: over.projectRef ?? Option.none(),
 });
 
-const migrationsDir = (workdir: string) => join(workdir, "supabase", "migrations");
+const migrationsDir = Effect.fnUntraced(function* (workdir: string) {
+  const path = yield* Path.Path;
+  return path.join(workdir, "supabase", "migrations");
+});
+
+const migrationPath = Effect.fnUntraced(function* (workdir: string, file: string) {
+  const path = yield* Path.Path;
+  return path.join(yield* migrationsDir(workdir), file);
+});
+
+const listMigrations = Effect.fnUntraced(function* (workdir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readDirectory(yield* migrationsDir(workdir));
+});
+
+const readMigration = Effect.fnUntraced(function* (workdir: string, file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString(yield* migrationPath(workdir, file));
+});
+
+const seedExistingMigration = Effect.fnUntraced(function* (workdir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.makeDirectory(yield* migrationsDir(workdir), { recursive: true });
+  yield* fs.writeFileString(yield* migrationPath(workdir, "existing.sql"), "select 1;\n");
+});
+
+const writeProjectFile = Effect.fnUntraced(function* (workdir: string, name: string, body: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(workdir, "supabase");
+  yield* fs.makeDirectory(dir, { recursive: true });
+  yield* fs.writeFileString(path.join(dir, name), body);
+});
+
+const migrationsDirExists = Effect.fnUntraced(function* (workdir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.exists(yield* migrationsDir(workdir)).pipe(Effect.orElseSucceed(() => false));
+});
+
 const tmp = useTempWorkdir();
 
 describe("migration fetch", () => {
@@ -150,10 +186,11 @@ describe("migration fetch", () => {
     return Effect.gen(function* () {
       yield* migrationFetch(flags());
       expect(out.stderrText).toContain("Connecting to remote database...");
-      const dir = migrationsDir(tmp.current);
-      const files = readdirSync(dir);
+      const files = yield* listMigrations(tmp.current);
       expect(files).toEqual(["20240101000000_init.sql"]);
-      expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("create table a;\ncreate index b;\n");
+      expect(yield* readMigration(tmp.current, files[0]!)).toBe(
+        "create table a;\ncreate index b;\n",
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -165,73 +202,68 @@ describe("migration fetch", () => {
     });
     return Effect.gen(function* () {
       yield* migrationFetch(flags());
-      const dir = migrationsDir(tmp.current);
-      expect(readFileSync(join(dir, "20240101000000_empty.sql"), "utf8")).toBe(";\n");
+      expect(yield* readMigration(tmp.current, "20240101000000_empty.sql")).toBe(";\n");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("prompts before overwriting a non-empty directory and proceeds on yes", () => {
-    mkdirSync(migrationsDir(tmp.current), { recursive: true });
-    writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
     const { layer } = setup(tmp.current, {
       confirm: true,
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
+      yield* seedExistingMigration(tmp.current);
       yield* migrationFetch(flags());
-      expect(readdirSync(migrationsDir(tmp.current))).toContain("20240101000000_init.sql");
+      expect(yield* listMigrations(tmp.current)).toContain("20240101000000_init.sql");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("cancels with context canceled when the overwrite prompt is declined", () => {
-    mkdirSync(migrationsDir(tmp.current), { recursive: true });
-    writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
     const { layer } = setup(tmp.current, {
       confirm: false,
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
+      yield* seedExistingMigration(tmp.current);
       const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
       }
-      expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
+      expect(yield* listMigrations(tmp.current)).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("honors a piped 'n' answer without a TTY (cancels the overwrite)", () => {
     // The overwrite prompt defaults to YES; piped stdin still overrides it without a TTY.
-    mkdirSync(migrationsDir(tmp.current), { recursive: true });
-    writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
     const { layer } = setup(tmp.current, {
       isTTY: false,
       pipedInput: "n\n",
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
+      yield* seedExistingMigration(tmp.current);
       const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
       }
-      expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
+      expect(yield* listMigrations(tmp.current)).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("bypasses the overwrite prompt with --yes (echoes the auto-answer)", () => {
-    mkdirSync(migrationsDir(tmp.current), { recursive: true });
-    writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
     const { layer, out } = setup(tmp.current, {
       yes: true,
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
+      yield* seedExistingMigration(tmp.current);
       yield* migrationFetch(flags());
       expect(out.stderrText).toContain("[Y/n] y");
-      expect(readdirSync(migrationsDir(tmp.current))).toContain("20240101000000_init.sql");
+      expect(yield* listMigrations(tmp.current)).toContain("20240101000000_init.sql");
     }).pipe(Effect.provide(layer));
   });
 
@@ -240,16 +272,15 @@ describe("migration fetch", () => {
     () => {
       // SUPABASE_YES lives only in supabase/.env; the project env loads before the
       // overwrite prompt.
-      mkdirSync(migrationsDir(tmp.current), { recursive: true });
-      writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
-      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
       const { layer, out } = setup(tmp.current, {
         rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
       });
       return Effect.gen(function* () {
+        yield* seedExistingMigration(tmp.current);
+        yield* writeProjectFile(tmp.current, ".env", "SUPABASE_YES=true\n");
         yield* migrationFetch(flags());
         expect(out.stderrText).toContain("[Y/n] y");
-        expect(readdirSync(migrationsDir(tmp.current))).toContain("20240101000000_init.sql");
+        expect(yield* listMigrations(tmp.current)).toContain("20240101000000_init.sql");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -257,42 +288,40 @@ describe("migration fetch", () => {
   it.live("still prompts on stderr in json mode and proceeds on a piped yes", () => {
     // The overwrite prompt still writes to stderr and reads stdin in json mode; it must
     // not silently auto-accept.
-    mkdirSync(migrationsDir(tmp.current), { recursive: true });
-    writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
     const { layer, out } = setup(tmp.current, {
       format: "json",
       pipedInput: "y\n",
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
+      yield* seedExistingMigration(tmp.current);
       yield* migrationFetch(flags());
       expect(out.stderrText).toContain("[Y/n]");
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
           message: "Migration history fetched",
-          data: { files: [join(migrationsDir(tmp.current), "20240101000000_init.sql")] },
+          data: { files: [yield* migrationPath(tmp.current, "20240101000000_init.sql")] },
         }),
       );
     }).pipe(Effect.provide(layer));
   });
 
   it.live("honors a piped no in json mode (cancels the overwrite, no auto-accept)", () => {
-    mkdirSync(migrationsDir(tmp.current), { recursive: true });
-    writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
     const { layer } = setup(tmp.current, {
       format: "json",
       pipedInput: "n\n",
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
+      yield* seedExistingMigration(tmp.current);
       const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
       }
-      expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
+      expect(yield* listMigrations(tmp.current)).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -309,7 +338,7 @@ describe("migration fetch", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationFetchWriteError");
       }
-      expect(readdirSync(migrationsDir(tmp.current))).toEqual([]);
+      expect(yield* listMigrations(tmp.current)).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -321,7 +350,7 @@ describe("migration fetch", () => {
     });
     return Effect.gen(function* () {
       yield* migrationFetch(flags());
-      expect(readdirSync(migrationsDir(tmp.current))).toEqual(["-1_legacy.sql"]);
+      expect(yield* listMigrations(tmp.current)).toEqual(["-1_legacy.sql"]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -337,7 +366,7 @@ describe("migration fetch", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationFetchWriteError");
       }
-      expect(readdirSync(migrationsDir(tmp.current))).toEqual([]);
+      expect(yield* listMigrations(tmp.current)).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -345,10 +374,9 @@ describe("migration fetch", () => {
     // A file at .../migrations makes makeDirectory fail; supabase itself must stay a
     // real directory, since the handler's project-env load reads supabase/.env* before
     // this mkdir and would hit ENOTDIR first otherwise.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations"), "not a directory");
     const { layer } = setup(tmp.current, { rows: [] });
     return Effect.gen(function* () {
+      yield* writeProjectFile(tmp.current, "migrations", "not a directory");
       const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -367,7 +395,7 @@ describe("migration fetch", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("DbConfigLoadError");
       }
-      expect(existsSync(migrationsDir(tmp.current))).toBe(false);
+      expect(yield* migrationsDirExists(tmp.current)).toBe(false);
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
   });
@@ -377,12 +405,11 @@ describe("migration fetch", () => {
     () => {
       // A flag conflict must surface even when supabase/.env is malformed, which would
       // otherwise abort with a different error (DbConfigLoadError) if the env load ran first.
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", ".env"), "!=broken\n");
       const { layer } = setup(tmp.current, {
         cliArgs: ["--db-url", "postgresql://x", "--linked"],
       });
       return Effect.gen(function* () {
+        yield* writeProjectFile(tmp.current, ".env", "!=broken\n");
         const exit = yield* migrationFetch(flags({ dbUrl: Option.some("postgresql://x") })).pipe(
           Effect.exit,
         );
@@ -426,7 +453,7 @@ describe("migration fetch", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
-      expect(existsSync(migrationsDir(tmp.current))).toBe(false);
+      expect(yield* migrationsDirExists(tmp.current)).toBe(false);
       expect(out.promptConfirmCalls.length).toBe(0);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
