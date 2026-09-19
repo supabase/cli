@@ -25,6 +25,7 @@ export interface StorageVectorEnvInput {
   /** See {@link startInternalDbPassword}. */
   readonly dbPassword: string;
   readonly projectEnvValues?: Readonly<Record<string, string>>;
+  readonly ambientEnvValues?: Readonly<Record<string, string>>;
 }
 
 /** Called only when `config.storage.vector.enabled` — the TOML key is `[storage.vector]`, not `vector_buckets`. */
@@ -35,21 +36,29 @@ export function appendStorageVectorEnv(
   const defaultVectorUrl = startInternalDbUrl("postgres", input.dbHost, input.dbPassword);
   return {
     ...env,
-    VECTOR_ENABLED: envOrDefault("VECTOR_ENABLED", "true", input.projectEnvValues),
+    VECTOR_ENABLED: envOrDefault(
+      "VECTOR_ENABLED",
+      "true",
+      input.projectEnvValues,
+      input.ambientEnvValues,
+    ),
     VECTOR_BUCKET_PROVIDER: envOrDefault(
       "VECTOR_BUCKET_PROVIDER",
       "pgvector",
       input.projectEnvValues,
+      input.ambientEnvValues,
     ),
     VECTOR_STORE_MIGRATIONS_ENABLED: envOrDefault(
       "VECTOR_STORE_MIGRATIONS_ENABLED",
       "true",
       input.projectEnvValues,
+      input.ambientEnvValues,
     ),
     VECTOR_DATABASE_URL: envOrDefault(
       "VECTOR_DATABASE_URL",
       defaultVectorUrl,
       input.projectEnvValues,
+      input.ambientEnvValues,
     ),
   };
 }
@@ -93,6 +102,7 @@ export interface StorageEnvInput {
   /** `config.storage.vector.enabled`. */
   readonly vectorBucketsEnabled: boolean;
   readonly projectEnvValues?: Readonly<Record<string, string>>;
+  readonly ambientEnvValues?: Readonly<Record<string, string>>;
 }
 
 /** Builds the env vars for the Storage container, including the conditional vector-bucket branch. */
@@ -130,6 +140,7 @@ export function buildStorageEnv(input: StorageEnvInput): Record<string, string> 
         dbHost: input.dbHost,
         dbPassword: input.dbPassword,
         projectEnvValues: input.projectEnvValues,
+        ambientEnvValues: input.ambientEnvValues,
       })
     : env;
 }
@@ -156,6 +167,7 @@ export interface StorageContainerSpecInput {
   readonly anonKey: string;
   readonly serviceRoleKey: string;
   readonly projectEnvValues?: Readonly<Record<string, string>>;
+  readonly ambientEnvValues?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -182,6 +194,7 @@ export function buildStorageContainerSpec(input: StorageContainerSpecInput): Sta
     s3ProtocolEnabled: input.s3ProtocolEnabled,
     vectorBucketsEnabled: input.vectorBucketsEnabled,
     projectEnvValues: input.projectEnvValues,
+    ambientEnvValues: input.ambientEnvValues,
   });
 
   return {

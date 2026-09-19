@@ -89,8 +89,9 @@ export function buildKongQueryToken(apiKeys: KongApiKeys): string {
  */
 export function resolveKongNginxWorkerProcesses(
   projectEnvValues?: Readonly<Record<string, string>>,
+  ambientEnvValues?: Readonly<Record<string, string>>,
 ): string {
-  return envOrDefault("KONG_NGINX_WORKER_PROCESSES", "1", projectEnvValues);
+  return envOrDefault("KONG_NGINX_WORKER_PROCESSES", "1", projectEnvValues, ambientEnvValues);
 }
 
 export interface KongEmailTemplateMount {

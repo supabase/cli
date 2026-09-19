@@ -3,6 +3,7 @@ export function envOrDefault(
   key: string,
   def: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  ambientEnvValues: Readonly<Record<string, string>> = {},
 ): string {
-  return projectEnvValues?.[key] ?? def;
+  return projectEnvValues?.[key] ?? ambientEnvValues?.[key] ?? def;
 }
