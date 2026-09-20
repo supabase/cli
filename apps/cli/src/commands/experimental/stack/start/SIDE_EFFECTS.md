@@ -23,6 +23,11 @@ idle stop. `--eager` makes all selected services eager. Changing activation poli
 restart the composition, including when a later invocation omits an earlier `--eager` flag.
 `--preparation` selects on-demand or background artifact preparation.
 
+When Functions is selected, the CLI reads and validates `supabase/functions/.env`, ignoring reserved
+`SUPABASE_*` entries. If custom env values or default JWT verification differ from the saved member,
+start restarts Functions in place before ordinary composition start. A stopped member briefly launches
+and stops again so normal lazy activation is retained; its identity and endpoints stay unchanged.
+
 ## Service selection
 
 `--exclude` accepts repeated or comma-separated capability names: `rest`, `auth`, `realtime`,

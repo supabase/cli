@@ -1,3 +1,4 @@
+import { readStackFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
 import type { ServiceCreation, Stack } from "@supabase/stack/effect";
@@ -105,13 +106,21 @@ const sameBinding = (
     comparableConfig(requested.service, requested.config),
   );
 
-const factoryBoundConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
+const reconciledConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
   database: new Set(["databasePassword", "jwtSecret"]),
   rest: new Set(["databaseUrl", "jwtSecret"]),
   auth: new Set(["databaseUrl", "jwtSecret", "externalApiUrl", "smtpUrl"]),
   realtime: new Set(["databaseUrl", "jwtSecret"]),
   storage: new Set(["databaseUrl", "filePath", "jwtSecret", "imgproxyUrl"]),
-  functions: new Set(["functionsRoot", "bootstrap", "apiUrl", "jwtSecret"]),
+  functions: new Set([
+    "functionsRoot",
+    "bootstrap",
+    "apiUrl",
+    "databaseUrl",
+    "jwtSecret",
+    "env",
+    "verifyJwt",
+  ]),
   studio: new Set([
     "functionsRoot",
     "pgmetaUrl",
@@ -129,7 +138,7 @@ const factoryBoundConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
 
 const comparableConfig = (service: string, value: unknown): unknown => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
-  const ignored = factoryBoundConfigKeys[service] ?? new Set<string>();
+  const ignored = reconciledConfigKeys[service] ?? new Set<string>();
   return Object.fromEntries(Object.entries(value).filter(([key]) => !ignored.has(key)));
 };
 
@@ -261,7 +270,24 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             }),
         ),
       );
-    const requested = selectedCreations(creations, exclusions);
+    const requested = yield* Effect.forEach(selectedCreations(creations, exclusions), (creation) =>
+      creation.service === "functions"
+        ? readStackFunctionsEnv(`${creation.config.functionsRoot}/.env`, true).pipe(
+            Effect.map((env): ServiceCreation => ({
+              ...creation,
+              config: { ...creation.config, env },
+            })),
+            Effect.mapError(
+              (cause) =>
+                new StackCommandStartError({
+                  reason: "invalid-config",
+                  message: cause.message,
+                  cause,
+                }),
+            ),
+          )
+        : Effect.succeed(creation),
+    );
     if (
       requested.some(({ service }) => service === "studio") &&
       !requested.some(({ service }) => service === "rest")
@@ -409,6 +435,23 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           Effect.flatMap((complete) => (complete ? Effect.void : cleanupInitialSafe)),
         ),
       );
+    }
+    const functions = members.find((member) => member.service === "functions");
+    const requestedFunctions = requested.find((creation) => creation.service === "functions");
+    if (functions?.service === "functions" && requestedFunctions?.service === "functions") {
+      const before = yield* functions.status.pipe(Effect.mapError(stackError));
+      if (before.config.service === "functions") {
+        const next = {
+          ...before.config.config,
+          env: requestedFunctions.config.env,
+          verifyJwt: requestedFunctions.config.verifyJwt,
+        };
+        if (!Equal.equals(before.config.config, next)) {
+          yield* functions.restart({ config: next }).pipe(Effect.mapError(stackError));
+          if (before.lifecycle === "stopped")
+            yield* functions.stop.pipe(Effect.mapError(stackError));
+        }
+      }
     }
     const configured = yield* stack.composition.describe.pipe(Effect.mapError(stackError));
     const desiredMembers = configured.members.map(({ id }) => {

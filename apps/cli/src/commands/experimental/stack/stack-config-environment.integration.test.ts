@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Effect, Exit, FileSystem, Layer } from "effect";
 import type { ServiceCreation } from "@supabase/stack/effect";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 
@@ -32,6 +32,18 @@ const service = (services: ReadonlyArray<ServiceCreation>, name: string) =>
   services.find((entry) => entry.service === name);
 
 describe("loadStackConfig environment overrides", () => {
+  it.live("keeps malformed Functions env out of database and config preparation", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "functions-env-malformed"\n');
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(`${root}/supabase/functions`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/functions/.env`, 'BROKEN="unterminated\n');
+      const config = yield* load(root);
+      const creations = yield* config.creations("functions-env-malformed");
+      expect(service(creations, "database")?.service).toBe("database");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("uses shell > supabase dotenv > project-root dotenv precedence", () =>
     Effect.gen(function* () {
       const root = yield* project(

@@ -49,6 +49,21 @@ const instance = (
   creation: ServiceCreation,
   id: string,
 ): ServiceInstances[ServiceCreation["service"]] => {
+  const status = (config: ServiceCreation) => ({
+    id,
+    endpoints: [],
+    config,
+    lifecycle: "stopped" as const,
+    health: undefined,
+    error: undefined,
+    cleanupError: undefined,
+    exit: undefined,
+    currentOperation: undefined,
+    launchId: undefined,
+    intentRevision: 0,
+    wakeEnabled: false,
+    registered: true,
+  });
   const base = {
     id,
     start: Effect.void,
@@ -57,21 +72,7 @@ const instance = (
     restart: () => Effect.void,
     destroy: Effect.void,
     prepare: Effect.void,
-    status: Effect.succeed({
-      id,
-      endpoints: [],
-      config: creation,
-      lifecycle: "stopped",
-      health: undefined,
-      error: undefined,
-      cleanupError: undefined,
-      exit: undefined,
-      currentOperation: undefined,
-      launchId: undefined,
-      intentRevision: 0,
-      wakeEnabled: false,
-      registered: true,
-    }),
+    status: Effect.succeed(status(creation)),
     followStatus: Stream.empty,
     logs: Stream.empty,
     credentials: () => Effect.succeed({}),
@@ -97,8 +98,18 @@ const instance = (
       return { ...base, service: "storage" };
     case "imgproxy":
       return { ...base, service: "imgproxy" };
-    case "functions":
-      return { ...base, service: "functions" };
+    case "functions": {
+      let current = creation;
+      return {
+        ...base,
+        service: "functions",
+        restart: (input?: Parameters<ServiceInstances["functions"]["restart"]>[0]) =>
+          Effect.sync(() => {
+            if (input !== undefined) current = { ...current, config: input.config };
+          }),
+        status: Effect.sync(() => status(current)),
+      };
+    }
     case "studio":
       return { ...base, service: "studio" };
     case "pgmeta":
@@ -203,6 +214,29 @@ const layers = (root: string, fixture: ReturnType<typeof fakeStack>) => {
 };
 
 describe("experimental stack start", () => {
+  it.live("rejects incompatible Functions env before changing composition", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-functions-env-" });
+      yield* fs.makeDirectory(`${root}/supabase/functions`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "functions-env"\n');
+      const fixture = fakeStack();
+      for (const [contents, message] of [
+        ["INVALID.KEY=value\n", "Environment names"],
+        ['VALUE="first\nsecond"\n', "Multiline"],
+      ] as const) {
+        yield* fs.writeFileString(`${root}/supabase/functions/.env`, contents);
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+        expect(error).toMatchObject({ reason: "invalid-config" });
+        expect(error.message).toContain(message);
+        expect(fixture.composed).toBe(0);
+      }
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("rejects malformed configuration before creating a stack", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -266,6 +300,61 @@ describe("experimental stack start", () => {
       expect(fixture.stopped).toBe(3);
       yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(5);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("loads Functions env only when Functions are selected", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-functions-env-" });
+      yield* fs.makeDirectory(`${root}/supabase/functions`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "start-functions-env"\n[edge_runtime]\nenabled = true\n',
+      );
+      yield* fs.writeFileString(`${root}/supabase/functions/.env`, 'BROKEN="unterminated\n');
+      const fixture = fakeStack();
+
+      yield* stackStart(flags(["functions"])).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.members.some(({ service }) => service === "functions")).toBe(false);
+
+      yield* fs.writeFileString(
+        `${root}/supabase/functions/.env`,
+        "CUSTOM_VALUE=hello\nSUPABASE_SERVICE_ROLE_KEY=ignored\n",
+      );
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const functions = fixture.members.find(({ service }) => service === "functions");
+      if (functions?.service !== "functions") return yield* Effect.die("Functions missing");
+      const database = fixture.members.find(({ service }) => service === "database");
+      if (database === undefined) return yield* Effect.die("Database missing");
+      const databaseId = database.id;
+      const functionsId = functions.id;
+      const status = yield* functions.status;
+      expect(status.config.service).toBe("functions");
+      if (status.config.service === "functions")
+        expect(status.config.config.env).toEqual({ CUSTOM_VALUE: "hello" });
+
+      yield* fs.writeFileString(
+        `${root}/supabase/functions/.env`,
+        "CUSTOM_VALUE=changed\nSUPABASE_SERVICE_ROLE_KEY=ignored-again\n",
+      );
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.members.find(({ service }) => service === "database")?.id).toBe(databaseId);
+      const refreshed = fixture.members.find(({ service }) => service === "functions");
+      if (refreshed?.service !== "functions") return yield* Effect.die("Functions missing");
+      expect(refreshed.id).toBe(functionsId);
+      const refreshedStatus = yield* refreshed.status;
+      if (refreshedStatus.config.service === "functions")
+        expect(refreshedStatus.config.config.env).toEqual({ CUSTOM_VALUE: "changed" });
+
+      if (refreshedStatus.config.service !== "functions")
+        return yield* Effect.die("Functions configuration missing");
+      yield* refreshed.restart({
+        config: { ...refreshedStatus.config.config, verifyJwt: false },
+      });
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const restored = yield* refreshed.status;
+      expect(restored.config).toMatchObject({ service: "functions", config: { verifyJwt: true } });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

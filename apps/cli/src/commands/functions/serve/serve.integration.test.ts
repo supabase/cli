@@ -35,6 +35,7 @@ import {
   mockRuntimeInfo,
 } from "../../../../tests/helpers/mocks.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
 import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
 import { DebugFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { FileWatcher, type FileWatchEvent } from "../../../shared/runtime/file-watcher.service.ts";
@@ -429,6 +430,7 @@ function setupServe(options: SetupOptions = {}) {
     childSpawner.layer,
     Layer.succeed(DebugFlag, options.debug ?? false),
     Layer.succeed(NetworkIdFlag, options.networkId ?? Option.none()),
+    Layer.mock(StackApi, {}),
   );
 
   return { layer, out, telemetry, processControl, fileWatcher, childSpawner };

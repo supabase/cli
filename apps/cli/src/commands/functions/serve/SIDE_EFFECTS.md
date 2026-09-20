@@ -100,9 +100,21 @@ Long-running raw log / error output only; there is no final success payload obje
 
 ### `--output-format stream-json`
 
-Long-running raw log / error events only; there is no terminal `result` event on success.
+The legacy backend emits long-running raw log / error events with no terminal `result` event.
+Stack mode emits a readiness `result` containing the instance ID and URL, then live log events.
 
 ## Notes
+
+When `SUPABASE_EXPERIMENTAL_STACK=1` selects the Stack backend, the command opens the saved
+project stack and serves its Functions service. A composed Functions service is started or woken
+and readied in place; the stack composition and its other services remain available on shutdown.
+If Functions is excluded from the composition, a temporary standalone Functions instance is
+created under the same stack owner and destroyed with the command scope. `--env-file` and
+`--no-verify-jwt` apply only for the command lifetime and restore the saved composed configuration
+when the owner remains reachable. Import-map and inspector flags are rejected before any stack
+mutation. Stack mode writes no project files and does not stop or restart the whole composition.
+It reads the shared Functions `.env` when creating a temporary service, or the explicit `--env-file`;
+per-function `.env` files are not read, and reserved `SUPABASE_*` entries are ignored.
 
 - Any legacy Function name positional arguments are accepted and ignored. The command always
   serves every discovered Function, preserving invocations such as

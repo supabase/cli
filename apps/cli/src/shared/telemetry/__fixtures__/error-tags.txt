@@ -266,6 +266,7 @@ FunctionsNewFileExistsError
 FunctionsNewInvalidSlugError
 FunctionsNewWorkdirError
 FunctionsNewWriteError
+FunctionsServeStackError
 GenBearerJwtConfigParseError
 GenBearerJwtDecodeError
 GenBearerJwtKeyNotFoundError
@@ -503,8 +504,11 @@ SsoUpdateMetadataFileError
 SsoUpdateNetworkError
 SsoUpdateNotFoundError
 SsoUpdateUnexpectedStatusError
+StackBootstrapError
 StackCatalogSetupError
 StackConfigError
+StackFunctionsBundleError
+StackFunctionsEnvError
 StackNativeEngineError
 StackRoutingError
 StackRuntimeUnavailableError

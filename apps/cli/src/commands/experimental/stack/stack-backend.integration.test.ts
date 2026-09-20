@@ -309,6 +309,22 @@ stack = true
     );
   });
 
+  it.effect("routes only functions serve through the selected Stack backend", () =>
+    withServices(
+      Effect.gen(function* () {
+        const root = yield* project("[experimental]\nstack = true\n");
+        expect(yield* resolve({ args: ["functions", "serve"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["help", "functions", "serve"], cwd: root, env: {} })).toBe(
+          "stack",
+        );
+        expect(
+          yield* resolve({ args: ["__complete", "functions", "serve", "--"], cwd: root, env: {} }),
+        ).toBe("stack");
+        expect(yield* resolve({ args: ["functions", "list"], cwd: root, env: {} })).toBe("legacy");
+      }),
+    ),
+  );
+
   it("selects matching command trees for completion", () => {
     expect(completionFlags("stack", "start")).toEqual(
       expect.arrayContaining(["--stack", "--runtime", "--preparation", "--eager"]),

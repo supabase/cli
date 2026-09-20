@@ -97,8 +97,28 @@ A `--db-url` that matches `config.toml` host and port is still rewritten like a 
 stack target for dump's tool container. Compose names (`supabase_db_*`, `supabase_network_*`,
 `db:5432`) are not used. The stack backend requires the in-process pg-delta engine;
 `--use-migra`, `--use-pgadmin`, `--use-pg-schema`, and `db pull --diff-engine migra` are
-rejected. The flag does not switch the `functions` command family. The local `functions serve`
-migration is pending; this document does not claim that stack routing owns its foreground lifecycle.
+rejected. The flag also routes local `functions serve` through the stack; other `functions`
+commands retain their existing behavior.
+
+`functions serve` requires a running project stack. It attaches to the existing Functions member,
+waking it when needed. If Functions was excluded, it creates a temporary standalone Functions
+instance on the stack's API listener without changing the saved composition. Ctrl-C destroys that
+temporary instance; an existing member remains available. `--no-verify-jwt` and `--env-file` apply
+for the serving session and the previous configuration is restored on exit. Ordinary code edits
+are picked up by the next invocation without a runtime restart. Import-map and inspector flags
+and multiline environment values are currently unsupported on this backend. Normal exit owns cleanup; forcibly killing the CLI
+cannot guarantee restoration or removal of its temporary instance. Concurrent override sessions
+for the same Functions instance are unsupported. Cleanup waits for submitted lifecycle operations;
+additional signals do not force it to abandon cleanup. Restoration restores configuration and keeps
+the service running; it does not return it to a sleeping state.
+
+Stack mode reads the shared `supabase/functions/.env` file when creating Functions; `--env-file`
+replaces those custom values for the session. A normal `start` applies changes to the shared file
+and restores default JWT verification on the same Functions instance. Per-function
+`.env` files are not loaded. Reserved
+`SUPABASE_*` values in these files are ignored because the runtime supplies them. With
+`--output-format stream-json`, readiness emits a result containing the instance ID and URL,
+followed by live log events.
 
 `storage ls`/`cp`/`mv`/`rm` and `seed buckets` (including bucket seeding inside `db reset
 --local`) also consult `experimental.stack`, with the same `SUPABASE_EXPERIMENTAL_STACK`
