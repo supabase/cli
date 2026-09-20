@@ -54,7 +54,7 @@ export function managementApiRuntimeLayer(subcommand: ReadonlyArray<string>) {
   const platformApiStack = commandPlatformApiLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliSettings),
-    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(Layer.fresh(FetchHttpClient.layer)),
     Layer.provide(dohFetchLayer),
     Layer.provide(debugLoggerLayer),
     Layer.provide(identityStitchLayer),
