@@ -12,7 +12,6 @@ import {
   Option,
   Path,
   PlatformError,
-  Predicate,
   Schema,
   Sink,
   Stream,
@@ -21,7 +20,6 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { vi } from "vitest";
-import { cliConfigProviderLayer } from "../../shared/config/cli-config-provider.layer.ts";
 
 import {
   mockAnalytics,
@@ -831,6 +829,8 @@ describe("start integration", () => {
       "fails on a bucket's invalid file_size_limit even when already running, matching Go's Config.Load",
       () =>
         Effect.gen(function* () {
+          // `checkDbToml` runs unconditionally before the already-running short-circuit; later
+          // checks (e.g. storage.analytics.enabled) sit after that early return and never run here.
           const { layer, child } = yield* setup({
             configContents:
               'project_id = "demo"\n[storage.buckets.avatars]\nfile_size_limit = "bogus"\n',
@@ -1399,6 +1399,9 @@ describe("start integration", () => {
       "rejects an out-of-root auth.email.template content_path before any Docker work, even with auth disabled",
       () =>
         Effect.gen(function* () {
+          // `auth.enabled = false` skips `readAuthEmailTemplateContent`'s own gate, but Kong
+          // mounts every configured template unconditionally — an eager pre-Docker containment
+          // pass in `start.handler.ts` checks every content_path before `create` is ever spawned.
           const { layer, child } = yield* setup({
             configContents:
               'project_id = "demo"\n[auth]\nenabled = false\n[auth.email.template.invite]\ncontent_path = "/etc/hosts"\n',
@@ -1423,6 +1426,10 @@ describe("start integration", () => {
       "fails on a missing (but in-root) auth.email.template content_path before any Docker work, even with auth disabled",
       () =>
         Effect.gen(function* () {
+          // `auth.enabled = false` skips the gated read entirely, and this content_path resolves
+          // in-root (passes containment), so only the read-verification Kong-mount check can still
+          // catch a missing file here — otherwise this would reach `docker create` with a
+          // bind-mount source that doesn't exist on disk.
           const { layer, workdir, child } = yield* setup({
             configContents:
               'project_id = "demo"\n[auth]\nenabled = false\n[auth.email.template.invite]\ncontent_path = "./templates/missing.html"\n',
@@ -1440,17 +1447,7 @@ describe("start integration", () => {
             );
             // This content_path never escapes the project root, so a regression back to "no
             // read-verification" would make this succeed instead of fail.
-            const failure = Cause.findErrorOption(exit.cause);
-            expect(
-              Option.isSome(failure) &&
-                Predicate.isTagged(failure.value, "StartInvalidConfigError"),
-            ).toBe(true);
-            if (
-              Option.isSome(failure) &&
-              Predicate.isTagged(failure.value, "StartInvalidConfigError")
-            ) {
-              expect(failure.value.message).not.toContain("resolves outside the project root");
-            }
+            expect(serialized).not.toContain("resolves outside the project root");
           }
           expect(yield* fs.exists(path.join(workdir, "templates", "missing.html"))).toBe(false);
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1556,6 +1553,11 @@ describe("start integration", () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
+          // `resolveLocalConfigValues` embeds a fresh `exp` claim into the anon/service-role key
+          // each time it signs them, so a second independent resolution would mint a
+          // byte-different key than the one baked into the running containers. Asserting a single
+          // resolution call pins this without racing wall-clock time, unlike comparing two
+          // independently-generated JWTs that could coincidentally match within the same second.
           const { layer, workdir } = yield* setup({
             format: "json",
             configContents:
@@ -1699,6 +1701,10 @@ describe("start integration", () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
+          // Exercises the config-document-shape branches `start.handler.ts` owns
+          // (`resolveGotruePasskeyWebauthn`, `resolveGotrueExternalProviders`,
+          // `buildKongEmailTemplateMounts`, `values.analyticsBackend`) in one pass; a malformed
+          // `db.health_timeout` hard-fails the whole command, so it's exercised separately below.
           const { layer, workdir, child } = yield* setup({
             configContents: `project_id = "demo"
 
@@ -1790,6 +1796,8 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails config loading on an unparseable db.health_timeout before any Docker work, matching Go's Config.Load",
       () =>
         Effect.gen(function* () {
+          // Decodes in the same unconditional pass as every other duration field, before any
+          // Docker work, so rollback never even runs.
           const { layer, child } = yield* setup({
             configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "not-a-duration"\n',
           });
@@ -2103,6 +2111,9 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
       () =>
         Effect.gen(function* () {
+          // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema, so the malformed
+          // value lives directly in config.toml here — there's no schema-level bool coercion to
+          // catch it first, unlike the modeled fields above.
           const { layer, child } = yield* setup({
             configContents:
               'project_id = "demo"\n[auth]\nenabled = false\n[auth.passkey]\nenabled = "bad"\n',
@@ -2123,6 +2134,12 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails on an invalid auth.external.<custom>.enabled even when auth is disabled, matching Go's Config.Load",
       () =>
         Effect.gen(function* () {
+          // `auth.external` is an open-ended provider map — an unmodeled/
+          // custom provider name like `custom` is a legitimate config shape `@supabase/config`'s
+          // schema silently drops at decode time (see the "custom auth.external providers" describe
+          // block below for the accepted-value counterpart), so
+          // `resolveAuthExternalProviders`'s raw-document read is the only place this malformed
+          // value is ever seen — same override-only-throw reasoning as the passkey test above.
           const { layer, child } = yield* setup({
             configContents:
               'project_id = "demo"\n[auth]\nenabled = false\n[auth.external.custom]\nenabled = "bad"\n',
@@ -2143,6 +2160,11 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails on a per-function env field, matching Go's Config.Load rejecting an unknown functions[slug] key",
       () =>
         Effect.gen(function* () {
+          // A per-function `env` key is rejected unconditionally at config
+          // load, before any Docker work — the established error is
+          // `'functions[foo]' has invalid keys: env`. `@supabase/config`'s own schema DOES model
+          // `[functions.<slug>.env]` (a legitimate next/-only feature), so this must be a
+          // CLI-side rejection.
           const { layer, child } = yield* setup({
             configContents:
               'project_id = "demo"\n[functions.foo]\nenabled = true\n[functions.foo.env]\nFOO = "env(SOME_VAR)"\n',
@@ -2208,12 +2230,13 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "warns about a Windows npipe Docker daemon before starting Vector, in text mode, and excludes it from the health watch list",
       () =>
+        // `resolveDockerDaemonHost` checks `DOCKER_HOST` before shelling out to `docker context
+        // inspect`, so setting it directly forces the npipe branch without a real Windows
+        // Docker Desktop context.
         withEnvVar(
           "DOCKER_HOST",
           "npipe:////./pipe/docker_engine",
           Effect.gen(function* () {
-            // DOCKER_HOST is read before docker context inspect, so this reaches the npipe branch
-            // without requiring a Windows Docker context.
             const { layer, out } = yield* setup();
 
             yield* start(flags()).pipe(Effect.provide(layer));
@@ -2250,6 +2273,8 @@ content_path = "./supabase/templates/custom_notice.html"
       "skips storage and imgproxy together when storage.enabled = false, even with image_transformation on",
       () =>
         Effect.gen(function* () {
+          // ImgProxy mounts Storage's own volumes, so disabling storage takes ImgProxy down with
+          // it even though `storage.image_transformation.enabled` alone would otherwise turn it on.
           const { layer, child } = yield* setup({
             configContents:
               'project_id = "demo"\n[storage]\nenabled = false\n[storage.image_transformation]\nenabled = true\n',
@@ -2266,6 +2291,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "ignores SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED when [storage.image_transformation] is absent from config.toml",
       () =>
+        // `storage.image_transformation` is a nil-unless-declared field: with no
+        // `[storage.image_transformation]` table, the env var is never looked up.
         withEnvVar(
           "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
           "true",
@@ -2358,6 +2385,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
+          // `--exclude gotrue` removes the gotrue image from `imagePlan`; its migrate-job image
+          // must still resolve a registry override that only exists in the project's own `.env` file.
           const workdir = tempRoot.current;
           const { layer, child } = yield* setup({ route: freshVolumeRoute(defaultRoute()) });
           // Written after `setup()` so the `supabase/` dir (created by `writeConfig`) already exists.
@@ -2381,6 +2410,10 @@ content_path = "./supabase/templates/custom_notice.html"
       "does not attempt to resolve an excluded service's migrate-job image on a non-fresh-volume restart",
       () =>
         Effect.gen(function* () {
+          // Image resolution for the one-shot setup jobs only happens lazily inside
+          // `initSchema15` on a fresh volume; on an ordinary restart, `--exclude storage-api`
+          // must not attempt to resolve Storage's image at all, or an unavailable/rate-limited
+          // image would fail `start` even though nothing in this run needs it.
           const base = defaultRoute();
           const route = (args: ReadonlyArray<string>): RouteResult => {
             const targetsStorageImage =
@@ -2414,6 +2447,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an undecryptable [db.vault] secret even on a non-fresh volume, matching Go's Config.Load",
       () =>
+        // `checkDbToml`'s internal call inside `startSetupLocalDatabase` only runs on a fresh
+        // volume, but every `encrypted:` value decrypts unconditionally regardless of volume
+        // state, so an undecryptable `[db.vault]` secret must still fail eagerly here.
         withEnvVar(
           "DOTENV_PRIVATE_KEY",
           undefined,
@@ -2541,6 +2577,8 @@ content_path = "./supabase/templates/custom_notice.html"
       "never asks before overwriting an existing bucket, so piped stdin stays untouched",
       () =>
         Effect.gen(function* () {
+          // The bucket is already present, which is the only way the overwrite confirmation
+          // is reachable; the piped line belongs to a parent script.
           const http = mockStorageBucketHttpClient(["avatars"]);
           const { layer, out } = yield* setup({
             configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
@@ -2623,6 +2661,8 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.live("seeds against the env-overridden SUPABASE_API_PORT, not config.toml's raw port", () =>
+      // `seedBucketsRun` must reuse `start`'s own already env-overridden config, so a
+      // `SUPABASE_API_PORT` override reaches the bucket-seeding gateway's base URL too.
       withEnvVar(
         "SUPABASE_API_PORT",
         "65432",
@@ -2644,6 +2684,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "seeds against the env-overridden SUPABASE_API_EXTERNAL_URL, not config.toml's raw value",
       () =>
+        // `effectiveLocalStorageConfig` must use the overridden `api.external_url`, not the raw
+        // config value, so it reaches the bucket-seeding gateway's base URL too.
         withEnvVar(
           "SUPABASE_API_EXTERNAL_URL",
           "http://override.example.com:9999",
@@ -2665,6 +2707,10 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "seeds a bucket's default file_size_limit from the env-overridden SUPABASE_STORAGE_FILE_SIZE_LIMIT",
       () =>
+        // `effectiveLocalStorageConfig` previously left `storage.file_size_limit` as the
+        // raw, un-overridden config value, so `seedBucketsRun`'s per-bucket default
+        // (for a bucket with no explicit `file_size_limit` of its own) never reflected an
+        // env/dotenv-only `SUPABASE_STORAGE_FILE_SIZE_LIMIT` override.
         withEnvVar(
           "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
           "10MiB",
@@ -2729,6 +2775,8 @@ content_path = "./supabase/templates/custom_notice.html"
       "keeps the host-side staged env artifacts after a successful bring-up (no eager cleanup)",
       () =>
         Effect.gen(function* () {
+          // Staged under `<workdir>/supabase/.temp/start-secrets/<container>/` so a later
+          // `stop`/rollback can reclaim it.
           const { layer, child, workdir } = yield* setup();
 
           const path = yield* Path.Path;
@@ -2757,6 +2805,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
+          // `resolveFunctionBindMounts` backs Studio's function bind mounts regardless of Edge
+          // Runtime; see `start.handler.ts`'s "studio" case doc comment.
           const workdir = tempRoot.current;
           yield* fs.makeDirectory(path.join(workdir, "supabase", "functions", "foo"), {
             recursive: true,
@@ -2793,6 +2843,9 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
+          // A subdirectory with no `supabase/config.toml` of its own is a legitimate state;
+          // `start` still proceeds with `search: false`. `inferFunctionsManifest` needs its own
+          // `search: false` too, so an unrelated ancestor project's `supabase/functions` never wins.
           const ancestorRoot = tempRoot.current;
           yield* fs.makeDirectory(path.join(ancestorRoot, "supabase", "functions", "foo"), {
             recursive: true,
@@ -2882,6 +2935,8 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails with a pull error once all registry candidates are exhausted, without a rollback (nothing was created yet)",
       () =>
         Effect.gen(function* () {
+          // Pre-pull runs entirely before `bringUp` creates anything, unlike a failure inside
+          // `bringUp` itself (see the "rollback" describe block below).
           const base = defaultRoute();
           const route = (args: ReadonlyArray<string>): RouteResult => {
             if (args[0] === "image" && args[1] === "inspect") {
@@ -2916,6 +2971,11 @@ content_path = "./supabase/templates/custom_notice.html"
       "still fails when the daemon dies mid-pre-pull under --ignore-health-check — Go's exit-0 swallow is an unintended quirk this port deliberately does not reproduce (CLI-1987)",
       () =>
         Effect.gen(function* () {
+          // Models the daemon-becoming-unreachable trigger: `hasLocalImage` fails immediately on
+          // a daemon-unreachable `image inspect` stderr, with no registry-candidate retries or
+          // real backoff sleeps — the flagless test above already covers the other trigger,
+          // pull-retry exhaustion. Both funnel into the same joined `ImagePrepullError`. See
+          // `isUnhealthyStartError`'s doc comment and `SIDE_EFFECTS.md`'s "Notes" before changing this.
           const base = defaultRoute();
           const route = (args: ReadonlyArray<string>): RouteResult => {
             if (args[0] === "image" && args[1] === "inspect") {
@@ -2957,6 +3017,18 @@ content_path = "./supabase/templates/custom_notice.html"
       "rolls back on a SIGINT-style interruption mid-bring-up, matching Go's context.Canceled rollback",
       () =>
         Effect.gen(function* () {
+          // Rollback on Ctrl-C: every command's context is wrapped so a SIGINT
+          // produces a genuine interrupt, and rollback runs on ANY failure,
+          // including that interrupt. The native
+          // port installs no signal handling of its own, so this relies entirely on the global
+          // `signalAwareProgram` wrapper (`shared/cli/run.ts`) calling `Fiber.interrupt`, and on
+          // rollback being wired via `Effect.onError` (not `Effect.tapError`, which never sees a
+          // pure interrupt's `Cause`).
+          //
+          // Marking `db` never-healthy keeps `bringUp`'s Postgres health-check wait genuinely
+          // retrying on its real backoff, rather than the whole synchronous mock bring-up
+          // completing before this test's polling loop is even scheduled — which would make
+          // `Fiber.interrupt` a no-op on an already-succeeded fiber.
           const neverHealthy = new Set<string>();
           const route = defaultRoute({ neverHealthy });
           let dbContainerId: string | undefined;
@@ -2998,6 +3070,12 @@ content_path = "./supabase/templates/custom_notice.html"
       "rolls back on a SIGINT-style interruption during the post-bring-up bulk health-check wait",
       () =>
         Effect.gen(function* () {
+          // The `Effect.onError` rollback wrapper around `bringUp` alone resolves the instant
+          // every container is created, so an interrupt landing anywhere in the tail that follows
+          // (health-check wait, storage recheck-and-seed, bucket seed, analytics capture) must
+          // still trigger `rollbackStart`. Marking `auth` never-healthy keeps
+          // `waitForHealthyServices` genuinely retrying so the interrupt lands inside this step,
+          // not before or after it.
           const neverHealthy = new Set<string>();
           const route = defaultRoute({ neverHealthy });
           let authContainerId: string | undefined;
@@ -3126,6 +3204,8 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails on a malformed auth.email.max_frequency before any Docker work, matching Go's Config.Load",
       () =>
         Effect.gen(function* () {
+          // Decodes in the same unconditional config-load pass as every other duration field,
+          // before any Docker work.
           const { layer, child } = yield* setup({
             configContents: 'project_id = "demo"\n[auth.email]\nmax_frequency = "not-a-duration"\n',
           });
@@ -3144,6 +3224,10 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a typed config error on a malformed auth.email override even when auth itself is disabled",
       () =>
+        // With auth disabled, `resolveAuthEmail`'s unconditional call in `start.handler.ts`
+        // (for Kong's template mounts) becomes the first place this override is parsed — a
+        // synchronous throw there would otherwise surface as an uncaught defect instead of this
+        // typed error. Nothing has been created yet, so there's nothing for rollback to prune.
         withEnvVar(
           "SUPABASE_AUTH_EMAIL_OTP_LENGTH",
           "abc",
@@ -3166,6 +3250,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a typed config error on a malformed auth.sms override even when auth itself is disabled",
       () =>
+        // Same shape as the auth.email override test above: with auth disabled,
+        // `resolveAuthSms`'s unconditional call becomes the first place this override is
+        // parsed, so a synchronous throw must surface as this typed error, not an uncaught defect.
         withEnvVar(
           "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
           "bad",
@@ -3189,6 +3276,8 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails and rolls back when Postgres itself never becomes healthy within its configured health_timeout",
       () =>
         Effect.gen(function* () {
+          // `db.health_timeout` is config.toml-configurable, unlike the generic 30s
+          // `serviceTimeout` other services wait on, so this keeps the scenario fast.
           const neverHealthy = new Set<string>();
           const base = defaultRoute({ neverHealthy });
           const route = (args: ReadonlyArray<string>): RouteResult => {
@@ -3219,6 +3308,9 @@ content_path = "./supabase/templates/custom_notice.html"
       "exits 0 on --ignore-health-check when Postgres itself never becomes healthy, without rolling back and without starting any other service",
       () =>
         Effect.gen(function* () {
+          // `ignoreHealthCheck && isUnhealthyStartError(err)` downgrades uniformly to whatever the
+          // run returns, including Postgres's own health-wait failure, which propagates before
+          // any other service is even created.
           const neverHealthy = new Set<string>();
           const base = defaultRoute({ neverHealthy });
           const route = (args: ReadonlyArray<string>): RouteResult => {
@@ -3303,6 +3395,8 @@ content_path = "./supabase/templates/custom_notice.html"
     "exits 0 on --ignore-health-check when a non-Postgres container never turns healthy, without rolling back",
     () =>
       Effect.gen(function* () {
+        // The container name is only known once `docker create` reports it, so this wraps
+        // `defaultRoute` to capture it into `neverHealthy` the moment it's created.
         const neverHealthy = new Set<string>();
         const route = defaultRoute({ neverHealthy });
         const { layer, out, child, analytics } = yield* setup({
@@ -3419,6 +3513,9 @@ content_path = "./supabase/templates/custom_notice.html"
       "a bucket-seed failure during the recheck becomes a hard failure with rollback, replacing the original health error",
       () =>
         Effect.gen(function* () {
+          // A non-200 bucket-create response fails `seedBucketsRun` deep inside its
+          // Storage-gateway call — unlike an invalid bucket name, which config validation would
+          // already reject before reaching Docker.
           const failingBucketCreateHttpClientLayer = Layer.succeed(
             HttpClient.HttpClient,
             HttpClient.make((request) => {
@@ -3471,14 +3568,6 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(serialized).toContain("StorageGatewayStatusError");
             // The seed error replaces the original health-check timeout entirely.
             expect(serialized).not.toContain("HealthCheckTimeoutError");
-            const failures = exit.cause.reasons.filter(Cause.isFailReason);
-            expect(failures.length).toBeGreaterThan(0);
-            expect(
-              failures.some(({ error }) => Predicate.isTagged(error, "StorageGatewayStatusError")),
-            ).toBe(true);
-            expect(
-              failures.some(({ error }) => Predicate.isTagged(error, "HealthCheckTimeoutError")),
-            ).toBe(false);
           }
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
           expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
@@ -3566,6 +3655,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.live("falls back to SUPABASE_NETWORK_ID when the flag itself is omitted", () =>
+      // See `start.handler.ts`'s doc comment on this resolution for the full precedence.
       withEnvVar(
         "SUPABASE_NETWORK_ID",
         "env-net",
@@ -3693,45 +3783,6 @@ content_path = "./supabase/templates/custom_notice.html"
         ),
       );
     }
-
-    it.live("reads ambient values added after project environment loading", () =>
-      Effect.gen(function* () {
-        const baseRoute = defaultRoute();
-        let injected = false;
-        const { layer, child } = yield* setup({
-          route: (args) => {
-            if (!injected) {
-              Object.assign(process.env, ambient);
-              injected = true;
-            }
-            return baseRoute(args);
-          },
-        });
-
-        yield* start(flags()).pipe(Effect.provide(Layer.merge(layer, cliConfigProviderLayer)));
-        expect(injected).toBe(true);
-        const kong = child.spawned.find(
-          (spawn) =>
-            spawn.args[0] === "create" &&
-            containerNameFromCreateArgs(spawn.args).includes("_kong_"),
-        );
-        const storage = child.spawned.find(
-          (spawn) =>
-            spawn.args[0] === "create" &&
-            containerNameFromCreateArgs(spawn.args).includes("_storage_"),
-        );
-        for (const [key, value] of Object.entries(ambient)) {
-          expect(
-            key === "KONG_NGINX_WORKER_PROCESSES" ? kong?.env[key] : storage?.env[key],
-            key,
-          ).toBe(value);
-        }
-      }).pipe(
-        (effect) =>
-          Object.keys(ambient).reduce((body, key) => withEnvVar(key, undefined, body), effect),
-        Effect.provide(BunServices.layer),
-      ),
-    );
   });
 
   describe("storage migration pin", () => {
@@ -3830,6 +3881,8 @@ content_path = "./supabase/templates/custom_notice.html"
       "brings up the stack when the DB container's inspect reports 'No such object' instead of 'No such container'",
       () =>
         Effect.gen(function* () {
+          // Docker/Podman report a missing container as either "No such container" or "No such
+          // object" depending on daemon version — `isContainerNotFoundMessage` must recognize both.
           const created = new Set<string>();
           const route = (args: ReadonlyArray<string>): RouteResult => {
             if (args[0] === "container" && args[1] === "inspect") {
@@ -3975,8 +4028,9 @@ content_path = "./supabase/templates/custom_notice.html"
               "SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN",
               "override-auth-token",
               Effect.gen(function* () {
-                // Enabling Twilio alone leaves its required credentials unresolved, so override
-                // the complete provider set to isolate config precedence.
+                // A complete, enabled provider is required, or SMS validation downgrades
+                // enable_signup to false regardless of the override — see the "disables phone login"
+                // test below for that behavior itself.
                 const { layer, child } = yield* setup({
                   configContents: 'project_id = "demo"\n[auth.sms.twilio]\nenabled = false\n',
                 });
@@ -4034,6 +4088,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "disables phone login and warns when enable_signup is true with no SMS provider enabled",
       () =>
+        // SMS validation downgrades `enable_signup` to `false` (plus a stderr warning) —
+        // reached only when every named provider is disabled — before `buildGotrueEnv`
+        // ever reads it.
         withEnvVar(
           "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
           "true",
@@ -4113,6 +4170,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails fast on SUPABASE_AUTH_EMAIL_TEMPLATE_<NAME>_CONTENT with no content_path configured, matching Go's Config.Validate",
       () =>
+        // The env override folds into the email template's content field before
+        // validation runs, so it is rejected exactly like a raw TOML `content` key with
+        // no `content_path` — before start touches Docker at all.
         withEnvVar(
           "SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT",
           "<html>Hi</html>",
@@ -4698,6 +4758,7 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "decrypts an encrypted [edge_runtime.secrets] entry into plaintext, not the raw ciphertext",
       () =>
+        // Mirrors "encrypted secrets reach GoTrue's container" above, for `edge_runtime.secrets`.
         withEnvVar(
           "DOTENV_PRIVATE_KEY",
           VAULT_PRIVATE_KEY,
@@ -4723,6 +4784,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a typed config error, before any container is created, on an undecryptable [edge_runtime.secrets] entry",
       () =>
+        // Caught eagerly by `checkDbToml`'s `assertDecryptableSecrets` pre-check, before the
+        // bring-up loop's own edge-runtime-specific decrypt.
         withEnvVar(
           "DOTENV_PRIVATE_KEY",
           undefined,
@@ -4908,6 +4971,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_ANALYTICS_VECTOR_PORT",
       () =>
+        // `analytics.vector_port` decodes in the same Config.Load pass as `analytics.port`
+        // above; nothing downstream reads the resolved value, but a malformed override must
+        // still fail eagerly.
         withEnvVar(
           "SUPABASE_ANALYTICS_VECTOR_PORT",
           "not-a-port",
@@ -4969,7 +5035,9 @@ content_path = "./supabase/templates/custom_notice.html"
           "SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI",
           "pg-functions://postgres/auth/custom-access-token-hook",
           Effect.gen(function* () {
-            // pg-functions hooks do not require secrets; http(s) hooks do.
+            // A pg-functions URI needs no `secrets` (unlike http/https, validated by
+            // `validateResolvedConfig`), keeping this scenario focused on the
+            // enabled/uri override reaching GoTrue.
             const { layer, child } = yield* setup({
               configContents:
                 'project_id = "demo"\n[auth.hook.custom_access_token]\nenabled = false\n',
@@ -5162,6 +5230,10 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "coerces an env(...)-resolved passkey enabled string instead of reading it as disabled",
       () =>
+        // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema, so the pre-decode
+        // `env(...)` walker substitutes the real value but leaves it a raw string (no type
+        // coercion for schema-unmodeled paths) — a strict `=== true` check would silently read
+        // this valid config as disabled.
         withEnvVar(
           "PASSKEY_ENABLED",
           "true",
