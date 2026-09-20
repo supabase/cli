@@ -78,6 +78,10 @@ describe("durable stack state", () => {
         yield* fs.writeFileString(`${root}/broken/state.json`, '{"id":42}');
         const malformed = yield* store.read("broken").pipe(Effect.exit);
         expect(Exit.isFailure(malformed)).toBe(true);
+        if (Exit.isFailure(malformed)) {
+          expect(String(malformed.cause)).toContain("stack broken");
+          expect(String(malformed.cause)).toContain("state.json");
+        }
         const valid = yield* store.read(initial.id);
         expect(Schema.is(State.SavedStack)(valid)).toBe(true);
       }),

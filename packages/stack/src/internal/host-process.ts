@@ -35,7 +35,10 @@ const writeLine = (value: unknown) =>
     ),
   );
 
-const options = (args: ReadonlyArray<string>): Effect.Effect<StackHostOptions, StackHostError> => {
+const options = (
+  args: ReadonlyArray<string>,
+  report: (value: unknown) => Effect.Effect<void, StackHostError>,
+): Effect.Effect<StackHostOptions, StackHostError> => {
   if (args.length !== 3)
     return Effect.fail(
       new StackHostError({
@@ -54,22 +57,29 @@ const options = (args: ReadonlyArray<string>): Effect.Effect<StackHostOptions, S
     stateRoot,
     cacheRoot,
     stackId,
-    onReady: (endpoint) => writeLine({ type: "ready", endpoint }),
+    onReady: (endpoint) => report({ type: "ready", endpoint }),
   });
 };
 
 const program = (args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
-    const host = yield* options(args);
+    let reported = false;
+    const report = (value: unknown) =>
+      Effect.suspend(() => {
+        if (reported) return Effect.void;
+        reported = true;
+        return writeLine(value);
+      });
+    const host = yield* options(args, report);
     yield* runStackHost(host).pipe(
       Effect.catchCause((cause) => {
         const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
         const reason = causeCode(failure?.cause) === "EADDRINUSE" ? "bind-conflict" : undefined;
-        return writeLine({
+        return report({
           type: "error",
           message: String(cause),
           ...(reason === undefined ? {} : { reason }),
-        }).pipe(Effect.andThen(Effect.failCause(cause)));
+        }).pipe(Effect.exit, Effect.andThen(Effect.failCause(cause)));
       }),
     );
   });

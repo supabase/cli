@@ -1,7 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
 import { expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Path, Redacted } from "effect";
+import { Context, Effect, FileSystem, Layer, Path, Redacted, Ref } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { tmpdir } from "node:os";
 import * as Owner from "./Owner.ts";
@@ -79,6 +79,58 @@ it.effect("rejects a malformed persisted composition", () =>
       }).pipe(Effect.flip);
       expect(failure).toBeInstanceOf(Owner.OwnerError);
       expect(failure.operation).toBe("configure");
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.effect("publishes service removal and composition pruning together", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-remove-" });
+      const stack = initial("owner-remove");
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const removalWrite = yield* Ref.make(false);
+      const failingState: State.Interface = {
+        ...state,
+        save: (next) =>
+          Ref.get(removalWrite).pipe(
+            Effect.flatMap((alreadyWritten) =>
+              next.instances.length === 0
+                ? alreadyWritten
+                  ? Effect.fail(
+                      new State.StateError({ operation: "write", message: "injected failure" }),
+                    )
+                  : Ref.set(removalWrite, true).pipe(Effect.andThen(state.save(next)))
+                : state.save(next),
+            ),
+          ),
+      };
+      const owner = yield* ownerFor({
+        saved: stack,
+        state: failingState,
+        root: `${root}/data`,
+        cacheRoot,
+      });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const service = yield* owner.services.create({
+        service: "mail",
+        config: {},
+        endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
+      });
+      yield* owner.composition.configure({
+        members: [{ id: service.id, activation: "eager" }],
+        dependencies: [],
+      });
+
+      yield* owner.core.destroy(service.id);
+
+      const saved = yield* state.read(stack.id);
+      if (saved === undefined) return yield* Effect.die("saved state disappeared");
+      expect(yield* Ref.get(removalWrite)).toBe(true);
+      expect(saved.instances).toEqual([]);
+      expect(saved.composition).toEqual({ members: [], dependencies: [] });
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

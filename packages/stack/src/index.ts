@@ -1,5 +1,5 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
-import { Effect, Layer, ManagedRuntime, Schema, Scope, Stream } from "effect";
+import { Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
 import * as StackEffect from "./effect.ts";
 import { StackError } from "./Rpc.ts";
 import {
@@ -95,16 +95,63 @@ export interface ToolOptions extends CallOptions {
 const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
   const run = <A, E>(effect: Effect.Effect<A, E>, options?: CallOptions) =>
     runtime.runPromise(effect, options);
+  const activeIterators = new Set<() => Promise<void>>();
+  let clientClosePromise: Promise<void> | undefined;
   const iterable = <A, E>(stream: Stream.Stream<A, E>): AsyncIterable<A> => ({
     [Symbol.asyncIterator]() {
-      const iterator = Stream.toAsyncIterable(stream)[Symbol.asyncIterator]();
-      runtime.runSync(
-        Scope.addFinalizer(
-          runtime.scope,
-          Effect.promise(() => Promise.resolve(iterator.return?.())),
-        ),
-      );
-      return iterator;
+      if (clientClosePromise !== undefined) throw new Error("Stack client is closed");
+      const iterator = runtime
+        .runSync(Stream.toAsyncIterableEffect(stream))
+        [Symbol.asyncIterator]();
+      const iteratorReturn = iterator.return;
+      const iteratorThrow = iterator.throw;
+      let iteratorClosePromise: Promise<IteratorResult<A>> | undefined;
+      let dispose: () => Promise<void>;
+      const close = (): Promise<IteratorResult<A>> => {
+        if (iteratorClosePromise !== undefined) return iteratorClosePromise;
+        const promise: Promise<IteratorResult<A>> = (
+          iteratorReturn === undefined
+            ? Promise.resolve<IteratorResult<A>>({ done: true, value: undefined })
+            : iteratorReturn(undefined)
+        ).finally(() => activeIterators.delete(dispose));
+        iteratorClosePromise = promise;
+        return promise;
+      };
+      dispose = () => close().then(() => undefined);
+      activeIterators.add(dispose);
+      return {
+        next: (value?: unknown) =>
+          iterator.next(value).then(
+            (result) => {
+              if (result.done) {
+                activeIterators.delete(dispose);
+              }
+              return result;
+            },
+            (error) => {
+              activeIterators.delete(dispose);
+              return Promise.reject(error);
+            },
+          ),
+        return: close,
+        ...(iteratorThrow === undefined
+          ? {}
+          : {
+              throw: (error?: unknown) =>
+                iteratorThrow(error).then(
+                  (result) => {
+                    if (result.done) {
+                      activeIterators.delete(dispose);
+                    }
+                    return result;
+                  },
+                  (failure) => {
+                    activeIterators.delete(dispose);
+                    return Promise.reject(failure);
+                  },
+                ),
+            }),
+      };
     },
   });
   const common = <K extends Kind>(service: StackEffect.ServiceInstance<K>): ServiceInstance<K> => ({
@@ -229,7 +276,11 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
     stop: (options?: CallOptions) => run(handle.stop, options),
     destroy: (options?: CallOptions) => run(handle.destroy, options),
     close: () => {
-      return runtime.dispose();
+      if (clientClosePromise !== undefined) return clientClosePromise;
+      clientClosePromise = Promise.allSettled(
+        [...activeIterators].map((dispose) => dispose()),
+      ).then(() => runtime.dispose());
+      return clientClosePromise;
     },
     tools: {
       run: (tool: PostgresTool, options: ToolOptions) =>

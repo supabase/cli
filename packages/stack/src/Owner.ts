@@ -246,18 +246,27 @@ const makeOwnerWithDependencies = (
       updateState((current) => Effect.succeed({ ...current, composition: value })).pipe(
         Effect.asVoid,
       );
-    const removeFromComposition = (id: string) =>
-      Ref.get(composition).pipe(
-        Effect.map((current) => ({
-          members: current.members.filter((member) => member.id !== id),
-          dependencies: current.dependencies.filter(
-            (dependency) => dependency.from !== id && dependency.to !== id,
-          ),
-        })),
-        Effect.tap((next) => Ref.set(composition, next)),
-        Effect.tap(persistComposition),
+    const removeInstance = (id: string) => {
+      const prune = (current: CompositionConfig): CompositionConfig => ({
+        members: current.members.filter((member) => member.id !== id),
+        dependencies: current.dependencies.filter(
+          (dependency) => dependency.from !== id && dependency.to !== id,
+        ),
+      });
+      return updateState((current) =>
+        Schema.decodeUnknownEffect(Orchestrator.CompositionConfig)(current.composition).pipe(
+          Effect.mapError((cause) => errorFor("state", cause)),
+          Effect.map((savedComposition) => ({
+            ...current,
+            instances: current.instances.filter((instance) => instance.id !== id),
+            composition: prune(savedComposition),
+          })),
+        ),
+      ).pipe(
+        Effect.tap(() => Ref.update(composition, prune)),
         Effect.asVoid,
       );
+    };
 
     const recipeFor = (input: unknown, id: string) =>
       makeServiceRecipe(input, {
@@ -383,22 +392,10 @@ const makeOwnerWithDependencies = (
                 ),
               ),
               Effect.andThen(
-                removeCreation(id).pipe(
+                removeInstance(id).pipe(
                   Effect.mapError(
                     (cause) =>
                       new ServiceError({ operation: "state", message: cause.message, cause }),
-                  ),
-                ),
-              ),
-              Effect.andThen(
-                removeFromComposition(id).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ServiceError({
-                        operation: "composition",
-                        message: cause.message,
-                        cause,
-                      }),
                   ),
                 ),
               ),

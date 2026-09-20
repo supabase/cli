@@ -78,9 +78,20 @@ const checkId = (id: string): Effect.Effect<void, StateError> =>
     ? Effect.void
     : Effect.fail(stateError("identity", `Invalid state id: ${id}`));
 
-const decodeState = (text: string): Effect.Effect<SavedStack, StateError> =>
+const decodeState = (
+  text: string,
+  id: string,
+  target: string,
+): Effect.Effect<SavedStack, StateError> =>
   Schema.decodeEffect(Schema.fromJsonString(SavedStack))(text).pipe(
-    Effect.mapError((cause) => stateError("decode", cause)),
+    Effect.mapError(
+      (cause) =>
+        new StateError({
+          operation: "decode",
+          message: `Unable to decode state ${target} for stack ${id}: ${cause.message}`,
+          cause,
+        }),
+    ),
   );
 
 const makeState = (options: {
@@ -123,7 +134,7 @@ const makeState = (options: {
       const text = yield* fs
         .readFileString(target)
         .pipe(Effect.mapError((cause) => stateError("read", cause)));
-      const state = yield* decodeState(text);
+      const state = yield* decodeState(text, id, target);
       if (state.id !== id) {
         return yield* stateError("identity", "State document identity does not match its path");
       }
