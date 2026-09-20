@@ -236,30 +236,93 @@ describe("storage rm", () => {
         format: "json",
         routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
       });
-      return Effect.gen(function* () {
-        const exit = yield* storageRm({
-          files: ["ss:///private/a.pdf"],
-          recursive: false,
-          linked: true,
-          local: true,
-          projectRef: Option.none(),
-        }).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
-          const refusal = exit.cause.reasons
-            .filter(Cause.isFailReason)
-            .map((reason) => reason.error)
-            .find((error) => error instanceof StorageRmConfirmationRequiredError);
-          expect(refusal).toBeDefined();
-          expect(refusal?.suggestion).toContain("--yes");
-          expect(refusal?.suggestion).toContain("SUPABASE_YES");
-        }
-        expect(requests).toHaveLength(0);
-        expect(out.messages.some((m) => m.type === "success")).toBe(false);
-      });
+      // `CLICOLOR_FORCE` makes the colour gate report a colour-capable stderr, so the
+      // suggestion would pick up ANSI styling if it were still styled.
+      return withEnvVar(
+        "NO_COLOR",
+        undefined,
+        withEnvVar(
+          "CLICOLOR_FORCE",
+          "1",
+          Effect.gen(function* () {
+            const exit = yield* storageRm({
+              files: ["ss:///private/a.pdf"],
+              recursive: false,
+              linked: true,
+              local: true,
+              projectRef: Option.none(),
+            }).pipe(Effect.provide(layer), Effect.exit);
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
+              const refusal = exit.cause.reasons
+                .filter(Cause.isFailReason)
+                .map((reason) => reason.error)
+                .find((error) => error instanceof StorageRmConfirmationRequiredError);
+              expect(refusal).toBeDefined();
+              expect(refusal?.suggestion).toContain("--yes");
+              expect(refusal?.suggestion).toContain("SUPABASE_YES");
+              // The structured suggestion is machine payload, never a styled terminal line.
+              expect(refusal?.suggestion).not.toContain("\u001b[");
+            }
+            expect(requests).toHaveLength(0);
+            expect(out.messages.some((m) => m.type === "success")).toBe(false);
+          }),
+        ),
+      );
     },
   );
+
+  it.live("still refuses -r with no paths in json mode without --yes", () => {
+    const { layer, requests, out } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      format: "json",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageRm({
+        files: [],
+        recursive: true,
+        linked: true,
+        local: true,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const refusal = exit.cause.reasons
+          .filter(Cause.isFailReason)
+          .map((reason) => reason.error)
+          .find((error) => error instanceof StorageRmConfirmationRequiredError);
+        expect(refusal).toBeDefined();
+      }
+      expect(requests).toHaveLength(0);
+      expect(out.messages.some((m) => m.type === "success")).toBe(false);
+    });
+  });
+
+  it.live("still reports the missing -r error, not the refusal, with no paths in json mode", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      format: "json",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageRm({
+        files: [],
+        recursive: false,
+        linked: true,
+        local: true,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain(
+          "You must specify -r flag to delete directories.",
+        );
+      }
+      expect(requests).toHaveLength(0);
+    });
+  });
 
   it.live("chunks explicit deletes by the storage API limit (1000)", () => {
     const files = Array.from({ length: 1001 }, (_, i) => `ss:///private/file-${i}.txt`);

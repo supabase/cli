@@ -100,7 +100,10 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
       else existing.push(prefix);
     }
 
-    if (!yes && output.format !== "text") {
+    // No paths and no `-r` is a validation error, not a deletion, so it keeps reporting
+    // the established missing-`-r` failure below instead of the confirmation refusal.
+    const missingRecursive = groups.size === 0 && !flags.recursive;
+    if (!yes && !missingRecursive && output.format !== "text") {
       return yield* new StorageRmConfirmationRequiredError();
     }
 
