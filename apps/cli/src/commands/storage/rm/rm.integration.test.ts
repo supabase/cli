@@ -5,6 +5,7 @@ import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
+import { StorageRmConfirmationRequiredError } from "../storage.errors.ts";
 import { setupStorage } from "../../../../tests/helpers/storage.ts";
 import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { storageRm } from "./rm.handler.ts";
@@ -226,25 +227,39 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("uses the default (no) when non-interactive and skips deletion", () => {
-    const { layer, requests } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      local: true,
-      format: "json",
-      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageRm({
-        files: ["ss:///private/a.pdf"],
-        recursive: false,
-        linked: true,
+  it.live(
+    "refuses to delete in json mode without --yes instead of reporting an empty success",
+    () => {
+      const { layer, requests, out } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
         local: true,
-        projectRef: Option.none(),
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(requests.some((r) => r.method === "DELETE")).toBe(false);
-    });
-  });
+        format: "json",
+        routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageRm({
+          files: ["ss:///private/a.pdf"],
+          recursive: false,
+          linked: true,
+          local: true,
+          projectRef: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
+          const refusal = exit.cause.reasons
+            .filter(Cause.isFailReason)
+            .map((reason) => reason.error)
+            .find((error) => error instanceof StorageRmConfirmationRequiredError);
+          expect(refusal).toBeDefined();
+          expect(refusal?.suggestion).toContain("--yes");
+          expect(refusal?.suggestion).toContain("SUPABASE_YES");
+        }
+        expect(requests).toHaveLength(0);
+        expect(out.messages.some((m) => m.type === "success")).toBe(false);
+      });
+    },
+  );
 
   it.live("chunks explicit deletes by the storage API limit (1000)", () => {
     const files = Array.from({ length: 1001 }, (_, i) => `ss:///private/file-${i}.txt`);
@@ -530,7 +545,7 @@ describe("storage rm", () => {
   });
 
   it.live("emits a { deleted, buckets_deleted } result in json mode", () => {
-    const { layer, out } = setupStorage(tmp.current, {
+    const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
@@ -546,6 +561,7 @@ describe("storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.some((r) => r.method === "DELETE")).toBe(true);
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["deleted"]).toEqual(["a.pdf"]);
       expect(success?.data?.["buckets_deleted"]).toEqual([]);

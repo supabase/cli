@@ -26,6 +26,7 @@ import {
   StorageMissingFlagError,
   StorageMutuallyExclusiveFlagsError,
   StorageObjectNotFoundError,
+  StorageRmConfirmationRequiredError,
 } from "../storage.errors.ts";
 import { listStoragePaths } from "../storage.iterate.ts";
 
@@ -97,6 +98,10 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
       const existing = groups.get(bucket);
       if (existing === undefined) groups.set(bucket, [prefix]);
       else existing.push(prefix);
+    }
+
+    if (!yes && output.format !== "text") {
+      return yield* new StorageRmConfirmationRequiredError();
     }
 
     const summary: RmSummary = { deleted: [], buckets_deleted: [] };

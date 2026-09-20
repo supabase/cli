@@ -546,6 +546,7 @@ StorageMissingPathError
 StorageMissingProjectConfigError
 StorageMutuallyExclusiveFlagsError
 StorageObjectNotFoundError
+StorageRmConfirmationRequiredError
 StorageUnsupportedMoveError
 StorageUnsupportedOperationError
 StorageUrlParseError

@@ -57,7 +57,8 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
 
 | Code | Condition                                                                                                                                                                    |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success (including a declined confirmation, and a tolerated `Bucket not found`)                                                                                              |
+| `0`  | success (including a confirmation declined at the text-mode prompt, and a tolerated `Bucket not found`)                                                                      |
+| `1`  | a non-text `--output-format` without `--yes`/`SUPABASE_YES` (`StorageRmConfirmationRequiredError`) — there is no prompt to ask on, so nothing is deleted and nothing is sent |
 | `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard, including any `DELETE` call                    |
 | `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`) — also beats any `DELETE` call                     |
 | `1`  | invalid/parse url, missing bucket (root path), missing `-r` flag (directory or no args), object-not-found (recursive empty prefix), API non-2xx, network, auth, config parse |
@@ -76,6 +77,9 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
   `Bucket not found: <bucket>` (stderr).
 
 ### `--output-format json`
+
+Requires `--yes`/`SUPABASE_YES`; without it the run fails before any request rather
+than defaulting the unaskable confirmation to no and reporting an empty deletion.
 
 ```json
 { "deleted": ["abstract.pdf"], "buckets_deleted": ["private"] }
@@ -101,7 +105,9 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
   rather than a silently discarded flag.
 - Validation (missing bucket, missing `-r` for a directory) runs before any network call;
   the no-args missing-`-r` error runs after the client is built.
-- A declined confirmation skips that bucket and is not an error.
+- A confirmation declined at the text-mode prompt skips that bucket and is not an error;
+  a non-text `--output-format` has no prompt to decline, so it hard-fails without `--yes`
+  instead (`StorageRmConfirmationRequiredError`), before the Storage gateway is contacted.
 - Explicit deletes are attempted first ("in case the paths resolve to extensionless files");
   prefixes not returned as removed are then walked recursively when `-r` is set.
 - Object deletes are chunked at `DELETE_OBJECTS_LIMIT` (1000) per request.
