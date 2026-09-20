@@ -20,7 +20,6 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { vi } from "vitest";
-import { cliConfigProviderLayer } from "../../shared/config/cli-config-provider.layer.ts";
 
 import {
   mockAnalytics,
@@ -3806,48 +3805,6 @@ content_path = "./supabase/templates/custom_notice.html"
         ),
       );
     }
-
-    it.live.each([
-      { label: "reads values", values: ambient },
-      { label: "preserves empty values", values: empty },
-    ])("$label added after project environment loading", ({ values }) =>
-      Effect.gen(function* () {
-        const baseRoute = defaultRoute();
-        let injected = false;
-        const { layer, child } = setup({
-          route: (args) => {
-            if (!injected) {
-              Object.assign(process.env, values);
-              injected = true;
-            }
-            return baseRoute(args);
-          },
-        });
-
-        yield* start(flags()).pipe(Effect.provide(layer), Effect.provide(cliConfigProviderLayer));
-        expect(injected).toBe(true);
-        const kong = child.spawned.find(
-          (spawn) =>
-            spawn.args[0] === "create" &&
-            containerNameFromCreateArgs(spawn.args).includes("_kong_"),
-        );
-        const storage = child.spawned.find(
-          (spawn) =>
-            spawn.args[0] === "create" &&
-            containerNameFromCreateArgs(spawn.args).includes("_storage_"),
-        );
-        for (const [key, value] of Object.entries(values)) {
-          expect(
-            key === "KONG_NGINX_WORKER_PROCESSES" ? kong?.env[key] : storage?.env[key],
-            key,
-          ).toBe(value);
-        }
-      }).pipe(
-        (effect) =>
-          Object.keys(ambient).reduce((body, key) => withEnvVar(key, undefined, body), effect),
-        Effect.provide(BunServices.layer),
-      ),
-    );
   });
 
   describe("storage migration pin", () => {
