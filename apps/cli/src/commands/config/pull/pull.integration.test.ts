@@ -2173,6 +2173,40 @@ describe("config pull integration", () => {
     },
   );
 
+  it.live("a declared provider is written back disabled by a remote that never set up SMS", () => {
+    const never = {
+      status: 200,
+      body: v2Response({
+        attributes: (attributes) => ({
+          ...attributes,
+          auth: {
+            ...(attributes["auth"] as Record<string, unknown>),
+            sms_provider: "twilio",
+            sms_twilio_account_sid: null,
+          },
+        }),
+      }),
+    };
+    const declared = TWILIO_BEFORE.replace("enabled = false", "enabled = true")
+      .replace('account_sid = ""', 'account_sid = "ACdeclared"')
+      .replace('message_service_sid = ""', 'message_service_sid = "MGdeclared"');
+    const { layer } = setup({ toml: declared, yes: true, v2: never });
+    return withProcessEnv(
+      TWILIO_AUTH_TOKEN_VAR,
+      "a-real-secret-value",
+      Effect.gen(function* () {
+        yield* configPull(noFlags);
+        const after = readFileSync(configPath(), "utf8");
+        expect(after).toContain("enabled = false");
+        expect(after).toContain('account_sid = "ACdeclared"');
+
+        const second = setup({ toml: after, yes: true, v2: never });
+        yield* configPull(noFlags).pipe(Effect.provide(second.layer));
+        expect(second.out.stdoutText).toContain("No config differences found.");
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
   it.live(
     "twilio scenario B: the schema-validation gate drops the whole family when a sibling stays unwritable (remote silent on message_service_sid), and the written file still reloads",
     () => {

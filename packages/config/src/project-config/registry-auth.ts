@@ -804,23 +804,33 @@ const smsBaseRows: ReadonlyArray<ProjectConfigMappingRow> = [
   },
 ];
 
-// A single `sms_provider` string names exactly one active provider; reconciled unconditionally
-// since a standalone mapping has no local document to consult for "already enabled". An
-// unrecognized value maps every provider's `enabled` to `false` rather than surfacing as a bug —
-// there's no single field to flag it against, but the raw string stays reachable at
-// `_apiResponse.auth.sms_provider`.
+// A single `sms_provider` string names exactly one active provider, but a provider whose identity
+// attribute is explicitly unset is unconfigured, never enabled (#6680). An unrecognized value maps
+// every provider's `enabled` to `false` rather than surfacing as a bug — there's no single field to
+// flag it against, but the raw string stays reachable at `_apiResponse.auth.sms_provider`.
 const SMS_PROVIDERS = ["twilio", "twilio_verify", "messagebird", "textlocal", "vonage"] as const;
+
+const SMS_IDENTITY_ATTRIBUTES: Record<(typeof SMS_PROVIDERS)[number], string> = {
+  twilio: "sms_twilio_account_sid",
+  twilio_verify: "sms_twilio_verify_account_sid",
+  messagebird: "sms_messagebird_originator",
+  textlocal: "sms_textlocal_sender",
+  vonage: "sms_vonage_from",
+};
 
 const smsProviderSelectionRows: ReadonlyArray<ProjectConfigMappingRow> = SMS_PROVIDERS.map(
   (provider) => ({
     configPath: ["auth", "sms", provider, "enabled"],
     apiPath: ["auth", "sms_provider"],
+    alsoConsumes: [["auth", SMS_IDENTITY_ATTRIBUTES[provider]]],
     // Null/empty → omit all five (no provider named); a non-string throws like every other
     // mapped field.
-    transform: (value) => {
-      if (value === null) return undefined;
+    transform: (value, attributes) => {
+      if (value === undefined || value === null) return undefined;
       const named = expectString(value, ["auth", "sms_provider"]);
-      return named.length > 0 ? named === provider : undefined;
+      if (named.length === 0) return undefined;
+      const identity = readAuthAttribute(attributes, SMS_IDENTITY_ATTRIBUTES[provider]);
+      return named === provider && identity !== null && identity !== "";
     },
   }),
 );

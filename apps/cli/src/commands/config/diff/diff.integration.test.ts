@@ -200,6 +200,48 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("a project that never set up SMS diffs clean against a declared enabled = false", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[auth.sms.twilio]\nenabled = false\n',
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(noFlags);
+      expect(out.stdoutText).toContain("No config differences found.");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a configured provider still diffs clean", () => {
+    const { layer, out } = setup({
+      toml: [
+        'project_id = "test"',
+        "[auth.sms.twilio]",
+        "enabled = true",
+        'account_sid = "AC1"',
+        'message_service_sid = "MG1"',
+        'auth_token = "env(TWILIO_AUTH_TOKEN)"',
+        "",
+      ].join("\n"),
+      dotenv: "TWILIO_AUTH_TOKEN=token\n",
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (attributes) => ({
+            ...attributes,
+            auth: {
+              ...(attributes["auth"] as Record<string, unknown>),
+              sms_twilio_account_sid: "AC1",
+              sms_twilio_message_service_sid: "MG1",
+            },
+          }),
+        }),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(noFlags);
+      expect(out.stdoutText).toContain("No config differences found.");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("--exit-code sets exit 2 when differences are found", () => {
     const { layer, processControl } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
