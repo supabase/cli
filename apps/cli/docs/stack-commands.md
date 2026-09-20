@@ -210,10 +210,10 @@ Excluding `rest` while Studio remains selected is rejected; excluding `analytics
 Studio. The effective configuration is
 retained in stack state, so starting without `--exclude` restores the project's configured services.
 
-`supabase stack stop --all` stops every readable managed stack while preserving data. It continues
-after unreadable entries or individual stop failures, reports a bounded stopped/failed/skipped
-summary with per-stack details, and exits nonzero when anything was skipped or failed. Registry-root
-enumeration errors remain fatal.
+`supabase stack stop --all` stops every managed stack while preserving data. Discovery fails closed
+when any registry entry is unreadable, so no partial stop operation is attempted. Individual stop
+failures make the command fail and identify the affected stack IDs with their error details; no
+success or unavailable summary is emitted when a stop fails.
 
 `supabase stack destroy --stack feature-a` permanently removes exactly that stack and its data after
 confirmation. Use `--yes` for unattended execution. There is no bulk destroy option.
