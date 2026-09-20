@@ -5,7 +5,7 @@
 import { BunPath } from "@effect/platform-bun";
 import { inferFunctionsManifest } from "@supabase/config/effect";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
-import { Config, Effect, FileSystem, Option, Path, Result } from "effect";
+import { Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -182,17 +182,6 @@ import { buildImgproxyContainerSpec } from "./services/imgproxy.service.ts";
 import { buildPgMetaContainerSpec } from "./services/pg-meta.service.ts";
 import { buildStudioContainerSpec } from "./services/studio.service.ts";
 import { buildSupavisorContainerSpec } from "./services/supavisor.service.ts";
-
-const resolveAmbientEnvValues = Effect.fnUntraced(function* (keys: ReadonlyArray<string>) {
-  const entries = yield* Effect.forEach(keys, (key) =>
-    Config.option(Config.string(key)).pipe(
-      Effect.map((value) => [key, Option.getOrUndefined(value)] as const),
-    ),
-  );
-  return Object.fromEntries(
-    entries.filter((entry): entry is readonly [string, string] => entry[1] !== undefined),
-  );
-});
 
 /** The analytics API key's only possible value; never configurable. */
 const ANALYTICS_API_KEY = "api-key";
@@ -375,14 +364,17 @@ const resolveKongEmailTemplateMounts = Effect.fnUntraced(function* (
   workdir: string,
   fs: FileSystem.FileSystem,
 ) {
-  const mounts: Array<KongEmailTemplateMount> = [];
-  for (const [id, template] of Object.entries(email.template)) {
-    const resolvedPath = yield* Effect.try({
+  const resolveContentPath = (
+    section: "template" | "notification",
+    name: string,
+    contentPath: string,
+  ) =>
+    Effect.try({
       try: () =>
         resolveEmailTemplateContentPath({
-          section: "template",
-          name: id,
-          contentPath: template.content_path,
+          section,
+          name,
+          contentPath,
           contentPresent: false,
           base: workdir,
         }),
@@ -391,26 +383,16 @@ const resolveKongEmailTemplateMounts = Effect.fnUntraced(function* (
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
+  const mounts: Array<KongEmailTemplateMount> = [];
+  for (const [id, template] of Object.entries(email.template)) {
+    const resolvedPath = yield* resolveContentPath("template", id, template.content_path);
     if (resolvedPath === undefined) continue;
     yield* readKongEmailTemplateContent("template", id, resolvedPath, fs);
     mounts.push({ id, resolvedPath });
   }
   for (const [id, notification] of Object.entries(email.notification)) {
     if (!notification.enabled) continue;
-    const resolvedPath = yield* Effect.try({
-      try: () =>
-        resolveEmailTemplateContentPath({
-          section: "notification",
-          name: id,
-          contentPath: notification.content_path,
-          contentPresent: false,
-          base: workdir,
-        }),
-      catch: (cause) =>
-        new StartInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    const resolvedPath = yield* resolveContentPath("notification", id, notification.content_path);
     if (resolvedPath === undefined) continue;
     yield* readKongEmailTemplateContent("notification", id, resolvedPath, fs);
     mounts.push({ id: `${id}_notification`, resolvedPath, notification: true });
@@ -1169,7 +1151,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         }
 
         case "kong": {
-          const ambientEnvValues = yield* resolveAmbientEnvValues(["KONG_NGINX_WORKER_PROCESSES"]);
           return {
             spec: buildKongContainerSpec(
               {
@@ -1196,10 +1177,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                 edgeRuntimeId: edgeRuntimeContainerName,
                 logflareId: logflareContainerName,
                 poolerId: poolerContainerName,
-                nginxWorkerProcesses: resolveKongNginxWorkerProcesses(
-                  projectEnvValues,
-                  ambientEnvValues,
-                ),
+                nginxWorkerProcesses: resolveKongNginxWorkerProcesses(projectEnvValues),
                 emailTemplateMounts: kongEmailTemplateMounts,
               },
               { path, posixPath },
@@ -1265,13 +1243,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             }),
           };
 
-        case "storage": {
-          const ambientEnvValues = yield* resolveAmbientEnvValues([
-            "VECTOR_ENABLED",
-            "VECTOR_BUCKET_PROVIDER",
-            "VECTOR_STORE_MIGRATIONS_ENABLED",
-            "VECTOR_DATABASE_URL",
-          ]);
+        case "storage":
           return {
             spec: buildStorageContainerSpec({
               projectId,
@@ -1291,10 +1263,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               anonKey: values.anonKey,
               serviceRoleKey: values.serviceRoleKey,
               projectEnvValues,
-              ambientEnvValues,
             }),
           };
-        }
 
         case "imgproxy":
           return { spec: buildImgproxyContainerSpec({ projectId, networkId, image }) };

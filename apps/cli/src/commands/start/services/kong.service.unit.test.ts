@@ -82,6 +82,19 @@ describe("buildKongEmailTemplateBind", () => {
       ).toBe("/work/invite:/home/kong/templates/email/invite_notification:rw,z");
     }).pipe(Effect.provide(BunPath.layer));
   });
+
+  it.effect("keeps the container path POSIX-form when the host path service is win32", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      expect(
+        buildKongEmailTemplateBind(
+          { id: "invite", resolvedPath: "C:\\work\\invite.html" },
+          { path, posixPath },
+        ),
+      ).toBe("C:\\work\\invite.html:/home/kong/templates/email/invite.html:rw,z");
+    }).pipe(Effect.provide(BunPath.layerWin32));
+  });
 });
 
 describe("buildKongEntrypointScript", () => {

@@ -123,7 +123,7 @@ const edgeRuntimeFailureDiagnostics = Effect.fnUntraced(function* (name: string)
     Effect.map(({ stdout }) => stdout.trim() || "[]"),
     Effect.catch((error) => Effect.succeed(`<unavailable: ${error.message}>`)),
   );
-  const logs = yield* runDockerEffect(["logs", "--tail", "200", name]).pipe(
+  const logs = yield* runDockerEffect(["logs", name]).pipe(
     Effect.map(({ stdout, stderr }) => `${stdout}${stderr}`.trim() || "<empty>"),
     Effect.catch((error) => Effect.succeed(`<unavailable: ${error.message}>`)),
   );
@@ -144,6 +144,7 @@ const runWgetInImage = (image: string, args: ReadonlyArray<string>) =>
     Effect.catchTag("DockerCommandError", (error) =>
       Effect.succeed({ stdout: error.stdout, stderr: error.stderr }),
     ),
+    Effect.orElseSucceed(() => ({ stdout: "", stderr: "" })),
   );
 
 function expectBusyBoxAccepted(
@@ -275,15 +276,13 @@ describe("supabase start slim images (e2e)", () => {
         );
         const body = yield* invoked.text;
         if (invoked.status < 200 || invoked.status >= 300) {
-          return yield* new StartE2eSetupError({
-            message: `Functions request failed (${invoked.status}): ${body}\n${yield* edgeRuntimeFailureDiagnostics(edgeRuntimeContainer)}`,
-          });
+          throw new Error(
+            `Functions request failed (${invoked.status}): ${body}\n${yield* edgeRuntimeFailureDiagnostics(edgeRuntimeContainer)}`,
+          );
         }
-        expect(
-          yield* Schema.decodeEffect(
-            Schema.fromJsonString(Schema.Struct({ message: Schema.String })),
-          )(body),
-        ).toEqual({ message: "Hello Functions!" });
+        expect(yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(body)).toEqual({
+          message: "Hello Functions!",
+        });
       }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
     START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );

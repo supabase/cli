@@ -799,6 +799,17 @@ export const runDockerEffect = (
     }
     return { stdout, stderr };
   }).pipe(
-    (effect) => (options.timeout === undefined ? effect : Effect.timeout(effect, options.timeout)),
+    (effect) =>
+      options.timeout === undefined
+        ? effect
+        : Effect.timeoutOrElse(effect, {
+            duration: options.timeout,
+            orElse: () =>
+              new DockerCommandError({
+                message: `docker ${args.join(" ")} timed out after ${options.timeout}ms`,
+                stdout: "",
+                stderr: "",
+              }),
+          }),
     Effect.scoped,
   );

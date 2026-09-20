@@ -30,6 +30,7 @@ const overridePorts = (dir: string) =>
 const makeProject = Effect.fnUntraced(function* (prefix: string) {
   const fs = yield* FileSystem.FileSystem;
   const dir = yield* fs.makeTempDirectoryScoped({ prefix });
+  // Best-effort: a leaked local stack would otherwise pollute the CI runner for later jobs.
   yield* Effect.addFinalizer(() =>
     runSupabaseEffect(["stop", "--no-backup"], { cwd: dir }).pipe(Effect.ignore),
   );
@@ -309,8 +310,8 @@ describe("supabase start (e2e)", () => {
           runDockerEffect(["build", "-q", "-t", mailpitImage, buildDir]).pipe(
             Effect.as(mailpitImage),
           ),
+          // Never leave a poisoned tag behind for later jobs on this runner.
           (image) => runDockerEffect(["image", "rm", "-f", image]).pipe(Effect.ignore),
-          { interruptible: true },
         );
 
         // Everything except Postgres and Mailpit is excluded: this scenario only
