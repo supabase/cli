@@ -26,12 +26,16 @@ const databaseConn = Effect.fn("StackBootstrap.databaseConnection")(function* (
 const withDatabaseSession = <A, E, R>(
   database: DatabaseInstance,
   body: (session: DbSession) => Effect.Effect<A, E, R>,
+  user?: string,
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
       const dbConn = yield* DbConnection;
       const conn = yield* databaseConn(database);
-      const session = yield* dbConn.connect(conn, { isLocal: true, dnsResolver: "native" });
+      const session = yield* dbConn.connect(user === undefined ? conn : { ...conn, user }, {
+        isLocal: true,
+        dnsResolver: "native",
+      });
       return yield* body(session);
     }),
   );
@@ -75,19 +79,22 @@ export const applyStackMigrateAndSeed = (
   StackBootstrapError,
   DbConnection | FileSystem.FileSystem | Path.Path | Output
 > =>
-  withDatabaseSession(database, (session) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* migrateAndSeed(session, fs, path, workdir, "", {
-        migrationsEnabled: toml.migrationsEnabled,
-        seed: toml.seed,
-        experimental,
-        pgDeltaEnabled: toml.pgDelta.enabled,
-        schemaPaths: toml.schemaPaths,
-        localDatabaseWebhooksEnabled: toml.webhooksEnabled,
-      });
-    }),
+  withDatabaseSession(
+    database,
+    (session) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* migrateAndSeed(session, fs, path, workdir, "", {
+          migrationsEnabled: toml.migrationsEnabled,
+          seed: toml.seed,
+          experimental,
+          pgDeltaEnabled: toml.pgDelta.enabled,
+          schemaPaths: toml.schemaPaths,
+          localDatabaseWebhooksEnabled: toml.webhooksEnabled,
+        });
+      }),
+    "postgres",
   ).pipe(
     Effect.mapError(
       (error) =>

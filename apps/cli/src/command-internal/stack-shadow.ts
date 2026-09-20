@@ -8,6 +8,7 @@ import { StackCatalogSetup } from "./stack-catalog-setup.ts";
 import { stackProjectRuntime } from "./stack-local-database.ts";
 import { defaultStackRuntime } from "./stack-runtime.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
+import { toPostgresURL } from "./postgres-url.ts";
 import {
   connectShadowDatabase,
   ShadowDbError,
@@ -105,13 +106,16 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
     },
   });
   const credentials = yield* database.credentials({ from: "host" });
-  const url = credentials.databaseUrl;
-  const conn = url === undefined ? undefined : parseConnectionString(url);
-  if (conn === undefined || url === undefined)
+  const credentialUrl = credentials.databaseUrl;
+  const credentialsConn =
+    credentialUrl === undefined ? undefined : parseConnectionString(credentialUrl);
+  if (credentialsConn === undefined || credentialUrl === undefined)
     return yield* new ShadowDbError({
       message: "Shadow database URL is unavailable",
       reason: "connect",
     });
+  const url = toPostgresURL({ ...credentialsConn, user: "postgres" });
+  const conn = credentialsConn;
   return {
     stack,
     database,
