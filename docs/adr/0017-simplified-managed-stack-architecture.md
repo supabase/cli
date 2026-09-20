@@ -1,7 +1,10 @@
 # 0017. Simplified managed stack architecture
 
-**Status**: accepted
+**Status**: superseded by [the Stack package architecture](../../packages/stack/ARCHITECTURE.md)
 **Date**: 2026-08-17
+
+> This decision record describes an earlier managed-stack architecture. The current package
+> architecture and lifecycle contract are maintained in `packages/stack/ARCHITECTURE.md`.
 
 ## Decision
 

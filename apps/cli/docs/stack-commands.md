@@ -53,9 +53,9 @@ The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pre
 `-o env` becomes `--env`.
 
 `supabase stack list` reads the global managed-stack registry and reports each readable stack's
-project, branch, runtime, and owner availability. Corrupt or unsupported registry entries are
-included in a diagnostic section with their full IDs and error reasons, and do not hide readable
-entries. The text table shortens readable IDs for scanning; use `--output-format json` or
+project, branch, runtime, and owner availability. A corrupt or unsupported registry entry fails the
+whole discovery operation with a diagnostic; readable entries are not emitted as a partial list.
+The text table shortens readable IDs for scanning; use `--output-format json` or
 `--output-format stream-json` for the complete structured inventory with full IDs.
 
 Listing is global and has no checkout filter. Owner availability is not service lifecycle or health;
