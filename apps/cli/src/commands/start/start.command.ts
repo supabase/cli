@@ -13,6 +13,7 @@ import { dbConnectionLayer } from "../../command-internal/db-connection.layer.ts
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
+import { stackApiLayer } from "../../command-internal/stack-api.ts";
 import { stringSliceFlag } from "../../command-internal/string-slice-flag.ts";
 import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
@@ -75,6 +76,8 @@ const startRuntimeLayer = Layer.mergeAll(
   dbConnectionLayer,
   httpClient,
   platformApiFactory,
+  // Shared bucket seeding requires StackApi even when legacy routing is selected.
+  stackApiLayer,
   // `stdinLayer` satisfies `promptYesNo`'s `Stdin` requirement (seed-buckets runs with
   // `yes: true`), so `start` never reads a piped line at runtime — type requirements only.
   stdinLayer,
