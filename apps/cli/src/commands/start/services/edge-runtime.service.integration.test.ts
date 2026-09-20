@@ -132,8 +132,8 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
     vi.unstubAllEnvs();
   });
 
-  it.effect("omits the Deno cache for project-only Bitbucket configuration", () => {
-    return Effect.gen(function* () {
+  it.effect("omits the Deno cache for project-only Bitbucket configuration", () =>
+    Effect.gen(function* () {
       const mock = mockDockerSpawner();
       const out = mockOutput();
       const input = {
@@ -148,13 +148,13 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
       expect(mock.runCall).toBeDefined();
       expect(mock.runCall!.args.join(" ")).not.toContain(":/root/.cache/deno");
       expect(mock.calls.some((call) => call.args[0] === "volume")).toBe(false);
-    });
-  });
+    }),
+  );
 
   it.effect(
     "sends the real internal db url (db container name, port 5432, config.db.password) — NOT functions serve's `db`-alias default",
-    () => {
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
@@ -167,12 +167,11 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         expect(entries).toContain(
           "SUPABASE_DB_URL=postgresql://postgres:postgres@supabase_db_proj:5432/postgres",
         );
-      });
-    },
+      }),
   );
 
-  it.effect("passes every already-resolved auth artifact through unchanged", () => {
-    return Effect.gen(function* () {
+  it.effect("passes every already-resolved auth artifact through unchanged", () =>
+    Effect.gen(function* () {
       const mock = mockDockerSpawner();
       const out = mockOutput();
 
@@ -191,13 +190,13 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
       expect(entries).toContain("SUPABASE_INTERNAL_SECRET_KEY=sb_secret_local");
       expect(entries).toContain('SUPABASE_JWKS={"keys":[]}');
       expect(entries).toContain("SUPABASE_INTERNAL_HOST_PORT=54321");
-    });
-  });
+    }),
+  );
 
   it.effect(
     "never applies functions serve's own CLI-only overrides (no inspector port, verifyJWT defaults on)",
-    () => {
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
@@ -209,14 +208,13 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         const runCall = mock.runCall!;
         expect(runCall.args).not.toContain("-p");
         expect(runCall.args.join(" ")).not.toContain("--inspect");
-      });
-    },
+      }),
   );
 
   it.effect(
     "sets --ulimit nofile, capped at Go's 65536 and clamped to the host hard limit (CLI-2220)",
-    () => {
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
@@ -229,12 +227,11 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         const ulimitIndex = runCall.args.indexOf("--ulimit");
         expect(runCall.args[ulimitIndex + 1]).toBe(edgeRuntimeNofileUlimit("darwin").arg);
         expect(out.messages.filter((message) => message.type === "warn")).toEqual([]);
-      });
-    },
+      }),
   );
 
-  it.effect("sets --workdir once an enabled function mounts the project root (#6035)", () => {
-    return Effect.gen(function* () {
+  it.effect("sets --workdir once an enabled function mounts the project root (#6035)", () =>
+    Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
       const slug = "hello";
@@ -243,6 +240,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         recursive: true,
       });
       yield* fs.writeFileString(entrypoint, "Deno.serve(() => new Response('ok'));");
+
       const fnConfig = {
         enabled: true,
         verify_jwt: true,
@@ -254,6 +252,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
       const mock = mockDockerSpawner();
       const out = mockOutput();
       const input = baseInput(tempWorkdir.current);
+
       yield* startStackEdgeRuntimeContainer({
         ...input,
         configDeclaredFunctions: { [slug]: fnConfig },
@@ -263,32 +262,30 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
         Effect.provide(out.layer),
       );
+
       const args = mock.runCall!.args;
       expect(args[args.indexOf("--workdir") + 1]).toBe(tempWorkdir.current);
-    });
-  });
+    }),
+  );
 
-  it.effect(
-    "omits --workdir when no bind mounts the project root into the container (#6035)",
-    () => {
-      return Effect.gen(function* () {
-        const mock = mockDockerSpawner();
-        const out = mockOutput();
+  it.effect("omits --workdir when no bind mounts the project root into the container (#6035)", () =>
+    Effect.gen(function* () {
+      const mock = mockDockerSpawner();
+      const out = mockOutput();
 
-        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
-        );
+      yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+        Effect.provide(out.layer),
+      );
 
-        expect(mock.runCall!.args).not.toContain("--workdir");
-      });
-    },
+      expect(mock.runCall!.args).not.toContain("--workdir");
+    }),
   );
 
   it.effect(
     "stamps its own com.supabase.cli.workdir label so a later stop from a different cwd can reclaim this container's staged-secret directory",
-    () => {
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
@@ -299,14 +296,13 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
 
         const runCall = mock.runCall!;
         expect(runCall.args).toContain(`com.supabase.cli.workdir=${tempWorkdir.current}`);
-      });
-    },
+      }),
   );
 
   it.effect(
     "joins the caller-supplied network id and uses the already-resolved image, unmodified",
-    () => {
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const mock = mockDockerSpawner();
         const out = mockOutput();
         const input = {
@@ -324,14 +320,13 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         const networkIndex = runCall.args.indexOf("--network");
         expect(runCall.args[networkIndex + 1]).toBe("custom_network_override");
         expect(runCall.args).toContain("registry.example.com/supabase/edge-runtime:v1.99.9");
-      });
-    },
+      }),
   );
 
   it.effect(
     "delivers the bundled main service via docker cp into the created container — never a single-file host bind (#6254)",
-    () => {
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
@@ -371,14 +366,13 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         expect(yield* Effect.promise(() => mainService.text())).toContain(
           "SUPABASE_INTERNAL_FUNCTIONS_CONFIG",
         );
-      });
-    },
+      }),
   );
 
   it.effect(
     "slim edge-runtime uses the docker.io entrypoint, /root main service, and shared cache volume",
-    () => {
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
         const mock = mockDockerSpawner();
         const out = mockOutput();
@@ -416,14 +410,13 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         }
         const files = yield* Effect.promise(() => new Bun.Archive(archiveBytes).files());
         expect([...files.keys()]).toEqual(["root/index.ts"]);
-      });
-    },
+      }),
   );
 
   it.effect(
     "surfaces docker's own stderr verbatim and never reaches cp/start when docker create fails",
-    () => {
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const mock = mockDockerSpawner((args) =>
           args[0] === "create"
             ? { exitCode: 125, stderr: "Conflict. The container name is already in use" }
@@ -442,14 +435,13 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         expect(mock.calls.some((call) => call.args[0] === "cp")).toBe(false);
         expect(mock.calls.some((call) => call.args[0] === "start")).toBe(false);
         expect(mock.calls.some((call) => call.args[0] === "container")).toBe(false);
-      });
-    },
+      }),
   );
 
   it.effect(
     "prefixes docker cp's uninterpretable stderr, never reaches docker start, and leaves container removal to the caller when the copy fails",
-    () => {
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const mock = mockDockerSpawner((args) =>
           args[0] === "cp"
             ? {
@@ -472,14 +464,13 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         );
         expect(mock.calls.some((call) => call.args[0] === "start")).toBe(false);
         expect(mock.calls.some((call) => call.args[0] === "container")).toBe(false);
-      });
-    },
+      }),
   );
 
   it.effect(
     "resolves with the started container's id and a cleanup effect left for the caller to run",
-    () => {
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
@@ -490,14 +481,13 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
 
         expect(started.containerId).toBe("supabase_edge_runtime_proj");
         yield* started.cleanup;
-      });
-    },
+      }),
   );
 
   it.effect(
     "cleans up a stale staging directory from a previous invocation even when this invocation fails before ever reaching docker create",
-    () => {
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const path = yield* Path.Path;
         const fs = yield* FileSystem.FileSystem;
         const mock = mockDockerSpawner();
@@ -513,6 +503,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         // this path deterministically rather than a fresh mkdtemp each call.
         yield* fs.makeDirectory(path.join(stagingDir, "env"), { recursive: true });
         yield* fs.writeFileString(path.join(stagingDir, "env", "docker.env"), "STALE=1");
+
         const input = {
           ...baseInput(tempWorkdir.current),
           // An invalid shell-variable name fails before this invocation's staging writes
@@ -520,22 +511,23 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
           // create/cp/start failures.
           edgeRuntimeSecrets: { "1BAD_NAME": "line one\nline two" },
         };
+
         const exit = yield* Effect.exit(
           startStackEdgeRuntimeContainer(input).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
             Effect.provide(out.layer),
           ),
         );
+
         expect(Exit.isFailure(exit)).toBe(true);
         expect(yield* fs.exists(stagingDir)).toBe(false);
-      });
-    },
+      }),
   );
 
   it.effect(
     "never reloads Kong — Go's `start` bring-up (`ServeFunctions`) never does, unlike `functions serve`'s own restart wrapper",
-    () => {
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
@@ -547,14 +539,13 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         expect(
           mock.calls.some((call) => call.args[0] === "exec" && call.args.includes("kong")),
         ).toBe(false);
-      });
-    },
+      }),
   );
 
   it.effect(
     "never prints functions serve's own setup banner — Go's start bring-up (ServeFunctions) never does, unlike restartEdgeRuntime",
-    () => {
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
@@ -564,7 +555,6 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         );
 
         expect(out.stderrText).not.toContain("Setting up Edge Functions runtime...");
-      });
-    },
+      }),
   );
 });
