@@ -9,7 +9,7 @@
  * invocation only, emitted by its own handler after calling this function.
  */
 
-import { Data, Effect, FileSystem, Option, Path } from "effect";
+import { Data, Effect, FileSystem, Option, Path, Redacted } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { detectGitBranch } from "../../shared/git/git-branch.ts";
@@ -39,11 +39,7 @@ import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
 import { currentStackBackend } from "../stack-backend.ts";
-import {
-  optionalCatalogConfigFromStatus,
-  stackLocalDatabaseConn,
-  stackOpenReadyProject,
-} from "../stack-local-database.ts";
+import { stackLocalDatabaseConn, stackOpenReadyProject } from "../stack-local-database.ts";
 import {
   classifyStorageCapability,
   describeStorageCapability,
@@ -101,7 +97,7 @@ const suggestionOf = (error: unknown): string | undefined =>
     : undefined;
 
 /** Resets the local database in-process. See this module's own header for the full design rationale. */
-export const resetLocalDatabase = Effect.fnUntraced(function* (
+export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(function* (
   input: ResetLocalDatabaseInput = PLAIN_FULL_RESET,
 ) {
   const backend = yield* currentStackBackend;
@@ -123,37 +119,56 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
   if (backend.kind === "stack") {
     const opened = yield* stackOpenReadyProject;
     if (Option.isNone(opened))
-      return yield* Effect.fail(
-        new ResetLocalDbNotRunningError({ message: "The local stack is not running." }),
-      );
+      return yield* new ResetLocalDbNotRunningError({ message: "The local stack is not running." });
     const catalog = yield* Effect.serviceOption(StackCatalogSetup);
     if (Option.isNone(catalog)) return yield* resetFailed("stack catalog setup is unavailable");
-    const stackConfig = yield* loadStackConfig(workdir).pipe(
-      Effect.mapError((cause) => resetFailed(cause.message)),
-    );
+    yield* loadStackConfig(workdir).pipe(Effect.mapError((cause) => resetFailed(cause.message)));
     const toml = yield* readDbToml(fs, path, workdir);
-    const runningStatus = yield* opened.value.stack.status.pipe(
+    const databaseStatus = yield* opened.value.database.status.pipe(
       Effect.mapError((cause) => resetFailed(`failed to inspect stack: ${cause.message}`)),
     );
-    const optionalConfig = optionalCatalogConfigFromStatus(stackConfig, runningStatus);
-    yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
-    yield* opened.value.stack.resetDatabase.pipe(
-      Effect.catchTag("StackNotRunningError", () =>
-        Effect.fail(
-          new ResetLocalDbNotRunningError({ message: "The local stack is not running." }),
-        ),
+    if (databaseStatus.config.service !== "database")
+      return yield* resetFailed("the local stack primary service is not a database");
+    const composition = yield* opened.value.stack.composition.describe.pipe(
+      Effect.mapError((cause) =>
+        resetFailed(`failed to inspect stack composition: ${cause.message}`),
       ),
+    );
+    const members = yield* Effect.forEach(composition.members, ({ id }) =>
+      opened.value.stack.services
+        .get(id)
+        .pipe(
+          Effect.mapError((cause) =>
+            resetFailed(`failed to inspect stack service: ${cause.message}`),
+          ),
+        ),
+    );
+    const databaseServices = members.flatMap((member) =>
+      member.service === "auth" || member.service === "storage" || member.service === "realtime"
+        ? [member.service]
+        : [],
+    );
+    yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
+    yield* opened.value.stack.composition.stop.pipe(
+      Effect.mapError((cause) => resetFailed(`failed to stop local stack: ${cause.message}`)),
+    );
+    yield* opened.value.database.resetData.pipe(
       Effect.mapError((cause) => resetFailed(`failed to reset local database: ${cause.message}`)),
+    );
+    yield* opened.value.database.start.pipe(
+      Effect.mapError((cause) => resetFailed(`failed to start local database: ${cause.message}`)),
+    );
+    yield* opened.value.database.ready.pipe(
+      Effect.mapError((cause) => resetFailed(`failed to ready local database: ${cause.message}`)),
     );
     yield* catalog.value
       .apply({
         target: {
-          kind: "live",
           stack: opened.value.stack,
-          projectRoot: workdir,
-          config: stackConfig,
+          database: opened.value.database,
+          databaseServices,
+          jwtSecret: Redacted.value(databaseStatus.config.config.jwtSecret),
         },
-        optionalConfig,
         overlay: {
           webhooks: "config",
           webhooksEnabled: toml.webhooksEnabled,
@@ -186,9 +201,9 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
         }).pipe(Effect.mapError((cause) => resetFailed(cause.message)));
       }),
     );
-    const status = yield* opened.value.stack.status.pipe(
+    yield* opened.value.stack.composition.start.pipe(
       Effect.mapError((cause) =>
-        resetFailed(`failed to inspect stack after reset: ${cause.message}`),
+        resetFailed(`failed to start local stack services: ${cause.message}`),
       ),
     );
     // Bucket creation and object seeding are owned by the CLI, not the stack runtime; the
@@ -202,12 +217,13 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
         `${yellow("WARNING:")} skipped seeding storage buckets: ${reason} ${nextStep}\n`,
         "stderr",
       );
-    const capability = status.capabilities.find((entry) => entry.name === "storage");
+    const storage = members.find((member) => member.service === "storage");
     // The database is already rebuilt, so any typed seeding failure only warns; defects and
     // interruption still propagate.
     yield* Effect.gen(function* () {
       const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
       if (!hasConfiguredBuckets(context.config)) return;
+      const capability = storage === undefined ? undefined : yield* storage.status;
       const decision = classifyStorageCapability(capability);
       if (decision !== "proceed") {
         yield* skipSeeding(
@@ -218,7 +234,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
         );
         return;
       }
-      const credentials = yield* stackStorageEndpointFor(opened.value.stack, status);
+      const credentials = yield* stackStorageEndpointFor(opened.value.stack);
       yield* seedBucketsRun({
         projectRef: "",
         emitSummary: false,
@@ -253,7 +269,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
     Option.getOrUndefined(cliSettings.projectId),
   );
   if (!running) {
-    return yield* Effect.fail(notRunning());
+    return yield* notRunning();
   }
   // "Resetting local database…" then recreate + migrate + seed.
   yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");

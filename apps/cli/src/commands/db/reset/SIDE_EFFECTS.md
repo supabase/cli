@@ -30,13 +30,15 @@ removed `DeclarativeSeam.execInherit` seam — see those commands' own
 
 When the `experimental.stack` feature flag is on (`SUPABASE_EXPERIMENTAL_STACK=1|0` env
 precedence, same rules as [`docs/stack-commands.md`](../../../../docs/stack-commands.md)), the
-local path calls `resetDatabase` on the project stack instead of the container recreate
-described above. After the reset, buckets are seeded — reusing the `seed buckets` local path —
-when Storage is `ready`, `dormant`, `starting`, or `stopping`; the gateway holds requests during
-lazy activation and wakes a stopping capability after cleanup, so neither state waits. The command
-never fails the reset for a Storage problem: an unusable capability state
-(`disabled`/`failed`/`stopped`), a missing capability/credentials, a stack-gateway activation
-failure, or an invalid bucket config all print `WARNING: skipped seeding storage buckets: <reason>
+local path stops the saved composition, resets the registered database instance's data, starts
+and readies that instance, reapplies the catalog overlay and migrations, then starts the saved
+composition again instead of recreating containers. The reset retains the saved database
+configuration and composition members; it does not rebuild the stack from current config. After
+the reset, buckets are seeded — reusing the `seed buckets` local path — when Storage is running
+(healthy or still starting), starting, or stopping/stopped with wake enabled; an unhealthy or
+errored Storage is skipped. The gateway handles lazy activation. The command never fails the
+reset for a Storage problem: an unavailable service, missing credentials, a stack-gateway
+activation failure, or an invalid bucket config all print `WARNING: skipped seeding storage buckets: <reason>
 <next step>` to stderr and exit `0`,
 where the next step is `Run supabase seed buckets --local once Storage is available.` (or, for
 disabled Storage, to enable `[storage]`, run `supabase stack stop` then `supabase stack start`,
@@ -44,14 +46,16 @@ then `supabase seed buckets --local`), unless the underlying stack-storage error
 suggestion (a missing API gateway endpoint, Auth disabled, or a gateway 502/503), in which case
 that suggestion is printed as the next step instead. The warning is omitted when the project
 configures no `[storage.buckets]` or vector buckets, since there is nothing to seed. The
-Storage gateway URL is the selected stack's API gateway URL (`status.endpoints.api.url`), not
-`[api].port`/`[api.tls]`, and the credential is the stack's service-role JWT — never `[api]`/
+Storage gateway URL and service state come from the saved composition Storage member, not the
+current `[api]` config, and the credential is derived from the retained database JWT — never `[api]`/
 `SUPABASE_API_*`/`SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}`. Bucket SQL/schema preparation is
 the stack runtime's own storage workload/catalog setup responsibility; bucket creation and
 `objects_path` upload from `[storage.buckets]` remain this command's (via `seed buckets`)
 responsibility — the runtime never creates buckets itself. Durable stack state lives under
 `$SUPABASE_HOME/stacks/<stackId>/`. A missing stack reports "The local stack is not
-running." Config, including `functions/.env`, is validated before the wipe.
+running." The database and stack config are validated before the wipe. If catalog preparation
+or migrations fail, companion services remain stopped. Fix the reported error and rerun
+`supabase db reset --local` to complete the reset and resume them.
 
 ## Files Read
 

@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
+import { StackError, type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
 
 import {
@@ -42,6 +43,7 @@ import { CommandPlatformApi } from "../../../../../auth/command-platform-api.ser
 import { CommandPlatformApiFactory } from "../../../../../auth/command-platform-api-factory.service.ts";
 import { dockerRunLayer } from "../../../../../command-internal/docker-run.layer.ts";
 import { stackBackendLayer } from "../../../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../../../command-internal/stack-api.ts";
 import { DbConfigResolver } from "../../../../../command-internal/db-config.service.ts";
 import {
   type DbSession,
@@ -80,6 +82,99 @@ interface EngineExportCall {
   readonly targetRef: string;
   readonly projectRef: string | undefined;
   readonly strictCoverage: boolean;
+}
+
+const GENERATE_STACK_ID = "e".repeat(64);
+const unusedStack = Effect.die("unused");
+const unusedStackFn = () => unusedStack;
+const STACK_GENERATE_PORT = 54329;
+
+function generateStackApi(workdir: string) {
+  const database: DatabaseInstance = {
+    id: "primary",
+    service: "database",
+    start: unusedStack,
+    ready: unusedStack,
+    stop: unusedStack,
+    restart: unusedStackFn,
+    destroy: unusedStack,
+    prepare: unusedStack,
+    credentials: unusedStackFn,
+    exportSnapshot: unusedStackFn,
+    restoreSnapshot: unusedStackFn,
+    resetData: unusedStack,
+    logs: Stream.empty,
+    followStatus: Stream.empty,
+    status: Effect.succeed({
+      id: "primary",
+      config: {
+        service: "database",
+        config: {
+          version: "17",
+          databasePassword: Redacted.make("postgres"),
+          jwtSecret: Redacted.make("secret"),
+          jwtExpiry: 3600,
+        },
+      },
+      endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: STACK_GENERATE_PORT }],
+      lifecycle: "running",
+      health: "healthy",
+      registered: true,
+      wakeEnabled: true,
+      intentRevision: 0,
+      currentOperation: undefined,
+      launchId: undefined,
+      exit: undefined,
+      error: undefined,
+      cleanupError: undefined,
+    }),
+  };
+  const composition = {
+    members: [{ id: database.id, activation: "eager" as const }],
+    dependencies: [],
+  };
+  const stack: Stack = {
+    id: GENERATE_STACK_ID,
+    services: {
+      create: unusedStackFn,
+      list: Effect.succeed([database]),
+      get: (id) =>
+        id === database.id
+          ? Effect.succeed(database)
+          : Effect.fail(new StackError({ operation: "get", message: "unknown instance" })),
+    },
+    composition: {
+      describe: Effect.succeed(composition),
+      supabase: unusedStackFn,
+      configure: unusedStackFn,
+      start: unusedStack,
+      stop: unusedStack,
+      restart: unusedStack,
+    },
+    stop: unusedStack,
+    destroy: unusedStack,
+    tools: { run: unusedStackFn },
+  };
+  const identity = { projectRoot: workdir, branchContext: "main", stackName: "default" };
+  return Layer.succeed(StackApi, {
+    create: unusedStackFn,
+    open: () => Effect.succeed(stack),
+    resolveIdentity: () => Effect.succeed(identity),
+    discover: () =>
+      Effect.succeed([
+        {
+          definition: {
+            id: stack.id,
+            identity,
+            runtime: "native",
+            instances: [],
+            composition,
+            ports: [],
+          },
+          host: undefined,
+        },
+      ]),
+  });
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -248,7 +343,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     processControl.layer,
     alwaysReadyHttpClientLayer,
     dockerRun,
-    ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),
+    ...(opts.stackBackend === true
+      ? [stackBackendLayer("stack"), generateStackApi(workdir)]
+      : [generateStackApi(workdir)]),
   );
   return {
     layer,

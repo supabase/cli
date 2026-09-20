@@ -80,7 +80,7 @@ export const dbResetRuntimeLayer = Layer.mergeAll(
   dockerRunLayer,
   // Backs `isLocalDbRunning`'s direct Engine-API probe (+ its `--debug` trace).
   localDockerEngineLayer.pipe(Layer.provide(debugLoggerLayer)),
-  // Exposed so `db reset --local` can open the project stack and call `resetDatabase`.
+  // Exposed so `db reset --local` can open the project stack and reset its database instance.
   stackApiLayer,
   stackCatalogSetupLayer,
   commandRuntimeLayer(["db", "reset"]),

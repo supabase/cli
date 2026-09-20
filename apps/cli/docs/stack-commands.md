@@ -110,9 +110,10 @@ env-precedence rule as `start`/`stop`/`status`. See
 primary database without changing other services (webhooks setup only; no second overlay or
 migrate-and-seed).
 `supabase start` while that postgres-only stack is running stops it and starts the full
-configured stack, keeping data. `--from-backup` is not supported on the stack path. The `db reset
---local` and declarative `--apply` reset migration remains pending; those paths are not described
-as migrated to the current stack API here.
+configured stack, keeping data. `--from-backup` is not supported on the stack path.
+`db reset --local` and declarative resets rebuild the existing database while retaining stack
+identity, ports, and composition. See
+[`db/reset/SIDE_EFFECTS.md`](../src/commands/db/reset/SIDE_EFFECTS.md).
 
 `gen types --local` and `inspect db … --local` resolve the project stack through the same
 `--local` database target as `db dump`. They do not start a stack.
@@ -257,7 +258,6 @@ a missing capability/endpoint, a gateway activation failure, or an invalid bucke
 `start` command; startup does not silently skip the configured seed. See
 [`stack/start/SIDE_EFFECTS.md`](../src/commands/experimental/stack/start/SIDE_EFFECTS.md).
 
-**`db reset --local` and declarative reset remain pending.** The full-cluster reset and its bucket
-seeding policy are not yet migrated to the current stack API. See the command's own
-[`db/reset/SIDE_EFFECTS.md`](../src/commands/db/reset/SIDE_EFFECTS.md) for the current legacy
-contract.
+**`db reset --local` and declarative reset** reapply the catalog, migrations, and seeds before
+resuming the saved composition. Bucket-seeding failures warn after the database reset succeeds.
+See [`db/reset/SIDE_EFFECTS.md`](../src/commands/db/reset/SIDE_EFFECTS.md).
