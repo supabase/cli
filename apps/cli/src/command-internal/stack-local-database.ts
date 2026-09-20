@@ -258,6 +258,12 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
     );
     return "started" as const;
   }
+  const existingDatabase = yield* stack.services.list.pipe(Effect.mapError(startFailed));
+  if (databaseFor(existingDatabase) !== undefined)
+    return yield* startFailed({
+      message:
+        "A standalone database exists outside the saved stack composition. Destroy the standalone database before starting this stack.",
+    });
   const creations = yield* config.creations(stack.id).pipe(Effect.mapError(startFailed));
   const databaseCreation = creations.find(
     (creation): creation is Extract<ServiceCreation, { service: "database" }> =>

@@ -77,7 +77,9 @@ const StackInspectionSchema = Schema.Struct({
   owner: Schema.Literals(["reachable", "unavailable"]),
   lifecycle: Schema.NullOr(Schema.String),
   composition: Schema.Struct({
-    members: Schema.Array(Schema.Struct({ service: Schema.String, state: Schema.String })),
+    members: Schema.Array(
+      Schema.Struct({ id: Schema.String, service: Schema.String, state: Schema.String }),
+    ),
   }),
   endpoints: Schema.Record(Schema.String, Schema.Struct({ url: Schema.String })),
 });
@@ -266,8 +268,12 @@ describe("stack start (compiled e2e)", () => {
           ).toBe("running");
           expect(running.composition.members.some(({ service }) => service === "rest")).toBe(true);
           expect(running.endpoints["database.sql"]?.url).toMatch(/^tcp:\/\/127\.0\.0\.1:\d+$/);
-          const databasePath = join(homeDir.dir, "stacks", idText, "data", "database");
-          yield* access(join(databasePath, "PG_VERSION"));
+          const databaseId = running.composition.members.find(
+            ({ service }) => service === "database",
+          )?.id;
+          if (databaseId === undefined) return yield* Effect.die("database member id is missing");
+          const databasePath = join(homeDir.dir, "stacks", idText, "data", databaseId);
+          yield* access(join(databasePath, "data", "PG_VERSION"));
 
           const followResult = yield* Effect.scoped(
             Effect.gen(function* () {
@@ -361,7 +367,7 @@ describe("stack start (compiled e2e)", () => {
           });
           expect(status.exitCode, `stdout:\n${status.stdout}\nstderr:\n${status.stderr}`).toBe(0);
           expect(status.stdout).toContain(`(${idText})`);
-          expect(status.stdout).toContain("Owner: running");
+          expect(status.stdout).toContain("Owner: reachable");
           expect(status.stdout).toContain("Lifecycle: running");
           expect(status.stdout).toContain("Readiness: ready");
           expect(status.stdout).toMatch(/Config drift: (changed|unchanged)/u);
@@ -377,7 +383,7 @@ describe("stack start (compiled e2e)", () => {
             `stdout:\n${topLevelStatus.stdout}\nstderr:\n${topLevelStatus.stderr}`,
           ).toBe(0);
           expect(topLevelStatus.stdout).toContain(`(${idText})`);
-          expect(topLevelStatus.stdout).toContain("Owner: running");
+          expect(topLevelStatus.stdout).toContain("Owner: reachable");
           expect(topLevelStatus.stdout).toContain("Lifecycle: running");
 
           const env = yield* runSupabaseEffect(
@@ -388,8 +394,15 @@ describe("stack start (compiled e2e)", () => {
           const variables = yield* Schema.decodeEffect(Schema.fromJsonString(VariablesSchema))(
             env.stdout,
           );
-          expect(Object.keys(variables)).toEqual(["DB_URL"]);
-          expect(variables.DB_URL).toMatch(/^postgresql:\/\/postgres:.+@.+:\d+\/postgres$/u);
+          expect(Object.keys(variables)).toEqual([
+            "DB_URL",
+            "ANON_KEY",
+            "SERVICE_ROLE_KEY",
+            "API_URL",
+          ]);
+          expect(variables.DB_URL).toMatch(
+            /^postgresql:\/\/supabase_admin:.+@.+:\d+\/postgres(?:\?.*)?$/u,
+          );
 
           const dotenv = yield* runSupabaseEffect(
             ["stack", "status", "--env", "--stack-id", idText, "--output-format", "text"],
@@ -432,9 +445,9 @@ describe("stack start (compiled e2e)", () => {
             stoppedStatus.exitCode,
             `stdout:\n${stoppedStatus.stdout}\nstderr:\n${stoppedStatus.stderr}`,
           ).toBe(0);
-          expect(stoppedStatus.stdout).toContain("Owner: absent");
+          expect(stoppedStatus.stdout).toContain("Owner: unavailable");
           expect(stoppedStatus.stdout).toContain("Lifecycle: unavailable");
-          expect(stoppedStatus.stdout).toContain("Readiness: unknown");
+          expect(stoppedStatus.stdout).toContain("Readiness: unavailable");
 
           const stoppedEnv = yield* runSupabaseEffect(
             ["stack", "status", "--env", "--stack-id", idText],
@@ -447,9 +460,11 @@ describe("stack start (compiled e2e)", () => {
           );
           expect(stoppedEnv.exitCode).not.toBe(0);
           expect(stoppedEnv.stdout).not.toContain("DB_URL");
-          expect(stoppedEnv.stderr).toContain("must be running");
+          expect(stoppedEnv.stderr).toContain(
+            "The stack owner or primary database is unavailable for environment export.",
+          );
 
-          yield* access(join(databasePath, "PG_VERSION"));
+          yield* access(join(databasePath, "data", "PG_VERSION"));
 
           const stoppedLogs = yield* runSupabaseEffect(
             [

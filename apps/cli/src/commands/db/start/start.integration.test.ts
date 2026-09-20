@@ -1748,11 +1748,11 @@ describe("db start stack backend", () => {
     });
   });
 
-  it.live("does not select a standalone database as the composition primary", () => {
+  it.live("rejects a standalone database outside the saved composition", () => {
     const { layer, catalogApplied } = setup({ recordCatalog: true });
     const fixture = stackFixture(true, false, true);
     return Effect.gen(function* () {
-      yield* dbStart(DEFAULT_FLAGS).pipe(
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
         Effect.provide(
           Layer.mergeAll(
             layer,
@@ -1760,9 +1760,20 @@ describe("db start stack backend", () => {
             stackLayer(tempRoot.current, fixture, true),
           ),
         ),
+        Effect.exit,
       );
-      expect(fixture.state.running).toBe(true);
-      expect(catalogApplied).toEqual([{ serviceCount: 3 }]);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("standalone database");
+        expect(JSON.stringify(exit.cause)).toContain("Destroy");
+      }
+      expect(fixture.state.running).toBe(false);
+      expect(fixture.state.destroyed).toBe(false);
+      expect(catalogApplied).toEqual([]);
+      expect(yield* fixture.stack.composition.describe).toMatchObject({ members: [] });
+      expect((yield* fixture.stack.services.list).map(({ id }) => id)).toEqual([
+        "database-primary",
+      ]);
     });
   });
 

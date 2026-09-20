@@ -233,7 +233,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       return yield* new StackCommandStartError({
         reason: "lifecycle",
         message: "A standalone database exists outside the saved stack composition",
-        suggestion: "Stop or destroy the standalone database before starting this stack.",
+        suggestion: "Destroy the standalone database before starting this stack.",
       });
     const persistedJwt =
       primaryDatabase === undefined
