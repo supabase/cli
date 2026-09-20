@@ -236,8 +236,7 @@ describe("storage rm", () => {
         format: "json",
         routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
       });
-      // `CLICOLOR_FORCE` makes the colour gate report a colour-capable stderr, so the
-      // suggestion would pick up ANSI styling if it were still styled.
+      // Force the colour gate on so a styled suggestion would carry ANSI.
       return withEnvVar(
         "NO_COLOR",
         undefined,
@@ -262,7 +261,6 @@ describe("storage rm", () => {
               expect(refusal).toBeDefined();
               expect(refusal?.suggestion).toContain("--yes");
               expect(refusal?.suggestion).toContain("SUPABASE_YES");
-              // The structured suggestion is machine payload, never a styled terminal line.
               expect(refusal?.suggestion).not.toContain("\u001b[");
             }
             expect(requests).toHaveLength(0);

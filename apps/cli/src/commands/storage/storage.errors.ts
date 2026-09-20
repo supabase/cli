@@ -140,8 +140,6 @@ export class StorageRmConfirmationRequiredError extends Data.TaggedError(
     super({
       message:
         "Deleting objects needs confirmation, and a non-text output format has no prompt to ask on.",
-      // Only raised in machine output modes, where the suggestion is serialized into the
-      // error payload; plain text keeps `aqua()` ANSI out of it.
       suggestion: "Re-run with --yes (or set SUPABASE_YES=1) to confirm without a prompt.",
     });
   }
