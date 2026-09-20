@@ -5,6 +5,7 @@ import {
 } from "../functions/FunctionsBootstrap.ts";
 import { StackIdSchema } from "../identity/StackId.ts";
 import { ServiceError } from "../Service.ts";
+import { serviceJwt } from "./ServiceConfig.ts";
 import {
   CatalogError,
   EndpointIntent,
@@ -21,6 +22,8 @@ import {
 export const Config = Schema.Struct({
   functionsRoot: Schema.String,
   bootstrap: Schema.String,
+  databaseUrl: Schema.optionalKey(Schema.String),
+  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   apiUrl: Schema.optionalKey(Schema.String),
   jwtSecret: Schema.optionalKey(Schema.String),
   policy: Schema.optionalKey(Schema.String),
@@ -57,12 +60,18 @@ const makeSpec = (
     Effect.gen(function* () {
       const http = endpoints.get("http");
       const root = container ? "/__supabase_functions" : creation.config.functionsRoot;
+      const jwt = creation.config.jwtSecret;
       return {
+        ...creation.config.env,
         ...(http === undefined ? {} : { EDGE_RUNTIME_PORT: String(http.port) }),
         SUPABASE_INTERNAL_FUNCTIONS_ROOT: root,
-        ...(creation.config.jwtSecret === undefined
+        ...(jwt === undefined
           ? {}
-          : { SUPABASE_INTERNAL_JWT_SECRET: creation.config.jwtSecret }),
+          : {
+              SUPABASE_INTERNAL_JWT_SECRET: jwt,
+              SUPABASE_ANON_KEY: yield* serviceJwt("anon", jwt),
+              SUPABASE_SERVICE_ROLE_KEY: yield* serviceJwt("service_role", jwt),
+            }),
         ...(creation.config.verifyJwt === undefined
           ? {}
           : {
@@ -80,6 +89,9 @@ const makeSpec = (
               ),
             }),
         ...(creation.config.apiUrl === undefined ? {} : { SUPABASE_URL: creation.config.apiUrl }),
+        ...(creation.config.databaseUrl === undefined
+          ? {}
+          : { SUPABASE_DB_URL: creation.config.databaseUrl }),
         ...(creation.config.policy === undefined
           ? {}
           : { EDGE_RUNTIME_POLICY: creation.config.policy }),

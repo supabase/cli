@@ -383,6 +383,13 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
                     ? { apiUrl: apiRuntimeUrl }
                     : {};
             const values = { ...configInputs.get(entry.id), ...extra };
+            const database = entriesByKind.get("database");
+            if (
+              entry.creation.service === "functions" &&
+              database !== undefined &&
+              endpointNames(database.creation).includes("sql")
+            )
+              values.databaseUrl = yield* operations.output(database.id, "databaseUrl");
             if (Object.keys(values).length > 0) {
               return yield* operations.updateCreation(entry.id, values);
             }
