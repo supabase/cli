@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Schema } from "effect";
 import { ServiceCreation } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
+import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
@@ -100,6 +101,31 @@ entrypoint = "./hello/main.ts"
         expect(String(exit.cause)).toContain(
           "functions.hello.entrypoint is unsupported by the experimental stack",
         );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("leaves stack-opt-in init listeners automatic except disabled pooler", () =>
+    Effect.gen(function* () {
+      const root = yield* project(renderCliConfigTemplate("stack-config-init", false, true));
+      const config = yield* load(root);
+      const services = byService(yield* config.creations("stack-config-init"));
+      expect(services.get("database")?.endpoints).toEqual({ sql: { port: "auto" } });
+      expect(services.get("rest")?.endpoints).toEqual({ http: { port: "auto" } });
+      expect(services.get("pooler")).toBeUndefined();
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects an enabled unsupported provider in the initialized config shape", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-enabled-provider"
+[auth.external.figma]
+enabled = true
+client_id = "figma-client"
+secret = "figma-secret"
+`);
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.external.figma");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

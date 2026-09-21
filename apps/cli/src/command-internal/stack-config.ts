@@ -748,10 +748,12 @@ const valuesEqual = (left: unknown, right: unknown): boolean => {
 const firstDifference = (left: unknown, right: unknown, path: string): string | undefined => {
   if (valuesEqual(left, right)) return undefined;
   if (isRecord(left) && isRecord(right)) {
+    if (left.enabled === false && right.enabled === false) return undefined;
     for (const key of new Set([...Object.keys(left), ...Object.keys(right)])) {
       const difference = firstDifference(left[key], right[key], `${path}.${key}`);
       if (difference !== undefined) return difference;
     }
+    return undefined;
   }
   return path;
 };

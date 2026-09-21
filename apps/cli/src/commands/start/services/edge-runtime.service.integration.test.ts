@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { describe, expect, it } from "@effect/vitest";
+import { expect, layer } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
 import { edgeRuntimeNofileUlimit } from "../../../shared/stack-constants.ts";
 import { ConfigProvider, Deferred, Effect, Exit, Sink, Stream } from "effect";
 import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -112,7 +113,7 @@ function envEntries(runCall: {
     .filter((line) => line.length > 0);
 }
 
-describe("startStackEdgeRuntimeContainer", () => {
+layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
   const tempWorkdir = useTempWorkdir("supabase-edge-runtime-service-int-");
 
   // Only needs to exist — every scenario here has zero declared functions,

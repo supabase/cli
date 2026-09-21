@@ -1,7 +1,9 @@
+import { BunServices } from "@effect/platform-bun";
+import { FileSystem, Path } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -649,6 +651,39 @@ describe("functions serve integration", () => {
     });
   });
 
+  it.live.each([
+    ["per-function", "supabase/functions/hello/.env"],
+    ["default", "supabase/functions/.env"],
+    ["project", ".env.development"],
+  ] as const)(
+    "rejects a BOM-prefixed %s env file without starting the runtime",
+    ([, relativePath]) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const supabaseDir = path.join(tempRoot.current, "supabase");
+        const functionDir = path.join(supabaseDir, "functions", "hello");
+        yield* fs.makeDirectory(functionDir, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(supabaseDir, "config.toml"),
+          'project_id = "test-project"\n',
+        );
+        yield* fs.writeFileString(
+          path.join(functionDir, "index.ts"),
+          'Deno.serve(() => new Response("hello"))\n',
+        );
+        const envPath = path.join(tempRoot.current, relativePath);
+        yield* fs.writeFileString(envPath, "\uFEFFFOO=secret-value\n");
+
+        const { layer } = setupServe();
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+        expect(error.message).toContain(`failed to parse environment file: ${envPath}`);
+        expect(error.message).toContain("unexpected character");
+        expect(error.message).not.toContain("secret-value");
+        expect(deployMockState.runCalls.some((call) => call.args[0] === "create")).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("fails before starting the runtime when a Function env file is malformed", () => {
     return Effect.gen(function* () {
       yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
@@ -796,7 +831,7 @@ describe("functions serve integration", () => {
           "supabase_edge_runtime_test-project:/",
         ]);
         expect(extractFlagValues(dockerRun.args, "--workdir")).toEqual([
-          toDockerPath(tempRoot.current),
+          toDockerPath(tempRoot.current, { resolve }),
         ]);
         expect(dockerRun.args[dockerRun.args.length - 1]).toBe(
           "exec edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
@@ -1519,7 +1554,9 @@ describe("functions serve integration", () => {
       const bindValues = extractFlagValues(dockerCreate.args, "-v");
       expect(bindValues.some((value) => value.startsWith(`${appsDir}:`))).toBe(true);
       expect(bindValues.filter((value) => value.startsWith(`${appsDir}/`))).toEqual([]);
-      expect(extractFlagValues(dockerCreate.args, "--workdir")).toEqual([toDockerPath(projectDir)]);
+      expect(extractFlagValues(dockerCreate.args, "--workdir")).toEqual([
+        toDockerPath(projectDir, { resolve }),
+      ]);
     });
   });
 
@@ -1702,8 +1739,10 @@ describe("functions serve integration", () => {
       }
       const bindValues = extractFlagValues(dockerRun.args, "-v");
       const resolvedRootDenoJson = realpathSync(rootDenoJson);
-      expect(bindValues).toContain(`${resolvedRootDenoJson}:${toDockerPath(rootDenoJson)}:ro`);
-      expect(bindValues).toContain(`${resolvedLibsDir}:${toDockerPath(libsDir)}:ro`);
+      expect(bindValues).toContain(
+        `${resolvedRootDenoJson}:${toDockerPath(rootDenoJson, { resolve })}:ro`,
+      );
+      expect(bindValues).toContain(`${resolvedLibsDir}:${toDockerPath(libsDir, { resolve })}:ro`);
       const rootDenoJsonWarn = `WARN: Mounting import map scope target outside the project root: ${resolvedRootDenoJson}\n`;
       const libsWarn = `WARN: Mounting import map scope target outside the project root: ${resolvedLibsDir}\n`;
       expect(out.rawChunks.filter((chunk) => chunk.text === rootDenoJsonWarn)).toEqual([
