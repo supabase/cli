@@ -433,7 +433,7 @@ Keep Effect RPC as the transport initially. Its handlers should mostly delegate 
 | Registry             | `services.create`, `services.get`, `services.list`                                                                     | Create and locate instances                                   |
 | Instance lifecycle   | `service.prepare`, `service.start`, `service.stop`, `service.restart`, `service.destroy`                               | Operate one instance                                          |
 | Instance observation | `service.status`, `service.ready`, `service.followStatus`, `service.logs`, `service.followLogs`, `service.credentials` | Read state, await health and inspect outputs                  |
-| Database snapshots   | `database.exportSnapshot`, `database.restoreSnapshot`                                                                  | Database-specific storage operations                          |
+| Database snapshots   | `database.saveSnapshot`, `database.restoreSnapshot`                                                                    | Database-specific managed storage operations                   |
 | Composition          | `composition.configure`, `composition.describe`, `composition.start`, `composition.stop`, `composition.restart`        | Define and operate the application selection and dependencies |
 | Tools                | `tools.run`, `tools.writeStdin`, `tools.closeStdin`                                                                    | Execute an attached command with streamed input/output        |
 
@@ -622,39 +622,41 @@ The artifact cache is independent and shared across stacks. Normal stop preserve
 
 Snapshots are initially supported only for `database`, including the shadow-baseline cache use case. Start with that concrete case.
 
-Expose `exportSnapshot` and `restoreSnapshot` on `DatabaseInstance` only. The common service handle retains lifecycle, health and logs; REST and other instance types do not expose unsupported snapshot methods. Keep a database-specific snapshot descriptor. No generic snapshot provider registry, mandatory storage interface or whole-composition snapshot is needed until a second concrete use case requires one.
+Expose `saveSnapshot` and `restoreSnapshot` on `DatabaseInstance` only. The common service handle retains lifecycle, health and logs; REST and other instance types do not expose unsupported snapshot methods. Keep a database-specific snapshot descriptor. No generic snapshot provider registry, mandatory storage interface or whole-composition snapshot is needed until a second concrete use case requires one.
 
 ```ts
 interface DatabaseInstance extends ServiceInstance {
   readonly service: "database";
-  exportSnapshot(options: { destination: string }): Promise<DatabaseSnapshot>;
-  restoreSnapshot(options: { source: string }): Promise<DatabaseSnapshot>;
+  saveSnapshot(key: string): Promise<void>;
+  restoreSnapshot(key: string): Promise<boolean>;
 }
 
 // `baseline` has already been initialized; `shadow` is a fresh instance.
 await baseline.stop();
-await baseline.exportSnapshot({ destination: archivePath });
+await baseline.saveSnapshot("baseline");
 
-await shadow.restoreSnapshot({ source: archivePath });
+if (!(await shadow.restoreSnapshot("baseline"))) {
+  // A miss leaves the empty instance in place; initialize that same instance.
+}
 await shadow.start();
 await shadow.ready();
 ```
 
-The database implementation owns the snapshot format, PostgreSQL data selection, compatibility validation, initialization metadata and credential reconciliation. It uses native filesystem operations or container volume/helper operations through the runtime backend. The orchestrator knows only admission, instance ownership and operation settlement; it never needs to understand PostgreSQL archive contents.
+The database implementation owns the snapshot format, PostgreSQL data selection, compatibility validation, initialization metadata and credential reconciliation. It uses native filesystem clone/copy operations or container volume/helper operations through the runtime backend. Snapshot entries live in a managed namespace below `cacheRoot`, and the storage backend applies retention; saving a key atomically replaces the previous entry for that key. The orchestrator knows only admission, instance ownership and operation settlement; it never needs to understand PostgreSQL data contents.
 
 Keep the contract narrow:
 
-- Export requires confirmed stopped, initialized data. The caller explicitly stops first; snapshotting does not secretly stop dependents or restart services.
-- Restore requires a confirmed stopped instance with empty data. Validate archive safety, format, artifact/runtime compatibility and initialization profile before installing restored data. Reject a nonempty target; there is no overwrite option.
+- Save requires confirmed stopped, initialized data. The caller explicitly stops first; snapshotting does not secretly stop dependents or restart services. A save publishes only a complete entry and replaces the previous entry for the same key.
+- Restore requires a confirmed stopped instance with empty data. Validate format, artifact/runtime compatibility and initialization profile before installing restored data. A missing key returns `false`; a compatible published entry returns `true`; reject a nonempty target rather than overwriting it.
 - Both operations occupy the instance's existing serial operation gate and leave lifecycle stopped. Queued start, destroy or another storage operation waits for settlement and revalidates. No new lifecycle states are necessary; the observable pending operation identifies snapshot work. An armed wake route is not a substitute for explicit stop.
-- Export publishes only a completed archive. Validate and stage restoration before treating the target as usable. Normal failures clean up this invocation's temporary resources and report any cleanup failure; incomplete restoration is never reported as success. Do not add persisted recovery phases or an operation journal.
-- Restore transfers compatible database contents, not the source instance's identity, public port claims or composition membership. The target retains its own data location and configuration, with database-specific credentials reconciled before readiness.
+- Native snapshots copy or clone the host data; container snapshots copy database data through a managed volume and helper. Docker data normally lives in a managed volume, while existing host data can be retained through the host-backed fallback. The host storage marker detects a missing or mismatched Docker volume; deleting that volume loses its database data.
+- Restore transfers compatible database contents, not the source instance's identity, public port claims or composition membership. The target retains its own data location and configuration, with database-specific credentials reconciled before readiness. Snapshots survive destruction of the source instance because their managed storage is separate.
 
-These are physical database snapshots for the cache use case. A `pg_dump` invocation remains an ordinary client tool for logical exports. CLI code owns cache keys, eviction, migrations and the decision to fall back to rebuilding a baseline. The snapshot API does not acquire those policies.
+These are physical database snapshots for the cache use case. A `pg_dump` invocation remains an ordinary client tool for logical exports. CLI code owns cache keys, migrations and the decision to fall back to rebuilding a baseline; managed storage owns publication and retention. The snapshot API does not acquire CLI cache policy.
 
 ### Resetting database data
 
-`DatabaseInstance.resetData` removes the selected database instance's owned data and initialization metadata while retaining its registration, configuration, composition bindings, and public port assignments. It is database-specific, alongside snapshot export and restore; other service types do not expose a reset operation.
+`DatabaseInstance.resetData` removes the selected database instance's owned data and initialization metadata while retaining its registration, configuration, composition bindings, and public port assignments. It is database-specific, alongside snapshot save and restore; other service types do not expose a reset operation.
 
 The caller must stop the database with wake disabled first. Reset runs through the same serialized storage-operation gate as snapshots and leaves the database stopped. Deletion uses the database's ownership checks and runtime-specific filesystem handling. The next normal start initializes a fresh PostgreSQL cluster using the retained configuration. Reset does not apply project migrations or seeds, stop other services, or resume the composition; those decisions belong to the CLI. It adds no lifecycle state or persisted recovery phase.
 

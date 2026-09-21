@@ -23,7 +23,7 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly cause?: unknown;
 }> {}
 
-interface ContainerSpec {
+export interface ContainerSpec {
   readonly image: string;
   readonly stackId: string;
   readonly instanceId: string;
@@ -34,6 +34,8 @@ interface ContainerSpec {
     readonly source: string;
     readonly target: string;
     readonly readOnly: boolean;
+    readonly type?: "bind" | "volume";
+    readonly volumeSubpath?: string;
   }>;
   readonly workingDir?: string;
   readonly ports?: ReadonlyArray<number>;
@@ -201,7 +203,15 @@ export const makeContainerRuntime = (options: {
         envPath,
         ...(spec.mounts ?? []).flatMap((mount) => [
           "--mount",
-          `type=bind,${mountField("src", mount.source)},${mountField("dst", mount.target)}${mount.readOnly ? ",ro" : ""}`,
+          [
+            `type=${mount.type ?? "bind"}`,
+            mountField("src", mount.source),
+            mountField("dst", mount.target),
+            ...(mount.volumeSubpath === undefined
+              ? []
+              : [mountField("volume-subpath", mount.volumeSubpath)]),
+            ...(mount.readOnly ? ["ro"] : []),
+          ].join(","),
         ]),
         ...(spec.workingDir === undefined ? [] : ["--workdir", spec.workingDir]),
         ...(spec.ports ?? []).flatMap((port) => ["--publish", `127.0.0.1::${port}`]),

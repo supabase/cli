@@ -16,7 +16,6 @@ import {
   type Observation,
 } from "./Rpc.ts";
 import { ServiceCreation } from "./services/Catalog.ts";
-import type { DatabaseSnapshot } from "./services/DatabaseSnapshot.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { PgProveOptions, PostgresTool } from "./Tools.ts";
 
@@ -26,7 +25,6 @@ export type { ServiceCreation } from "./services/Catalog.ts";
 export type { CompositionConfig } from "./Orchestrator.ts";
 export type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
 export type { Observation } from "./Rpc.ts";
-export type { DatabaseSnapshot } from "./services/DatabaseSnapshot.ts";
 export type { PgProveOptions } from "./Tools.ts";
 
 const stateFor = (root: string) => State.Service.pipe(Effect.provide(State.layer({ root })));
@@ -84,8 +82,8 @@ export interface ServiceInstance<K extends Kind = Kind> {
 }
 /** A database instance with stopped-data snapshot operations. */
 export interface DatabaseInstance extends ServiceInstance<"database"> {
-  readonly exportSnapshot: (destination: string) => Effect.Effect<DatabaseSnapshot, StackError>;
-  readonly restoreSnapshot: (source: string) => Effect.Effect<DatabaseSnapshot, StackError>;
+  readonly saveSnapshot: (key: string) => Effect.Effect<void, StackError>;
+  readonly restoreSnapshot: (key: string) => Effect.Effect<boolean, StackError>;
   /** Removes database-owned data while preserving the instance registration. */
   readonly resetData: Effect.Effect<void, StackError>;
 }
@@ -228,10 +226,9 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       case "database":
         return {
           ...common(id, "database"),
-          exportSnapshot: (destination) =>
-            call("exportSnapshot", (rpc) => rpc.exportSnapshot({ id, destination })),
-          restoreSnapshot: (source) =>
-            call("restoreSnapshot", (rpc) => rpc.restoreSnapshot({ id, source })),
+          saveSnapshot: (key) => call("saveSnapshot", (rpc) => rpc.saveSnapshot({ id, key })),
+          restoreSnapshot: (key) =>
+            call("restoreSnapshot", (rpc) => rpc.restoreSnapshot({ id, key })),
           resetData: call("resetData", (rpc) => rpc.resetData({ id })),
         };
       case "rest":
