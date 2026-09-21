@@ -15,10 +15,7 @@ Bun monorepo with workspaces under `apps/` and `packages/`. `pnpm` is the packag
 Use an existing TypeScript/Bun workspace, especially `packages/api`, as the package-structure
 reference. Published `apps/cli` and `packages/config` are not private; `apps/docs` and
 `packages/cli-*` have their own shapes. Generic lint, format, and unused-code tooling is
-root-owned. Effect lint covers a growing allow list of areas, defined by the `!` entries in
-`.oxlintrc.effect.json` (the source of truth) and enforced through the root scripts; it
-currently spans `packages/stack`, the experimental and smaller `apps/cli/src/commands`
-families and most of the shared compute runtime, and expands area by area.
+root-owned.
 
 ### Config Naming Vocabulary
 
@@ -32,56 +29,14 @@ Use a family-neutral name when a symbol deliberately spans both families. See th
 
 ## Effect
 
-Effect V4 source is in `.repos/effect/`; use it instead of `node_modules`, with core APIs in
-`.repos/effect/packages/effect/`, test helpers in `.repos/effect/packages/vitest/`, and migration
-notes in `.repos/effect/MIGRATION.md`. These are read-only source checkouts that may be ahead of
-installed dependencies; when APIs differ, use the matching release tag inside the reference
-repository. Run `pnpm repos:install` if it is absent.
+Always use the [Effect skill](.agents/skills/effect/SKILL.md) when writing or changing code. Read
+the references relevant to the task before editing. Write
+all TypeScript runtime code in Effect. Promise-returning APIs are allowed only as package exports
+for consumers that do not use Effect.
+The skill is authoritative for Effect coding practices when repository instructions conflict.
 
-- Write new TypeScript runtime code in Effect. Internal helpers return Effects; Promise facades
-  belong only at public edges. Wrap a foreign Promise once at its leaf with `Effect.tryPromise`,
-  pass cancellation when supported, and map failures into typed domain errors.
-- Effects are reusable: allocate mutable state per execution (`Effect.suspend`, `Effect.gen`, or
-  scoped acquisition), and keep `Effect.sync` total by using `Effect.try` for throwing thunks.
-- Keep service requirements visible through the type until composition. Provide services with
-  layers or `Effect.provide`; do not hide missing services with casts, nested runtimes, globals,
-  or synchronous adapters.
-- Use `Scope`/`acquireRelease` for resources. Limit `uninterruptibleMask` to the
-  acquisition-to-registration handoff and keep blocking acquisition interruptible with `restore`.
-  Prefer `Effect.forkChild` or scope-owned fibers; detached work needs a documented lifetime and
-  completion path. Use native `Deferred`, `Latch`, `Semaphore`, `Queue`, `PubSub`, `Schedule`,
-  and race or concurrent combinators instead of waiter arrays, polling sleeps, or shared
-  cancellation flags.
-- Shared initialization and teardown are single-flight operations: callers join one cached
-  Effect, fiber, or `Deferred<Exit<...>>`; interrupting one waiter must not cancel shared teardown.
-- `Effect.callback` owns its full foreign lifecycle: register listeners before starting, resume at
-  most once, and on cancellation remove owned listeners and close or destroy the exact resource.
-- Expected failures use typed `Data.TaggedError` and `Effect.fail`; never throw them inside Effect
-  programs. Defects are impossible invariants. Recover with the narrowest `catch` operator; use
-  `catchCause` only when recovery intentionally handles defects or interruption, preserve every
-  other cause, and do not use operational `orDie`/`Layer.orDie`.
-- Preserve `Data.TaggedError` string identities in `apps/cli/src` and `packages/config/src` when
-  renaming classes; class names may change, but tags must remain stable. See the CLI
-  [telemetry identity rule](apps/cli/AGENTS.md#telemetry).
-- Use public helpers (`Exit.isSuccess`, `Option.isSome`, `Cause.isTimeoutError`, and similar) and
-  exhaustive `Match`/predicate helpers for domain variants. Raw `._tag` is for schema/type
-  definitions, serialization, or genuinely dynamic boundaries only.
-- Compose schemas with `decodeUnknownEffect`, `decodeEffect`, and `encodeEffect`, mapping
-  `SchemaError` into domain errors. Sync codecs are acceptable only at an explicitly synchronous,
-  service-free edge that intentionally throws.
-
-### Effect linting
-
-- Fix the underlying design when Effect lint reports a violation. Refactor to native
-  Effect constructs; do not silence findings with `oxlint-disable`, casts, file
-  exclusions, or weaker lint configuration.
-- A suppression is acceptable only for a demonstrated false positive or an unavoidable
-  foreign-library boundary. Before retaining one, inspect the corresponding Effect API
-  and identify the specific missing capability or behavior that prevents replacement;
-  existing Promise-based code, native API usage, or refactoring effort alone do not
-  justify an exception. Limit it to the specific rule and smallest scope, and explain
-  why a compliant implementation is not possible.
-- Passing lint by bypassing its rules does not complete an Effect migration.
+Effect linting uses oxlint via `.oxlintrc.effect.json`; run `pnpm lint:effect:check` or
+`pnpm lint:effect:fix` from the repository root.
 
 ## Commands, validation, and workflows
 
@@ -173,17 +128,16 @@ docs when interfaces, ownership, or lifecycle changes.
 
 Name tests `*.unit.test.ts`, `*.integration.test.ts`, or `*.e2e.test.ts`; colocate them with source.
 Use `tests/` for shared helpers. For CLI commands, unit-test complex pure logic, integration-test
-handlers and feature matrices with realistic Effect layers, and reserve E2E for one to three
-golden-path subprocess workflows. Handler integration is the default for command behavior. Use
-`@effect/vitest`'s `it.live` with stateful mock factories returning `{ layer, state }`;
-assert resulting state and user-visible behavior, not `vi.fn()` call details. See
+handlers and feature matrices with realistic dependencies, and reserve E2E for one to three
+golden-path subprocess workflows. Handler integration is the default for command behavior. Assert
+resulting state and user-visible behavior, not mock call details. See
 [`login.integration.test.ts`](apps/cli/src/commands/login/login.integration.test.ts) and
 [`login.e2e.test.ts`](apps/cli/src/commands/login/login.e2e.test.ts); E2E uses
 [`tests/helpers/cli.ts`](apps/cli/tests/helpers/cli.ts) and `runSupabase()`.
 
 Keep tests flake-resistant:
 
-- Subscribe before triggering a transition; use observable readiness/completion, never sleeps or polling delays for propagation, startup, cancellation, cleanup, or port release. Timeouts are guards; use TestClock or fake timers for timing semantics.
+- Subscribe before triggering a transition; use observable readiness/completion, never sleeps or polling delays for propagation, startup, cancellation, cleanup, or port release. Timeouts are guards; use controlled clocks or fake timers for timing semantics.
 - Assume file-level parallelism: use unique IDs, roots, process markers, and derived resources; never disable parallelism globally.
 - Never release and reuse an ephemeral port or assume a released endpoint is a dead backend; own a refusal listener or inject the failure.
 - Require subprocess readiness and stdout/stderr diagnostics; clean up only exact owned resources. Reproduce and stress flake fixes, then repeat the green case.
