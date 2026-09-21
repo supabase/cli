@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Stdio } from "effect";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";
@@ -486,13 +486,7 @@ describe("functions deploy", () => {
       );
       yield* fs.writeFileString(
         path.join(workdir, "supabase", "functions", "hello-world", "deno.json"),
-        yield* Schema.encodeEffect(
-          Schema.fromJsonString(
-            Schema.Struct({ imports: Schema.Record(Schema.String, Schema.String) }),
-          ),
-        )({
-          imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
-        }),
+        '{"imports":{"@repo/shared":"../../../../packages/shared/src/index.ts"}}',
       );
 
       const exit = yield* Effect.exit(functionsDeploy(baseFlags));
