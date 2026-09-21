@@ -20,7 +20,7 @@
     "!apps/cli/src/commands/functions/deploy/**",
     "!apps/cli/src/commands/functions/list/**",
     "!apps/cli/src/commands/functions/new/**",
-    "!apps/cli/src/commands/functions/serve/serve.handler.ts",
+    "!apps/cli/src/commands/functions/serve/**",
     "!apps/cli/src/commands/init/**",
     "!apps/cli/src/commands/issue/**",
     "!apps/cli/src/commands/link/**",
