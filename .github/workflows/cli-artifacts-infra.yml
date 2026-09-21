@@ -1,0 +1,80 @@
+name: CLI Artifacts Infra
+
+# Deploys infra/cli-artifacts/template.yaml into the cli-artifacts-prod AWS account: the
+# public-read S3 bucket that mirrors slim native artifacts and the PutObject-only role the
+# mirror-slim-image workflow assumes. Only develop can assume github-deploy in that account, so
+# pull requests lint the template and never touch AWS. Details: infra/cli-artifacts/README.md.
+
+on:
+  pull_request:
+    paths:
+      - infra/cli-artifacts/**
+      - .github/workflows/cli-artifacts-infra.yml
+  push:
+    branches:
+      - develop
+    paths:
+      - infra/cli-artifacts/**
+      - .github/workflows/cli-artifacts-infra.yml
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: cli-artifacts-infra
+  cancel-in-progress: false
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install cfn-lint
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user --quiet "cfn-lint==1.57.0"
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Lint template
+        run: cfn-lint infra/cli-artifacts/template.yaml
+
+  deploy:
+    needs: lint
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/develop' && vars.CLI_ARTIFACTS_AWS_ACCOUNT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure aws credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.CLI_ARTIFACTS_AWS_ACCOUNT_ID }}:role/github-deploy
+          aws-region: us-east-1
+
+      - name: Deploy stack
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name cli-artifacts \
+            --template-file infra/cli-artifacts/template.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Show stack outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name cli-artifacts \
+            --query "Stacks[0].Outputs" \
+            --output table

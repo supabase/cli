@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Public-read S3 mirror for slim native artifacts consumed by the Supabase CLI, plus the
+  bucket-scoped publisher role assumed by the mirror-slim-image workflow.
+
+Parameters:
+  BucketName:
+    Type: String
+    Default: supabase-cli-artifacts
+    Description: Globally unique bucket name; also the host label in the public URL.
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  TrustedSubject:
+    Type: String
+    Default: repo:supabase/cli:ref:refs/heads/develop
+    Description: GitHub Actions OIDC subject allowed to assume the publisher role.
+
+Resources:
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    # Objects are meant to be public through the bucket policy; only ACL-based public
+    # access stays blocked. Listing is never granted, so keys must be known in advance.
+    Properties:
+      BucketName: !Ref BucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-noncurrent-and-abort-multipart
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+
+  ArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublicReadObjects
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${ArtifactBucket.Arn}/*"
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt ArtifactBucket.Arn
+              - !Sub "${ArtifactBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  PublisherRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: slim-artifacts-publisher
+      Description: Uploads slim native artifacts from the supabase/cli mirror workflow.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Ref TrustedSubject
+      Policies:
+        - PolicyName: put-artifact-objects
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${ArtifactBucket.Arn}/*"
+
+Outputs:
+  BucketName:
+    Value: !Ref ArtifactBucket
+  BucketUrl:
+    Value: !Sub "https://${ArtifactBucket}.s3.${AWS::Region}.amazonaws.com"
+  PublisherRoleArn:
+    Value: !GetAtt PublisherRole.Arn
