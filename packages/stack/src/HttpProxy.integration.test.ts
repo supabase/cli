@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Fiber, Layer } from "effect";
+import { Data, Deferred, Effect, Fiber, Layer, Logger } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { Socket } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
@@ -34,6 +34,14 @@ class HttpProxyTestError extends Data.TaggedError("HttpProxyTestError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
+
+const captureErrors = (lines: Array<string>) =>
+  Logger.layer([
+    Logger.make(({ logLevel, message }) => {
+      if (logLevel === "Error")
+        lines.push((Array.isArray(message) ? message : [message]).map(String).join(" "));
+    }),
+  ]);
 
 const request = (port: number, path: string, body: Uint8Array) =>
   Effect.gen(function* () {
@@ -128,8 +136,9 @@ it.live("keeps the retained listener and remaining route after one route is remo
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live("interrupts target acquisition when a waiting client disconnects", () =>
-  Effect.scoped(
+it.live("interrupts target acquisition quietly when a waiting client disconnects", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
     Effect.gen(function* () {
       const backend = createServer((_request, response) => response.end("unused"));
       const backendAddress = yield* listen(backend);
@@ -173,9 +182,10 @@ it.live("interrupts target acquisition when a waiting client disconnects", () =>
       yield* Deferred.await(acquired).pipe(Effect.timeout("5 seconds"));
       yield* Effect.sync(() => client.destroy());
       yield* Deferred.await(released);
+      expect(logs).toEqual([]);
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureErrors(logs))));
+});
 
 it.live("forwards raw WebSocket upgrades, subprotocols, and echo frames", () =>
   Effect.scoped(
@@ -259,13 +269,14 @@ it.live("overrides the upstream host for HTTP routes when configured", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live("returns a gateway error when a managed target cannot become ready", () =>
-  Effect.scoped(
+it.live("returns a gateway error naming the route and cause when a target cannot wake", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
     Effect.gen(function* () {
       const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
       yield* proxy.setRoutes([
         {
-          id: "failed",
+          id: "rest",
           prefix: "/",
           target: Effect.fail(new ProxyError({ message: "readiness failed" })),
         },
@@ -275,9 +286,53 @@ it.live("returns a gateway error when a managed target cannot become ready", () 
       expect(response.status).toBe(502);
       expect(response.headers["access-control-allow-origin"]).toBe("*");
       expect(yield* response.text).toBe("Bad Gateway");
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toContain("Route rest request failed");
+      expect(logs[0]).toContain("readiness failed");
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeHttpClient.layerNodeHttp, NodeServices.layer))),
-);
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(logs)),
+    ),
+  );
+});
+
+it.live("closes an upgrade naming the route and cause when a target cannot wake", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([
+        {
+          id: "realtime",
+          prefix: "/socket",
+          target: Effect.fail(new ProxyError({ message: "wake failed" })),
+        },
+      ]);
+      const socket = yield* Effect.acquireRelease(
+        Effect.sync(() => new Socket()),
+        (value) => Effect.sync(() => value.destroy()),
+      );
+      const received: Array<Buffer> = [];
+      yield* Effect.callback<void, HttpProxyTestError>((resume) => {
+        socket.on("data", (chunk: Buffer) => received.push(chunk));
+        // A destroyed upgrade reaches the client as a reset, which closes the socket either way.
+        socket.on("error", () => undefined);
+        socket.once("close", () => resume(Effect.void));
+        socket.connect(proxy.port, "127.0.0.1", () =>
+          socket.write(
+            "GET /socket HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+          ),
+        );
+        return Effect.void;
+      }).pipe(Effect.timeout("5 seconds"));
+      expect(Buffer.concat(received)).toHaveLength(0);
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toContain("Route realtime upgrade failed");
+      expect(logs[0]).toContain("wake failed");
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureErrors(logs))));
+});
 
 it.live("disconnects a pending upstream response when its client closes", () =>
   Effect.scoped(

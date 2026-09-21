@@ -288,6 +288,26 @@ describe("service kernel", () => {
     ),
   );
 
+  it.live("records a failed wake preparation on the observation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const plans = yield* Queue.unbounded<RuntimePlan>();
+        const invalid = yield* Ref.make(true);
+        const service = yield* makeService(makeDefinition(plans, undefined, undefined, invalid), {
+          id: "database-wake-prepare",
+          config: { version: 17 },
+        });
+        yield* service.arm;
+        const failure = yield* service.startAt(0, undefined, true).pipe(Effect.flip);
+        expect(failure).toBeInstanceOf(ServiceError);
+        const observation = yield* service.get;
+        expect(observation.lifecycle).toBe("stopped");
+        expect(observation.wakeEnabled).toBe(true);
+        expect(observation.error?.message).toBe("invalid configuration");
+      }),
+    ),
+  );
+
   it.live("does not prepare concurrent starts more than once", () =>
     Effect.scoped(
       Effect.gen(function* () {

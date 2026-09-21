@@ -428,7 +428,9 @@ export const makeService = <Config>(
         if (existing.lifecycle === "running") return;
       }
       const nextConfig = candidate ?? (yield* Ref.get(config));
-      if (definition.prepare !== undefined) yield* definition.prepare(nextConfig);
+      // A wake has no caller to receive a preparation failure, so observers record it instead.
+      if (definition.prepare !== undefined)
+        yield* definition.prepare(nextConfig).pipe(Effect.tapError((error) => update({ error })));
       yield* run(
         Effect.gen(function* () {
           const observation = yield* SubscriptionRef.get(observations);
