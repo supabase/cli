@@ -371,6 +371,51 @@ it.live("disconnects a pending upstream response quietly when its client closes"
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureErrors(logs))));
 });
 
+it.live("stays quiet when a client closes after receiving part of the response", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((incoming, outgoing) => {
+        incoming.resume();
+        outgoing.writeHead(200, { "content-type": "application/octet-stream" });
+        outgoing.write("first-chunk");
+      });
+      const address = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      const released = yield* Deferred.make<void>();
+      yield* proxy.setRoutes([
+        {
+          id: "streaming",
+          prefix: "/",
+          target: Effect.acquireRelease(Effect.succeed(address), () =>
+            Deferred.succeed(released, undefined),
+          ),
+        },
+      ]);
+      const client = yield* Effect.acquireRelease(
+        Effect.sync(() => new Socket()),
+        (socket) => Effect.sync(() => socket.destroy()),
+      );
+      yield* Effect.callback<void, HttpProxyTestError>((resume) => {
+        // Closing mid-response reaches the client as a reset, which is the disconnect under test.
+        client.on("error", () => undefined);
+        const onData = (chunk: Buffer) => {
+          if (!chunk.includes("first-chunk")) return;
+          client.destroy();
+          resume(Effect.void);
+        };
+        client.on("data", onData);
+        client.connect(proxy.port, "127.0.0.1", () =>
+          client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+        );
+        return Effect.sync(() => client.off("data", onData));
+      }).pipe(Effect.timeout("5 seconds"));
+      yield* Deferred.await(released).pipe(Effect.timeout("5 seconds"));
+      expect(logs).toEqual([]);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureErrors(logs))));
+});
+
 it.live("releases a waiting WebSocket target quietly when its client resets", () => {
   const logs: Array<string> = [];
   return Effect.scoped(

@@ -152,11 +152,13 @@ const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
           cleanup();
           resume(result);
         };
+        // Settling first keeps the outcome: destroying a partial upstream response emits
+        // `aborted` synchronously, which would otherwise resettle as a proxy failure.
         const abandon = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
           if (settled) return;
+          finish(result);
           outgoing?.destroy();
           incoming?.destroy();
-          finish(result);
         };
         const onError = (cause: Error) => abandon(Effect.fail(errorFor(cause)));
         const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
@@ -230,9 +232,9 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
           resume(result);
         };
         const abandon = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
+          finish(result);
           client.destroy();
           upstream.destroy();
-          finish(result);
         };
         const onError = (cause: Error) => abandon(Effect.fail(errorFor(cause)));
         const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
