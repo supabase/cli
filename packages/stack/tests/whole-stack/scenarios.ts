@@ -27,6 +27,7 @@ import { exerciseAnalytics, queryAnalyticsMarker } from "./analytics.ts";
 import { subscribeRealtime } from "./websocket.ts";
 import { watchRecoveryMail } from "./realtime-mail.ts";
 import { assertWorkloadsGone, captureWorkloads } from "./workloads.ts";
+import { assertOwnerExited, captureOwnerPid } from "../owner.ts";
 
 const withFixture = <A, E, R>(
   runtime: Runtime,
@@ -318,7 +319,9 @@ export const defaultLifecycle = (runtime: Runtime) =>
         ).toBe(true);
       const before = yield* exerciseStack(fixture, "default");
       const workloads = yield* captureWorkloads(runtime, fixture);
+      const ownerPid = yield* captureOwnerPid(fixture.locations, fixture.stack.id);
       yield* stopWithDiagnostics(fixture);
+      yield* assertOwnerExited(ownerPid);
       yield* assertWorkloadsGone(runtime, fixture, workloads);
       const reopenedStack = yield* open({ ...fixture.locations, id: fixture.stack.id });
       yield* setStackOwner(fixture, reopenedStack);
@@ -350,7 +353,9 @@ export const defaultLifecycle = (runtime: Runtime) =>
       const after = yield* exerciseStack(reopened, "reopened");
       expect(after.credentials).toEqual(before.credentials);
       yield* assertOwnedPathsPresent(reopened);
+      const reopenedOwnerPid = yield* captureOwnerPid(reopened.locations, reopened.stack.id);
       yield* reopened.stack.destroy;
+      yield* assertOwnerExited(reopenedOwnerPid);
       yield* clearStackOwner(reopened);
       yield* assertOwnedPathsGone(reopened);
     }),
@@ -483,7 +488,9 @@ export const parallel = (runtime: Runtime) =>
           expect(reopenedLedger.credentials).toEqual(leftLedger.credentials);
           const reopenedWorkloads = yield* captureWorkloads(runtime, reopenedLeftFixture);
           yield* assertOwnedPathsPresent(reopenedLeftFixture);
+          const ownerPid = yield* captureOwnerPid(reopenedLeftFixture.locations, reopenedLeft.id);
           yield* reopenedLeft.destroy;
+          yield* assertOwnerExited(ownerPid);
           yield* clearStackOwner(left);
           yield* assertWorkloadsGone(runtime, reopenedLeftFixture, reopenedWorkloads, true);
           yield* assertOwnedPathsGone(reopenedLeftFixture);

@@ -1,5 +1,5 @@
 import { NodeHttpServer } from "@effect/platform-node";
-import { Data, Effect, Duration, Option, Schema, Scope, Stream } from "effect";
+import { Data, Effect, Duration, Option, Schedule, Schema, Scope, Stream } from "effect";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -18,7 +18,13 @@ export class HostProcessError extends Data.TaggedError("HostProcessError")<{
   readonly cause?: unknown;
   readonly reason?: HostFailureReason;
 }> {}
-type HostFailureReason = "missing-control-listener" | "connection-failure" | "bind-conflict";
+type HostFailureReason =
+  | "missing-control-listener"
+  | "connection-failure"
+  | "bind-conflict"
+  | "invalid-owner-pid"
+  | "owner-exit-pending"
+  | "owner-exit-probe";
 const HostIdentity = Schema.Struct({
   projectRoot: Schema.String,
   branchContext: Schema.String,
@@ -230,6 +236,70 @@ const isBindConflict = (failure: HostProcessError) => {
   const code = causeCode(failure.cause);
   return failure.reason === "bind-conflict" || code === "EADDRINUSE";
 };
+
+export type OwnerExitProbeResult =
+  | { readonly state: "absent" }
+  | { readonly state: "present" }
+  | { readonly state: "inconclusive"; readonly code: "EPERM" };
+export type OwnerExitProbe = (pid: number) => Effect.Effect<OwnerExitProbeResult, HostProcessError>;
+
+/** Probes the captured owner PID with signal 0. */
+const probeOwnerExit: OwnerExitProbe = Effect.fn("HostProcess.probeOwnerExit")(function* (pid) {
+  return yield* Effect.try({
+    try: () => {
+      process.kill(pid, 0);
+      return { state: "present" } as const;
+    },
+    catch: (cause) =>
+      new HostProcessError({
+        operation: "shutdown-exit",
+        message: `Shutdown acknowledged, but probing owner process ${pid} failed: ${String(cause)}`,
+        reason: "owner-exit-probe",
+        cause,
+      }),
+  }).pipe(
+    Effect.catch((failure): Effect.Effect<OwnerExitProbeResult, HostProcessError> => {
+      const code = causeCode(failure.cause);
+      if (code === "ESRCH") return Effect.succeed({ state: "absent" } as const);
+      if (code === "EPERM") return Effect.succeed({ state: "inconclusive", code } as const);
+      return Effect.fail(failure);
+    }),
+  );
+});
+
+/** Waits until the captured owner PID is absent from the process table. */
+export const waitForOwnerExit = Effect.fn("HostProcess.waitForOwnerExit")(function* (
+  pid: number,
+  probe: OwnerExitProbe = probeOwnerExit,
+) {
+  if (!Number.isSafeInteger(pid) || pid <= 0)
+    return yield* error(
+      "shutdown-exit",
+      `Owner endpoint returned an invalid PID: ${pid}`,
+      "invalid-owner-pid",
+    );
+  const check = probe(pid).pipe(
+    Effect.flatMap((result) =>
+      result.state === "absent"
+        ? Effect.void
+        : Effect.fail(
+            error(
+              "shutdown-exit",
+              result.state === "present"
+                ? `Owner shutdown acknowledgement completed, but process ${pid} is still running`
+                : `Owner shutdown acknowledgement completed, but process ${pid} is inaccessible (${result.code}); exit is inconclusive`,
+              "owner-exit-pending",
+            ),
+          ),
+    ),
+  );
+  return yield* check.pipe(
+    Effect.retry({
+      schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "5 seconds" })),
+      while: (failure) => failure.reason === "owner-exit-pending",
+    }),
+  );
+});
 
 export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
   state: State.Interface,

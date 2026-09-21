@@ -119,9 +119,25 @@ Bindings supply ordinary configuration values; a URL alone never creates a depen
 
 - Instance methods affect that instance, subject to dependency checks.
 - Composition methods affect selected members; startup also includes declared prerequisites.
-- `stack.stop()` stops every owned instance and attached tool, then exits the owner. It requires a live owner; an unavailable owner cannot confirm cleanup.
-- `stack.destroy()` additionally removes owned data and registrations.
+- `stack.stop()` stops every owned instance and attached tool and returns after confirming owner exit. It requires a live owner; an unavailable owner cannot confirm cleanup.
+- `stack.destroy()` additionally removes owned data and registrations, and also waits for owner exit.
 - `stack.close()` disposes the client and invalidates its active observation iterators. Stopping the last instance leaves the owner available.
+
+Exit confirmation is bounded. If cleanup is acknowledged but owner exit cannot be confirmed, the operation fails with `operation: "shutdown-exit"` and the owner PID in the message. A failed or cancelled call does not guarantee that teardown has completed. Do not start or restart the same stack concurrently with whole-stack shutdown; separate stacks remain independent.
+
+Disposable test stacks need explicit teardown; closing a client does not own their lifetime:
+
+```ts
+try {
+  // Exercise the stack.
+} finally {
+  try {
+    await stack.destroy();
+  } finally {
+    await stack.close();
+  }
+}
+```
 
 Each service exposes `status`, `followStatus`, `logs`, and `credentials`. Observations include the currently bound public endpoints, including listeners for sleeping services. Credentials default to host addressing. Use `from: "runtime"` for a URL passed to a service or tool container.
 
@@ -148,5 +164,15 @@ await Effect.runPromise(
 ```
 
 Cancelling an admitted lifecycle caller ends its wait; the owner finishes the operation. Cancelling an attached tool ends that job and cleans up its resources. Tool input and output stream with backpressure; the result contains a job ID and exit code, not collected output. Promise tool sinks should return a Promise when the destination requires waiting for capacity.
+
+For disposable Effect test fixtures, `acquireUseRelease` runs teardown on failure and interruption while retaining typed cleanup errors:
+
+```ts
+const test = Effect.acquireUseRelease(
+  Stack.create(options),
+  (stack) => exerciseStack(stack),
+  (stack) => stack.destroy,
+);
+```
 
 The owner supports normal stop/start persistence. Unexpected owner death does not trigger resource adoption, orphan removal, or interrupted-operation recovery. CLI integration is maintained separately from this package.

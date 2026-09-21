@@ -3,7 +3,7 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
-import { connectHost, launchHost } from "./HostProcess.ts";
+import { connectHost, launchHost, waitForOwnerExit } from "./HostProcess.ts";
 import type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import * as State from "./State.ts";
@@ -152,17 +152,20 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   const http = yield* HttpClient.HttpClient;
   const crypto = yield* Crypto.Crypto;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const client = (live: boolean) =>
-    Effect.gen(function* () {
-      const endpoint = yield* live
-        ? launchHost(state, { ...locations, stackId: saved.id })
-        : connectHost(state, saved.id);
-      return yield* clientFor(endpoint.port);
-    }).pipe(
+  const endpointFor = (live: boolean) =>
+    (live
+      ? launchHost(state, { ...locations, stackId: saved.id })
+      : connectHost(state, saved.id)
+    ).pipe(
       Effect.provideService(HttpClient.HttpClient, http),
       Effect.provideService(Crypto.Crypto, crypto),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
+  const client = (live: boolean) =>
+    Effect.gen(function* () {
+      const endpoint = yield* endpointFor(live);
+      return yield* clientFor(endpoint.port);
+    }).pipe(Effect.provideService(HttpClient.HttpClient, http));
   const call = <A, E, R>(
     operation: string,
     run: (rpc: Client) => Effect.Effect<A, E, R>,
@@ -175,6 +178,22 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     Stream.unwrap(Effect.map(client(false), run)).pipe(
       Stream.mapError((cause) => failure(operation, cause)),
     );
+  const shutdown = Effect.fn("Stack.shutdown")(function* (destroy: boolean) {
+    const operation = destroy ? "destroy" : "shutdown";
+    const endpoint = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const endpoint = yield* endpointFor(destroy);
+        yield* clientFor(endpoint.port).pipe(
+          Effect.provideService(HttpClient.HttpClient, http),
+          Effect.flatMap((rpc) => rpc.shutdown({ destroy })),
+        );
+        return endpoint;
+      }),
+    ).pipe(Effect.mapError((cause) => failure(operation, cause)));
+    yield* waitForOwnerExit(endpoint.pid).pipe(
+      Effect.mapError((cause) => failure("shutdown-exit", cause)),
+    );
+  });
 
   const common = <K extends Kind>(id: string, service: K): ServiceInstance<K> => ({
     id,
@@ -372,8 +391,8 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       stop: call("stopComposition", (rpc) => rpc.stopComposition()),
       restart: call("restartComposition", (rpc) => rpc.restartComposition()),
     },
-    stop: call("shutdown", (rpc) => rpc.shutdown({ destroy: false }), false),
-    destroy: call("destroy", (rpc) => rpc.shutdown({ destroy: true })),
+    stop: shutdown(false),
+    destroy: shutdown(true),
     tools: { run },
   } satisfies Stack;
 });

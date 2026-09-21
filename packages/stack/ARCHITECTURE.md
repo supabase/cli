@@ -471,6 +471,10 @@ During Draining:
 5. For destruction, remove proven-owned data and metadata after shutdown.
 6. Send the outcome, close the control endpoint and release ownership.
 
+Public whole-stack `stop` and `destroy` complete only after acknowledged cleanup and confirmed owner-process exit. The client captures the live owner PID from the validated identity endpoint or readiness handshake, completes and closes the shutdown RPC, then performs bounded process-existence checks. An absent PID confirms exit; a permission-denied probe remains inconclusive until the deadline. Failure to confirm exit is a `shutdown-exit` error carrying the PID in its message, even when workload cleanup has already succeeded. This does not require persisted PID records or forceful termination. Caller cancellation ends its wait without cancelling admitted owner cleanup.
+
+Callers must not start or restart the same stack concurrently with whole-stack shutdown. In particular, replacing an owner between identity lookup and the shutdown request is outside this guarantee. Parallel stacks with separate identities remain independent. Client disposal and Effect scope closure do not implicitly stop a detached stack; disposable fixtures register explicit destruction.
+
 On cleanup failure, retain the host so callers can inspect the current observations and error. Returning to Serving does not undo completed cleanup. Unexpected host death is outside the supported normal stop/start lifecycle: there is no automatic recovery, orphan reconciliation or resumption of interrupted operations. Leftover resources may require manual cleanup. A lost control response is reported as uncertain; do not blindly retry a mutation.
 
 ### Request lifetime is separate from execution lifetime

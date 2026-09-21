@@ -6,6 +6,41 @@ import { HttpClient } from "effect/unstable/http";
 import { tmpdir } from "node:os";
 import { open, postgres } from "./effect.ts";
 import * as PromiseStack from "./index.ts";
+import { assertOwnerExited, captureOwnerPid } from "../tests/owner.ts";
+
+for (const runtime of ["node", "bun"] as const) {
+  it.live(
+    `${runtime}: Promise stop and destroy confirm the launching client's owner has exited`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-owner-${runtime}-` });
+        const child = yield* ChildProcess.make(
+          runtime === "bun" ? process.execPath : "node",
+          [
+            new URL("../tests/owner-exit-client.ts", import.meta.url).pathname,
+            root,
+            `${tmpdir()}/supabase-stack-artifacts`,
+          ],
+          { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+        );
+        const [stdout, stderr, code] = yield* Effect.all(
+          [
+            child.stdout.pipe(Stream.decodeText, Stream.mkString),
+            child.stderr.pipe(Stream.decodeText, Stream.mkString),
+            child.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(Number(code), stderr).toBe(0);
+        expect(stdout).toContain("owner-exit-confirmed");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      ),
+    { timeout: 120_000 },
+  );
+}
 
 it.live(
   "keeps a service alive after its Promise client exits and reconnects through Effect",
@@ -54,9 +89,11 @@ it.live(
       };
       const stack = yield* open(locations);
       yield* Effect.addFinalizer(() =>
-        stack.destroy.pipe(
-          Effect.catch((cause) => Effect.logError("E2E stack cleanup failed", cause)),
-        ),
+        Effect.gen(function* () {
+          const pid = yield* captureOwnerPid(locations, stack.id);
+          yield* stack.destroy;
+          yield* assertOwnerExited(pid);
+        }).pipe(Effect.catchCause(Effect.die)),
       );
       const mail = yield* stack.services.get(identity.instanceId);
       expect((yield* mail.status).lifecycle).toBe("running");
@@ -335,7 +372,11 @@ it.live(
       );
       const owner = yield* open({ ...locations, id: stack.id });
       yield* Effect.addFinalizer(() =>
-        owner.destroy.pipe(Effect.catch((cause) => Effect.logError("Stack destroy failed", cause))),
+        Effect.gen(function* () {
+          const pid = yield* captureOwnerPid(locations, owner.id);
+          yield* owner.destroy;
+          yield* assertOwnerExited(pid);
+        }).pipe(Effect.catchCause(Effect.die)),
       );
       yield* Effect.addFinalizer(() =>
         Effect.tryPromise(() => stack.close()).pipe(

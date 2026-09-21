@@ -1,12 +1,20 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
-import { Context, Data, Deferred, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { NodeHttpClient, NodeServices, NodeStream } from "@effect/platform-node";
+import { Context, Data, Deferred, Effect, FileSystem, Layer, Path, Schema, Stream } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- test fixture writes the inherited readiness fd.
-import { closeSync, writeSync } from "node:fs";
+import { Rpc, RpcGroup, RpcSerialization, RpcServer } from "effect/unstable/rpc";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- test fixture owns inherited readiness and release descriptors.
+import { closeSync, createReadStream, writeSync } from "node:fs";
 import { acquireHost, HostEndpoint, launchHost } from "../src/HostProcess.ts";
 import * as State from "../src/State.ts";
 
 class FixtureError extends Data.TaggedError("FixtureError")<{ readonly message: string }> {}
+
+const FixtureRpc = RpcGroup.make(
+  Rpc.make("shutdown", {
+    payload: { destroy: Schema.Boolean },
+    error: Schema.Never,
+  }),
+);
 
 const causeCode = (cause: unknown): string | undefined => {
   if (typeof cause !== "object" || cause === null) return undefined;
@@ -19,6 +27,11 @@ const makeState = (root: string) =>
   Layer.build(State.layer({ root })).pipe(
     Effect.map((context) => Context.get(context, State.Service)),
   );
+
+const awaitBarrier = NodeStream.fromReadable({
+  evaluate: () => createReadStream("", { fd: 4 }),
+  onError: (cause) => new FixtureError({ message: String(cause) }),
+}).pipe(Stream.take(1), Stream.runDrain);
 
 const [stateRoot, cacheRoot, stackId, mode = "owner", ownerEntrypoint] = process.argv.slice(2);
 if (stateRoot === undefined || stackId === undefined)
@@ -45,6 +58,16 @@ const owner = Effect.scoped(
       pid: process.pid,
       port: host.port,
     };
+    const rpc = yield* RpcServer.toHttpEffect(FixtureRpc, { streamBufferSize: 4 }).pipe(
+      Effect.provide(
+        Layer.merge(
+          FixtureRpc.toLayer({
+            shutdown: () => Deferred.succeed(shutdown, undefined).pipe(Effect.asVoid),
+          }),
+          RpcSerialization.layerNdjson,
+        ),
+      ),
+    );
     const serving = host.server.serve(
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
@@ -58,6 +81,8 @@ const owner = Effect.scoped(
             HttpServerResponse.setHeader("connection", "close"),
           );
         }
+        if (mode === "rpc-held" && request.method === "POST" && request.url.startsWith("/rpc"))
+          return yield* rpc;
         return HttpServerResponse.empty({ status: 404 });
       }),
     );
@@ -72,6 +97,7 @@ const owner = Effect.scoped(
       closeSync(3);
     }
     yield* Deferred.await(shutdown);
+    if (mode === "rpc-held") yield* awaitBarrier;
   }),
 );
 
