@@ -20,9 +20,10 @@ on:
 
 permissions: {}
 
+# Lint runs are per pull request or ref; deploys serialize on their own group below.
 concurrency:
-  group: cli-artifacts-infra
-  cancel-in-progress: false
+  group: cli-artifacts-infra-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
@@ -49,9 +50,18 @@ jobs:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/develop' && vars.CLI_ARTIFACTS_AWS_ACCOUNT_ID != ''
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: cli-artifacts-infra-deploy
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
+    env:
+      # Passed explicitly on every deploy: `cloudformation deploy` keeps an existing stack's
+      # previous parameter values unless they are overridden, so template defaults alone
+      # would never update a live stack.
+      BUCKET_NAME: supabase-cli-artifacts
+      TRUSTED_SUBJECT: repo:supabase/cli:ref:refs/heads/develop
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,11 +93,15 @@ jobs:
             --stack-name cli-artifacts \
             --template-file infra/cli-artifacts/template.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
-            --no-fail-on-empty-changeset
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              "BucketName=${BUCKET_NAME}" \
+              "TrustedSubject=${TRUSTED_SUBJECT}"
 
       - name: Show stack events on failure
         if: failure()
         run: |
+          set -euo pipefail
           aws cloudformation describe-stack-events \
             --stack-name cli-artifacts \
             --query "StackEvents[?contains(ResourceStatus, 'FAILED')].[LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
@@ -95,6 +109,7 @@ jobs:
 
       - name: Show stack outputs
         run: |
+          set -euo pipefail
           aws cloudformation describe-stacks \
             --stack-name cli-artifacts \
             --query "Stacks[0].Outputs" \

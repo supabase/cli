@@ -7,16 +7,21 @@ Parameters:
   BucketName:
     Type: String
     Default: supabase-cli-artifacts
-    Description: Globally unique bucket name; also the host label in the public URL.
-    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    Description: >-
+      Globally unique bucket name; also the host label in the public URL, so dots are not
+      allowed (they break TLS on the virtual-hosted endpoint).
+    AllowedPattern: "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
   TrustedSubject:
     Type: String
     Default: repo:supabase/cli:ref:refs/heads/develop
-    Description: GitHub Actions OIDC subject allowed to assume the publisher role.
+    Description: Exact GitHub Actions OIDC subject allowed to assume the publisher role.
+    AllowedPattern: "^repo:[A-Za-z0-9._@-]+/[A-Za-z0-9._@-]+:ref:refs/heads/[A-Za-z0-9._/-]+$"
 
 Resources:
   ArtifactBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     # Objects are meant to be public through the bucket policy; only ACL-based public
     # access stays blocked. Listing is never granted, so keys must be known in advance.
     Properties:
@@ -83,15 +88,18 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-              StringLike:
                 token.actions.githubusercontent.com:sub: !Ref TrustedSubject
       Policies:
         - PolicyName: put-artifact-objects
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
+              # AbortMultipartUpload lets a failed `aws s3 cp` clean up its own parts; it
+              # grants no read, list, or delete on completed objects.
               - Effect: Allow
-                Action: s3:PutObject
+                Action:
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
                 Resource: !Sub "${ArtifactBucket.Arn}/*"
 
 Outputs:
