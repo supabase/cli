@@ -276,10 +276,16 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       }
     }
 
-    // 2. Resolve service keys (auth check).
-    const keys = yield* api.v1
-      .getProjectApiKeys({ ref, reveal: true })
-      .pipe(Effect.catch(mapApiKeysError));
+    // 2. Resolve service keys (auth check). A token may list keys yet be refused `reveal=true`
+    // (403); the redacted listing still satisfies the anon-key check below.
+    const keys = yield* api.v1.getProjectApiKeys({ ref, reveal: true }).pipe(
+      Effect.catch(mapApiKeysError),
+      Effect.catchTag("LinkAuthTokenError", (error) =>
+        error.status === 403
+          ? api.v1.getProjectApiKeys({ ref }).pipe(Effect.catch(mapApiKeysError))
+          : Effect.fail(error),
+      ),
+    );
     const { anon, serviceRole } = extractServiceKeys(keys);
     if (anon.length === 0 && serviceRole.length === 0) {
       return yield* new LinkMissingKeyError({ message: "Anon key not found." });

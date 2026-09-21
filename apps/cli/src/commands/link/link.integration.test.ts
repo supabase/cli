@@ -54,6 +54,17 @@ const SERVICE_KEYS = [
   { name: "anon", api_key: "anon-key", type: "publishable" },
 ];
 
+// The listing served without `reveal=true`: secret keys redacted, publishable keys in full.
+const REDACTED_SERVICE_KEYS = [
+  {
+    name: "service_role",
+    api_key: null,
+    type: "secret",
+    secret_jwt_template: { role: "service_role" },
+  },
+  { name: "anon", api_key: "anon-key", type: "publishable" },
+];
+
 const POOLER_PRIMARY = [
   {
     identifier: "primary",
@@ -156,6 +167,8 @@ interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   project?: V1StubResult;
   apiKeys?: V1StubResult;
+  // Served to the fallback `getProjectApiKeys({ ref })` request; defaults to `apiKeys`.
+  unrevealedApiKeys?: V1StubResult;
   storageConfig?: V1StubResult;
   poolerConfig?: V1StubResult;
   branches?: V1StubResult;
@@ -224,10 +237,16 @@ function setup(opts: SetupOpts = {}) {
   const analytics = opts.analytics ?? mockAnalytics();
   const telemetry = mockTelemetryStateTracked();
   const linkedCache = mockLinkedProjectCacheTracked();
+  const revealedApiKeys = stub(opts.apiKeys, SERVICE_KEYS);
+  const unrevealedApiKeys =
+    opts.unrevealedApiKeys === undefined
+      ? revealedApiKeys
+      : stub(opts.unrevealedApiKeys, SERVICE_KEYS);
   const apiMock = mockCommandPlatformApiService({
     v1: {
       getProject: stub(opts.project, HEALTHY_PROJECT),
-      getProjectApiKeys: stub(opts.apiKeys, SERVICE_KEYS),
+      getProjectApiKeys: (input) =>
+        input.reveal === true ? revealedApiKeys() : unrevealedApiKeys(),
       getStorageConfig: stub(opts.storageConfig, { migrationVersion: "2026-01-01-000000" }),
       getPoolerConfig: stub(opts.poolerConfig, POOLER_PRIMARY),
       listAllBranches: stub(opts.branches, []),
@@ -491,8 +510,44 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails with auth error when api-keys returns non-200", () => {
-      const { layer } = setup({ apiKeys: { fail: statusCodeFailure(401) } });
+    it.live("fails with auth error on a 401 without falling back to redacted keys", () => {
+      const { layer } = setup({
+        apiKeys: { fail: statusCodeFailure(401) },
+        unrevealedApiKeys: { ok: REDACTED_SERVICE_KEYS },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(link(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("LinkAuthTokenError");
+          expect(causeText).toContain(
+            "Authorization failed for the access token and project ref pair",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("links with redacted keys when the token may list but not reveal them", () => {
+      const { layer, out, apiMock, workdir } = setup({
+        apiKeys: { fail: statusCodeFailure(403) },
+        unrevealedApiKeys: { ok: REDACTED_SERVICE_KEYS },
+      });
+      return Effect.gen(function* () {
+        yield* link(flags());
+        expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
+        expect(out.stdoutText).toContain("Finished supabase link.");
+        expect(
+          apiMock.requests.filter((r) => r.method === "getProjectApiKeys").map((r) => r.input),
+        ).toEqual([{ ref: VALID_REF, reveal: true }, { ref: VALID_REF }]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("fails with auth error when redacted keys are refused too", () => {
+      const { layer } = setup({
+        apiKeys: { fail: statusCodeFailure(403) },
+        unrevealedApiKeys: { fail: statusCodeFailure(403) },
+      });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(link(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
