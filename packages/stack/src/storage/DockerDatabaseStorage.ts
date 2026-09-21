@@ -1,6 +1,7 @@
 import {
   Crypto,
   Effect,
+  Exit,
   FileSystem,
   Option,
   Path,
@@ -27,6 +28,29 @@ const Marker = Schema.Struct({
   initialized: Schema.Boolean,
 });
 type Marker = Schema.Schema.Type<typeof Marker>;
+const SnapshotIdentity = Schema.Struct({
+  format: Schema.String,
+  version: Schema.String,
+  runtime: Schema.String,
+  platform: Schema.String,
+  arch: Schema.String,
+  profile: Schema.String,
+  key: Schema.String,
+});
+const SnapshotDescriptor = Schema.Struct({
+  format: Schema.String,
+  version: Schema.String,
+  runtime: Schema.String,
+  platform: Schema.String,
+  arch: Schema.String,
+  profile: Schema.String,
+  keyDigest: Schema.String,
+});
+const ReadyMarker = Schema.Struct({
+  version: Schema.String,
+  runtime: Schema.Literals(["native", "docker", "podman"]),
+  profile: Schema.Literal("supabase"),
+});
 
 export class DockerDatabaseStorageError extends Schema.TaggedError<DockerDatabaseStorageError>()(
   "DockerDatabaseStorageError",
@@ -43,6 +67,7 @@ export interface DatabaseStorageMount {
 
 export interface DockerDatabaseStorage {
   readonly prepare: (version: string) => Effect.Effect<void, DockerDatabaseStorageError>;
+  readonly needsDataChown: Effect.Effect<boolean, DockerDatabaseStorageError>;
   readonly mount: (
     version: string,
   ) => Effect.Effect<DatabaseStorageMount, DockerDatabaseStorageError>;
@@ -101,135 +126,174 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           ),
           Effect.mapError((cause) => errorFor("identity", cause)),
         );
-      const selected = yield* Effect.cached(
+      const encodeMarker = Schema.encodeEffect(Schema.fromJsonString(Marker));
+      const encodeIdentity = Schema.encodeEffect(Schema.fromJsonString(SnapshotIdentity));
+      const encodeDescriptor = Schema.encodeEffect(Schema.fromJsonString(SnapshotDescriptor));
+      const validateMarker = (marker: Marker) =>
         Effect.gen(function* () {
-          if (options.runtime === "native" || options.container === undefined)
-            return {
-              backend: "host" as const,
-              namespace: dataNamespace,
-              cacheNamespace: "native",
-              initialized: false,
-            };
-          if (options.runtime !== "docker") {
-            const present = yield* options.fs
-              .exists(markerPath)
-              .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
-            if (present)
-              return yield* options.fs.readFileString(markerPath).pipe(
-                Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Marker))),
-                Effect.mapError((cause) => errorFor("marker", cause)),
-              );
-            const cacheRoot = yield* options.fs
-              .realPath(options.cacheRoot)
-              .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
-            const value: Marker = {
-              backend: "host",
-              namespace: dataNamespace,
-              cacheNamespace: `cache-${(yield* hash(cacheRoot)).slice(0, 32)}`,
-              initialized: false,
-            };
-            yield* options.fs
-              .writeFileString(markerPath, JSON.stringify(value), { mode: 0o600 })
-              .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
-            return value;
-          }
-          const daemonId = yield* engineCommand(["info", "--format", "{{.ID}}"]);
-          const version = yield* engineCommand([
-            "version",
-            "--format",
-            "{{.Client.Version}}|{{.Server.Version}}",
-          ]);
-          const [clientVersion, serverVersion] = version.split("|");
-          const clientMajor = parseMajor(clientVersion ?? "");
-          const serverMajor = parseMajor(serverVersion ?? "");
-          if (clientMajor === undefined || serverMajor === undefined)
-            return yield* errorFor("engine", "Docker returned an invalid version");
-          const canonicalStateRoot = yield* options.fs
-            .realPath(stateRoot)
-            .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
-          yield* options.fs
-            .makeDirectory(options.cacheRoot, { recursive: true })
-            .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
-          const canonicalCacheRoot = yield* options.fs
-            .realPath(options.cacheRoot)
-            .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
-          const stateDigest = yield* hash(`${canonicalStateRoot}\0${daemonId.trim()}`);
-          const cacheDigest = yield* hash(canonicalCacheRoot);
-          const volume = `supabase-db-${stateDigest.slice(0, 32)}`;
-          const markerPresent = yield* options.fs
-            .exists(markerPath)
-            .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
-          const marker = markerPresent
-            ? Option.some(
-                yield* options.fs.readFileString(markerPath).pipe(
-                  Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Marker))),
-                  Effect.mapError((cause) => errorFor("marker", cause)),
-                ),
-              )
-            : Option.none<Marker>();
-          if (Option.isSome(marker)) {
-            if (marker.value.namespace !== dataNamespace)
-              return yield* errorFor(
-                "data",
-                "Recorded Docker database namespace does not match this instance",
-              );
-            if (marker.value.backend === "docker") {
-              if (marker.value.daemonId !== daemonId.trim())
-                return yield* errorFor(
-                  "data",
-                  "Recorded Docker database storage does not match this daemon",
-                );
-              if (marker.value.volume === undefined)
-                return yield* errorFor("data", "Recorded Docker storage volume is missing");
-              yield* engineCommand(["volume", "inspect", marker.value.volume]);
-              return marker.value;
-            }
-            return marker.value;
-          }
-          const hostData = options.path.join(options.instanceRoot, "data");
           if (
-            yield* options.fs
-              .exists(hostData)
-              .pipe(Effect.mapError((cause) => errorFor("data", cause)))
-          ) {
-            const entries = yield* options.fs
-              .readDirectory(hostData)
-              .pipe(Effect.mapError((cause) => errorFor("data", cause)));
-            if (entries.length > 0) {
+            marker.namespace !== dataNamespace ||
+            !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u.test(marker.namespace) ||
+            !/^cache-[a-f0-9]{32}$/u.test(marker.cacheNamespace) ||
+            (marker.volume !== undefined &&
+              !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u.test(marker.volume))
+          )
+            return yield* errorFor("data", "Recorded database storage identity is invalid");
+          return marker;
+        });
+      const selectedCache = yield* Ref.make<Marker | undefined>(undefined);
+      const selectionLock = yield* Semaphore.make(1);
+      const selected = selectionLock.withPermit(
+        Effect.gen(function* () {
+          const cached = yield* Ref.get(selectedCache);
+          if (cached !== undefined) return cached;
+          const value = yield* Effect.gen(function* () {
+            if (options.runtime === "native" || options.container === undefined)
+              return {
+                backend: "host" as const,
+                namespace: dataNamespace,
+                cacheNamespace: "native",
+                initialized: false,
+              };
+            if (options.runtime !== "docker") {
+              const present = yield* options.fs
+                .exists(markerPath)
+                .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
+              if (present)
+                return yield* options.fs.readFileString(markerPath).pipe(
+                  Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Marker))),
+                  Effect.flatMap(validateMarker),
+                  Effect.mapError((cause) => errorFor("marker", cause)),
+                );
+              const cacheRoot = yield* options.fs
+                .realPath(options.cacheRoot)
+                .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
               const value: Marker = {
                 backend: "host",
                 namespace: dataNamespace,
-                cacheNamespace: `cache-${cacheDigest.slice(0, 32)}`,
-                initialized: true,
+                cacheNamespace: `cache-${(yield* hash(cacheRoot)).slice(0, 32)}`,
+                initialized: false,
               };
+              const encoded = yield* encodeMarker(value);
               yield* options.fs
-                .writeFileString(markerPath, JSON.stringify(value), { mode: 0o600 })
+                .writeFileString(markerPath, encoded, { mode: 0o600 })
                 .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
               return value;
             }
-          }
-          // Docker 26 introduced volume-subpath. Older engines retain the host-backed path.
-          const backend = clientMajor >= 26 && serverMajor >= 26 ? "docker" : "host";
-          const value: Marker = {
-            backend,
-            ...(backend === "docker" ? { volume, daemonId: daemonId.trim() } : {}),
-            namespace: dataNamespace,
-            cacheNamespace: `cache-${cacheDigest.slice(0, 32)}`,
-            initialized: false,
-          };
-          if (backend === "docker")
-            yield* engineCommand([
-              "volume",
-              "create",
-              "--label",
-              "com.supabase.stack-managed=true",
-              "--label",
-              `com.supabase.stack-state-root=${stateDigest}`,
-              volume,
+            const daemonId = yield* engineCommand(["info", "--format", "{{.ID}}"]);
+            const version = yield* engineCommand([
+              "version",
+              "--format",
+              "{{.Client.Version}}|{{.Server.Version}}",
             ]);
-          yield* options.fs
-            .writeFileString(markerPath, JSON.stringify(value), { mode: 0o600 })
-            .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
+            const [clientVersion, serverVersion] = version.split("|");
+            const clientMajor = parseMajor(clientVersion ?? "");
+            const serverMajor = parseMajor(serverVersion ?? "");
+            if (clientMajor === undefined || serverMajor === undefined)
+              return yield* errorFor("engine", "Docker returned an invalid version");
+            const canonicalStateRoot = yield* options.fs
+              .realPath(stateRoot)
+              .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
+            yield* options.fs
+              .makeDirectory(options.cacheRoot, { recursive: true })
+              .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
+            const canonicalCacheRoot = yield* options.fs
+              .realPath(options.cacheRoot)
+              .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
+            const stateDigest = yield* hash(`${canonicalStateRoot}\0${daemonId.trim()}`);
+            const cacheDigest = yield* hash(canonicalCacheRoot);
+            const volume = `supabase-db-${stateDigest.slice(0, 32)}`;
+            const markerPresent = yield* options.fs
+              .exists(markerPath)
+              .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
+            const marker = markerPresent
+              ? Option.some(
+                  yield* options.fs.readFileString(markerPath).pipe(
+                    Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Marker))),
+                    Effect.mapError((cause) => errorFor("marker", cause)),
+                  ),
+                )
+              : Option.none<Marker>();
+            if (Option.isSome(marker)) {
+              const validMarker = yield* validateMarker(marker.value);
+              if (marker.value.backend === "docker") {
+                if (validMarker.daemonId !== daemonId.trim())
+                  return yield* errorFor(
+                    "data",
+                    "Recorded Docker database storage does not match this daemon",
+                  );
+                if (validMarker.volume === undefined)
+                  return yield* errorFor("data", "Recorded Docker storage volume is missing");
+                const volume = validMarker.volume;
+                yield* engineCommand(["volume", "inspect", volume]).pipe(
+                  Effect.catchTag("DockerDatabaseStorageError", (cause) =>
+                    !validMarker.initialized && /(?:no such volume|not found)/iu.test(cause.message)
+                      ? engineCommand([
+                          "volume",
+                          "create",
+                          "--label",
+                          "com.supabase.stack-managed=true",
+                          "--label",
+                          `com.supabase.stack-state-root=${stateDigest}`,
+                          volume,
+                        ]).pipe(Effect.asVoid)
+                      : Effect.fail(cause),
+                  ),
+                );
+                return validMarker;
+              }
+              return validMarker;
+            }
+            const hostData = options.path.join(options.instanceRoot, "data");
+            if (
+              yield* options.fs
+                .exists(hostData)
+                .pipe(Effect.mapError((cause) => errorFor("data", cause)))
+            ) {
+              const entries = yield* options.fs.readDirectory(hostData).pipe(
+                // A legacy data directory may be owned by PostgreSQL's container UID.
+                // Let the root helper validate and adopt it instead of treating EACCES as empty.
+                Effect.orElseSucceed(() => ["inaccessible-data"]),
+              );
+              if (entries.length > 0) {
+                const value: Marker = {
+                  backend: "host",
+                  namespace: dataNamespace,
+                  cacheNamespace: `cache-${cacheDigest.slice(0, 32)}`,
+                  initialized: true,
+                };
+                const encoded = yield* encodeMarker(value);
+                yield* options.fs
+                  .writeFileString(markerPath, encoded, { mode: 0o600 })
+                  .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
+                return value;
+              }
+            }
+            // Docker 26 introduced volume-subpath. Older engines retain the host-backed path.
+            const backend = clientMajor >= 26 && serverMajor >= 26 ? "docker" : "host";
+            const value: Marker = {
+              backend,
+              ...(backend === "docker" ? { volume, daemonId: daemonId.trim() } : {}),
+              namespace: dataNamespace,
+              cacheNamespace: `cache-${cacheDigest.slice(0, 32)}`,
+              initialized: false,
+            };
+            if (backend === "docker")
+              yield* engineCommand([
+                "volume",
+                "create",
+                "--label",
+                "com.supabase.stack-managed=true",
+                "--label",
+                `com.supabase.stack-state-root=${stateDigest}`,
+                volume,
+              ]);
+            yield* options.fs
+              .writeFileString(markerPath, yield* encodeMarker(value), { mode: 0o600 })
+              .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
+            return value;
+          });
+          yield* Ref.set(selectedCache, value);
           return value;
         }),
       );
@@ -272,6 +336,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
 
       const helperId = yield* Ref.make<string | undefined>(undefined);
+      const helperCleanupPending = yield* Ref.make(false);
       const operationLock = yield* Semaphore.make(1);
       const ownerScope = yield* Scope.Scope;
       const mountField = (key: string, value: string) => {
@@ -292,13 +357,17 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           ].join(","),
         ]);
       const removeHelper = Effect.fn("DockerDatabaseStorage.removeHelper")(() =>
-        Effect.gen(function* () {
-          const current = yield* Ref.get(helperId);
-          if (current !== undefined) {
-            yield* engineCommand(["rm", "-f", current]);
-            yield* Ref.set(helperId, undefined);
-          }
-        }),
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            const current = yield* Ref.get(helperId);
+            if (current !== undefined) {
+              // Keep the owned identity until the remote container is gone.
+              yield* engineCommand(["rm", "-f", current]);
+              yield* Ref.set(helperId, undefined);
+              yield* Ref.set(helperCleanupPending, false);
+            }
+          }),
+        ),
       );
       yield* Scope.addFinalizer(
         ownerScope,
@@ -308,14 +377,26 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         (mounts: ReadonlyArray<DatabaseStorageMount>) =>
           Effect.gen(function* () {
             const current = yield* Ref.get(helperId);
-            if (current !== undefined) return current;
+            if (current !== undefined && (yield* Ref.get(helperCleanupPending)))
+              yield* removeHelper();
+            const active = yield* Ref.get(helperId);
+            if (active !== undefined) return active;
             if (options.container === undefined)
               return yield* errorFor("helper", "Container runtime is unavailable");
             yield* options.container.prepare(HELPER_IMAGE);
+            const token = yield* options.crypto.randomUUIDv4.pipe(
+              Effect.mapError((cause) => errorFor("helper", cause)),
+            );
+            const name = `supabase-db-helper-${token}`;
+            // Register the deterministic owned name before the remote create starts so an
+            // interrupted docker run can still be removed by the same scope.
+            yield* Ref.set(helperId, name);
             const created = yield* engineCommand([
               "run",
               "-d",
               "--init",
+              "--name",
+              name,
               "--label",
               "com.supabase.stack-managed=true",
               ...mountArgs(mounts),
@@ -326,8 +407,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             ]);
             if (!/^[a-f0-9]{12,64}$/u.test(created))
               return yield* errorFor("helper", "Docker returned an invalid helper identity");
-            yield* Ref.set(helperId, created);
-            return created;
+            return name;
           }),
       );
 
@@ -335,16 +415,24 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         command: string,
         mounts: ReadonlyArray<DatabaseStorageMount>,
       ): Effect.Effect<string, DockerDatabaseStorageError> => {
-        const operation = Effect.gen(function* () {
-          const id = yield* acquireHelper(mounts);
-          return yield* engineCommand(["exec", id, "/bin/sh", "-c", command]);
-        })
-          .pipe(
-            Effect.catchCause((cause) =>
-              removeHelper().pipe(Effect.andThen(Effect.failCause(cause))),
+        const cleanupAfterFailure = Effect.gen(function* () {
+          if ((yield* Ref.get(helperId)) === undefined) return;
+          yield* Ref.set(helperCleanupPending, true);
+          yield* removeHelper();
+        });
+        const operation = Effect.uninterruptibleMask((restore) =>
+          restore(
+            Effect.gen(function* () {
+              const id = yield* acquireHelper(mounts);
+              return yield* engineCommand(["exec", id, "/bin/sh", "-c", command]);
+            }),
+          ).pipe(
+            Effect.onExit((exit) =>
+              Exit.isFailure(exit) ? Effect.uninterruptible(cleanupAfterFailure) : Effect.void,
             ),
-          )
-          .pipe(Effect.mapError((cause) => errorFor("mount", cause)));
+            Effect.mapError((cause) => errorFor("mount", cause)),
+          ),
+        );
         return operationLock
           .withPermit(operation)
           .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
@@ -354,68 +442,111 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         const marker = yield* options.fs
           .readFileString(markerPath)
           .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Marker))));
-        return marker;
+        return yield* validateMarker(marker);
+      });
+      const getMarkerIfPresent = Effect.gen(function* () {
+        const present = yield* options.fs
+          .exists(markerPath)
+          .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
+        return present ? Option.some(yield* getMarker) : Option.none<Marker>();
+      });
+      const getMarkerForRemoval = Effect.gen(function* () {
+        const existing = yield* getMarkerIfPresent;
+        if (Option.isSome(existing)) {
+          if (options.runtime === "docker") {
+            yield* selected;
+            return Option.some(yield* getMarker);
+          }
+          return existing;
+        }
+        const data = options.path.join(options.instanceRoot, "data");
+        if (!(yield* options.fs.exists(data))) return Option.none<Marker>();
+        const nonEmpty = yield* options.fs.readDirectory(data).pipe(
+          Effect.map((entries) => entries.length > 0),
+          Effect.orElseSucceed(() => true),
+        );
+        if (!nonEmpty) return Option.none<Marker>();
+        yield* selected;
+        return Option.some(yield* getMarker);
       });
       const writeMarker = (marker: Marker) =>
-        options.fs.writeFileString(markerPath, JSON.stringify(marker), { mode: 0o600 });
+        encodeMarker(marker).pipe(
+          Effect.flatMap((encoded) =>
+            options.fs.writeFileString(markerPath, encoded, { mode: 0o600 }),
+          ),
+        );
       const setup = Effect.fn("DockerDatabaseStorage.prepare")((version: string) =>
         Effect.gen(function* () {
           yield* selected;
           const marker = yield* getMarker;
           if (marker.backend === "host") {
-            yield* options.fs.makeDirectory(options.path.join(options.instanceRoot, "data"), {
-              recursive: true,
-              mode: 0o700,
-            });
+            const data = options.path.join(options.instanceRoot, "data");
+            if (marker.initialized) {
+              if (!(yield* options.fs.exists(data)))
+                return yield* errorFor("prepare", "Initialized database data is missing");
+              const major = yield* runHelper(
+                "set -eu; test -f /instance/data/PG_VERSION; cat /instance/data/PG_VERSION",
+                [
+                  { source: options.instanceRoot, target: "/instance", readOnly: false },
+                  { source: options.cacheRoot, target: "/cache", readOnly: false },
+                ],
+              );
+              if (major.trim() !== majorVersion(version))
+                return yield* errorFor(
+                  "prepare",
+                  "Initialized PostgreSQL major does not match the requested configuration",
+                );
+            } else {
+              yield* options.fs.makeDirectory(data, { recursive: true, mode: 0o700 });
+            }
             return;
           }
           const store = `/store/${marker.namespace}`;
           const cache = `/store/${marker.cacheNamespace}`;
-          yield* runHelper(
-            `set -eu; mkdir -p ${shellQuote(`${store}/data`)} ${shellQuote(`${cache}/entries`)} ${shellQuote(`${cache}/stages`)}; chown -R 100:101 ${shellQuote(store)}; test -f ${shellQuote(`${store}/data/PG_VERSION`)} || true`,
-            [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
-          );
           if (marker.initialized) {
             const major = yield* runHelper(
               `set -eu; test -f ${shellQuote(`${store}/data/PG_VERSION`)}; cat ${shellQuote(`${store}/data/PG_VERSION`)}`,
-              [{ source: marker.volume ?? "", target: "/store", readOnly: true, type: "volume" }],
+              [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
             );
             if (major.trim() !== majorVersion(version))
               return yield* errorFor(
                 "prepare",
                 "Initialized PostgreSQL major does not match the requested configuration",
               );
+          } else {
+            yield* runHelper(
+              `set -eu; mkdir -p ${shellQuote(`${store}/data`)} ${shellQuote(`${cache}/entries`)} ${shellQuote(`${cache}/stages`)}; chown -R 100:101 ${shellQuote(store)}`,
+              [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
+            );
           }
         }).pipe(Effect.mapError((cause) => errorFor("prepare", cause))),
       );
       const majorVersion = (version: string) => version.split(".")[0] ?? version;
 
-      const mount = (version: string) =>
-        Effect.flatMap(selected, () => getMarker)
-          .pipe(
-            Effect.flatMap((marker) =>
-              (marker.initialized ? Effect.void : setup(version)).pipe(
-                Effect.andThen(
-                  Effect.succeed(
-                    marker.backend === "docker"
-                      ? {
-                          source: marker.volume ?? "",
-                          target: "/var/lib/postgresql/data",
-                          readOnly: false,
-                          type: "volume" as const,
-                          volumeSubpath: `${marker.namespace}/data`,
-                        }
-                      : {
-                          source: options.path.join(options.instanceRoot, "data"),
-                          target: "/var/lib/postgresql/data",
-                          readOnly: false,
-                        },
-                  ),
-                ),
-              ),
-            ),
-          )
-          .pipe(Effect.mapError((cause) => errorFor("mount", cause)));
+      const mount = (_version: string) =>
+        selected.pipe(
+          Effect.flatMap(() => getMarker),
+          Effect.map((marker) =>
+            marker.backend === "docker"
+              ? {
+                  source: marker.volume ?? "",
+                  target: "/var/lib/postgresql/data",
+                  readOnly: false,
+                  type: "volume" as const,
+                  volumeSubpath: `${marker.namespace}/data`,
+                }
+              : {
+                  source: options.path.join(options.instanceRoot, "data"),
+                  target: "/var/lib/postgresql/data",
+                  readOnly: false,
+                },
+          ),
+          Effect.mapError((cause) => errorFor("mount", cause)),
+        );
+      const needsDataChown = getMarker.pipe(
+        Effect.map((marker) => marker.backend === "host"),
+        Effect.mapError((cause) => errorFor("marker", cause)),
+      );
       const markInitialized = Effect.fn("DockerDatabaseStorage.markInitialized")(
         (version: string) =>
           Effect.gen(function* () {
@@ -423,7 +554,14 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             if (marker.backend === "docker") {
               yield* runHelper(
                 `set -eu; test -f ${shellQuote(`/store/${marker.namespace}/data/PG_VERSION`)}; test "$(cat ${shellQuote(`/store/${marker.namespace}/data/PG_VERSION`)})" = ${shellQuote(majorVersion(version))}`,
-                [{ source: marker.volume ?? "", target: "/store", readOnly: true, type: "volume" }],
+                [
+                  {
+                    source: marker.volume ?? "",
+                    target: "/store",
+                    readOnly: false,
+                    type: "volume",
+                  },
+                ],
               );
             }
             yield* writeMarker({ ...marker, initialized: true });
@@ -431,12 +569,14 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
       const removeData = Effect.fn("DockerDatabaseStorage.removeData")((_version: string) =>
         Effect.gen(function* () {
-          const marker = yield* getMarker;
+          const markerOption = yield* getMarkerForRemoval;
+          if (Option.isNone(markerOption)) return;
+          const marker = markerOption.value;
           if (marker.backend === "host") {
-            yield* options.fs.remove(options.path.join(options.instanceRoot, "data"), {
-              recursive: true,
-              force: true,
-            });
+            yield* runHelper(
+              `set -eu; rm -rf /instance/data; mkdir -p /instance/data; chown 100:101 /instance/data`,
+              snapshotPaths(marker).mounts,
+            );
           } else {
             yield* runHelper(
               `set -eu; rm -rf ${shellQuote(`/store/${marker.namespace}/data`)}; mkdir -p ${shellQuote(`/store/${marker.namespace}/data`)}; chown 100:101 ${shellQuote(`/store/${marker.namespace}/data`)}`,
@@ -453,12 +593,14 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
       const destroyData = Effect.fn("DockerDatabaseStorage.destroyData")((_version: string) =>
         Effect.gen(function* () {
-          const marker = yield* getMarker;
+          const markerOption = yield* getMarkerForRemoval;
+          if (Option.isNone(markerOption)) return;
+          const marker = markerOption.value;
           if (marker.backend === "host") {
-            yield* options.fs.remove(options.path.join(options.instanceRoot, "data"), {
-              recursive: true,
-              force: true,
-            });
+            yield* runHelper(
+              `set -eu; rm -rf /instance/data /instance/.supabase-database-ready.json`,
+              snapshotPaths(marker).mounts,
+            );
             yield* removeHelper();
           } else {
             yield* runHelper(`set -eu; rm -rf ${shellQuote(`/store/${marker.namespace}`)}`, [
@@ -491,21 +633,43 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               ],
             };
       const descriptorDigest = (version: string, key: string) =>
-        hash(
-          JSON.stringify({
-            format: "supabase-database-snapshot-v1",
-            version,
-            runtime: options.runtime,
-            platform: process.platform,
-            arch: process.arch,
-            profile: "supabase",
-            key,
-          }),
+        encodeIdentity({
+          format: "supabase-database-snapshot-v1",
+          version,
+          runtime: options.runtime,
+          platform: process.platform,
+          arch: process.arch,
+          profile: "supabase",
+          key,
+        }).pipe(
+          Effect.mapError((cause) => errorFor("snapshot", cause)),
+          Effect.flatMap(hash),
         );
       const saveSnapshot = Effect.fn("DockerDatabaseStorage.saveSnapshot")(
         (version: string, key: string) =>
           Effect.gen(function* () {
+            yield* selected;
             const store = yield* getMarker;
+            if (!store.initialized)
+              return yield* errorFor("snapshot", "Database is not initialized");
+            const readyPath = options.path.join(
+              options.instanceRoot,
+              ".supabase-database-ready.json",
+            );
+            if (
+              !(yield* options.fs
+                .exists(readyPath)
+                .pipe(Effect.mapError((cause) => errorFor("snapshot", cause))))
+            )
+              return yield* errorFor("snapshot", "Database is not ready");
+            const ready = yield* options.fs
+              .readFileString(readyPath)
+              .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ReadyMarker))));
+            if (ready.version !== version || ready.runtime !== options.runtime)
+              return yield* errorFor(
+                "snapshot",
+                "Database readiness marker does not match the requested configuration",
+              );
             const digest = yield* descriptorDigest(version, key);
             const paths = snapshotPaths(store);
             const root = paths.root;
@@ -515,7 +679,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               Effect.mapError((cause) => errorFor("snapshot", cause)),
             );
             const stage = `${root}/stages/${digest}-${token}`;
-            const descriptor = JSON.stringify({
+            const descriptor = yield* encodeDescriptor({
               format: "supabase-database-snapshot-v1",
               version,
               runtime: options.runtime,
@@ -525,7 +689,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               keyDigest: digest,
             });
             yield* runHelper(
-              `set -eu; mkdir -p ${root}/entries ${root}/stages; flock -x -w 120 ${shellQuote(`${root}/.lock`)} sh -eu -c ${shellQuote(`set -eu; trap 'rm -rf ${stage}' EXIT; test ! -e ${source}/postmaster.pid; test -f ${source}/PG_VERSION; test "$(cat ${source}/PG_VERSION)" = ${majorVersion(version)}; bad=$(find ${source} \\( ! -type f ! -type d \\) -print -quit); test -z "$bad"; rm -rf ${stage}; mkdir -p ${stage}; cp -a --reflink=auto ${source} ${stage}/data; printf '%s' ${shellQuote(descriptor)} > ${stage}/descriptor.json; if [ -e ${target} ]; then mv ${target} ${target}.retired; fi; mv ${stage} ${target}; rm -rf ${target}.retired; find ${root}/entries -mindepth 1 -maxdepth 1 -type d ! -name ${digest} -printf '%T@ %p\\n' | sort -rn | tail -n +3 | cut -d' ' -f2- | xargs -r rm -rf`)}; rm -rf ${shellQuote(stage)}`,
+              `set -eu; mkdir -p ${root}; flock -x -w 120 ${shellQuote(`${root}/.lock`)} sh -eu -c ${shellQuote(`set -eu; mkdir -p ${root}/entries ${root}/stages; find ${root}/stages -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; find ${root}/entries -mindepth 1 -maxdepth 1 -name '*.retired' -exec rm -rf -- {} +; trap 'rm -rf ${stage}' EXIT; test ! -e ${source}/postmaster.pid; test -f ${source}/PG_VERSION; test "$(cat ${source}/PG_VERSION)" = ${majorVersion(version)}; bad=$(find ${source} \\( ! -type f ! -type d \\) -print -quit); if [ -n "$bad" ]; then exit 1; fi; rm -rf ${stage}; mkdir -p ${stage}; cp -a --reflink=auto ${source} ${stage}/data; printf '%s' ${shellQuote(descriptor)} > ${stage}/descriptor.json; if [ -e ${target} ]; then rm -rf ${target}.retired; mv ${target} ${target}.retired; if ! mv ${stage} ${target}; then mv ${target}.retired ${target}; exit 1; fi; else mv ${stage} ${target}; fi; rm -rf ${target}.retired; touch ${target}; find ${root}/entries -mindepth 1 -maxdepth 1 -type d ! -name ${digest} ! -name '*.retired' -printf '%T@ %p\\n' | sort -rn | tail -n +3 | cut -d' ' -f2- | xargs -r rm -rf`)}; rm -rf ${shellQuote(stage)}`,
               paths.mounts,
             );
           }).pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
@@ -533,6 +697,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       const restoreSnapshot = Effect.fn("DockerDatabaseStorage.restoreSnapshot")(
         (version: string, key: string) =>
           Effect.gen(function* () {
+            yield* selected;
             const store = yield* getMarker;
             const digest = yield* descriptorDigest(version, key);
             const paths = snapshotPaths(store);
@@ -546,7 +711,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               store.backend === "host"
                 ? `/instance/.supabase-restore-${digest}`
                 : `${root}/stages/restore-${digest}-${token}`;
-            const descriptor = JSON.stringify({
+            const descriptor = yield* encodeDescriptor({
               format: "supabase-database-snapshot-v1",
               version,
               runtime: options.runtime,
@@ -555,8 +720,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               profile: "supabase",
               keyDigest: digest,
             });
+            const targetSetup = store.initialized ? `test -d ${data}` : `mkdir -p ${data}`;
             const result = yield* runHelper(
-              `set -eu; mkdir -p ${root}/entries ${root}/stages; flock -x -w 120 ${shellQuote(`${root}/.lock`)} sh -eu -c ${shellQuote(`set -eu; trap 'rm -rf ${stage}' EXIT; if find ${data} -mindepth 1 -print -quit | grep -q .; then echo NONEMPTY; exit 0; fi; if [ ! -d ${source} ]; then echo MISS; exit 0; fi; test -f ${source}/descriptor.json; actual=$(cat ${source}/descriptor.json); expected=${shellQuote(descriptor)}; if [ "$actual" != "$expected" ]; then case "$actual" in *\\"format\\":\\"supabase-database-snapshot-v1\\"*) echo MISS; exit 0;; *) exit 1;; esac; fi; bad=$(find ${source}/data \\( ! -type f ! -type d \\) -print -quit); test -z "$bad"; test ! -e ${source}/data/postmaster.pid; rm -rf ${stage}; cp -a --reflink=auto ${source}/data ${stage}; test "$(cat ${stage}/PG_VERSION)" = ${majorVersion(version)}; rmdir ${data}; mv ${stage} ${data}; touch ${source}; echo HIT`)}; rm -rf ${shellQuote(stage)}`,
+              `set -eu; mkdir -p ${root}; flock -x -w 120 ${shellQuote(`${root}/.lock`)} sh -eu -c ${shellQuote(`set -eu; mkdir -p ${root}/entries ${root}/stages; find ${root}/stages -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; find ${root}/entries -mindepth 1 -maxdepth 1 -name '*.retired' -exec rm -rf -- {} +; ${targetSetup}; trap 'rm -rf ${stage}' EXIT; bad=$(find ${data} -mindepth 1 -print -quit); if [ -n "$bad" ]; then echo NONEMPTY; exit 0; fi; if [ ! -d ${source} ]; then echo MISS; exit 0; fi; test -f ${source}/descriptor.json; actual=$(cat ${source}/descriptor.json); expected=${shellQuote(descriptor)}; if [ "$actual" != "$expected" ]; then exit 1; fi; bad=$(find ${source}/data \\( ! -type f ! -type d \\) -print -quit); if [ -n "$bad" ]; then exit 1; fi; test ! -e ${source}/data/postmaster.pid; rm -rf ${stage}; cp -a --reflink=auto ${source}/data ${stage}; test "$(cat ${stage}/PG_VERSION)" = ${majorVersion(version)}; rmdir ${data}; mv ${stage} ${data}; touch ${source}; echo HIT`)}; rm -rf ${shellQuote(stage)}`,
               paths.mounts,
             );
             if (result === "MISS") return false;
@@ -570,6 +736,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
       return {
         prepare: setup,
+        needsDataChown,
         mount,
         markInitialized,
         removeData,

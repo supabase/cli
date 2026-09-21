@@ -139,19 +139,15 @@ describe("managed native database snapshots", () => {
         }
         yield* fs.remove(path.join(source, "data"), { recursive: true });
         yield* fs.makeDirectory(path.join(source, "data"));
+        const one = saved.find((entry) => entry.key === "one");
+        if (one === undefined) throw new Error("Missing one");
         const beforeRestore = yield* Clock.currentTimeMillis;
         expect(yield* snapshots.restoreSnapshot("one")).toBe(true);
         const afterRestore = yield* Clock.currentTimeMillis;
-        const touched = Option.match(
-          yield* fs.stat(entryPath(path, cache, saved.find((entry) => entry.key === "one")!.name)),
-          {
-            onNone: () => undefined,
-            onSome: (info) => Option.match(info.mtime, {
-              onNone: () => undefined,
-              onSome: (mtime) => mtime.getTime(),
-            }),
-          },
-        );
+        const touched = Option.match((yield* fs.stat(entryPath(path, cache, one.name))).mtime, {
+          onNone: () => undefined,
+          onSome: (mtime) => mtime.getTime(),
+        });
         if (touched === undefined) throw new Error("Snapshot touch time is unavailable");
         expect(touched).toBeGreaterThanOrEqual(beforeRestore - 1_000);
         expect(touched).toBeLessThanOrEqual(afterRestore + 1_000);

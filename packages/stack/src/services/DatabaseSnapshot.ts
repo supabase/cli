@@ -17,7 +17,7 @@ import { postgresVersion } from "../Artifacts.ts";
 import { copyDirectory } from "../storage/DirectoryCopy.ts";
 import type { DatabaseRuntime } from "./Database.ts";
 
-export const SnapshotDescriptor = Schema.Struct({
+const SnapshotDescriptor = Schema.Struct({
   format: Schema.Literal("supabase-database-snapshot-v1"),
   version: Schema.String,
   runtime: Schema.Literals(["native", "docker", "podman"]),
@@ -27,7 +27,6 @@ export const SnapshotDescriptor = Schema.Struct({
   logicalKey: Schema.String,
   keyDigest: Schema.String,
 });
-export interface SnapshotDescriptor extends Schema.Schema.Type<typeof SnapshotDescriptor> {}
 
 export class DatabaseSnapshotError extends Data.TaggedError("DatabaseSnapshotError")<{
   readonly operation: string;
@@ -240,23 +239,24 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
         yield* mapError("stage", fs.makeDirectory(stage, { recursive: true, mode: 0o700 }));
         yield* Effect.acquireUseRelease(
           Effect.succeed(stage),
-          () => Effect.gen(function* () {
-            yield* copy(source, path.join(stage, "data"));
-            yield* mapError(
-              "descriptor",
-              fs.writeFileString(path.join(stage, "descriptor.json"), encoded, { mode: 0o600 }),
-            );
-            const hadTarget = yield* mapError("publish", fs.exists(target));
-            if (hadTarget) yield* mapError("publish", fs.rename(target, retired));
-            const publication = yield* Effect.exit(mapError("publish", fs.rename(stage, target)));
-            if (Exit.isFailure(publication)) {
-              if (hadTarget) yield* mapError("rollback", fs.rename(retired, target));
-              return yield* Effect.failCause(publication.cause);
-            }
-            yield* mapError("publish", fs.remove(retired, { recursive: true, force: true }));
-            yield* touch(target);
-            yield* retention(keyDigest);
-          }),
+          () =>
+            Effect.gen(function* () {
+              yield* copy(source, path.join(stage, "data"));
+              yield* mapError(
+                "descriptor",
+                fs.writeFileString(path.join(stage, "descriptor.json"), encoded, { mode: 0o600 }),
+              );
+              const hadTarget = yield* mapError("publish", fs.exists(target));
+              if (hadTarget) yield* mapError("publish", fs.rename(target, retired));
+              const publication = yield* Effect.exit(mapError("publish", fs.rename(stage, target)));
+              if (Exit.isFailure(publication)) {
+                if (hadTarget) yield* mapError("rollback", fs.rename(retired, target));
+                return yield* Effect.failCause(publication.cause);
+              }
+              yield* mapError("publish", fs.remove(retired, { recursive: true, force: true }));
+              yield* touch(target);
+              yield* retention(keyDigest);
+            }),
           () => mapError("cleanup", fs.remove(stage, { recursive: true, force: true })),
         );
       }),
@@ -308,68 +308,72 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
         yield* mapError("stage", fs.makeDirectory(stage, { recursive: true, mode: 0o700 }));
         yield* Effect.acquireUseRelease(
           Effect.succeed(stage),
-          () => Effect.gen(function* () {
-            yield* copy(path.join(target, "data"), path.join(stage, "data"));
-            const stagedData = path.join(stage, "data");
-            const stagedVersion = yield* mapError(
-              "validate",
-              fs.readFileString(path.join(stagedData, "PG_VERSION")),
-            );
-            if (stagedVersion.trim() !== version.split(".")[0])
-              return yield* errorFor(
+          () =>
+            Effect.gen(function* () {
+              yield* copy(path.join(target, "data"), path.join(stage, "data"));
+              const stagedData = path.join(stage, "data");
+              const stagedVersion = yield* mapError(
                 "validate",
-                "Snapshot PostgreSQL major version is incompatible",
+                fs.readFileString(path.join(stagedData, "PG_VERSION")),
               );
-            if (yield* mapError("validate", fs.exists(path.join(stagedData, "postmaster.pid"))))
-              return yield* errorFor("validate", "Snapshot contains a running database");
-            const markerContents = yield* markerText(version, options.runtime).pipe(
-              Effect.mapError((cause) => errorFor("ready", cause)),
-            );
-            yield* mapError(
-              "ready",
-              fs.writeFileString(stagedMarker, markerContents, { mode: 0o600 }),
-            );
-
-            // The handoff is short and uninterruptible. If marker publication fails, the old
-            // complete data tree and marker are restored before the error escapes.
-            yield* Effect.uninterruptible(
-              Effect.gen(function* () {
-                const hadData = yield* mapError("publish", fs.exists(data));
-                const hadMarker = yield* mapError("publish", fs.exists(marker));
-                if (hadData) yield* mapError("publish", fs.rename(data, retired));
-                const dataPublication = yield* Effect.exit(
-                  mapError("publish", fs.rename(path.join(stage, "data"), data)),
+              if (stagedVersion.trim() !== version.split(".")[0])
+                return yield* errorFor(
+                  "validate",
+                  "Snapshot PostgreSQL major version is incompatible",
                 );
-                if (Exit.isFailure(dataPublication)) {
-                  if (hadData) yield* mapError("rollback", fs.rename(retired, data));
-                  return yield* Effect.failCause(dataPublication.cause);
-                }
-                if (hadMarker) {
-                  const markerRetirement = yield* Effect.exit(
-                    mapError("publish", fs.rename(marker, retiredMarker)),
+              if (yield* mapError("validate", fs.exists(path.join(stagedData, "postmaster.pid"))))
+                return yield* errorFor("validate", "Snapshot contains a running database");
+              const markerContents = yield* markerText(version, options.runtime).pipe(
+                Effect.mapError((cause) => errorFor("ready", cause)),
+              );
+              yield* mapError(
+                "ready",
+                fs.writeFileString(stagedMarker, markerContents, { mode: 0o600 }),
+              );
+
+              // The handoff is short and uninterruptible. If marker publication fails, the old
+              // complete data tree and marker are restored before the error escapes.
+              yield* Effect.uninterruptible(
+                Effect.gen(function* () {
+                  const hadData = yield* mapError("publish", fs.exists(data));
+                  const hadMarker = yield* mapError("publish", fs.exists(marker));
+                  if (hadData) yield* mapError("publish", fs.rename(data, retired));
+                  const dataPublication = yield* Effect.exit(
+                    mapError("publish", fs.rename(path.join(stage, "data"), data)),
                   );
-                  if (Exit.isFailure(markerRetirement)) {
+                  if (Exit.isFailure(dataPublication)) {
+                    if (hadData) yield* mapError("rollback", fs.rename(retired, data));
+                    return yield* Effect.failCause(dataPublication.cause);
+                  }
+                  if (hadMarker) {
+                    const markerRetirement = yield* Effect.exit(
+                      mapError("publish", fs.rename(marker, retiredMarker)),
+                    );
+                    if (Exit.isFailure(markerRetirement)) {
+                      yield* mapError(
+                        "rollback",
+                        fs.remove(data, { recursive: true, force: true }),
+                      );
+                      if (hadData) yield* mapError("rollback", fs.rename(retired, data));
+                      return yield* Effect.failCause(markerRetirement.cause);
+                    }
+                  }
+                  const markerPublication = yield* Effect.exit(
+                    mapError("ready", fs.rename(stagedMarker, marker)),
+                  );
+                  if (Exit.isFailure(markerPublication)) {
+                    if (hadMarker) yield* mapError("rollback", fs.rename(retiredMarker, marker));
                     yield* mapError("rollback", fs.remove(data, { recursive: true, force: true }));
                     if (hadData) yield* mapError("rollback", fs.rename(retired, data));
-                    return yield* Effect.failCause(markerRetirement.cause);
+                    return yield* Effect.failCause(markerPublication.cause);
                   }
-                }
-                const markerPublication = yield* Effect.exit(
-                  mapError("ready", fs.rename(stagedMarker, marker)),
-                );
-                if (Exit.isFailure(markerPublication)) {
-                  if (hadMarker) yield* mapError("rollback", fs.rename(retiredMarker, marker));
-                  yield* mapError("rollback", fs.remove(data, { recursive: true, force: true }));
-                  if (hadData) yield* mapError("rollback", fs.rename(retired, data));
-                  return yield* Effect.failCause(markerPublication.cause);
-                }
-                yield* mapError("publish", fs.remove(retired, { recursive: true, force: true }));
-                if (hadMarker)
-                  yield* mapError("publish", fs.remove(retiredMarker, { force: true }));
-              }),
-            );
-            yield* touch(target);
-          }),
+                  yield* mapError("publish", fs.remove(retired, { recursive: true, force: true }));
+                  if (hadMarker)
+                    yield* mapError("publish", fs.remove(retiredMarker, { force: true }));
+                }),
+              );
+              yield* touch(target);
+            }),
           () => mapError("cleanup", fs.remove(stage, { recursive: true, force: true })),
         );
         return true;

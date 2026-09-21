@@ -23,7 +23,7 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly cause?: unknown;
 }> {}
 
-export interface ContainerSpec {
+interface ContainerSpec {
   readonly image: string;
   readonly stackId: string;
   readonly instanceId: string;

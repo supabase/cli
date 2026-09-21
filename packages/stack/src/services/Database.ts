@@ -658,18 +658,6 @@ export const makeDatabase = (
             );
         }
         yield* prepareArtifact(input);
-        if (!hasMarker && container !== undefined) {
-          const initialized = (yield* dataCommand(input.version, [
-            "sh",
-            "-c",
-            "if [ -f /var/lib/postgresql/data/PG_VERSION ]; then /usr/bin/busybox cat /var/lib/postgresql/data/PG_VERSION; fi",
-          ])).trim();
-          if (initialized !== "" && initialized !== postgresVersion(input.version).split(".")[0])
-            return yield* errorFor(
-              "prepare",
-              "Initialized PostgreSQL major does not match the requested configuration",
-            );
-        }
       },
       Effect.mapError((cause) => errorFor("prepare", cause)),
     );
@@ -768,7 +756,13 @@ export const makeDatabase = (
           const selectedContainer = container;
           if (selectedContainer === undefined)
             return yield* errorFor("launch", "Container runtime is unavailable");
-          yield* dataCommand(config.version, ["chown", "100:101", "/var/lib/postgresql/data"]);
+          if (
+            storage === undefined ||
+            (yield* storage.needsDataChown.pipe(
+              Effect.mapError((cause) => errorFor("launch", cause)),
+            ))
+          )
+            yield* dataCommand(config.version, ["chown", "100:101", "/var/lib/postgresql/data"]);
           const launched = yield* selectedContainer
             .launch({
               image: image.image,
@@ -907,19 +901,17 @@ export const makeDatabase = (
           ? Effect.flatMap(snapshots(context.config.version), (store) =>
               store.saveSnapshot(key),
             ).pipe(Effect.mapError((cause) => errorFor("snapshot", cause)))
-          : storage.prepare(postgresVersion(context.config.version)).pipe(
-              Effect.andThen(storage.saveSnapshot(postgresVersion(context.config.version), key)),
-              Effect.mapError((cause) => errorFor("snapshot", cause)),
-            ),
+          : storage
+              .saveSnapshot(postgresVersion(context.config.version), key)
+              .pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
       restoreSnapshot: (context, key) =>
         storage === undefined
           ? Effect.flatMap(snapshots(context.config.version), (store) =>
               store.restoreSnapshot(key),
             ).pipe(Effect.mapError((cause) => errorFor("snapshot", cause)))
-          : storage.prepare(postgresVersion(context.config.version)).pipe(
-              Effect.andThen(storage.restoreSnapshot(postgresVersion(context.config.version), key)),
-              Effect.mapError((cause) => errorFor("snapshot", cause)),
-            ),
+          : storage
+              .restoreSnapshot(postgresVersion(context.config.version), key)
+              .pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
       endpoint: Ref.get(endpoint).pipe(
         Effect.flatMap((value) =>
           value === undefined

@@ -433,7 +433,7 @@ Keep Effect RPC as the transport initially. Its handlers should mostly delegate 
 | Registry             | `services.create`, `services.get`, `services.list`                                                                     | Create and locate instances                                   |
 | Instance lifecycle   | `service.prepare`, `service.start`, `service.stop`, `service.restart`, `service.destroy`                               | Operate one instance                                          |
 | Instance observation | `service.status`, `service.ready`, `service.followStatus`, `service.logs`, `service.followLogs`, `service.credentials` | Read state, await health and inspect outputs                  |
-| Database snapshots   | `database.saveSnapshot`, `database.restoreSnapshot`                                                                    | Database-specific managed storage operations                   |
+| Database snapshots   | `database.saveSnapshot`, `database.restoreSnapshot`                                                                    | Database-specific managed storage operations                  |
 | Composition          | `composition.configure`, `composition.describe`, `composition.start`, `composition.stop`, `composition.restart`        | Define and operate the application selection and dependencies |
 | Tools                | `tools.run`, `tools.writeStdin`, `tools.closeStdin`                                                                    | Execute an attached command with streamed input/output        |
 
@@ -534,7 +534,7 @@ Some foundations are not optional, but they do not need to dominate the service 
 | Ownership  | One detached StackHost and exclusive lease; client handles do not own service lifetime                                                      |
 | Ports      | Persist public port assignments across stop/start; reuse the same ports, including initially automatic assignments; never silently relocate |
 | Data       | Stop retains data; destroy removes only proven owned data                                                                                   |
-| Snapshots  | DB-specific stopped export, compatible empty-target restore, complete archive publication and credential reconciliation                     |
+| Snapshots  | DB-specific keyed save, compatible empty-target restore, complete entry publication and credential reconciliation                           |
 
 ### Port allocation and endpoint ownership
 
@@ -642,7 +642,7 @@ await shadow.start();
 await shadow.ready();
 ```
 
-The database implementation owns the snapshot format, PostgreSQL data selection, compatibility validation, initialization metadata and credential reconciliation. It uses native filesystem clone/copy operations or container volume/helper operations through the runtime backend. Snapshot entries live in a managed namespace below `cacheRoot`, and the storage backend applies retention; saving a key atomically replaces the previous entry for that key. The orchestrator knows only admission, instance ownership and operation settlement; it never needs to understand PostgreSQL data contents.
+The database implementation owns the snapshot format, PostgreSQL data selection, compatibility validation, initialization metadata and credential reconciliation. It uses native filesystem clone/copy operations or container volume/helper operations through the runtime backend. Native entries live below `cacheRoot`; Docker entries share the data volume, in a separate namespace derived from `cacheRoot`. Docker cache reuse requires the same daemon, `stateRoot`, and `cacheRoot`. Each store retains three entries by last use; saving a key replaces the previous complete entry for that key. Cache entries are disposable and do not promise durability across power loss. The orchestrator knows only admission, instance ownership and operation settlement; it never needs to understand PostgreSQL data contents.
 
 Keep the contract narrow:
 
@@ -734,6 +734,6 @@ Verify through consumed integration flows:
 3. Register two standalone databases, then start/restart the default composition: neither standalone instance is implicitly started or restarted. Namespace stop/destroy still includes both. Two stacks and multiple databases have separate ports/data; a shadow operation does not block Functions restart. Record every public endpoint, stop the stack, start another parallel stack, then reopen/start the original: every original public port is unchanged. Occupying one saved port with an unrelated listener instead produces a conflict without rewriting its assignment.
 4. Start a composition containing lazy database and REST instances: startup returns concrete URLs with their proxy listeners bound and their backend processes still absent. Connecting to the returned database/REST URLs launches the appropriate instances without changing the URLs. No public or RPC sleep operation is exposed. Proxy inactivity can trigger internal sleep; public traffic prevents it; sleep retains wake; explicit stop disables wake; prerequisite idle eligibility is rechecked after dependent sleep.
 5. Unexpected exit disables wake and triggers ordinary cleanup of the owned runtime before another launch; Functions can explicitly restart afterward. Traffic cannot restart an exited prerequisite. A stale exit cannot damage a replacement.
-6. Normal snapshot failures do not publish partial archives or overwrite existing data. Client disconnection leaves admitted snapshot work owned by the live host. Host-crash recovery is not an acceptance requirement; unavailable observations must not be presented as current running/healthy/stopped state.
+6. Normal snapshot failures do not publish partial entries or overwrite existing data. Client disconnection leaves admitted snapshot work owned by the live host. Host-crash recovery is not an acceptance requirement; unavailable observations must not be presented as current running/healthy/stopped state.
 7. Container-mode service wiring and dumps receive a reachable runtime-facing database URL as plain data. Dumps stream with bounded buffering and exact cleanup; stackless commands create no managed stack. Stopping/destroying REST leaves Auth on the shared API port working; shared port claims survive removal of the final route.
 8. Namespace stop settles executing work and leaves no live runtime resources; failed cleanup cannot report successful stop. Disconnecting a client does not stop admitted lifecycle/snapshot operations. Stopping the last individual instance or finishing the last tool does not retire the StackHost; namespace stop/destroy does.

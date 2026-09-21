@@ -65,4 +65,7 @@ jobs:
         run: |
           set -o pipefail
           docker info
-          pnpm --filter @supabase/stack exec vitest run --project integration src/storage/DockerDatabaseStorage.integration.test.ts
+          pnpm --filter @supabase/stack exec vitest run --project integration \
+            src/storage/DirectoryCopy.integration.test.ts \
+            src/services/DatabaseSnapshot.integration.test.ts \
+            src/storage/DockerDatabaseStorage.integration.test.ts
