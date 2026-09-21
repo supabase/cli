@@ -69,3 +69,22 @@ jobs:
             src/storage/DirectoryCopy.integration.test.ts \
             src/services/DatabaseSnapshot.integration.test.ts \
             src/storage/DockerDatabaseStorage.integration.test.ts
+
+  storage-podman-fallback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup
+      - name: Install Podman
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y podman
+          podman info
+      - name: Prepare Podman helper image
+        run: |
+          podman pull debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+      - name: Run Podman storage lifecycle smoke
+        run: |
+          set -o pipefail
+          pnpm --filter @supabase/stack exec vitest run --project integration src/storage/PodmanDatabaseStorage.integration.test.ts
