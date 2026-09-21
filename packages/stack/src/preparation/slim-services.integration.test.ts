@@ -1,6 +1,18 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Crypto, Deferred, Effect, Exit, Fiber, FileSystem, Layer, Option } from "effect";
+import {
+  Cause,
+  Crypto,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Schedule,
+} from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the redirect test owns a local native listener.
 import { createServer, type Server } from "node:http";
 import { zstdCompress } from "node:zlib";
@@ -10,7 +22,6 @@ import { digestHex } from "./Integrity.ts";
 import {
   makeSlimServicesSource,
   slimServicesChecksum,
-  systemTarBoundary,
   type SlimServicesArtifact,
   type ZstdDecompressor,
 } from "./SlimServicesSource.ts";
@@ -113,6 +124,9 @@ type FetchLike = (
 const requestUrl = (input: Parameters<typeof fetch>[0]): string =>
   typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 
+/** Keeps retry coverage off the production backoff, whose jittered delays would idle the suite. */
+const immediate = Schedule.spaced(Duration.zero);
+
 const withFetch = <A, E, R>(fetcher: FetchLike, effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.provide(FetchHttpClient.layer),
@@ -188,7 +202,7 @@ describe("slim-services artifact source", () => {
     ),
   );
 
-  it.live("retries gateway failures and stops on a missing asset", () =>
+  it.live("retries a gateway error on the checksum and a truncated archive transfer", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const archive = yield* compress(tar("bin/demo", "demo"));
@@ -200,6 +214,13 @@ describe("slim-services artifact source", () => {
           attempts.set(url, next);
           return next;
         };
+        const truncated = () =>
+          new ReadableStream<Uint8Array>({
+            start: (controller) => {
+              controller.enqueue(archive.slice(0, 4));
+              controller.error("connection reset");
+            },
+          });
         const flaky: FetchLike = (input) => {
           const url = requestUrl(input);
           if (url.endsWith("SHA256SUMS"))
@@ -215,28 +236,39 @@ describe("slim-services artifact source", () => {
               ),
             );
           return Promise.resolve(
-            count(url) === 1 ? new Response("", { status: 503 }) : new Response(archive),
+            count(url) === 1 ? new Response(truncated()) : new Response(archive),
           );
         };
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-retry-" });
-        yield* withFetch(
-          flaky,
-          makeSlimServicesSource(() => artifact).materialize(request, destination, expected),
-        );
+        const source = makeSlimServicesSource(() => artifact, { backoff: immediate });
+        expect(yield* withFetch(flaky, source.checksum(request))).toBe(expected);
+        expect(attempts.get(artifact.checksumUrl)).toBe(2);
+        yield* withFetch(flaky, source.materialize(request, destination, expected));
         expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
         expect(attempts.get(artifact.downloadUrl)).toBe(2);
-
-        const missing: FetchLike = () => Promise.resolve(new Response("", { status: 404 }));
-        let requests = 0;
-        const failed = yield* withFetch((input, init) => {
-          requests += 1;
-          return missing(input, init);
-        }, slimServicesChecksum(artifact).pipe(Effect.exit));
-        expect(errorOf(failed)).toBeInstanceOf(PreparationError);
-        expect(requests).toBe(1);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
+  );
+
+  it.live("spends five attempts on a persistent gateway error and one on a missing asset", () =>
+    Effect.gen(function* () {
+      let gateway = 0;
+      const exhausted = yield* withFetch(() => {
+        gateway += 1;
+        return Promise.resolve(new Response("", { status: 504 }));
+      }, slimServicesChecksum(artifact, immediate).pipe(Effect.exit));
+      expect(errorOf(exhausted)).toBeInstanceOf(PreparationError);
+      expect(gateway).toBe(5);
+
+      let missing = 0;
+      const failed = yield* withFetch(() => {
+        missing += 1;
+        return Promise.resolve(new Response("", { status: 404 }));
+      }, slimServicesChecksum(artifact, immediate).pipe(Effect.exit));
+      expect(errorOf(failed)).toBeInstanceOf(PreparationError);
+      expect(missing).toBe(1);
+    }),
   );
 
   it.live("rejects archive members that escape the artifact root", () =>
@@ -545,7 +577,7 @@ describe("slim-services artifact source", () => {
         const fiber = yield* Effect.forkChild(
           withFetch(
             fetcher,
-            makeSlimServicesSource(() => artifact, systemTarBoundary, decompressor).materialize(
+            makeSlimServicesSource(() => artifact, { decompressor }).materialize(
               request,
               destination,
               expected,

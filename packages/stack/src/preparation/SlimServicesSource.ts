@@ -43,7 +43,7 @@ export interface TarBoundary {
 }
 
 /** The system tar boundary is argv-based so archive paths never enter a shell string. */
-export const systemTarBoundary: TarBoundary = {
+const systemTarBoundary: TarBoundary = {
   list: Effect.fn("SlimServicesSource.tarList")(function* (archivePath) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     return yield* spawner
@@ -89,28 +89,43 @@ const responseFor = (url: string) =>
     ),
   );
 
-/** Release hosts answer rate limits, gateway errors, and dropped transfers that a later attempt resolves. */
+/**
+ * Release hosts answer rate limits, gateway errors, and dropped transfers that a later attempt
+ * resolves. A transfer cut mid-body surfaces as `DecodeError`, so it retries alongside connect
+ * failures, while deterministic request faults fail on the first attempt.
+ */
 const transferFault = (error: unknown): boolean =>
   error instanceof PreparationError
     ? error.status !== undefined &&
       (error.status === 408 || error.status === 429 || error.status >= 500)
-    : HttpClientError.isHttpClientError(error);
+    : HttpClientError.isHttpClientError(error) &&
+      (error.reason._tag === "TransportError" || error.reason._tag === "DecodeError");
 
-const transferSchedule = Schedule.exponential("500 millis").pipe(
-  Schedule.jittered,
-  Schedule.upTo({ times: 4 }),
-);
+/** 4 retries (5 attempts) per request: 500ms exponential, jittered. */
+const TRANSFER_MAX_RETRIES = 4;
 
-const withTransferRetry = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-  Effect.retry(effect, { schedule: transferSchedule, while: transferFault });
+const transferBackoff = Schedule.exponential("500 millis").pipe(Schedule.jittered);
 
-const fetchBytes = Effect.fn("SlimServicesSource.fetchBytes")(function* (url: string) {
-  return yield* withTransferRetry(
-    responseFor(url).pipe(
-      Effect.flatMap((response) => response.arrayBuffer),
-      Effect.map((bytes) => new Uint8Array(bytes)),
-    ),
-  ).pipe(
+const withTransferRetry =
+  (url: string, backoff: Schedule.Schedule<unknown>) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    effect.pipe(
+      Effect.tapError((cause) =>
+        transferFault(cause)
+          ? Effect.logWarning(`Retrying slim-services transfer of ${url}`, cause)
+          : Effect.void,
+      ),
+      Effect.retry({ schedule: backoff, times: TRANSFER_MAX_RETRIES, while: transferFault }),
+    );
+
+const fetchBytes = Effect.fn("SlimServicesSource.fetchBytes")(function* (
+  url: string,
+  backoff: Schedule.Schedule<unknown>,
+) {
+  return yield* responseFor(url).pipe(
+    Effect.flatMap((response) => response.arrayBuffer),
+    Effect.map((bytes) => new Uint8Array(bytes)),
+    withTransferRetry(url, backoff),
     Effect.mapError(
       (cause) => new PreparationError({ message: `Unable to download ${url}`, cause }),
     ),
@@ -151,6 +166,7 @@ const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* 
   url: string,
   destination: string,
   expectedSha256: string,
+  backoff: Schedule.Schedule<unknown>,
 ) {
   const fs = yield* FileSystem.FileSystem;
   // Each attempt reopens the sink in truncating mode, so a retry replaces any partial transfer.
@@ -177,7 +193,7 @@ const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* 
       catch: (cause) => new PreparationError({ message: "Unable to finish archive digest", cause }),
     });
   });
-  const actual = yield* withTransferRetry(transfer);
+  const actual = yield* transfer.pipe(withTransferRetry(url, backoff));
   if (actual !== expectedSha256.toLowerCase())
     return yield* new PreparationError({
       message: `expected ${expectedSha256}, got ${actual}`,
@@ -192,8 +208,9 @@ const checksumFor = (contents: string, archiveName: string): string | undefined 
 
 export const slimServicesChecksum = Effect.fn("SlimServicesSource.checksum")(function* (
   artifact: SlimServicesArtifact,
+  backoff: Schedule.Schedule<unknown> = transferBackoff,
 ) {
-  return yield* fetchBytes(artifact.checksumUrl).pipe(
+  return yield* fetchBytes(artifact.checksumUrl, backoff).pipe(
     Effect.map((bytes) => new TextDecoder().decode(bytes)),
     Effect.flatMap((contents) => {
       const checksum = checksumFor(contents, `${artifact.assetName}.tar.zst`);
@@ -281,9 +298,15 @@ const validateExtractedTree = (
 
 export const makeSlimServicesSource = (
   resolve: (request: ArtifactRequest) => SlimServicesArtifact | undefined,
-  tarBoundary: TarBoundary = systemTarBoundary,
-  decompressor: ZstdDecompressor = nodeZstdDecompressor,
+  overrides: {
+    readonly tarBoundary?: TarBoundary;
+    readonly decompressor?: ZstdDecompressor;
+    readonly backoff?: Schedule.Schedule<unknown>;
+  } = {},
 ): ArtifactSource => {
+  const tarBoundary = overrides.tarBoundary ?? systemTarBoundary;
+  const decompressor = overrides.decompressor ?? nodeZstdDecompressor;
+  const backoff = overrides.backoff ?? transferBackoff;
   const resolveArtifact = Effect.fn("SlimServicesSource.resolveArtifact")(function* (
     request: ArtifactRequest,
   ) {
@@ -294,7 +317,9 @@ export const makeSlimServicesSource = (
   });
   return {
     checksum: (request) =>
-      resolveArtifact(request).pipe(Effect.flatMap((artifact) => slimServicesChecksum(artifact))),
+      resolveArtifact(request).pipe(
+        Effect.flatMap((artifact) => slimServicesChecksum(artifact, backoff)),
+      ),
     materialize: Effect.fn("SlimServicesSource.materialize")(
       function* (request, destination, expectedSha256, onProgress) {
         const fs = yield* FileSystem.FileSystem;
@@ -307,7 +332,7 @@ export const makeSlimServicesSource = (
         ]);
         return yield* Effect.gen(function* () {
           const artifact = yield* resolveArtifact(request);
-          const manifestBytes = yield* fetchBytes(artifact.manifestUrl);
+          const manifestBytes = yield* fetchBytes(artifact.manifestUrl, backoff);
           const manifestText = new TextDecoder().decode(manifestBytes);
           const manifestSchema = Schema.Struct({
             service: Schema.String,
@@ -350,7 +375,9 @@ export const makeSlimServicesSource = (
               version: artifact.version,
             });
           yield* Effect.sync(() => onProgress?.("downloading")).pipe(
-            Effect.andThen(downloadToFile(artifact.downloadUrl, compressedPath, expectedSha256)),
+            Effect.andThen(
+              downloadToFile(artifact.downloadUrl, compressedPath, expectedSha256, backoff),
+            ),
             Effect.mapError(
               (cause) =>
                 new PreparationError({
