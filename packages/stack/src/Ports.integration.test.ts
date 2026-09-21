@@ -109,6 +109,31 @@ it.live("allocates an auto port outside a contiguous range that refuses to bind"
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.live("reassigns the same auto port after its claim is released", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const state = yield* makeTestState(root);
+      yield* state.save({
+        id: "stack",
+        runtime: "native",
+        identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
+        instances: [],
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      });
+      const ports = yield* makePorts(state);
+      const request = { stackId: "stack", key: "api", host: "127.0.0.1", port: "auto" as const };
+      const accept = (_host: string, port: number) => Effect.succeed(port);
+      const first = yield* ports.acquire(request, accept);
+      yield* ports.release("stack", "api");
+      const again = yield* ports.acquire(request, accept);
+      expect(again.port).toBe(first.port);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live("names the last bind failure when no public port is available", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -1,5 +1,13 @@
-import { Cause, Crypto, Data, Effect, Exit, Option, Scope } from "effect";
+import { Cause, Data, Effect, Exit, Hash, Option, Scope } from "effect";
 import type * as State from "./State.ts";
+
+const portBase = 20000;
+const portSpan = 30000;
+/**
+ * Co-prime with the span, so the scan visits every port once and a reserved range narrower than
+ * the stride cannot produce consecutive bind failures.
+ */
+const portStride = 7919;
 
 export class PortError extends Data.TaggedError("PortError")<{
   readonly key: string;
@@ -14,11 +22,13 @@ export interface PortRequest {
   readonly port: number | "auto";
 }
 
+/** Spreads the scan across the span so separate checkouts, stacks, and keys start apart. */
+const scanStart = (stack: State.SavedStack, key: string) =>
+  Math.abs(Hash.string(`${stack.identity.projectRoot}:${stack.id}:${key}`)) % portSpan;
+
 /** Coordinates durable public claims while retaining each successfully bound listener. */
 export const makePorts = (state: State.Interface) =>
-  Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-
+  Effect.sync(() => {
     const acquire = Effect.fn("Ports.acquire")(
       <A, R>(
         request: PortRequest,
@@ -58,12 +68,14 @@ export const makePorts = (state: State.Interface) =>
               });
 
             const owner = yield* Scope.Scope;
+            const start = scanStart(stack, request.key);
             let failures = 0;
             let lastFailure: PortError | undefined;
-            for (let attempt = 0; attempt < 30000 && failures < 64; attempt++) {
-              // Each probe is redrawn so a contiguous reserved range cannot exhaust the budget.
+            for (let attempt = 0; attempt < portSpan && failures < 64; attempt++) {
               const port =
-                requested === "auto" ? yield* crypto.randomIntBetween(20000, 49999) : requested;
+                requested === "auto"
+                  ? portBase + ((start + attempt * portStride) % portSpan)
+                  : requested;
               if (claimed.has(port)) continue;
               const result = yield* Effect.uninterruptibleMask((restore) =>
                 Effect.gen(function* () {
