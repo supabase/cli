@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Crypto, Data, Effect, FileSystem, Path, Schema, Stream } from "effect";
+import { Crypto, Data, Effect, Exit, FileSystem, Path, Schema, Scope, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { makeContainerRuntime } from "../runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "./DockerDatabaseStorage.ts";
@@ -137,6 +137,84 @@ describe("Podman database storage", { timeout: 120_000 }, () => {
         );
         yield* secondStorage.destroyData("17");
         expect(yield* fs.exists(secondDataRoot)).toBe(false);
+        yield* podman([
+          "run",
+          "--rm",
+          "--mount",
+          `type=bind,src=${cacheRoot},dst=/cache`,
+          helperImage,
+          "/bin/sh",
+          "-c",
+          "rm -rf /cache/*",
+        ]);
+        yield* fs.remove(cacheRoot, { recursive: true, force: true });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("reopens host data after its cache root is purged", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const owner = yield* Scope.Scope;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "podman-storage-reopen-" });
+        const stateRoot = path.join(root, "state");
+        const storageRoot = path.join(stateRoot, "stack", "data");
+        const cacheRoot = path.join(root, "cache");
+        const instanceRoot = path.join(storageRoot, "reopen");
+        const dataRoot = path.join(instanceRoot, "data");
+        const readyPath = path.join(instanceRoot, ".supabase-database-ready.json");
+        yield* fs.makeDirectory(dataRoot, { recursive: true });
+        expect(yield* fs.exists(cacheRoot)).toBe(false);
+        const container = yield* makeContainerRuntime({ engine: "podman" });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const makeStorage = () =>
+          makeDockerDatabaseStorage({
+            runtime: "podman",
+            stackId: "podman-storage-reopen-test",
+            instanceId: "reopen",
+            instanceRoot,
+            root: storageRoot,
+            cacheRoot,
+            fs,
+            path,
+            crypto,
+            container,
+            spawner,
+          });
+
+        const initialScope = yield* Scope.fork(owner, "sequential");
+        yield* Scope.provide(initialScope)(
+          Effect.gen(function* () {
+            const storage = yield* makeStorage();
+            yield* storage.prepare("17");
+            yield* fs.writeFileString(path.join(dataRoot, "PG_VERSION"), "17\n");
+            yield* fs.writeFileString(path.join(dataRoot, "fixture"), "reopen");
+            yield* storage.markInitialized("17");
+            yield* fs.writeFileString(
+              readyPath,
+              '{"version":"17","runtime":"podman","profile":"supabase"}',
+            );
+            yield* storage.saveSnapshot("17", "reopen");
+          }),
+        );
+        yield* Scope.close(initialScope, Exit.void);
+        yield* fs.remove(cacheRoot, { recursive: true, force: true });
+        expect(yield* fs.exists(cacheRoot)).toBe(false);
+
+        const reopenedScope = yield* Scope.fork(owner, "sequential");
+        yield* Scope.provide(reopenedScope)(
+          Effect.gen(function* () {
+            const storage = yield* makeStorage();
+            yield* storage.prepare("17");
+            yield* storage.destroyData("17");
+          }),
+        );
+        yield* Scope.close(reopenedScope, Exit.void);
+        expect(yield* fs.exists(dataRoot)).toBe(false);
+        expect(yield* fs.exists(readyPath)).toBe(false);
         yield* podman([
           "run",
           "--rm",
