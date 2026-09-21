@@ -1,0 +1,53 @@
+name: Docker snapshot runtime benchmark
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [perf/managed-snapshot-runtime-benchmark]
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        filesystem: [ext4, xfs]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup
+      - name: Prepare XFS filesystem
+        if: matrix.filesystem == 'xfs'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y xfsprogs
+          truncate -s 8G "$RUNNER_TEMP/snapshot-xfs.img"
+          sudo mkfs.xfs -f -m reflink=1 "$RUNNER_TEMP/snapshot-xfs.img"
+          sudo mkdir -p /mnt/snapshot-xfs
+          sudo mount -o loop "$RUNNER_TEMP/snapshot-xfs.img" /mnt/snapshot-xfs
+          sudo chown "$(id -u):$(id -g)" /mnt/snapshot-xfs
+      - name: Prepare Docker images
+        run: |
+          docker pull ghcr.io/supabase/cli/postgres:17.6.1.173@sha256:1581c433d71a48a81e356a3ed2d4aa5ecfc8fc0465ea98661da7a88023317dcf
+          docker pull debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+      - name: Benchmark verified PostgreSQL snapshots
+        env:
+          BENCHMARK_FILESYSTEM: ${{ matrix.filesystem }}
+          BENCHMARK_ROOT: ${{ matrix.filesystem == 'xfs' && '/mnt/snapshot-xfs' || runner.temp }}
+          BENCHMARK_REPS: "3"
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/snapshot-runtime-results"
+          for dataset in small large; do
+            log="$RUNNER_TEMP/snapshot-runtime-results/$dataset.log"
+            BENCHMARK_DATASET="$dataset" pnpm exec bun packages/stack/tools/docker-snapshot-runtime-benchmark.ts >"$log" 2>&1
+            grep -E '^\{.*\}$' "$log" >"$RUNNER_TEMP/snapshot-runtime-results/$dataset.jsonl"
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: docker-snapshot-runtime-${{ matrix.filesystem }}
+          path: ${{ runner.temp }}/snapshot-runtime-results
