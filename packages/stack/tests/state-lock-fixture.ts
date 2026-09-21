@@ -7,6 +7,9 @@ import { fileURLToPath } from "node:url";
 
 const [mode, root, id] = process.argv.slice(2);
 if (root === undefined) throw new Error("Registry root missing");
+if (mode !== "write" && mode !== "hold" && mode !== "child")
+  throw new Error(`Unknown fixture mode: ${mode ?? "<missing>"}`);
+const fixturePath = fileURLToPath(import.meta.url);
 
 const program = Effect.scoped(
   Effect.gen(function* () {
@@ -33,11 +36,7 @@ const program = Effect.scoped(
           yield* spawner.spawn(
             ChildProcess.make(
               process.execPath,
-              [
-                ...(isBunVirtualPath(import.meta.url) ? [] : [fileURLToPath(import.meta.url)]),
-                "child",
-                root,
-              ],
+              [...(isBunVirtualPath(fixturePath) ? [] : [fixturePath]), "child", root],
               {
                 // Keep the child independent on Windows so holder termination tests lock recovery.
                 detached: process.platform === "win32",
