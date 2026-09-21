@@ -38,6 +38,13 @@ repository variable is set.
 Two roles on purpose: `github-deploy` is account admin and only ever applies this template;
 the per-release upload runs as the bucket-scoped publisher role.
 
+The trust is branch-scoped, not workflow-scoped: any job on `develop` with `id-token: write`
+can assume the publisher role. IAM evaluates only the `sub` and `aud` claims of the GitHub
+token, and narrowing `sub` to one workflow would require a repository-wide subject template
+that the org-managed `github-deploy` and `github-preview` trusts do not accept. The controls
+are the protected branch, the write-only permission set, the one-hour session cap, and bucket
+versioning.
+
 ## Changing the trusted branch
 
 Change `TRUSTED_SUBJECT` in the deploy job of the workflow (for example to a release branch)
