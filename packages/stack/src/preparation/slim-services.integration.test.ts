@@ -188,6 +188,57 @@ describe("slim-services artifact source", () => {
     ),
   );
 
+  it.live("retries gateway failures and stops on a missing asset", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const archive = yield* compress(tar("bin/demo", "demo"));
+        const crypto = yield* Crypto.Crypto;
+        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
+        const attempts = new Map<string, number>();
+        const count = (url: string): number => {
+          const next = (attempts.get(url) ?? 0) + 1;
+          attempts.set(url, next);
+          return next;
+        };
+        const flaky: FetchLike = (input) => {
+          const url = requestUrl(input);
+          if (url.endsWith("SHA256SUMS"))
+            return Promise.resolve(
+              count(url) === 1
+                ? new Response("", { status: 504 })
+                : new Response(`${expected}  demo-v1.0.0-linux-amd64.tar.zst\n`),
+            );
+          if (url.endsWith("manifest.json"))
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
+              ),
+            );
+          return Promise.resolve(
+            count(url) === 1 ? new Response("", { status: 503 }) : new Response(archive),
+          );
+        };
+        const fs = yield* FileSystem.FileSystem;
+        const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-retry-" });
+        yield* withFetch(
+          flaky,
+          makeSlimServicesSource(() => artifact).materialize(request, destination, expected),
+        );
+        expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
+        expect(attempts.get(artifact.downloadUrl)).toBe(2);
+
+        const missing: FetchLike = () => Promise.resolve(new Response("", { status: 404 }));
+        let requests = 0;
+        const failed = yield* withFetch((input, init) => {
+          requests += 1;
+          return missing(input, init);
+        }, slimServicesChecksum(artifact).pipe(Effect.exit));
+        expect(errorOf(failed)).toBeInstanceOf(PreparationError);
+        expect(requests).toBe(1);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.live("rejects archive members that escape the artifact root", () =>
     Effect.scoped(
       Effect.gen(function* () {

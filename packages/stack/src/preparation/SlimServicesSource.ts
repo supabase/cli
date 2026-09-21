@@ -1,6 +1,6 @@
-import { Effect, FileSystem, Path, Schema, Stream } from "effect";
+import { Effect, FileSystem, Path, Schedule, Schema, Stream } from "effect";
 import { NodeStream } from "@effect/platform-node";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientError } from "effect/unstable/http";
 import { createZstdDecompress } from "node:zlib";
 import { createHash } from "node:crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -80,16 +80,37 @@ const responseFor = (url: string) =>
     Effect.flatMap((response) =>
       Effect.gen(function* () {
         if (response.status < 200 || response.status >= 300)
-          return yield* new PreparationError({ message: `HTTP ${response.status}` });
+          return yield* new PreparationError({
+            message: `HTTP ${response.status}`,
+            status: response.status,
+          });
         return response;
       }),
     ),
   );
 
+/** Release hosts answer rate limits, gateway errors, and dropped transfers that a later attempt resolves. */
+const transferFault = (error: unknown): boolean =>
+  error instanceof PreparationError
+    ? error.status !== undefined &&
+      (error.status === 408 || error.status === 429 || error.status >= 500)
+    : HttpClientError.isHttpClientError(error);
+
+const transferSchedule = Schedule.exponential("500 millis").pipe(
+  Schedule.jittered,
+  Schedule.upTo({ times: 4 }),
+);
+
+const withTransferRetry = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.retry(effect, { schedule: transferSchedule, while: transferFault });
+
 const fetchBytes = Effect.fn("SlimServicesSource.fetchBytes")(function* (url: string) {
-  return yield* responseFor(url).pipe(
-    Effect.flatMap((response) => response.arrayBuffer),
-    Effect.map((bytes) => new Uint8Array(bytes)),
+  return yield* withTransferRetry(
+    responseFor(url).pipe(
+      Effect.flatMap((response) => response.arrayBuffer),
+      Effect.map((bytes) => new Uint8Array(bytes)),
+    ),
+  ).pipe(
     Effect.mapError(
       (cause) => new PreparationError({ message: `Unable to download ${url}`, cause }),
     ),
@@ -132,27 +153,31 @@ const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* 
   expectedSha256: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const response = yield* responseFor(url);
-  const hash = yield* Effect.try({
-    try: () => createHash("sha256"),
-    catch: (cause) =>
-      new PreparationError({ message: "Unable to initialize archive digest", cause }),
+  // Each attempt reopens the sink in truncating mode, so a retry replaces any partial transfer.
+  const transfer = Effect.gen(function* () {
+    const response = yield* responseFor(url);
+    const hash = yield* Effect.try({
+      try: () => createHash("sha256"),
+      catch: (cause) =>
+        new PreparationError({ message: "Unable to initialize archive digest", cause }),
+    });
+    yield* response.stream.pipe(
+      Stream.tap((chunk) =>
+        Effect.try({
+          try: () => {
+            hash.update(chunk);
+          },
+          catch: (cause) => new PreparationError({ message: "Unable to hash archive", cause }),
+        }),
+      ),
+      Stream.run(fs.sink(destination, { mode: 0o600 })),
+    );
+    return yield* Effect.try({
+      try: () => hash.digest("hex"),
+      catch: (cause) => new PreparationError({ message: "Unable to finish archive digest", cause }),
+    });
   });
-  yield* response.stream.pipe(
-    Stream.tap((chunk) =>
-      Effect.try({
-        try: () => {
-          hash.update(chunk);
-        },
-        catch: (cause) => new PreparationError({ message: "Unable to hash archive", cause }),
-      }),
-    ),
-    Stream.run(fs.sink(destination, { mode: 0o600 })),
-  );
-  const actual = yield* Effect.try({
-    try: () => hash.digest("hex"),
-    catch: (cause) => new PreparationError({ message: "Unable to finish archive digest", cause }),
-  });
+  const actual = yield* withTransferRetry(transfer);
   if (actual !== expectedSha256.toLowerCase())
     return yield* new PreparationError({
       message: `expected ${expectedSha256}, got ${actual}`,
