@@ -3,11 +3,14 @@
  * `local-config-values.ts`'s `envOverride`, which treats an empty value as
  * unset. Falls back to `def` only when the var is absent. Reads
  * `process.env` directly, bypassing the `SUPABASE_`-prefixed decode-hook chain.
+ * `env` defaults to the live `process.env` rather than a copied snapshot:
+ * Windows env lookups are case-insensitive; a snapshot record is not.
  */
 export function envOrDefault(
   key: string,
   def: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): string {
-  return projectEnvValues?.[key] ?? process.env[key] ?? def;
+  return projectEnvValues?.[key] ?? env[key] ?? def;
 }
