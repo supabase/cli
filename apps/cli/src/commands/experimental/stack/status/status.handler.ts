@@ -1,3 +1,4 @@
+import { endpointReports } from "../stack-endpoints.format.ts";
 import { Effect, Option, Path, Redacted } from "effect";
 import type { Observation, ServiceCreation, Stack } from "@supabase/stack/effect";
 import type { StackError } from "@supabase/stack/effect";
@@ -104,22 +105,6 @@ const mapStackError = (error: StackError) =>
         : "Retry the command and use --debug if the stack remains unavailable.",
     cause: error,
   });
-
-const endpointUrl = (endpoint: Observation["endpoints"][number]) =>
-  `${endpoint.protocol}://${endpoint.host}:${endpoint.port}`;
-
-const endpointReports = (observation: Observation | undefined) =>
-  Object.fromEntries(
-    (observation?.endpoints ?? []).map((endpoint) => [
-      endpoint.name,
-      {
-        protocol: endpoint.protocol,
-        address: endpoint.host,
-        port: endpoint.port,
-        url: endpointUrl(endpoint),
-      },
-    ]),
-  );
 
 const serviceState = (observation: Observation | undefined): ServiceReport["state"] => {
   if (observation === undefined) return "unavailable";

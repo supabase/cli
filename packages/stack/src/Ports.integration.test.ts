@@ -72,7 +72,35 @@ it.live("reports an occupied saved port without moving its assignment", () =>
       yield* bind("127.0.0.1", first.port);
       const failure = yield* ports.acquire(request, bind).pipe(Effect.flip);
       expect(failure).toBeInstanceOf(PortError);
+      expect(failure.message).toContain(`api at 127.0.0.1:${first.port}`);
       expect((yield* state.read("stack"))?.ports[0]?.port).toBe(first.port);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("refuses allocation when another stack has unreadable claims", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const state = yield* makeTestState(root);
+      yield* state.save({
+        id: "healthy",
+        runtime: "native",
+        identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
+        instances: [],
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      });
+      yield* fs.makeDirectory(`${root}/broken`);
+      yield* fs.writeFileString(`${root}/broken/state.json`, "{broken");
+      const ports = yield* makePorts(state);
+      const error = yield* ports
+        .acquire({ stackId: "healthy", key: "sql", host: "127.0.0.1", port: "auto" }, bind)
+        .pipe(Effect.flip);
+      expect(error).toBeInstanceOf(State.StateError);
+      expect((yield* state.read("healthy"))?.ports).toEqual([]);
+      expect(yield* fs.readFileString(`${root}/broken/state.json`)).toBe("{broken");
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

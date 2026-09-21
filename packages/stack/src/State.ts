@@ -94,9 +94,14 @@ const decodeState = (
     ),
   );
 
-const makeState = (options: {
+interface Options {
   readonly root: string;
-}): Effect.Effect<Interface, StateError, FileSystem.FileSystem | Path.Path> =>
+  readonly onInvalidState?: (id: string, error: StateError) => Effect.Effect<void>;
+}
+
+const makeState = (
+  options: Options,
+): Effect.Effect<Interface, StateError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -148,7 +153,14 @@ const makeState = (options: {
       for (const entry of entries) {
         if (!Schema.is(SafeId)(entry)) continue;
         const id = entry;
-        const value = yield* read(id);
+        const value = yield* read(id).pipe(
+          Effect.catch((error) =>
+            options.onInvalidState !== undefined &&
+            (error.operation === "decode" || error.operation === "identity")
+              ? options.onInvalidState(id, error).pipe(Effect.as(undefined))
+              : Effect.fail(error),
+          ),
+        );
         if (value !== undefined) states.push(value);
       }
       return states;
@@ -218,5 +230,5 @@ const makeState = (options: {
     return { read, list: list(), save, remove, withLock };
   });
 
-export const layer = (options: { readonly root: string }) =>
+export const layer = (options: Options) =>
   Layer.effect(Service, makeState(options).pipe(Effect.map(Service.of)));

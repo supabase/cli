@@ -103,7 +103,10 @@ describe("stack target resolver", () => {
           expect(failure.value).toBeInstanceOf(StackTargetError);
           if (failure.value instanceof StackTargetError) {
             expect(failure.value.reason).toBe("flags");
-            expect(failure.value.message).toContain("runtime does not match");
+            expect(failure.value.message).toContain("Requested runtime native");
+            expect(failure.value.message).toContain("existing stack runtime docker");
+            expect(failure.value.suggestion).toContain("--runtime auto");
+            expect(failure.value.suggestion).toContain("different --stack name");
           }
         }
       }

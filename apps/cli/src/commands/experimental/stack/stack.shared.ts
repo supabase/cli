@@ -155,7 +155,9 @@ export const stackTargetResolverLayer = Layer.effect(
         });
       if (found !== undefined && !runtimeMatches(found.definition.runtime, requestedRuntime))
         return yield* new StackTargetError({
-          message: "The requested runtime does not match the existing stack",
+          message: `Requested runtime ${requestedRuntime} does not match existing stack runtime ${found.definition.runtime}`,
+          suggestion:
+            "Use --runtime auto to reuse the saved runtime, or omit --stack-id and choose a different --stack name.",
           reason: "flags",
         });
       return {

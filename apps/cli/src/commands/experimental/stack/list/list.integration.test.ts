@@ -9,7 +9,6 @@ import {
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { StackApi, stackApiLayer } from "../stack.shared.ts";
 import { stackList } from "./list.handler.ts";
-import { StackCommandListError } from "./list.errors.ts";
 
 const registry = Effect.fn("StackListTest.registry")(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -63,27 +62,52 @@ describe("stack list", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("fails on corrupt saved state without emitting a partial list", () =>
+  it.live("lists healthy stacks and warns about invalid entries without altering state", () =>
     Effect.gen(function* () {
       const fixture = yield* registry();
-      const stack = yield* fixture.api.create({
+      const healthy = yield* fixture.api.create({
         ...fixture.locations,
         projectRoot: fixture.root,
+        name: "healthy",
         runtime: "native",
       });
-      yield* fixture.fs.writeFileString(
-        fixture.path.join(fixture.locations.stateRoot, stack.id, "state.json"),
-        "{broken",
+      const broken = yield* fixture.api.create({
+        ...fixture.locations,
+        projectRoot: fixture.root,
+        name: "broken",
+        runtime: "native",
+      });
+      const file = fixture.path.join(fixture.locations.stateRoot, broken.id, "state.json");
+      yield* fixture.fs.writeFileString(file, "{broken");
+      const mismatchRoot = fixture.path.join(fixture.locations.stateRoot, "mismatched");
+      yield* fixture.fs.makeDirectory(mismatchRoot);
+      const mismatchFile = fixture.path.join(mismatchRoot, "state.json");
+      const healthyState = yield* fixture.fs.readFileString(
+        fixture.path.join(fixture.locations.stateRoot, healthy.id, "state.json"),
       );
-      const output = mockOutput();
-      const error = yield* stackList().pipe(
-        Effect.provide(Layer.mergeAll(fixture.layer, output.layer)),
-        Effect.flip,
-      );
-      expect(error).toBeInstanceOf(StackCommandListError);
-      expect(error.reason).toBe("invalid-config");
-      expect(output.stdoutText).toBe("");
-      expect(output.messages).toEqual([]);
+      yield* fixture.fs.writeFileString(mismatchFile, healthyState);
+      for (const format of ["text", "json", "stream-json"] as const) {
+        const output = mockOutput({ format });
+        const entries = yield* stackList().pipe(
+          Effect.provide(Layer.mergeAll(fixture.layer, output.layer)),
+        );
+        expect(entries.map(({ id }) => id)).toEqual([healthy.id]);
+        expect(output.stderrText).toContain(`skipping invalid stack ${broken.id}`);
+        expect(output.stderrText).toContain("skipping invalid stack mismatched");
+        expect(output.stdoutText).not.toContain("Warning");
+        if (format !== "text")
+          expect(output.messages).toContainEqual(
+            expect.objectContaining({ data: { stacks: entries } }),
+          );
+      }
+      expect(yield* fixture.fs.readFileString(file)).toBe("{broken");
+      expect(yield* fixture.fs.readFileString(mismatchFile)).toBe(healthyState);
+      const discoveryError = yield* fixture.api.discover(fixture.locations).pipe(Effect.flip);
+      expect(discoveryError.operation).toBe("discover");
+      const openError = yield* fixture.api
+        .open({ ...fixture.locations, id: broken.id })
+        .pipe(Effect.flip);
+      expect(openError.operation).toBe("open");
       expect(fixture.telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(live)),
   );

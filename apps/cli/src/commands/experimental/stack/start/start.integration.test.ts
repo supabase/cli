@@ -51,7 +51,10 @@ const instance = (
 ): ServiceInstances[ServiceCreation["service"]] => {
   const status = (config: ServiceCreation) => ({
     id,
-    endpoints: [],
+    endpoints:
+      config.service === "database"
+        ? [{ name: "sql", protocol: "tcp" as const, host: "127.0.0.1", port: 23456 }]
+        : [],
     config,
     lifecycle: "stopped" as const,
     health: undefined,
@@ -178,8 +181,7 @@ const fakeStack = () => {
   };
 };
 
-const layers = (root: string, fixture: ReturnType<typeof fakeStack>) => {
-  const output = mockOutput();
+const layers = (root: string, fixture: ReturnType<typeof fakeStack>, output = mockOutput()) => {
   const telemetry = mockTelemetryStateTracked();
   const target = Layer.succeed(StackTargetResolver, {
     resolve: () => Effect.succeed({ projectRoot: root, runtime: "native" as const }),
@@ -286,7 +288,23 @@ describe("experimental stack start", () => {
         "analytics",
         "pooler",
       ];
-      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
+      const output = mockOutput({ format: "json" });
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, output)));
+      expect(output.messages).toContainEqual(
+        expect.objectContaining({
+          data: {
+            id: fixture.stack.id,
+            endpoints: {
+              "database.sql": {
+                protocol: "tcp",
+                address: "127.0.0.1",
+                port: 23456,
+                url: "tcp://127.0.0.1:23456",
+              },
+            },
+          },
+        }),
+      );
       expect(fixture.members.map(({ service }) => service)).toEqual(["database"]);
       expect(fixture.composed).toBe(1);
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));

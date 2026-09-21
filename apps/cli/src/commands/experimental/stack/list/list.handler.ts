@@ -26,7 +26,11 @@ export const stackList = Effect.fn("experimental.stack.list")(function* () {
       ),
     );
     const discovered = yield* api
-      .discover({ stateRoot: path.join(settings.supabaseHome, "stacks") })
+      .discover({
+        stateRoot: path.join(settings.supabaseHome, "stacks"),
+        onInvalidState: (id, error) =>
+          output.raw(`Warning: skipping invalid stack ${id}: ${error.message}\n`, "stderr"),
+      })
       .pipe(
         Effect.mapError(
           (cause) =>

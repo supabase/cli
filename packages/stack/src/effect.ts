@@ -436,8 +436,16 @@ export const open = Effect.fn("Stack.open")(
 
 /** Lists saved resources separately from the availability of their live owners. */
 export const discover = Effect.fn("Stack.discover")(
-  function* (options: Pick<StackLocations, "stateRoot">) {
-    const state = yield* stateFor(options.stateRoot);
+  function* (
+    options: Pick<StackLocations, "stateRoot"> & {
+      readonly onInvalidState?: (id: string, error: State.StateError) => Effect.Effect<void>;
+    },
+  ) {
+    const state = yield* State.Service.pipe(
+      Effect.provide(
+        State.layer({ root: options.stateRoot, onInvalidState: options.onInvalidState }),
+      ),
+    );
     const saved = yield* state.list;
     return yield* Effect.forEach(saved, (definition) =>
       connectHost(state, definition.id).pipe(

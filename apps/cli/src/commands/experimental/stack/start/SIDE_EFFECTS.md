@@ -65,6 +65,7 @@ It remains available after the CLI exits. Preparation downloads native artifacts
 images. Catalog setup and project SQL connect to the primary database. Bucket seeding uses the local
 Storage HTTP endpoint. The CLI does not remove caller-owned Storage files during cleanup.
 
-Text output reports progress and `Stack is ready.`. JSON output returns the stack `id` and an empty
-message; use `stack status` for endpoints and service observations. Failures retain typed command
+Text output reports progress and `Stack is ready.`. JSON output returns the stack `id`, assigned `endpoints` keyed by service and endpoint name
+(for example `database.sql`), and an empty message. Endpoints contain protocol, address, port,
+and URL, matching `stack status`; use status for service observations. Failures retain typed command
 errors and package diagnostics. Telemetry state is flushed after success or failure.

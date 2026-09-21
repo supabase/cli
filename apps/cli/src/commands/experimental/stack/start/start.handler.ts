@@ -1,3 +1,4 @@
+import { endpointReports } from "../stack-endpoints.format.ts";
 import { readStackFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
@@ -611,8 +612,21 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     );
     yield* Effect.forEach(preparation, (fiber) => Fiber.join(fiber));
     yield* Ref.set(initialCleanupComplete, true);
+    const endpoints = Object.fromEntries(
+      (yield* Effect.forEach(members, (member) =>
+        member.status.pipe(
+          Effect.tapError((error) => starting.fail(error.message)),
+          Effect.mapError(stackError),
+          Effect.map((observation) =>
+            Object.entries(endpointReports(observation)).map(
+              ([name, endpoint]) => [`${member.service}.${name}`, endpoint] as const,
+            ),
+          ),
+        ),
+      )).flat(),
+    );
     yield* starting.succeed("Stack is ready.");
-    yield* output.success("", { id: stack.id });
+    yield* output.success("", { id: stack.id, endpoints });
     return stack.id;
   });
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));

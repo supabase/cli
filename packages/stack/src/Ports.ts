@@ -69,6 +69,14 @@ export const makePorts = (state: State.Interface) =>
                   return yield* restore(
                     Effect.gen(function* () {
                       const listener = yield* bind(request.host, port).pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new PortError({
+                              key: request.key,
+                              message: `Cannot bind ${request.key} at ${request.host}:${port}: ${cause.message}`,
+                              cause,
+                            }),
+                        ),
                         Effect.provideService(Scope.Scope, scope),
                       );
                       if (saved === undefined)

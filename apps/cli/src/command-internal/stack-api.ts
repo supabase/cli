@@ -23,7 +23,7 @@ export class StackApi extends Context.Service<
     readonly create: (options: CreateOptions) => Effect.Effect<Stack, StackError>;
     readonly open: (options: OpenOptions) => Effect.Effect<Stack, StackError>;
     readonly discover: (
-      options: Pick<CreateOptions, "stateRoot">,
+      options: Parameters<typeof discover>[0],
     ) => Effect.Effect<DiscoverResult, StackError>;
     readonly resolveIdentity: (
       options: Parameters<typeof resolveStackIdentity>[0],
@@ -54,7 +54,7 @@ export const stackApiLayer = Layer.effect(
       provideServices(open(options)),
     );
     const discoverStacks = Effect.fn("StackApi.discover")(
-      (options: Pick<CreateOptions, "stateRoot">) => provideServices(discover(options)),
+      (options: Parameters<typeof discover>[0]) => provideServices(discover(options)),
     );
     const resolveIdentity = Effect.fn("StackApi.resolveIdentity")(
       (options: Parameters<typeof resolveStackIdentity>[0]) =>
