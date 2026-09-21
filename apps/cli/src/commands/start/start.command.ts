@@ -79,7 +79,7 @@ const startRuntimeLayer = Layer.mergeAll(
   // Shared bucket seeding requires StackApi even when legacy routing is selected.
   stackApiLayer,
   // `stdinLayer` satisfies `promptYesNo`'s `Stdin` requirement (seed-buckets runs with
-  // `yes: true`), so `start` never reads a piped line at runtime — type requirements only.
+  // `promptless`), so `start` never reads a piped line at runtime — type requirements only.
   stdinLayer,
 );
 

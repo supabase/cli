@@ -78,6 +78,12 @@ Docker healthcheck — mirroring PostgREST's own probe shape.
 Runs only when `isFreshVolume && Storage started`, after the bulk
 health check genuinely succeeds, right before the `cli_stack_started` telemetry capture. A
 seeding failure rolls back the whole `start` run, same as any other post-bring-up failure.
+Seeding never prompts. `start` resolves overwrite/prune from consent alone
+(`--yes`/`SUPABASE_YES`): overwrite proceeds, prune does not. No stdin is read, so `start`
+cannot consume a line of a parent script's input. A bucket left in place prints
+`Keeping <vector|analytics> bucket <name>: not declared in supabase/config.toml. Run supabase
+seed buckets to prune.` to stderr in every output mode, and deliberate pruning lives in
+`supabase seed buckets`.
 
 A second, narrower seeding path exists for the `--ignore-health-check` downgrade branch:
 when the bulk health check fails but `isFreshVolume && Storage
@@ -194,6 +200,7 @@ not implemented.
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                                   | Overrides the image registry used to resolve every service's image                                                                                                                                                                                                                                                                                                                                                                                                                                                          | no        |
 | `SUPABASE_PROJECT_ID`                                                                                                | Overrides the resolved local project id (env → config.toml → workdir basename)                                                                                                                                                                                                                                                                                                                                                                                                                                              | no        |
 | `SUPABASE_WORKDIR`                                                                                                   | Resolves `CommandSettings.workdir`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | no        |
+| `SUPABASE_YES` (or `--yes`)                                                                                          | Auto-confirms the fresh-volume bucket-seed overwrite/prune prompts (shell or project dotenv, same as `seed buckets`)                                                                                                                                                                                                                                                                                                                                                                                                        | no        |
 | `BITBUCKET_CLONE_DIR`                                                                                                | When non-empty, drops named volumes and `--security-opt` from every container create                                                                                                                                                                                                                                                                                                                                                                                                                                        | no        |
 | `DOCKER_HOST` / `DOCKER_CONTEXT` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` / `DOCKER_API_VERSION` / `DOCKER_CONFIG` | Read (ambient shell OR a project `.env`/`.env.<env>`/`.env.local` file) to discover the Docker daemon this whole command talks to; `DOCKER_HOST` is also re-derived and set on Vector's container env so it can reach the host's Docker socket for log collection                                                                                                                                                                                                                                                           | no        |
 | `KONG_NGINX_WORKER_PROCESSES`                                                                                        | Read (ambient shell or project dotenv) into Kong's own container env (defaults to `"1"` when unset)                                                                                                                                                                                                                                                                                                                                                                                                                         | no        |
@@ -271,6 +278,12 @@ output modes.
   volume) → Postgres create+start+health-wait → `Starting containers...` → (image
   pre-pull) → per-container create+start → `Waiting for health checks...` → `Started
 supabase local development setup.`
+- stderr (conditional, fresh-volume bucket seeding): `Creating <kind> bucket: <name>` per
+  created bucket, `Pruning vector bucket: <name>` when `--yes`/`SUPABASE_YES` consents, and
+  `Keeping <kind> bucket <name>: not declared in supabase/config.toml. Run supabase seed
+buckets to prune.` for a bucket left in place. These seeding lines use the raw writer, so they
+  appear in every output mode, not only text. No confirmation question is printed and no stdin
+  line is read.
 - stderr (conditional, health-check timeout): per unhealthy container, a
   `<container> container logs:` header and that container's `docker logs` output, then one
   `<container>: <reason>` line each. Containers are named `supabase_<service>_<project id>`

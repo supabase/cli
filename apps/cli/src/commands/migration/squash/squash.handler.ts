@@ -332,9 +332,7 @@ const squashToVersion = Effect.fnUntraced(function* (
   const output = yield* Output;
   const migrations = yield* loadPartialMigrations(fs, path, migrationsDir, version);
   if (migrations.length === 0) {
-    return yield* Effect.fail(
-      new MigrationSquashMissingVersionError({ message: "version not found" }),
-    );
+    return yield* new MigrationSquashMissingVersionError({ message: "version not found" });
   }
 
   const local = migrations[migrations.length - 1]!;
@@ -423,11 +421,9 @@ const baselineMigrations = Effect.fnUntraced(function* (
 
       const resolvedFile = yield* resolveMigrationFile(fs, path, migrationsDir, resolvedVersion);
       if (Option.isNone(resolvedFile)) {
-        return yield* Effect.fail(
-          new MigrationFileNotFoundError({
-            message: `glob supabase/migrations/${resolvedVersion}_*.sql: file does not exist`,
-          }),
-        );
+        return yield* new MigrationFileNotFoundError({
+          message: `glob supabase/migrations/${resolvedVersion}_*.sql: file does not exist`,
+        });
       }
       const m = yield* readMigrationFile(fs, path, resolvedFile.value);
 
@@ -477,24 +473,14 @@ const runSquash = Effect.fnUntraced(function* (
   yield* Effect.gen(function* () {
     // Checked here, ahead of the root pre-run.
     if (target.setFlags.length > 1) {
-      return yield* Effect.fail(
-        new MigrationTargetFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(
-            ["db-url", "linked", "local"],
-            target.setFlags,
-          ),
-        }),
-      );
+      return yield* new MigrationTargetFlagsError({
+        message: cobraMutuallyExclusiveErrorMessage(["db-url", "linked", "local"], target.setFlags),
+      });
     }
     if (Option.isSome(flags.dbUrl) && Option.isSome(flags.password)) {
-      return yield* Effect.fail(
-        new MigrationPasswordFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(
-            ["db-url", "password"],
-            ["db-url", "password"],
-          ),
-        }),
-      );
+      return yield* new MigrationPasswordFlagsError({
+        message: cobraMutuallyExclusiveErrorMessage(["db-url", "password"], ["db-url", "password"]),
+      });
     }
 
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
@@ -503,12 +489,10 @@ const runSquash = Effect.fnUntraced(function* (
     // `--project-ref` never implies `--linked` and must not be silently
     // discarded on a non-linked target; see push.handler.ts's identical guard.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new MigrationTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new MigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // Resolves and caches the project ref, then reads the remote-merged config before
@@ -562,17 +546,13 @@ const runSquash = Effect.fnUntraced(function* (
     if (version.length > 0) {
       if (parseMigrationVersion(version) === undefined) {
         // Bare message; squash does not inherit repair's "failed to parse <v>:" prefix.
-        return yield* Effect.fail(
-          new MigrationInvalidVersionError({ message: "invalid version number" }),
-        );
+        return yield* new MigrationInvalidVersionError({ message: "invalid version number" });
       }
       const versionFile = yield* resolveMigrationFile(fs, path, migrationsDir, version);
       if (Option.isNone(versionFile)) {
-        return yield* Effect.fail(
-          new MigrationFileNotFoundError({
-            message: `glob supabase/migrations/${version}_*.sql: file does not exist`,
-          }),
-        );
+        return yield* new MigrationFileNotFoundError({
+          message: `glob supabase/migrations/${version}_*.sql: file does not exist`,
+        });
       }
     }
 

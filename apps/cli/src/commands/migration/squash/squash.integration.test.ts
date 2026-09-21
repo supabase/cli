@@ -1,9 +1,17 @@
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option } from "effect";
+import {
+  Cause,
+  Config,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+} from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -18,6 +26,7 @@ import {
   mockTelemetryStateTracked,
   useShadowCacheDisabled,
   useTempWorkdir,
+  withEnvVar,
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
 import {
@@ -117,36 +126,37 @@ const simulatedFsError = (path: string, method: string) =>
   );
 
 interface FsFaultOpts {
-  /** Makes `fs.open(path, { flag: "w" })` itself fail — squash's one target-file open call. */
-  readonly failOpenPath?: string;
+  /** Makes `fs.open(file, { flag: "w" })` itself fail — squash's one target-file open call. */
+  readonly failOpenFile?: string;
   /**
-   * Lets the Nth+ `writeAll` call on the open handle for `path` fail (1-indexed),
+   * Lets the Nth+ `writeAll` call on the open handle for `file` fail (1-indexed),
    * succeeding on every earlier call, so the full-dump write (call 1) and the
    * separator/diff tail write (call 2) can be failed independently.
    */
-  readonly failWriteAllFromCall?: { readonly path: string; readonly fromCall: number };
-  readonly failRemovePath?: string;
-  readonly failReadDirectoryAtCall?: { readonly path: string; readonly atCall: number };
+  readonly failWriteAllFromCall?: { readonly file: string; readonly fromCall: number };
+  readonly failRemoveFile?: string;
+  readonly failMigrationsReadDirectoryAtCall?: number;
 }
 
-function faultyFsLayer(opts: FsFaultOpts): Layer.Layer<FileSystem.FileSystem> {
+function faultyFsLayer(workdir: string, opts: FsFaultOpts): Layer.Layer<FileSystem.FileSystem> {
   return Layer.effect(
     FileSystem.FileSystem,
-    Effect.map(FileSystem.FileSystem, (real) => {
+    Effect.gen(function* () {
+      const real = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const migrationsDir = pathService.join(workdir, "supabase", "migrations");
+      const migrationFile = (file: string) => pathService.join(migrationsDir, file);
       let readDirCallsForPath = 0;
       return FileSystem.FileSystem.of({
         ...real,
         remove: (path, removeOpts) =>
-          opts.failRemovePath !== undefined && path === opts.failRemovePath
+          opts.failRemoveFile !== undefined && path === migrationFile(opts.failRemoveFile)
             ? Effect.fail(simulatedFsError(path, "remove"))
             : real.remove(path, removeOpts),
         readDirectory: (path, readOpts) => {
-          if (
-            opts.failReadDirectoryAtCall !== undefined &&
-            path === opts.failReadDirectoryAtCall.path
-          ) {
+          if (opts.failMigrationsReadDirectoryAtCall !== undefined && path === migrationsDir) {
             readDirCallsForPath += 1;
-            if (readDirCallsForPath === opts.failReadDirectoryAtCall.atCall) {
+            if (readDirCallsForPath === opts.failMigrationsReadDirectoryAtCall) {
               return Effect.fail(simulatedFsError(path, "readDirectory"));
             }
           }
@@ -154,8 +164,8 @@ function faultyFsLayer(opts: FsFaultOpts): Layer.Layer<FileSystem.FileSystem> {
         },
         open: (path, openOpts) => {
           if (
-            opts.failOpenPath !== undefined &&
-            path === opts.failOpenPath &&
+            opts.failOpenFile !== undefined &&
+            path === migrationFile(opts.failOpenFile) &&
             openOpts?.flag === "w"
           ) {
             return Effect.fail(simulatedFsError(path, "open"));
@@ -164,7 +174,7 @@ function faultyFsLayer(opts: FsFaultOpts): Layer.Layer<FileSystem.FileSystem> {
             Effect.map((file) => {
               if (
                 opts.failWriteAllFromCall === undefined ||
-                path !== opts.failWriteAllFromCall.path
+                path !== migrationFile(opts.failWriteAllFromCall.file)
               ) {
                 return file;
               }
@@ -366,7 +376,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   );
 
   const layer =
-    opts.fsFaults === undefined ? baseLayer : Layer.merge(baseLayer, faultyFsLayer(opts.fsFaults));
+    opts.fsFaults === undefined
+      ? baseLayer
+      : Layer.merge(baseLayer, faultyFsLayer(workdir, opts.fsFaults));
 
   return {
     layer,
@@ -394,11 +406,51 @@ const flags = (over: Partial<MigrationSquashFlags> = {}): MigrationSquashFlags =
   projectRef: over.projectRef ?? Option.none(),
 });
 
-const seedMigration = (workdir: string, name: string, body = "create table t (id int);\n") => {
-  const dir = join(workdir, "supabase", "migrations");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, name), body);
-};
+const migrationsDirPath = Effect.fnUntraced(function* (workdir: string) {
+  const path = yield* Path.Path;
+  return path.join(workdir, "supabase", "migrations");
+});
+
+const migrationPath = Effect.fnUntraced(function* (workdir: string, file: string) {
+  const path = yield* Path.Path;
+  return path.join(yield* migrationsDirPath(workdir), file);
+});
+
+const seedMigration = Effect.fnUntraced(function* (
+  workdir: string,
+  name: string,
+  body = "create table t (id int);\n",
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const dir = yield* migrationsDirPath(workdir);
+  yield* fs.makeDirectory(dir, { recursive: true });
+  yield* fs.writeFileString(yield* migrationPath(workdir, name), body);
+});
+
+const seedHappyPathMigrations = Effect.fnUntraced(function* (workdir: string) {
+  yield* seedMigration(workdir, "0_init.sql", "create table a (id int);\n");
+  yield* seedMigration(workdir, "1_target.sql", "create table b (id int);\n");
+});
+
+const writeProjectFile = Effect.fnUntraced(function* (workdir: string, name: string, body: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(workdir, "supabase");
+  yield* fs.makeDirectory(dir, { recursive: true });
+  yield* fs.writeFileString(path.join(dir, name), body);
+});
+
+const readMigration = Effect.fnUntraced(function* (workdir: string, file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString(yield* migrationPath(workdir, file));
+});
+
+const migrationExists = Effect.fnUntraced(function* (workdir: string, file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs
+    .exists(yield* migrationPath(workdir, file))
+    .pipe(Effect.orElseSucceed(() => false));
+});
 
 const stdout = (out: ReturnType<typeof mockOutput>) => stripAnsi(out.stdoutText);
 const stderr = (out: ReturnType<typeof mockOutput>) => stripAnsi(out.stderrText);
@@ -528,9 +580,9 @@ describe("migration squash", () => {
     });
 
     it.effect("fails with a glob not-found error when --version matches no local file", () => {
-      seedMigration(tmp.current, "0_init.sql");
       const s = setup(tmp.current);
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
         const exit = yield* migrationSquash(flags({ version: Option.some("9") })).pipe(Effect.exit);
         expect(failureTag(exit)).toBe("MigrationFileNotFoundError");
         if (Exit.isFailure(exit)) {
@@ -555,10 +607,10 @@ describe("migration squash", () => {
     });
 
     it.effect("defaults to the local database when no target flag is given", () => {
-      seedMigration(tmp.current, "0_init.sql");
       // omitRef matches the real resolver's --local shape: no ref at all, not merely None.
       const s = setup(tmp.current, { args: [], omitRef: true });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
         yield* migrationSquash(flags());
         expect(s.resolverCalls[0]?.connType).toBe("local");
       }).pipe(Effect.provide(s.layer));
@@ -583,9 +635,9 @@ describe("migration squash", () => {
     it.effect(
       "fails with 'version not found' when the only file is a deprecated <14-digit>_init.sql",
       () => {
-        seedMigration(tmp.current, "20211208000000_init.sql");
         const s = setup(tmp.current);
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "20211208000000_init.sql");
           const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
           expect(failureTag(exit)).toBe("MigrationSquashMissingVersionError");
         }).pipe(Effect.provide(s.layer));
@@ -595,10 +647,9 @@ describe("migration squash", () => {
     it.effect(
       "surfaces 'failed to read directory' when supabase/migrations is a file, not a directory",
       () => {
-        mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-        writeFileSync(join(tmp.current, "supabase", "migrations"), "not a directory");
         const s = setup(tmp.current);
         return Effect.gen(function* () {
+          yield* writeProjectFile(tmp.current, "migrations", "not a directory");
           const error = yield* migrationSquash(flags()).pipe(Effect.flip);
           expect((error as { message: string }).message).toContain("failed to read directory");
         }).pipe(Effect.provide(s.layer));
@@ -608,9 +659,9 @@ describe("migration squash", () => {
     it.effect(
       "no-ops on a single migration: prints the earliest-migration line, spawns no container, and still finishes",
       () => {
-        seedMigration(tmp.current, "0_init.sql");
         const s = setup(tmp.current);
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
           yield* migrationSquash(flags());
           expect(stderr(s.out)).toContain(
             "supabase/migrations/0_init.sql is already the earliest migration.",
@@ -633,8 +684,6 @@ describe("migration squash", () => {
     const FULL_SQL = "CREATE TABLE t (id int);\n";
 
     function setupHappyPath(opts: SetupOpts = {}) {
-      seedMigration(tmp.current, "0_init.sql", "create table a (id int);\n");
-      seedMigration(tmp.current, "1_target.sql", "create table b (id int);\n");
       return setup(tmp.current, {
         beforeDumpSql: BEFORE_SQL,
         afterDumpSql: AFTER_SQL,
@@ -648,6 +697,7 @@ describe("migration squash", () => {
       () => {
         const s = setupHappyPath();
         return Effect.gen(function* () {
+          yield* seedHappyPathMigrations(tmp.current);
           yield* migrationSquash(flags());
 
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
@@ -659,18 +709,15 @@ describe("migration squash", () => {
             "Squashed local migrations to supabase/migrations/1_target.sql",
           );
 
-          const migrationsDir = join(tmp.current, "supabase", "migrations");
-          expect(existsSync(join(migrationsDir, "0_init.sql"))).toBe(false);
-          expect(existsSync(join(migrationsDir, "1_target.sql"))).toBe(true);
+          expect(yield* migrationExists(tmp.current, "0_init.sql")).toBe(false);
+          expect(yield* migrationExists(tmp.current, "1_target.sql")).toBe(true);
 
           // Hardcoded rather than recomputed via squash.diff.ts's helpers, so a regression
           // in the separator constant or the diff algorithm itself still fails this
           // assertion.
           const expectedTail =
             "\n--\n-- Dumped schema changes for auth and storage\n--\n\n" + "new auth object;\n";
-          expect(readFileSync(join(migrationsDir, "1_target.sql"), "utf8")).toBe(
-            FULL_SQL + expectedTail,
-          );
+          expect(yield* readMigration(tmp.current, "1_target.sql")).toBe(FULL_SQL + expectedTail);
 
           expect(stdout(s.out)).toContain("Finished supabase migration squash.");
         }).pipe(Effect.provide(s.layer));
@@ -682,6 +729,7 @@ describe("migration squash", () => {
       () => {
         const s = setupHappyPath();
         return Effect.gen(function* () {
+          yield* seedHappyPathMigrations(tmp.current);
           yield* migrationSquash(flags());
           expect(s.dumpCalls).toHaveLength(3);
           const [before, after, full] = s.dumpCalls;
@@ -700,7 +748,9 @@ describe("migration squash", () => {
       () => {
         const s = setupHappyPath();
         return Effect.gen(function* () {
+          yield* seedHappyPathMigrations(tmp.current);
           yield* migrationSquash(flags());
+          const expectedImage = yield* getRegistryImageUrl(dockerfileServiceImage("pg"));
           expect(s.dumpCalls).toHaveLength(3);
           for (const call of s.dumpCalls) {
             expect(call.env["PGPORT"]).toBe("54320");
@@ -708,9 +758,7 @@ describe("migration squash", () => {
             expect(call.env["PGDATABASE"]).toBe("postgres");
             expect(call.network).toEqual({ _tag: "host" });
             expect(call.cmd).toEqual(["bash", "-c", dumpSchemaScript, "--"]);
-            expect(call.image).toBe(
-              Effect.runSync(getRegistryImageUrl(dockerfileServiceImage("pg"))),
-            );
+            expect(call.image).toBe(expectedImage);
           }
           // Every dump dials the same shadow host, whatever this machine's Docker context
           // resolves (getHostname); checked for self-consistency rather than a hardcoded
@@ -728,6 +776,7 @@ describe("migration squash", () => {
       () => {
         const s = setupHappyPath();
         return Effect.gen(function* () {
+          yield* seedHappyPathMigrations(tmp.current);
           yield* migrationSquash(flags());
           const expectedHost = FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
           expect(s.setupJobCalls.length).toBeGreaterThan(0);
@@ -754,6 +803,7 @@ describe("migration squash", () => {
       () => {
         const s = setupHappyPath({ networkId: "custom-net" });
         return Effect.gen(function* () {
+          yield* seedHappyPathMigrations(tmp.current);
           yield* migrationSquash(flags());
           expect(s.dumpCalls).toHaveLength(3);
           for (const call of s.dumpCalls) {
@@ -767,14 +817,14 @@ describe("migration squash", () => {
       "resolves the pg_dump image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
       () => {
         // The project env is passed explicitly to each pg_dump invocation.
-        const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-        delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         const s = setupHappyPath();
-        writeFileSync(
-          join(tmp.current, "supabase", ".env"),
-          "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\n",
-        );
         return Effect.gen(function* () {
+          yield* seedHappyPathMigrations(tmp.current);
+          yield* writeProjectFile(
+            tmp.current,
+            ".env",
+            "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\n",
+          );
           yield* migrationSquash(flags());
           expect(s.dumpCalls).toHaveLength(3);
           for (const call of s.dumpCalls) {
@@ -782,15 +832,17 @@ describe("migration squash", () => {
           }
           // Reverted once the command's scope closes; never leaks into a later command in
           // the same process.
-          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-              else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
-            }),
-          ),
-          Effect.provide(s.layer),
+          const ambient = yield* Config.option(
+            Config.string("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
+          ).pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
+            ),
+          );
+          expect(Option.isNone(ambient)).toBe(true);
+        }).pipe(Effect.provide(s.layer), (body) =>
+          withEnvVar("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, body),
         );
       },
     );
@@ -800,45 +852,35 @@ describe("migration squash", () => {
       () => {
         // Host networking is the default; an explicit network id overrides it whenever
         // it resolves non-empty, even when sourced only from supabase/.env.
-        const prev = process.env["SUPABASE_NETWORK_ID"];
-        delete process.env["SUPABASE_NETWORK_ID"];
         const s = setupHappyPath();
-        writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_NETWORK_ID=dotenv-net\n");
         return Effect.gen(function* () {
+          yield* seedHappyPathMigrations(tmp.current);
+          yield* writeProjectFile(tmp.current, ".env", "SUPABASE_NETWORK_ID=dotenv-net\n");
           yield* migrationSquash(flags());
           expect(s.dumpCalls).toHaveLength(3);
           for (const call of s.dumpCalls) {
             expect(call.network).toEqual({ _tag: "named", name: "dotenv-net" });
           }
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (prev === undefined) delete process.env["SUPABASE_NETWORK_ID"];
-              else process.env["SUPABASE_NETWORK_ID"] = prev;
-            }),
-          ),
-          Effect.provide(s.layer),
+        }).pipe(Effect.provide(s.layer), (body) =>
+          withEnvVar("SUPABASE_NETWORK_ID", undefined, body),
         );
       },
     );
 
     it.effect("squashes only the migrations up to --version, leaving newer ones untouched", () => {
-      seedMigration(tmp.current, "0_init.sql", "create table a (id int);\n");
-      seedMigration(tmp.current, "1_target.sql", "create table b (id int);\n");
-      seedMigration(tmp.current, "2_after.sql", "create table c (id int);\n");
       const s = setup(tmp.current, {
         beforeDumpSql: BEFORE_SQL,
         afterDumpSql: AFTER_SQL,
         fullDumpSql: FULL_SQL,
       });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql", "create table a (id int);\n");
+        yield* seedMigration(tmp.current, "1_target.sql", "create table b (id int);\n");
+        yield* seedMigration(tmp.current, "2_after.sql", "create table c (id int);\n");
         yield* migrationSquash(flags({ version: Option.some("1") }));
-        const migrationsDir = join(tmp.current, "supabase", "migrations");
-        expect(existsSync(join(migrationsDir, "0_init.sql"))).toBe(false);
-        expect(existsSync(join(migrationsDir, "1_target.sql"))).toBe(true);
-        expect(readFileSync(join(migrationsDir, "2_after.sql"), "utf8")).toBe(
-          "create table c (id int);\n",
-        );
+        expect(yield* migrationExists(tmp.current, "0_init.sql")).toBe(false);
+        expect(yield* migrationExists(tmp.current, "1_target.sql")).toBe(true);
+        expect(yield* readMigration(tmp.current, "2_after.sql")).toBe("create table c (id int);\n");
       }).pipe(Effect.provide(s.layer));
     });
   });
@@ -847,10 +889,10 @@ describe("migration squash", () => {
   // established leak-on-create-failure behavior).
   describe("squashMigrations failure paths", () => {
     it.effect("fails when the shadow container cannot be created and never attempts a dump", () => {
-      seedMigration(tmp.current, "0_init.sql");
-      seedMigration(tmp.current, "1_target.sql");
       const s = setup(tmp.current, { failCreateShadow: true });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
+        yield* seedMigration(tmp.current, "1_target.sql");
         const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
         expect(failureTag(exit)).toBe("ShadowDbError");
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
@@ -863,17 +905,13 @@ describe("migration squash", () => {
     it.effect(
       "fails with a health-check timeout when the shadow never becomes healthy, and removes it",
       () => {
-        seedMigration(tmp.current, "0_init.sql");
-        seedMigration(tmp.current, "1_target.sql");
-        mkdirSync(join(tmp.current, "supabase"), { recursive: true });
         // A zero-second health timeout means zero retries after the first failed
         // probe — an immediate, deterministic timeout with no real/virtual delay.
-        writeFileSync(
-          join(tmp.current, "supabase", "config.toml"),
-          '[db]\nhealth_timeout = "0s"\n',
-        );
         const s = setup(tmp.current, { neverHealthyShadow: true });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
+          yield* seedMigration(tmp.current, "1_target.sql");
+          yield* writeProjectFile(tmp.current, "config.toml", '[db]\nhealth_timeout = "0s"\n');
           const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
           expect(failureTag(exit)).toBe("HealthCheckTimeoutError");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
@@ -886,10 +924,10 @@ describe("migration squash", () => {
     it.effect(
       "fails when the shadow's platform-baseline setup job exits non-zero, and removes it",
       () => {
-        seedMigration(tmp.current, "0_init.sql");
-        seedMigration(tmp.current, "1_target.sql");
         const s = setup(tmp.current, { failSetupJob: true });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
+          yield* seedMigration(tmp.current, "1_target.sql");
           const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
           expect(failureTag(exit)).toBe("DbSetupError");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
@@ -900,10 +938,10 @@ describe("migration squash", () => {
     );
 
     it.effect("fails when applying a migration to the shadow errors, and removes it", () => {
-      seedMigration(tmp.current, "0_init.sql", "create table boom;\n");
-      seedMigration(tmp.current, "1_target.sql");
       const s = setup(tmp.current, { failSql: "create table boom" });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql", "create table boom;\n");
+        yield* seedMigration(tmp.current, "1_target.sql");
         const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
         expect(failureTag(exit)).toBe("MigrationApplyError");
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
@@ -914,10 +952,10 @@ describe("migration squash", () => {
     it.effect(
       "fails with 'error running container: exit 1' when the before/after dump container exits non-zero",
       () => {
-        seedMigration(tmp.current, "0_init.sql");
-        seedMigration(tmp.current, "1_target.sql");
         const s = setup(tmp.current, { failDumpKind: "before" });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
+          yield* seedMigration(tmp.current, "1_target.sql");
           const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
           expect(failureTag(exit)).toBe("MigrationSquashDumpError");
           if (Exit.isFailure(exit)) {
@@ -934,8 +972,6 @@ describe("migration squash", () => {
     it.effect(
       "fails with 'error running container: exit 1' when the full-schema dump exits non-zero, leaving the target file truncated",
       () => {
-        seedMigration(tmp.current, "0_init.sql");
-        seedMigration(tmp.current, "1_target.sql");
         const s = setup(tmp.current, {
           beforeDumpSql: "before;\n",
           afterDumpSql: "after;\n",
@@ -943,13 +979,16 @@ describe("migration squash", () => {
           failDumpKind: "full",
         });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
+          yield* seedMigration(tmp.current, "1_target.sql");
           const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
           expect(failureTag(exit)).toBe("MigrationSquashDumpError");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-          const targetPath = join(tmp.current, "supabase", "migrations", "1_target.sql");
           // Truncated by the earlier O_TRUNC, then only the partial stream the dying
           // container wrote before failing; no separator/diff was ever appended.
-          expect(readFileSync(targetPath, "utf8")).toBe("partial output before the container died");
+          expect(yield* readMigration(tmp.current, "1_target.sql")).toBe(
+            "partial output before the container died",
+          );
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -959,16 +998,15 @@ describe("migration squash", () => {
       () => {
         // Squash's single O_TRUNC-equivalent open call, so there is exactly one failure
         // site here, not two.
-        seedMigration(tmp.current, "0_init.sql");
-        seedMigration(tmp.current, "1_target.sql");
-        const targetPath = join(tmp.current, "supabase", "migrations", "1_target.sql");
         const s = setup(tmp.current, {
           beforeDumpSql: "before;\n",
           afterDumpSql: "after;\n",
           fullDumpSql: "full;\n",
-          fsFaults: { failOpenPath: targetPath },
+          fsFaults: { failOpenFile: "1_target.sql" },
         });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
+          yield* seedMigration(tmp.current, "1_target.sql");
           const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
           expect(failureTag(exit)).toBe("MigrationSquashWriteError");
           if (Exit.isFailure(exit)) {
@@ -990,16 +1028,15 @@ describe("migration squash", () => {
         // The underlying failure here is the docker-log-stream write into the target
         // file, so it reports "failed to copy docker logs:", not lineByLineDiff's
         // "failed to write line:".
-        seedMigration(tmp.current, "0_init.sql");
-        seedMigration(tmp.current, "1_target.sql");
-        const targetPath = join(tmp.current, "supabase", "migrations", "1_target.sql");
         const s = setup(tmp.current, {
           beforeDumpSql: "before;\n",
           afterDumpSql: "after;\n",
           fullDumpSql: "full;\n",
-          fsFaults: { failWriteAllFromCall: { path: targetPath, fromCall: 1 } },
+          fsFaults: { failWriteAllFromCall: { file: "1_target.sql", fromCall: 1 } },
         });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
+          yield* seedMigration(tmp.current, "1_target.sql");
           const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
           expect(failureTag(exit)).toBe("MigrationSquashWriteError");
           if (Exit.isFailure(exit)) {
@@ -1016,18 +1053,17 @@ describe("migration squash", () => {
     it.effect(
       "fails with 'failed to write line' when appending the separator/diff tail fails (the full dump itself wrote fine)",
       () => {
-        seedMigration(tmp.current, "0_init.sql");
-        seedMigration(tmp.current, "1_target.sql");
-        const targetPath = join(tmp.current, "supabase", "migrations", "1_target.sql");
         const s = setup(tmp.current, {
           beforeDumpSql: "before;\n",
           afterDumpSql: "after;\n",
           fullDumpSql: "full;\n",
           // fromCall: 2 lets the full-dump write (call 1) succeed, isolating the tail
           // write (call 2).
-          fsFaults: { failWriteAllFromCall: { path: targetPath, fromCall: 2 } },
+          fsFaults: { failWriteAllFromCall: { file: "1_target.sql", fromCall: 2 } },
         });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
+          yield* seedMigration(tmp.current, "1_target.sql");
           const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
           expect(failureTag(exit)).toBe("MigrationSquashWriteError");
           if (Exit.isFailure(exit)) {
@@ -1039,43 +1075,41 @@ describe("migration squash", () => {
             expect(message).not.toContain(tmp.current);
           }
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-          expect(readFileSync(targetPath, "utf8")).toBe("full;\n");
+          expect(yield* readMigration(tmp.current, "1_target.sql")).toBe("full;\n");
         }).pipe(Effect.provide(s.layer));
       },
     );
 
     it.effect("prints a merged-file removal error to stderr non-fatally and still succeeds", () => {
-      seedMigration(tmp.current, "0_init.sql");
-      seedMigration(tmp.current, "1_target.sql");
-      const earlierPath = join(tmp.current, "supabase", "migrations", "0_init.sql");
       const s = setup(tmp.current, {
         beforeDumpSql: "before;\n",
         afterDumpSql: "after;\n",
         fullDumpSql: "full;\n",
-        fsFaults: { failRemovePath: earlierPath },
+        fsFaults: { failRemoveFile: "0_init.sql" },
       });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
+        yield* seedMigration(tmp.current, "1_target.sql");
         yield* migrationSquash(flags());
         expect(stdout(s.out)).toContain("Finished supabase migration squash.");
         expect(stderr(s.out)).toContain("FileSystem.remove (supabase/migrations/0_init.sql)");
-        expect(existsSync(earlierPath)).toBe(true);
+        expect(yield* migrationExists(tmp.current, "0_init.sql")).toBe(true);
       }).pipe(Effect.provide(s.layer));
     });
 
     it.effect(
       "reports the removal failure in the machine-mode payload's removeFailures, leaving removed empty",
       () => {
-        seedMigration(tmp.current, "0_init.sql");
-        seedMigration(tmp.current, "1_target.sql");
-        const earlierPath = join(tmp.current, "supabase", "migrations", "0_init.sql");
         const s = setup(tmp.current, {
           format: "json",
           beforeDumpSql: "before;\n",
           afterDumpSql: "after;\n",
           fullDumpSql: "full;\n",
-          fsFaults: { failRemovePath: earlierPath },
+          fsFaults: { failRemoveFile: "0_init.sql" },
         });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
+          yield* seedMigration(tmp.current, "1_target.sql");
           yield* migrationSquash(flags());
           const success = s.out.messages.find((m) => m.type === "success");
           const data = success?.data as {
@@ -1096,8 +1130,6 @@ describe("migration squash", () => {
     );
 
     it.effect("reports a shadow cleanup failure without failing the command", () => {
-      seedMigration(tmp.current, "0_init.sql");
-      seedMigration(tmp.current, "1_target.sql");
       const s = setup(tmp.current, {
         beforeDumpSql: "before;\n",
         afterDumpSql: "after;\n",
@@ -1105,6 +1137,8 @@ describe("migration squash", () => {
         failRemoveShadow: true,
       });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
+        yield* seedMigration(tmp.current, "1_target.sql");
         yield* migrationSquash(flags());
         expect(stdout(s.out)).toContain("Finished supabase migration squash.");
         expect(stderr(s.out)).toContain(`Failed to remove container: ${FAKE_SHADOW_CONTAINER_ID}`);
@@ -1116,9 +1150,9 @@ describe("migration squash", () => {
     it.effect(
       "prints Finished on stdout and the repair suggestion on stderr, and never prompts",
       () => {
-        seedMigration(tmp.current, "0_init.sql");
         const s = setup(tmp.current, { isLocal: true });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
           yield* migrationSquash(flags());
           expect(stdout(s.out)).toContain("Finished supabase migration squash.");
           expect(stderr(s.out)).toContain(
@@ -1130,9 +1164,9 @@ describe("migration squash", () => {
     );
 
     it.effect("a --db-url pointing at the local stack also takes the local-suggestion path", () => {
-      seedMigration(tmp.current, "0_init.sql");
       const s = setup(tmp.current, { isLocal: true, args: ["--db-url", "postgresql://local"] });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
         yield* migrationSquash(flags({ dbUrl: Option.some("postgresql://local") }));
         expect(stdout(s.out)).toContain("Finished supabase migration squash.");
       }).pipe(Effect.provide(s.layer));
@@ -1141,13 +1175,13 @@ describe("migration squash", () => {
 
   describe("remote target", () => {
     function setupRemote(opts: SetupOpts = {}) {
-      seedMigration(tmp.current, "0_init.sql");
       return setup(tmp.current, { isLocal: false, linkedRef: VALID_REF, ...opts });
     }
 
     it.effect("prompts to update the remote history table and baselines on 'y'", () => {
       const s = setupRemote({ confirm: true, args: ["--linked"] });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
         yield* migrationSquash(flags({ linked: true }));
         expect(stderr(s.out)).toContain("Update remote migration history table? [Y/n] ");
         expect(s.queries.some((q) => q.sql.includes("DELETE FROM supabase_migrations"))).toBe(true);
@@ -1160,6 +1194,7 @@ describe("migration squash", () => {
       () => {
         const s = setupRemote({ confirm: true });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
           yield* migrationSquash(flags());
           const text = stderr(s.out);
           const baseliningAt = text.indexOf("Baselining migration history to 0");
@@ -1175,6 +1210,7 @@ describe("migration squash", () => {
       () => {
         const s = setupRemote({ confirm: true });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
           yield* migrationSquash(flags());
           // A single ordered log, since execs/queries alone are order-blind and would
           // still pass an INSERT-before-DELETE regression; the baseline transaction is
@@ -1197,6 +1233,7 @@ describe("migration squash", () => {
       () => {
         const s = setupRemote({ confirm: true, failSql: "INSERT INTO supabase_migrations" });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
           const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
           expect(failureTag(exit)).toBe("MigrationSquashBaselineError");
           if (Exit.isFailure(exit)) {
@@ -1219,6 +1256,7 @@ describe("migration squash", () => {
       () => {
         const s = setupRemote({ confirm: false });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
           const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(s.execs).not.toContain("BEGIN");
@@ -1231,6 +1269,7 @@ describe("migration squash", () => {
     it.effect("--yes auto-confirms by echoing the prompt with 'y' and reads no stdin", () => {
       const s = setupRemote({ yes: true, pipedInput: undefined });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
         yield* migrationSquash(flags());
         expect(stderr(s.out)).toContain("Update remote migration history table? [Y/n] y");
         expect(s.execs).toContain("BEGIN");
@@ -1240,6 +1279,7 @@ describe("migration squash", () => {
     it.effect("a non-TTY run with no piped answer takes the default (yes) and baselines", () => {
       const s = setupRemote({ isTTY: false, pipedInput: undefined });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
         yield* migrationSquash(flags());
         expect(s.execs).toContain("BEGIN");
         expect(s.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(true);
@@ -1249,14 +1289,14 @@ describe("migration squash", () => {
     it.effect(
       "--version 0 baselines exactly version 0 even though a newer migration survives",
       () => {
-        seedMigration(tmp.current, "0_init.sql");
-        seedMigration(tmp.current, "1_newer.sql");
         const s = setup(tmp.current, {
           isLocal: false,
           linkedRef: VALID_REF,
           confirm: true,
         });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
+          yield* seedMigration(tmp.current, "1_newer.sql");
           yield* migrationSquash(flags({ version: Option.some("0") }));
           const insert = s.queries.find((q) => q.sql.includes("INSERT INTO supabase_migrations"));
           expect(insert?.params?.[0]).toBe("0");
@@ -1268,9 +1308,6 @@ describe("migration squash", () => {
       // Local versions are re-listed after the file removals, so a failed removal leaves
       // the older merged file's version as what an empty --version baselines to, not the
       // squash target.
-      seedMigration(tmp.current, "0_init.sql");
-      seedMigration(tmp.current, "1_target.sql");
-      const earlierPath = join(tmp.current, "supabase", "migrations", "0_init.sql");
       const s = setup(tmp.current, {
         isLocal: false,
         linkedRef: VALID_REF,
@@ -1278,9 +1315,11 @@ describe("migration squash", () => {
         beforeDumpSql: "before;\n",
         afterDumpSql: "after;\n",
         fullDumpSql: "full;\n",
-        fsFaults: { failRemovePath: earlierPath },
+        fsFaults: { failRemoveFile: "0_init.sql" },
       });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
+        yield* seedMigration(tmp.current, "1_target.sql");
         yield* migrationSquash(flags());
         const insert = s.queries.find((q) => q.sql.includes("INSERT INTO supabase_migrations"));
         expect(insert?.params?.[0]).toBe("0");
@@ -1290,9 +1329,6 @@ describe("migration squash", () => {
     it.effect(
       "debug-logs and baselines with an empty version when the post-squash version reload fails",
       () => {
-        seedMigration(tmp.current, "0_init.sql");
-        seedMigration(tmp.current, "1_target.sql");
-        const migrationsDir = join(tmp.current, "supabase", "migrations");
         const s = setup(tmp.current, {
           isLocal: false,
           linkedRef: VALID_REF,
@@ -1303,9 +1339,11 @@ describe("migration squash", () => {
           // Call 1 is squashToVersion's own listing (must succeed); call 2 is
           // baselineMigrations's post-removal re-list, which this fails; call 3 (inside
           // resolveMigrationFile) must succeed again to isolate the reload failure.
-          fsFaults: { failReadDirectoryAtCall: { path: migrationsDir, atCall: 2 } },
+          fsFaults: { failMigrationsReadDirectoryAtCall: 2 },
         });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
+          yield* seedMigration(tmp.current, "1_target.sql");
           const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
           expect(s.debugLogs).toHaveLength(1);
           expect(s.debugLogs[0]).toContain("failed to read directory");
@@ -1367,12 +1405,6 @@ describe("migration squash", () => {
     it.effect(
       "--linked reads [remotes.<ref>] and prints the config-override line before resolving",
       () => {
-        mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-        writeFileSync(
-          join(tmp.current, "supabase", "config.toml"),
-          ["[remotes.dev]", `project_id = "${VALID_REF}"`, ""].join("\n"),
-        );
-        seedMigration(tmp.current, "0_init.sql");
         const s = setup(tmp.current, {
           isLocal: false,
           linkedRef: VALID_REF,
@@ -1380,6 +1412,12 @@ describe("migration squash", () => {
           args: ["--linked"],
         });
         return Effect.gen(function* () {
+          yield* writeProjectFile(
+            tmp.current,
+            "config.toml",
+            ["[remotes.dev]", `project_id = "${VALID_REF}"`, ""].join("\n"),
+          );
+          yield* seedMigration(tmp.current, "0_init.sql");
           yield* migrationSquash(flags({ linked: true }));
           const text = stderr(s.out);
           expect(text).toContain("Loading config override: [remotes.dev]");
@@ -1393,9 +1431,9 @@ describe("migration squash", () => {
 
   describe("output formats", () => {
     it.effect("json emits the squash payload on stdout and keeps progress on stderr", () => {
-      seedMigration(tmp.current, "0_init.sql");
       const s = setup(tmp.current, { format: "json", isLocal: true });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
         yield* migrationSquash(flags());
         expect(s.out.messages).toContainEqual(
           expect.objectContaining({
@@ -1415,9 +1453,9 @@ describe("migration squash", () => {
     });
 
     it.effect("json suppresses the Finished line and the repair suggestion", () => {
-      seedMigration(tmp.current, "0_init.sql");
       const s = setup(tmp.current, { format: "json", isLocal: true });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
         yield* migrationSquash(flags());
         expect(stdout(s.out)).not.toContain("Finished");
         expect(stderr(s.out)).not.toContain("Run supabase migration repair");
@@ -1425,9 +1463,9 @@ describe("migration squash", () => {
     });
 
     it.effect("stream-json emits the result event on stdout with progress lines on stderr", () => {
-      seedMigration(tmp.current, "0_init.sql");
       const s = setup(tmp.current, { format: "stream-json", isLocal: true });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
         yield* migrationSquash(flags());
         expect(s.out.messages.some((m) => m.type === "success")).toBe(true);
         expect(stderr(s.out)).toContain("is already the earliest migration.");
@@ -1435,7 +1473,6 @@ describe("migration squash", () => {
     });
 
     it.effect("json still writes the prompt label to stderr and reads the piped answer", () => {
-      seedMigration(tmp.current, "0_init.sql");
       const s = setup(tmp.current, {
         format: "json",
         isLocal: false,
@@ -1443,6 +1480,7 @@ describe("migration squash", () => {
         confirm: true,
       });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
         yield* migrationSquash(flags());
         expect(stderr(s.out)).toContain("Update remote migration history table? [Y/n] ");
         expect(s.execs).toContain("BEGIN");
@@ -1452,7 +1490,6 @@ describe("migration squash", () => {
     it.effect(
       "json on the declined-prompt path reports success with baselinedVersion: null",
       () => {
-        seedMigration(tmp.current, "0_init.sql");
         const s = setup(tmp.current, {
           format: "json",
           isLocal: false,
@@ -1460,6 +1497,7 @@ describe("migration squash", () => {
           confirm: false,
         });
         return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
           yield* migrationSquash(flags());
           const success = s.out.messages.find((m) => m.type === "success");
           expect(success?.data).toMatchObject({ isLocal: false, baselinedVersion: null });
@@ -1468,8 +1506,6 @@ describe("migration squash", () => {
     );
 
     it.effect("json on the remote-confirmed 2-migration path reports the full real payload", () => {
-      seedMigration(tmp.current, "0_init.sql", "create table a (id int);\n");
-      seedMigration(tmp.current, "1_target.sql", "create table b (id int);\n");
       const s = setup(tmp.current, {
         format: "json",
         isLocal: false,
@@ -1480,6 +1516,8 @@ describe("migration squash", () => {
         fullDumpSql: "full;\n",
       });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql", "create table a (id int);\n");
+        yield* seedMigration(tmp.current, "1_target.sql", "create table b (id int);\n");
         yield* migrationSquash(flags());
         const success = s.out.messages.find((m) => m.type === "success");
         // "1_target.sql" is the sole surviving file once "0_init.sql" is removed, so the

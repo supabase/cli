@@ -1,67 +1,112 @@
 #!/usr/bin/env bash
-# Delete every staging project whose name starts with the given prefix (the live
-# e2e job's per-run prefix). Runs as the live e2e job's always() cleanup step,
-# which propagates the exit code.
-#
-# Reads SUPABASE_ACCESS_TOKEN + SUPABASE_LIVE_API_URL from the environment. Exits
-# non-zero if any DELETE failed and the project still reads as live; a failed
-# *listing* also exits non-zero.
+# Delete every staging project whose name starts with the live e2e prefix.
 set -eo pipefail
 
 PREFIX="${1:?usage: sweep-live-projects.sh PREFIX}"
 : "${SUPABASE_ACCESS_TOKEN:?SUPABASE_ACCESS_TOKEN required}"
 : "${SUPABASE_LIVE_API_URL:?SUPABASE_LIVE_API_URL required}"
 
-# Retry into a file, not a pipe: curl rewinds a file between attempts, but a
-# pipe keeps an already-flushed body and the retry would duplicate the listing.
 listing=$(mktemp)
-project=$(mktemp)
-trap 'rm -f "$listing" "$project"' EXIT
-curl -fsS --retry 3 --retry-connrefused --max-time 60 --retry-max-time 120 \
-  -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
-  -o "$listing" "${SUPABASE_LIVE_API_URL}/v1/projects"
-# Capture the list in a var (not a pipe-to-while subshell) so a failed delete is
-# recorded in $failed; a failed listing aborts above via errexit.
-projects=$(jq -r --arg p "$PREFIX" '.[] | select(.name|startswith($p)) | "\(.ref // .id) \(.status)"' "$listing")
+headers=$(mktemp)
+response=$(mktemp)
+trap 'rm -f "$listing" "$headers" "$response"' EXIT
 
-# The suite's teardown can delete a project after the listing was taken, so a
-# refused DELETE only counts once the project still reads as live afterwards
-# (12 bounded reads, 5s apart); a removed project is refused or GOING_DOWN.
-gone() {
-  local attempt code status
+api_request() {
+  local method=$1 url=$2 output=$3
+  : > "$headers"
+  : > "$output"
+  API_CODE=$(curl -sS --max-time 15 -X "$method" -D "$headers" -o "$output" \
+    -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" -w '%{http_code}' "$url") || API_CODE=000
+  API_REQUEST_ID=$(awk 'tolower($0) ~ /^x-request-id:/ { sub(/^[^:]*:[[:space:]]*/, ""); gsub(/[[:space:]]+$/, ""); print; exit }' "$headers" | tr -cd '[:alnum:]_.:/-' | cut -c1-120)
+}
+
+fetch_listing_once() {
+  api_request GET "${SUPABASE_LIVE_API_URL}/v1/projects" "$listing"
+  if [ "$API_CODE" != 200 ]; then
+    echo "project listing failed (HTTP $API_CODE${API_REQUEST_ID:+ request $API_REQUEST_ID})" >&2
+    case "$API_CODE" in 000|408|429|5??) return 1 ;; esac
+    return 2
+  fi
+  if ! jq -e 'type == "array" and all(.[]; (.name | type == "string") and ((.ref // .id) | type == "string") and ((.status // "") | type == "string"))' "$listing" >/dev/null; then
+    echo "project listing was malformed (HTTP 200${API_REQUEST_ID:+ request $API_REQUEST_ID})" >&2
+    return 2
+  fi
+}
+
+initial_attempt=1
+while true; do
+  if fetch_listing_once; then
+    initial_result=0
+    break
+  else
+    initial_result=$?
+  fi
+  [ "$initial_result" -eq 2 ] && break
+  [ "$initial_attempt" -lt 3 ] || break
+  initial_attempt=$((initial_attempt + 1))
+  sleep 5
+done
+if [ "$initial_result" -ne 0 ]; then
+  echo "::error::unable to obtain a complete authenticated project listing" >&2
+  exit 1
+fi
+
+projects=$(jq -r --arg p "$PREFIX" '.[] | select(.name | startswith($p)) | "\(.ref // .id) \(.status // "")"' "$listing")
+
+# Reconcile through fresh authenticated list responses. A DELETE 403/400 or a
+# single-project 404 is not evidence that a project is gone.
+reconcile() {
+  local ref=$1 attempt
   for attempt in $(seq 12); do
-    # curl leaves the output file untouched when no body arrives.
-    : > "$project"
-    code=$(curl -sS --max-time 10 -o "$project" -w '%{http_code}' \
-      -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
-      "${SUPABASE_LIVE_API_URL}/v1/projects/$1") || code=000
-    status=$(jq -r '.status // empty' "$project" 2>/dev/null || true)
-    case "$code:$status" in
-      403:* | 404:* | 200:GOING_DOWN | 200:REMOVED)
-        echo "project $1 already gone ($code${status:+ $status})"
+    if fetch_listing_once; then
+      if jq -e --arg ref "$ref" 'any(.[]; ((.ref // .id) == $ref) and ((.status // "") != "GOING_DOWN") and ((.status // "") != "REMOVED"))' "$listing" >/dev/null; then
+        echo "project $ref still active (list HTTP $API_CODE${API_REQUEST_ID:+ request $API_REQUEST_ID})" >&2
+        if [ "$delete_attempt" -lt 3 ]; then
+          case "$delete_code" in
+            000|408|425|429|5??)
+              delete_attempt=$((delete_attempt + 1))
+              echo "retrying transient delete for project $ref (attempt $delete_attempt)" >&2
+              sleep 5
+              api_request DELETE "${SUPABASE_LIVE_API_URL}/v1/projects/${ref}" "$response"
+              delete_code=$API_CODE
+              echo "delete retry completed for project $ref (HTTP $delete_code${API_REQUEST_ID:+ request $API_REQUEST_ID})" >&2
+              ;;
+          esac
+        fi
+      else
+        echo "project $ref reconciled as absent or terminal (list HTTP $API_CODE${API_REQUEST_ID:+ request $API_REQUEST_ID})"
         return 0
-        ;;
-    esac
+      fi
+    elif [ "$?" -eq 2 ]; then
+      echo "project $ref reconciliation evidence was unavailable or malformed" >&2
+      return 1
+    else
+      echo "project $ref reconciliation read failed (HTTP $API_CODE${API_REQUEST_ID:+ request $API_REQUEST_ID})" >&2
+    fi
     [ "$attempt" -lt 12 ] && sleep 5
   done
-  echo "project $1 still reads $code${status:+ $status}"
   return 1
 }
 
 failed=0
 while read -r ref status; do
   [ -n "$ref" ] || continue
-  # Already deleted by the suite; a second DELETE is refused.
   case "$status" in
     GOING_DOWN | REMOVED)
       echo "skipping project $ref ($status)"
       continue
       ;;
   esac
-  echo "deleting leftover project $ref"
-  if ! curl -fsS -X DELETE -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
-    "${SUPABASE_LIVE_API_URL}/v1/projects/${ref}" >/dev/null && ! gone "$ref"; then
-    echo "::error::failed to delete leftover project $ref"
+  delete_attempt=1
+  echo "deleting leftover project $ref (attempt $delete_attempt)"
+  api_request DELETE "${SUPABASE_LIVE_API_URL}/v1/projects/${ref}" "$response"
+  delete_code=$API_CODE
+  case "$API_CODE" in
+    2??) echo "delete accepted for project $ref (HTTP $API_CODE${API_REQUEST_ID:+ request $API_REQUEST_ID})" ;;
+    *) echo "delete failed for project $ref (HTTP $API_CODE${API_REQUEST_ID:+ request $API_REQUEST_ID})" >&2 ;;
+  esac
+  if ! reconcile "$ref"; then
+    echo "::error::project $ref remains active or cleanup evidence was unavailable" >&2
     failed=1
   fi
 done <<< "$projects"

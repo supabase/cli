@@ -328,8 +328,9 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     // the defaults silently. `resolvedConfig` reuses the config already resolved via
     // `buildLocalDbContainerInputs`'s full nested-env walk, so `seedBucketsRun` never
     // independently reloads config.toml through a narrower env resolution that could reject a
-    // config whose `env(VAR)` reference is backed by a non-default dotenv file. Same pattern
-    // `start.handler.ts` uses for its own `seedBucketsRun` calls.
+    // config whose `env(VAR)` reference is backed by a non-default dotenv file. Unlike
+    // `start`, this path does not pass `promptless`, so the bounded stdin scan still happens
+    // here.
     yield* seedBucketsRun({
       projectRef: "",
       emitSummary: false,

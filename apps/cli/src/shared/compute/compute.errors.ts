@@ -204,9 +204,9 @@ export class ComputeNotDeployedError extends Data.TaggedError("ComputeNotDeploye
 }
 
 /**
- * Compute are in private alpha: an unenrolled project's routes answer 404, indistinguishable at
- * the transport level from an unknown compute — so this is only raised on collection endpoints,
- * where there's no compute name that could have been wrong.
+ * Compute are in private alpha, and an unenrolled project's routes answer 404 with their own
+ * `not_found.compute.not_enabled`. Raised on every compute route, named ones included, plus as
+ * the fallback for a 404 body this CLI cannot classify.
  */
 export class ComputeUnavailableError extends Data.TaggedError("ComputeUnavailableError")<{
   readonly detail: string;
@@ -228,6 +228,20 @@ export class ComputeProjectNotFoundError extends Data.TaggedError("ComputeProjec
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
+  }
+}
+
+/**
+ * The Management API serves no such route. Separated from {@link ComputeProjectNotFoundError}
+ * because the router answers an unrouted path under the same `not_found` code a missing project
+ * does, and blaming the project ref sends someone whose project is fine nowhere useful.
+ */
+export class ComputeRouteNotFoundError extends Data.TaggedError("ComputeRouteNotFoundError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "not_found" };
   }
 }
 
