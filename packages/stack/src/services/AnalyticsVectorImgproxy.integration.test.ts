@@ -3,8 +3,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeService } from "../Service.ts";
-import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
+import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
+import { cleanupDockerRoot } from "../../tests/docker-cleanup.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-test",
@@ -28,6 +29,7 @@ describe("service catalog", () => {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-optional-data-" });
+          yield* Effect.addFinalizer(() => cleanupDockerRoot(root));
           const secret = "catalog-optional-data-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {
@@ -47,10 +49,8 @@ describe("service catalog", () => {
           });
           yield* database.start;
           yield* database.ready;
-          const databaseEndpoint = yield* databaseRecipe.endpoint("sql");
-          if (databaseEndpoint.kind !== "tcp" || databaseEndpoint.host === undefined)
-            return yield* new ProxyError({ message: "Docker database did not expose TCP" });
-          const databaseUrl = `postgresql://supabase_admin:postgres@host.docker.internal:${databaseEndpoint.port}/postgres`;
+          const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
+          const databaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/postgres`;
 
           const analyticsRecipe = yield* makeServiceRecipe(
             {
@@ -66,6 +66,7 @@ describe("service catalog", () => {
           yield* analytics.start;
           yield* analytics.ready;
           const analyticsEndpoint = yield* analyticsRecipe.endpoint("http");
+          const analyticsRelay = yield* makeDockerHttpRelay(analyticsRecipe.endpoint("http"));
           const analyticsResponse = yield* client.execute(
             HttpClientRequest.get(
               `http://${analyticsEndpoint.host}:${analyticsEndpoint.port}/health`,
@@ -77,7 +78,7 @@ describe("service catalog", () => {
             {
               service: "vector",
               config: {
-                analyticsUrl: `http://host.docker.internal:${analyticsEndpoint.port}`,
+                analyticsUrl: `http://${analyticsRelay.host}:${analyticsRelay.port}`,
                 apiKey: "catalog-analytics",
                 configPath: `${root}/vector.yaml`,
               },

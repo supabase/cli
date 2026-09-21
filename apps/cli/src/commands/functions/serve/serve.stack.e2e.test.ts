@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { create as createStack } from "@supabase/stack/effect";
 import { Data, Effect, FileSystem, Layer, Path, Redacted, Schema } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 import { spawnSupabase } from "../../../../tests/helpers/cli.ts";
 import { bundleStackFunctionsServeMainTemplate } from "../../../command-internal/stack-functions-bundler.ts";
@@ -32,7 +32,11 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const root = yield* fs.makeTempDirectoryScoped({ prefix: `functions-serve-${runtime}-` });
+  // Linux Edge Runtime overlays /tmp with a private worker filesystem, so native functions need a visible host path.
+  const root = yield* fs.makeTempDirectoryScoped({
+    ...(runtime === "native" && process.platform === "linux" ? { directory: homedir() } : {}),
+    prefix: `functions-serve-${runtime}-`,
+  });
   const home = yield* fs.makeTempDirectoryScoped({ prefix: "functions-serve-home-" });
   const functionsRoot = path.join(root, "supabase", "functions");
   yield* fs.makeDirectory(path.join(functionsRoot, "hello"), { recursive: true });

@@ -143,17 +143,19 @@ describe("durable stack state", () => {
       run(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-lock-acquisition-" });
+          const lockPath = path.join(root, ".registry.lock");
           const created = yield* Deferred.make<void>();
           const acknowledge = yield* Deferred.make<void>();
           const delayedFs = {
             ...fs,
-            makeDirectory: (path: string, options?: Parameters<typeof fs.makeDirectory>[1]) =>
+            makeDirectory: (directory: string, options?: Parameters<typeof fs.makeDirectory>[1]) =>
               fs
-                .makeDirectory(path, options)
+                .makeDirectory(directory, options)
                 .pipe(
                   Effect.andThen(
-                    path === `${root}/.registry.lock`
+                    directory === lockPath
                       ? Deferred.succeed(created, undefined).pipe(
                           Effect.andThen(Deferred.await(acknowledge)),
                         )
@@ -171,7 +173,7 @@ describe("durable stack state", () => {
           });
           yield* Deferred.succeed(acknowledge, undefined);
           expect(Exit.hasInterrupts(yield* Fiber.await(operation))).toBe(true);
-          expect(yield* fs.exists(`${root}/.registry.lock`)).toBe(false);
+          expect(yield* fs.exists(lockPath)).toBe(false);
         }),
       ),
   );

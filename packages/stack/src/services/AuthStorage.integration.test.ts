@@ -4,8 +4,9 @@ import { Effect, FileSystem, Layer, Redacted, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { SignJWT } from "jose";
 import { makeService } from "../Service.ts";
-import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
+import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
+import { cleanupDockerRoot } from "../../tests/docker-cleanup.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-test",
@@ -29,6 +30,7 @@ describe("service catalog", () => {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-auth-storage-" });
+          yield* Effect.addFinalizer(() => cleanupDockerRoot(root));
           const secret = "catalog-auth-storage-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {
@@ -48,10 +50,8 @@ describe("service catalog", () => {
           });
           yield* database.start;
           yield* database.ready;
-          const databaseEndpoint = yield* databaseRecipe.endpoint("sql");
-          if (databaseEndpoint.kind !== "tcp" || databaseEndpoint.host === undefined)
-            return yield* new ProxyError({ message: "Docker database did not expose TCP" });
-          const databaseUrl = `postgresql://supabase_admin:postgres@host.docker.internal:${databaseEndpoint.port}/postgres`;
+          const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
+          const databaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/postgres`;
           const authRecipe = yield* makeServiceRecipe(
             {
               service: "auth",
@@ -106,7 +106,7 @@ describe("service catalog", () => {
           });
           yield* imgproxy.start;
           yield* imgproxy.ready;
-          const imgproxyEndpoint = yield* imgproxyRecipe.endpoint("http");
+          const imgproxyRelay = yield* makeDockerHttpRelay(imgproxyRecipe.endpoint("http"));
           const storageRecipe = yield* makeServiceRecipe(
             {
               service: "storage",
@@ -114,7 +114,7 @@ describe("service catalog", () => {
                 databaseUrl,
                 filePath: storageRoot,
                 jwtSecret: secret,
-                imgproxyUrl: `http://host.docker.internal:${imgproxyEndpoint.port}`,
+                imgproxyUrl: `http://${imgproxyRelay.host}:${imgproxyRelay.port}`,
               },
             },
             dockerOptions(root),

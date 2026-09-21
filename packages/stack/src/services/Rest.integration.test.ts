@@ -10,6 +10,7 @@ import * as State from "../State.ts";
 import { makeService } from "../Service.ts";
 import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
+import { cleanupDockerRoot } from "../../tests/docker-cleanup.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(State.layer({ root })).pipe(
@@ -49,6 +50,7 @@ describe("service catalog", () => {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-rest-" });
+          yield* Effect.addFinalizer(() => cleanupDockerRoot(root));
           const stackId = "catalog-network";
           const state = yield* makeTestState(root + "/state");
           yield* state.save({

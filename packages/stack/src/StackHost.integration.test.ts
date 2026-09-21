@@ -71,11 +71,24 @@ const openIdleSocket = (port: number) =>
       resume(Effect.fail(hostTestError(cause)));
       return Effect.void;
     }
-    const onConnect = () => resume(Effect.succeed(socket));
+    // Bun registers an HTTP connection only after it receives a request.
+    let response = "";
+    const onData = (bytes: Buffer) => {
+      response += bytes.toString();
+      if (response.includes("\r\n\r\n")) {
+        socket.off("data", onData);
+        socket.resume();
+        resume(Effect.succeed(socket));
+      }
+    };
+    const onConnect = () =>
+      socket.write("GET /identity HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
     const onError = (cause: Error) => resume(Effect.fail(hostTestError(cause)));
+    socket.on("data", onData);
     socket.once("connect", onConnect);
     socket.once("error", onError);
     return Effect.sync(() => {
+      socket.off("data", onData);
       socket.off("connect", onConnect);
       socket.off("error", onError);
       socket.destroy();
@@ -325,8 +338,26 @@ it.live("serves one detached owner through Effect RPC and retires after shutdown
       );
       yield* Deferred.await(attached);
       yield* client.shutdown({ destroy: false });
-      yield* awaitClosed(idleSocket).pipe(Effect.timeout("5 seconds"));
-      yield* Fiber.await(logs).pipe(Effect.timeout("5 seconds"));
+      yield* awaitClosed(idleSocket).pipe(
+        Effect.timeoutOrElse({
+          duration: "5 seconds",
+          orElse: () =>
+            Effect.fail(
+              new HostTestError({
+                message: "Idle control connection did not close after shutdown",
+              }),
+            ),
+        }),
+      );
+      yield* Fiber.await(logs).pipe(
+        Effect.timeoutOrElse({
+          duration: "5 seconds",
+          orElse: () =>
+            Effect.fail(
+              new HostTestError({ message: "Log observation did not close after shutdown" }),
+            ),
+        }),
+      );
       const drainingToolExit = yield* Fiber.await(drainingTool);
       expect(Exit.isFailure(drainingToolExit)).toBe(true);
       if (Exit.isFailure(drainingToolExit))

@@ -6,6 +6,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { makeService, ServiceError } from "../Service.ts";
 import { makeDatabase, type BackendEndpoint, type DatabaseConfig } from "./Database.ts";
 import { SnapshotDescriptor, makeDatabaseSnapshots } from "./DatabaseSnapshot.ts";
+import { cleanupDockerRoot } from "../../tests/docker-cleanup.ts";
 
 class SnapshotTestError extends Data.TaggedError("SnapshotTestError")<{
   readonly message: string;
@@ -103,6 +104,7 @@ for (const runtime of ["native", "docker"] as const) {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: `snapshot-${runtime}-` });
+          if (runtime === "docker") yield* Effect.addFinalizer(() => cleanupDockerRoot(root));
           const source = yield* makeDatabase({
             stackId: `snapshot-${runtime}`,
             instanceId: "source",

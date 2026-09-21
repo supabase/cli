@@ -3,8 +3,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeService } from "../Service.ts";
-import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
+import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
+import { cleanupDockerRoot } from "../../tests/docker-cleanup.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-test",
@@ -28,6 +29,7 @@ describe("service catalog", () => {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-optional-api-" });
+          yield* Effect.addFinalizer(() => cleanupDockerRoot(root));
           const secret = "catalog-optional-api-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {
@@ -47,10 +49,8 @@ describe("service catalog", () => {
           });
           yield* database.start;
           yield* database.ready;
-          const databaseEndpoint = yield* databaseRecipe.endpoint("sql");
-          if (databaseEndpoint.kind !== "tcp" || databaseEndpoint.host === undefined)
-            return yield* new ProxyError({ message: "Docker database did not expose TCP" });
-          const databaseUrl = `postgresql://supabase_admin:postgres@host.docker.internal:${databaseEndpoint.port}/postgres`;
+          const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
+          const databaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/postgres`;
 
           const realtimeRecipe = yield* makeServiceRecipe(
             { service: "realtime", config: { databaseUrl, jwtSecret: secret } },
@@ -81,6 +81,7 @@ describe("service catalog", () => {
           yield* pgmeta.start;
           yield* pgmeta.ready;
           const pgmetaEndpoint = yield* pgmetaRecipe.endpoint("http");
+          const pgmetaRelay = yield* makeDockerHttpRelay(pgmetaRecipe.endpoint("http"));
           const schemasResponse = yield* client.execute(
             HttpClientRequest.get(`http://${pgmetaEndpoint.host}:${pgmetaEndpoint.port}/schemas`),
           );
@@ -91,7 +92,7 @@ describe("service catalog", () => {
             {
               service: "studio",
               config: {
-                pgmetaUrl: `http://host.docker.internal:${pgmetaEndpoint.port}`,
+                pgmetaUrl: `http://${pgmetaRelay.host}:${pgmetaRelay.port}`,
                 analyticsApiKey: "catalog-analytics-key",
                 apiUrl: "http://localhost:8000",
                 publicApiUrl: "http://localhost:8000",

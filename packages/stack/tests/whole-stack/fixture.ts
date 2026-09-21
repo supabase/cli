@@ -12,12 +12,13 @@ import {
   Stream,
 } from "effect";
 import { postgres } from "../../src/Tools.ts";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { bundleServeMainTemplate } from "../serve-main-bundler.ts";
 import { create, type Stack } from "../../src/effect.ts";
 import type { Observation } from "../../src/Rpc.ts";
 import { vectorAnalyticsConfig } from "./analytics.ts";
+import { cleanupDockerRoot } from "../docker-cleanup.ts";
 
 type AnyService = Effect.Success<Stack["services"]["list"]>[number];
 
@@ -82,7 +83,10 @@ const endpoint = (port: "auto") => ({ port });
 export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-whole-${runtime}-` });
+    const root = yield* fs.makeTempDirectoryScoped({
+      prefix: `stack-whole-${runtime}-`,
+      ...(runtime === "native" && process.platform === "linux" ? { directory: homedir() } : {}),
+    });
     const functionsRoot = `${root}/functions`;
     const storageRoot = `${root}/storage`;
     const vectorConfigPath = `${root}/vector.yaml`;
@@ -110,8 +114,12 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         const current = yield* Ref.get(owner);
-        if (Option.isSome(current))
-          yield* current.value.destroy.pipe(Effect.catchCause(Effect.die));
+        const destroy = Option.isSome(current)
+          ? current.value.destroy.pipe(Effect.catchCause(Effect.die))
+          : Effect.void;
+        yield* runtime === "docker"
+          ? destroy.pipe(Effect.ensuring(cleanupDockerRoot(storageRoot)))
+          : destroy;
       }),
     );
     const created = yield* stack.composition.supabase([

@@ -5,6 +5,8 @@ import { PgClient } from "@effect/sql-pg";
 import { makeService } from "../Service.ts";
 import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
+import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
+import { cleanupDockerRoot } from "../../tests/docker-cleanup.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-test",
@@ -27,6 +29,7 @@ describe("service catalog", () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-pooler-" });
+          yield* Effect.addFinalizer(() => cleanupDockerRoot(root));
           const secret = "catalog-pooler-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {
@@ -49,7 +52,8 @@ describe("service catalog", () => {
           const databaseEndpoint = yield* databaseRecipe.endpoint("sql");
           if (databaseEndpoint.kind !== "tcp" || databaseEndpoint.host === undefined)
             return yield* new ProxyError({ message: "Docker database did not expose TCP" });
-          const databaseUrl = `postgresql://supabase_admin:postgres@host.docker.internal:${databaseEndpoint.port}/_supabase`;
+          const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
+          const databaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/_supabase`;
           for (const poolMode of ["transaction", "session"] as const) {
             const tenant = `catalog-${poolMode}`;
             const poolerRecipe = yield* makeServiceRecipe(
