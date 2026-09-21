@@ -51,3 +51,18 @@ jobs:
         with:
           name: docker-snapshot-runtime-${{ matrix.filesystem }}
           path: ${{ runner.temp }}/snapshot-runtime-results
+
+  storage-host-fallback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup
+      - name: Prepare Docker helper image
+        run: |
+          docker pull debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+      - name: Run host-backed storage lifecycle integration
+        run: |
+          set -o pipefail
+          docker info
+          pnpm --filter @supabase/stack exec vitest run --project integration src/storage/DockerDatabaseStorage.integration.test.ts
