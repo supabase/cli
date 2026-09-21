@@ -71,7 +71,13 @@ const watchServiceLogs = Effect.fn("WholeStack.watchServiceLogs")(
                 return [...without, [instance.service, updated] as const];
               }),
             ),
-            Effect.ignoreCause,
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.void
+                : Effect.logError(
+                    `Whole-stack ${instance.service} log stream failed: ${Cause.pretty(cause)}`,
+                  ),
+            ),
           ),
         ),
       { discard: true },
@@ -218,7 +224,9 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
                   (status) =>
                     `${instance.service}=${status.lifecycle}(health=${status.health ?? "undefined"},wakeEnabled=${status.wakeEnabled},error=${status.error?.message ?? "undefined"})`,
                 ),
-                Effect.catchCause(() => Effect.succeed(`${instance.service}=unknown`)),
+                Effect.catchCause((cause) =>
+                  Effect.succeed(`${instance.service}=unknown(${Cause.pretty(cause)})`),
+                ),
               ),
             );
             const tails = yield* Ref.get(logTails);

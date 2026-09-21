@@ -147,17 +147,23 @@ const stopWithDiagnostics = Effect.fn("WholeStack.stopWithDiagnostics")((fixture
   fixture.stack.stop.pipe(
     Effect.catchCause((cause) =>
       Effect.gen(function* () {
-        const statuses = yield* statusByService(fixture).pipe(
-          Effect.catchCause(() => Effect.succeed([])),
+        const statuses = yield* Effect.forEach(serviceNames, (name) =>
+          service(fixture, name).status.pipe(
+            Effect.map(
+              (status) =>
+                `${name}=${status.lifecycle}(health=${status.health ?? "undefined"},wakeEnabled=${status.wakeEnabled},error=${status.error?.message ?? "undefined"})`,
+            ),
+            Effect.catchCause((statusCause) =>
+              Effect.succeed(`${name}=unknown(${Cause.pretty(statusCause)})`),
+            ),
+          ),
         );
         const logs = yield* Ref.get(fixture.logTails);
         const serviceIds = serviceNames
           .map((name) => `${name}=${service(fixture, name).id}`)
           .join(",");
         yield* Effect.logError(
-          `Whole-stack stop diagnostics: cause=${Cause.pretty(cause)} serviceIds=${serviceIds} statuses=${statuses
-            .map(([name, status]) => `${name}=${status.lifecycle}`)
-            .join(",")} logs=${logs.map(([name, value]) => `${name}: ${value}`).join("\n")}`,
+          `Whole-stack stop diagnostics: cause=${Cause.pretty(cause)} serviceIds=${serviceIds} statuses=${statuses.join(",")} logs=${logs.map(([name, value]) => `${name}: ${value}`).join("\n")}`,
         );
         return yield* Effect.failCause(cause);
       }),
