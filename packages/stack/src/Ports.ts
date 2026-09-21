@@ -58,10 +58,12 @@ export const makePorts = (state: State.Interface) =>
               });
 
             const owner = yield* Scope.Scope;
-            const first = yield* crypto.randomIntBetween(0, 29999);
             let failures = 0;
+            let lastFailure: PortError | undefined;
             for (let attempt = 0; attempt < 30000 && failures < 64; attempt++) {
-              const port = requested === "auto" ? 20000 + ((first + attempt) % 30000) : requested;
+              // Each probe is redrawn so a contiguous reserved range cannot exhaust the budget.
+              const port =
+                requested === "auto" ? yield* crypto.randomIntBetween(20000, 49999) : requested;
               if (claimed.has(port)) continue;
               const result = yield* Effect.uninterruptibleMask((restore) =>
                 Effect.gen(function* () {
@@ -105,10 +107,15 @@ export const makePorts = (state: State.Interface) =>
               )
                 return yield* Effect.failCause(result.cause);
               failures++;
+              lastFailure = error.value;
             }
             return yield* new PortError({
               key: request.key,
-              message: "No public port is available",
+              message:
+                lastFailure === undefined
+                  ? "No public port is available"
+                  : `No public port is available: ${lastFailure.message}`,
+              cause: lastFailure,
             });
           }),
         ),

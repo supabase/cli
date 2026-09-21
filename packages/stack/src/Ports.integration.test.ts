@@ -78,6 +78,64 @@ it.live("reports an occupied saved port without moving its assignment", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.live("allocates an auto port outside a contiguous range that refuses to bind", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const state = yield* makeTestState(root);
+      yield* state.save({
+        id: "stack",
+        runtime: "native",
+        identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
+        instances: [],
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      });
+      const ports = yield* makePorts(state);
+      const reservedBelow = 40000;
+      const acquired = yield* ports.acquire(
+        { stackId: "stack", key: "api", host: "127.0.0.1", port: "auto" },
+        (host, port) =>
+          port < reservedBelow
+            ? Effect.fail(new PortError({ key: "api", message: `bind EACCES ${host}:${port}` }))
+            : Effect.succeed(port),
+      );
+      expect(acquired.port).toBeGreaterThanOrEqual(reservedBelow);
+      expect((yield* state.read("stack"))?.ports).toEqual([
+        { key: "api", host: "127.0.0.1", port: acquired.port },
+      ]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("names the last bind failure when no public port is available", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const state = yield* makeTestState(root);
+      yield* state.save({
+        id: "stack",
+        runtime: "native",
+        identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
+        instances: [],
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      });
+      const ports = yield* makePorts(state);
+      const failure = yield* ports
+        .acquire({ stackId: "stack", key: "api", host: "127.0.0.1", port: "auto" }, (host, port) =>
+          Effect.fail(new PortError({ key: "api", message: `bind EACCES ${host}:${port}` })),
+        )
+        .pipe(Effect.flip);
+      expect(failure.message).toContain("No public port is available");
+      expect(failure.message).toContain("bind EACCES 127.0.0.1:");
+      expect((yield* state.read("stack"))?.ports).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live("refuses allocation when another stack has unreadable claims", () =>
   Effect.scoped(
     Effect.gen(function* () {
