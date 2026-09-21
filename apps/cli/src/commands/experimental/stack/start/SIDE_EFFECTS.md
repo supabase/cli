@@ -8,6 +8,15 @@ It creates or resumes the stack for the project and optional `--stack` name, or 
 
 The CLI loads the target project's `supabase/config.toml`, supported environment overrides, and
 project dotenv files. It validates the supported configuration before creating service definitions.
+Auth policies, OAuth providers, hooks, MFA, SMTP, email subjects and notification controls are
+forwarded to Auth. REST search paths, pooler limits, Realtime settings, Studio settings, Storage
+S3 protocol/vector controls, and configured Vector ports are forwarded to their services.
+Encrypted JWT secrets are decrypted before shared credentials are derived. `db.health_timeout`
+controls database readiness; an explicit `db.root_key` is supplied through a stack-owned key file.
+Studio receives the Functions management directory/URL and Analytics credentials when present.
+Email template `content_path` values and third-party identity providers remain unsupported: they
+require template serving and shared external JWKS verification respectively.
+
 Secrets needed by enabled services are passed to the runtime. State and service data live under
 `$SUPABASE_HOME/stacks/<stack-id>/` (`~/.supabase/stacks/<stack-id>/` by default); native artifacts
 use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project directory
@@ -24,7 +33,12 @@ restart the composition, including when a later invocation omits an earlier `--e
 `--preparation` selects on-demand or background artifact preparation.
 
 When Functions is selected, the CLI reads and validates `supabase/functions/.env`, ignoring reserved
-`SUPABASE_*` entries. If custom env values or default JWT verification differ from the saved member,
+`SUPABASE_*` entries. `edge_runtime.secrets` overrides that file, while `functions.<name>.env`
+provides per-function values from project environment references. Per-function enabled/JWT policies,
+entrypoints, import maps and static files are forwarded to the worker bootstrap. Configured paths
+are relative to `supabase/` and must remain within the project; Docker mounts that project read-only.
+The inspector port is retained as an endpoint intent and does not enable debugging by itself.
+If custom env values, per-function settings or default JWT verification differ from the saved member,
 start restarts Functions in place before ordinary composition start. A stopped member briefly launches
 and stops again so normal lazy activation is retained; its identity and endpoints stay unchanged.
 
@@ -34,6 +48,9 @@ and stops again so normal lazy activation is retained; its identity and endpoint
 `storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`. Database cannot be excluded.
 Storage includes its Imgproxy companion, Studio includes Pgmeta, and Analytics includes Vector.
 Studio requires REST; excluding REST while keeping Studio fails before stopping the composition.
+The native Vector artifact currently ships a demo configuration with its health API disabled.
+CLI log collection configuration remains unimplemented; exclude Analytics to avoid Vector readiness
+timeouts until that configuration is supplied.
 
 Changing exclusions stops the composition and reuses the existing service identities, data, and
 ports. Removed services remain saved and stopped so including them again can reuse them. The

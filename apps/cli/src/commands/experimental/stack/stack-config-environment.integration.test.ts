@@ -79,6 +79,7 @@ site_url = "from-config"
           SUPABASE_API_PORT: "54321",
           SUPABASE_DB_PORT: "54322",
           SUPABASE_ANALYTICS_PORT: "55555",
+          SUPABASE_ANALYTICS_VECTOR_PORT: "55556",
         },
         load(root),
       );
@@ -86,6 +87,8 @@ site_url = "from-config"
       expect(service(recipes, "database")?.endpoints).toEqual({ sql: { port: 54322 } });
       expect(service(recipes, "rest")?.endpoints).toEqual({ http: { port: 54321 } });
       expect(service(recipes, "analytics")?.endpoints).toEqual({ http: { port: 55555 } });
+
+      expect(service(recipes, "vector")?.endpoints).toEqual({ http: { port: 55556 } });
 
       const defaults = yield* load(root);
       const defaultRecipes = yield* defaults.creations("automatic-ports");

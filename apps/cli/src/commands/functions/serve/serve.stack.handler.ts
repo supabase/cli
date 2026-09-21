@@ -161,7 +161,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
     const saved = before.config.config;
     const desired = {
       ...saved,
-      ...(envOverride === undefined ? {} : { env: envOverride }),
+      ...(envOverride === undefined ? {} : { env: { ...saved.env, ...envOverride } }),
       ...(Option.isSome(flags.noVerifyJwt) ? { verifyJwt: !flags.noVerifyJwt.value } : {}),
     };
     const changed = !Equal.equals(saved, desired);
@@ -244,10 +244,10 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       ...source.config,
       apiUrl,
       databaseUrl,
-      env,
+      env: { ...env, ...source.config.env, ...envOverride },
       ...(Option.isSome(flags.noVerifyJwt) ? { verifyJwt: !flags.noVerifyJwt.value } : {}),
     },
-    endpoints: { http: { port } },
+    endpoints: { ...source.endpoints, http: { port } },
   };
   const temporary = yield* Effect.acquireRelease(stack.services.create(creation), (instance) =>
     instance.status.pipe(

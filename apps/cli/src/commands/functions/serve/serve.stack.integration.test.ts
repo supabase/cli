@@ -47,6 +47,7 @@ const functionsConfig = (): Extract<ServiceCreation, { service: "functions" }>["
   databaseUrl: "postgresql://postgres@127.0.0.1:54322/postgres",
   jwtSecret: "jwt-secret",
   verifyJwt: true,
+  env: { SHARED: "saved", RETAINED: "retained" },
 });
 
 const databaseConfig: Extract<ServiceCreation, { service: "database" }>["config"] = {
@@ -273,6 +274,29 @@ describe("experimental Stack Functions serve", () => {
       expect(state.currentFunctions.verifyJwt).toBe(true);
       expect(state.restartCount).toBe(2);
     }),
+  );
+
+  it.live("merges an explicit env file with saved secrets and restores them on SIGINT", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-env-merge-" });
+      const file = `${root}/override.env`;
+      yield* fs.writeFileString(file, "SHARED=override\nADDED=new\n");
+      const state = yield* fixture();
+      const run = yield* functionsServeStack(flags({ envFile: Option.some(file) })).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(state.started);
+      expect(state.currentFunctions.env).toEqual({
+        SHARED: "override",
+        RETAINED: "retained",
+        ADDED: "new",
+      });
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+      expect(state.currentFunctions.env).toEqual(functionsConfig().env);
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("rejects unsupported flags before reading or mutating the stack", () =>

@@ -112,9 +112,11 @@ const reconciledConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
   rest: new Set(["databaseUrl", "jwtSecret"]),
   auth: new Set(["databaseUrl", "jwtSecret", "externalApiUrl", "smtpUrl"]),
   realtime: new Set(["databaseUrl", "jwtSecret"]),
-  storage: new Set(["databaseUrl", "filePath", "jwtSecret", "imgproxyUrl"]),
+  storage: new Set(["databaseUrl", "filePath", "jwtSecret", "imgproxyUrl", "vectorDatabaseUrl"]),
   functions: new Set([
     "functionsRoot",
+    "filesRoot",
+    "functions",
     "bootstrap",
     "apiUrl",
     "databaseUrl",
@@ -126,6 +128,7 @@ const reconciledConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
     "functionsRoot",
     "pgmetaUrl",
     "analyticsUrl",
+    "analyticsApiKey",
     "functionsUrl",
     "apiUrl",
     "publicApiUrl",
@@ -276,7 +279,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         ? readStackFunctionsEnv(`${creation.config.functionsRoot}/.env`, true).pipe(
             Effect.map((env): ServiceCreation => ({
               ...creation,
-              config: { ...creation.config, env },
+              config: { ...creation.config, env: { ...env, ...creation.config.env } },
             })),
             Effect.mapError(
               (cause) =>
@@ -445,6 +448,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         const next = {
           ...before.config.config,
           env: requestedFunctions.config.env,
+          functions: requestedFunctions.config.functions,
+          filesRoot: requestedFunctions.config.filesRoot,
           verifyJwt: requestedFunctions.config.verifyJwt,
         };
         if (!Equal.equals(before.config.config, next)) {

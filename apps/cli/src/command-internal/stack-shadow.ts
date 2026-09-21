@@ -78,6 +78,8 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
       databasePassword: Redacted.make(input.password),
       jwtSecret: Redacted.make(input.jwtSecret),
       jwtExpiry: input.jwtExpiry,
+      healthTimeoutMs: input.healthTimeoutSeconds * 1_000,
+      ...(input.rootKey === undefined ? {} : { rootKey: Redacted.make(input.rootKey) }),
       settings,
     },
     endpoints: { sql: { port: opts.port ?? "auto" } },

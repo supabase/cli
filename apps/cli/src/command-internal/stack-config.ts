@@ -1,14 +1,19 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
+import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
 import { Crypto, Effect, Data, FileSystem, Path, Redacted, SchemaIssue } from "effect";
 import type { ServiceCreation as ServiceCreationType } from "@supabase/stack/effect";
 
 import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
+import { resolveAuthConfig } from "./stack-auth-config.ts";
+import { parseGoDuration } from "./go-duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
 
 declare const SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 import {
+  decryptAuthSecret,
+  resolveJwtSecret,
   envOverride,
   envOverrideApiMaxRows,
   envOverrideAuthPasswordRequirements,
@@ -250,6 +255,7 @@ const resolveAuthOverrides = (
           admin_email: smtp.adminEmail,
           sender_name: smtp.senderName,
         };
+  const resolvedSms = resolveAuthSms(authDocument, auth.sms, env);
   const thirdParty = {
     firebase: {
       enabled: envOverrideBool(
@@ -388,7 +394,17 @@ const resolveAuthOverrides = (
     mfa: resolveAuthMfa(auth.mfa, env),
     sessions: resolveGotrueSessions(auth.sessions, env),
     email: { ...resolvedEmail, smtp: resolvedSmtp },
-    sms: resolveAuthSms(authDocument, auth.sms, env),
+    sms: {
+      ...resolvedSms,
+      twilio: {
+        ...resolvedSms.twilio,
+        content_sid: envOverride(
+          "SUPABASE_AUTH_SMS_TWILIO_CONTENT_SID",
+          auth.sms.twilio.content_sid,
+          env,
+        ),
+      },
+    },
     external: externalResolved,
     web3: resolveGotrueWeb3(auth.web3, env),
     oauth_server: resolveGotrueOAuthServer(auth.oauth_server, env),
@@ -559,6 +575,17 @@ const resolveEffectiveCliConfig = (
       env,
     ),
     port: resolvedPort("SUPABASE_ANALYTICS_PORT", analytics.port, "analytics.port", env),
+    ...(analytics.vector_port === undefined &&
+    envOverride("SUPABASE_ANALYTICS_VECTOR_PORT", undefined, env) === undefined
+      ? {}
+      : {
+          vector_port: resolvedPort(
+            "SUPABASE_ANALYTICS_VECTOR_PORT",
+            analytics.vector_port ?? 0,
+            "analytics.vector_port",
+            env,
+          ),
+        }),
     backend: envOverrideAnalyticsBackend(analytics.backend, env),
     gcp_project_id: envOverride("SUPABASE_ANALYTICS_GCP_PROJECT_ID", analytics.gcp_project_id, env),
     gcp_project_number: envOverride(
@@ -598,7 +625,10 @@ const resolveEffectiveCliConfig = (
       config.auth.signing_keys_path,
       env,
     ),
-    jwt_secret: envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, env),
+    jwt_secret: decryptAuthSecret(
+      envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, env),
+      env,
+    ),
   };
   return {
     ...config,
@@ -632,7 +662,10 @@ const resolveEffectiveCliConfig = (
       enabled: envOverrideBool("SUPABASE_STUDIO_ENABLED", studio.enabled, "studio.enabled", env),
       port: resolvedPort("SUPABASE_STUDIO_PORT", studio.port, "studio.port", env),
       api_url: envOverride("SUPABASE_STUDIO_API_URL", studio.api_url, env),
-      openai_api_key: envOverride("SUPABASE_STUDIO_OPENAI_API_KEY", studio.openai_api_key, env),
+      openai_api_key: decryptAuthSecret(
+        envOverride("SUPABASE_STUDIO_OPENAI_API_KEY", studio.openai_api_key, env),
+        env,
+      ),
     },
     local_smtp: {
       ...mail,
@@ -662,48 +695,17 @@ const resolveEffectiveCliConfig = (
 };
 
 const unsupportedConfigPaths = [
-  "auth.additional_redirect_urls",
-  "auth.enable_refresh_token_rotation",
-  "auth.refresh_token_reuse_interval",
-  "auth.enable_manual_linking",
-  "auth.enable_anonymous_sign_ins",
-  "auth.minimum_password_length",
-  "auth.password_requirements",
-  "auth.rate_limit",
-  "auth.captcha",
-  "auth.hook",
-  "auth.mfa",
-  "auth.sessions",
-  "auth.email",
-  "auth.sms",
-  "auth.external",
-  "auth.web3",
-  "auth.oauth_server",
   "auth.third_party",
-  "auth.jwt_issuer",
   "auth.publishable_key",
   "auth.secret_key",
   "auth.anon_key",
   "auth.service_role_key",
-  "api.extra_search_path",
   "api.tls",
-  "analytics.vector_port",
   "analytics.gcp_project_id",
   "analytics.gcp_project_number",
   "analytics.gcp_jwt_path",
-  "db.pooler.default_pool_size",
-  "db.pooler.max_client_conn",
-  "edge_runtime.secrets",
   "edge_runtime.deno_version",
-  "edge_runtime.inspector_port",
-  "realtime.ip_version",
-  "realtime.max_header_length",
   "storage.analytics",
-  "storage.s3_protocol",
-  "studio.api_url",
-  "studio.openai_api_key",
-  "local_smtp.admin_email",
-  "local_smtp.sender_name",
   "experimental.orioledb_version",
   "experimental.s3_host",
   "experimental.s3_region",
@@ -758,14 +760,16 @@ const firstDifference = (left: unknown, right: unknown, path: string): string | 
   return path;
 };
 
-const configValidationError = (
-  config: CliConfig,
-  effectiveEdgeEnabled: boolean,
-): string | undefined => {
+const configValidationError = (config: CliConfig): string | undefined => {
   const defaults = getDefaultCliConfig();
-  const figma = config.auth.external.figma;
-  if (config.auth.enabled && figma?.enabled === true)
-    return "auth.external.figma is enabled but unsupported by the experimental stack";
+  if (config.auth.enabled) {
+    for (const [name, template] of Object.entries(config.auth.email.template))
+      if (template.content_path !== "")
+        return `auth.email.template.${name}.content_path requires template serving, which is not supported by the experimental stack`;
+    for (const [name, notification] of Object.entries(config.auth.email.notification))
+      if (notification.enabled && notification.content_path !== "")
+        return `auth.email.notification.${name}.content_path requires template serving, which is not supported by the experimental stack`;
+  }
   if (config.auth.signing_keys_path !== undefined)
     return "auth.signing_keys_path is unsupported by the experimental stack";
   for (const path of unsupportedConfigPaths) {
@@ -777,36 +781,11 @@ const configValidationError = (
   }
   if (config.analytics.enabled && config.analytics.backend !== "postgres")
     return "analytics.backend must be postgres for the experimental stack";
-  if (
-    config.storage.vector.max_buckets !== defaults.storage.vector.max_buckets ||
-    config.storage.vector.max_indexes !== defaults.storage.vector.max_indexes ||
-    Object.keys(config.storage.vector.buckets).length > 0
-  )
+  if (Object.keys(config.storage.vector.buckets).length > 0)
     return "storage.vector settings are unsupported by the experimental stack";
   if (config.db.major_version !== 15 && config.db.major_version !== 17)
     return "db.major_version must be 15 or 17 for the experimental stack";
-  if (!effectiveEdgeEnabled) return undefined;
-  for (const [name, functionConfig] of Object.entries(config.functions)) {
-    const functionDefaults = {
-      enabled: true,
-      verify_jwt: true,
-      import_map: "",
-      entrypoint: "",
-      static_files: [],
-      env: {},
-    };
-    for (const field of [
-      "enabled",
-      "verify_jwt",
-      "import_map",
-      "entrypoint",
-      "static_files",
-      "env",
-    ] as const) {
-      if (!valuesEqual(functionConfig[field], functionDefaults[field]))
-        return `functions.${name}.${field} is unsupported by the experimental stack`;
-    }
-  }
+
   return undefined;
 };
 
@@ -851,21 +830,101 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           });
         }),
       );
-      const validationError = configValidationError(
-        validatedConfig,
-        validatedConfig.edge_runtime.enabled,
-      );
+      const validationError = configValidationError(validatedConfig);
       if (validationError !== undefined)
         return yield* new StackConfigError({ message: validationError });
 
+      const authConfig = yield* resolveAuthConfig(validatedConfig.auth, validatedConfig.local_smtp);
+      const path = yield* Path.Path;
+      const functionEnvironments = Object.fromEntries(
+        yield* Effect.forEach(Object.entries(validatedConfig.functions), ([name, config]) =>
+          resolveCliConfigSubtree(
+            config.env,
+            { values: context.projectEnvValues },
+            `functions.${name}.env`,
+            { goViperCompat: true },
+          ).pipe(
+            Effect.map(
+              (env) =>
+                [
+                  name,
+                  Object.fromEntries(
+                    Object.entries(env).map(([key, value]) => [
+                      key,
+                      Redacted.isRedacted(value) ? Redacted.value(value) : value,
+                    ]),
+                  ),
+                ] as const,
+            ),
+          ),
+        ),
+      );
+      const functions = yield* Effect.try({
+        try: () =>
+          Object.fromEntries(
+            Object.entries(validatedConfig.functions).map(([name, config]) => {
+              const resolveFile = (value: string) => {
+                const resolved = path.resolve(projectRoot, "supabase", value);
+                const relative = path.relative(projectRoot, resolved);
+                if (
+                  relative === ".." ||
+                  relative.startsWith(`..${path.sep}`) ||
+                  path.isAbsolute(relative)
+                )
+                  throw new Error(
+                    `functions.${name} paths must remain within the project directory`,
+                  );
+                return resolved;
+              };
+              return [
+                name,
+                {
+                  enabled: config.enabled,
+                  verifyJWT: config.verify_jwt,
+                  ...(config.entrypoint === ""
+                    ? {}
+                    : { entrypoint: resolveFile(config.entrypoint) }),
+                  ...(config.import_map === ""
+                    ? {}
+                    : { import_map: resolveFile(config.import_map) }),
+                  static_files: config.static_files.map(resolveFile),
+                  env: functionEnvironments[name],
+                },
+              ];
+            }),
+          ),
+        catch: (cause) => new StackConfigError({ message: String(cause) }),
+      });
+      const functionsEnv = yield* Effect.try({
+        try: () =>
+          Object.fromEntries(
+            Object.entries(validatedConfig.edge_runtime.secrets ?? {}).map(([key, value]) => [
+              key,
+              decryptAuthSecret(value, context.projectEnvValues) ?? "",
+            ]),
+          ),
+        catch: (cause) => new StackConfigError({ message: String(cause) }),
+      });
       const crypto = yield* Crypto.Crypto;
       const storageFileSizeLimit = yield* Effect.try({
         try: () => String(parseFileSizeLimit(validatedConfig.storage.file_size_limit)),
         catch: (cause) =>
           new StackConfigError({ message: `Invalid storage.file_size_limit: ${String(cause)}` }),
       });
+      const healthTimeoutMs = yield* Effect.try({
+        try: () => parseGoDuration(validatedConfig.db.health_timeout) / 1_000_000,
+        catch: (cause) =>
+          new StackConfigError({ message: `Invalid db.health_timeout: ${String(cause)}` }),
+      });
+      const configuredJwtSecret = yield* Effect.try({
+        try: () =>
+          validatedConfig.auth.jwt_secret === undefined
+            ? undefined
+            : resolveJwtSecret(validatedConfig.auth.jwt_secret),
+        catch: (cause) => new StackConfigError({ message: String(cause) }),
+      });
       const jwtSecret =
-        validatedConfig.auth.jwt_secret === undefined
+        configuredJwtSecret === undefined
           ? Redacted.make(
               yield* crypto.randomUUIDv4.pipe(
                 Effect.mapError(
@@ -874,8 +933,21 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                 ),
               ),
             )
-          : Redacted.make(validatedConfig.auth.jwt_secret);
+          : Redacted.make(configuredJwtSecret);
       const document = context.loaded?.document;
+      const rootKey = yield* Effect.try({
+        try: () => {
+          const raw = section(document, "db")?.root_key;
+          if (raw !== undefined && typeof raw !== "string")
+            throw new Error("db.root_key must be a string");
+          const value = decryptAuthSecret(
+            envOverride("SUPABASE_DB_ROOT_KEY", raw, context.projectEnvValues),
+            context.projectEnvValues,
+          );
+          return value === "" ? undefined : value;
+        },
+        catch: (cause) => new StackConfigError({ message: String(cause) }),
+      });
       const dbPort = envPortOrConfigured(
         "SUPABASE_DB_PORT",
         document,
@@ -952,8 +1024,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           const effectiveJwtSecret = options?.jwtSecret ?? jwtSecret;
           if (
             options?.jwtSecret !== undefined &&
-            validatedConfig.auth.jwt_secret !== undefined &&
-            Redacted.value(options.jwtSecret) !== validatedConfig.auth.jwt_secret
+            configuredJwtSecret !== undefined &&
+            Redacted.value(options.jwtSecret) !== configuredJwtSecret
           )
             return yield* new StackConfigError({
               message: "The configured auth.jwt_secret does not match the existing stack",
@@ -986,6 +1058,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                 jwtSecret: effectiveJwtSecret,
                 jwtExpiry: validatedConfig.auth.jwt_expiry,
                 settings: validatedConfig.db.settings,
+                healthTimeoutMs,
+                ...(rootKey === undefined ? {} : { rootKey: Redacted.make(rootKey) }),
               },
               endpoints: { sql: endpoint(dbPort) },
             },
@@ -996,6 +1070,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     config: {
                       databaseUrl: "postgresql://placeholder",
                       backend: "postgres" as const,
+                      apiKey: "api-key",
                     },
                     endpoints: { http: endpoint(analyticsPort) },
                   } satisfies ServiceCreationType,
@@ -1009,6 +1084,9 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       databaseUrl: "postgresql://placeholder",
                       jwtSecret: Redacted.value(effectiveJwtSecret),
                       poolMode,
+                      tenant: "pooler-dev",
+                      defaultPoolSize: validatedConfig.db.pooler.default_pool_size,
+                      maxClientConnections: validatedConfig.db.pooler.max_client_conn,
                     },
                     endpoints: { http: endpoint(undefined), sql: endpoint(poolerPort) },
                   } satisfies ServiceCreationType,
@@ -1030,6 +1108,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     config: {
                       databaseUrl: "postgresql://placeholder",
                       schemas: validatedConfig.api.schemas.join(","),
+                      extraSearchPath: validatedConfig.api.extra_search_path.join(","),
                       maxRows: validatedConfig.api.max_rows,
                       ...(validatedConfig.api.external_url === undefined
                         ? {}
@@ -1045,11 +1124,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   {
                     service: "auth" as const,
                     config: {
-                      databaseUrl: "postgresql://placeholder",
-                      siteUrl: validatedConfig.auth.site_url,
+                      ...authConfig,
                       jwtSecret: Redacted.value(effectiveJwtSecret),
-                      jwtExpiry: validatedConfig.auth.jwt_expiry,
-                      disableSignup: !validatedConfig.auth.enable_signup,
                     },
                     endpoints: { http: endpoint(apiPort) },
                   } satisfies ServiceCreationType,
@@ -1063,6 +1139,11 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       databaseUrl: "postgresql://placeholder",
                       jwtSecret: Redacted.value(effectiveJwtSecret),
                       secretKeyBase: Redacted.value(effectiveJwtSecret),
+                      ipVersion:
+                        validatedConfig.realtime.ip_version === "IPv6"
+                          ? ("IPv6" as const)
+                          : ("IPv4" as const),
+                      maxHeaderLength: validatedConfig.realtime.max_header_length,
                     },
                     endpoints: {
                       http: endpoint(apiPort),
@@ -1080,6 +1161,10 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       jwtSecret: Redacted.value(effectiveJwtSecret),
                       filePath: `${storagePath}/${stackId}`,
                       fileSizeLimit: storageFileSizeLimit,
+                      s3ProtocolEnabled: validatedConfig.storage.s3_protocol.enabled,
+                      vectorEnabled: validatedConfig.storage.vector.enabled,
+                      vectorMaxBuckets: validatedConfig.storage.vector.max_buckets,
+                      vectorMaxIndexes: validatedConfig.storage.vector.max_indexes,
                     },
                     endpoints: { http: endpoint(apiPort) },
                   } satisfies ServiceCreationType,
@@ -1089,8 +1174,19 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "vector" as const,
-                    config: { analyticsUrl: "http://analytics" },
-                    endpoints: { http: endpoint(undefined) },
+                    config: { analyticsUrl: "http://analytics", apiKey: "api-key" },
+                    endpoints: {
+                      http: endpoint(
+                        envPortOrConfigured(
+                          "SUPABASE_ANALYTICS_VECTOR_PORT",
+                          document,
+                          "analytics",
+                          "vector_port",
+                          validatedConfig.analytics.vector_port ?? 0,
+                          context.projectEnvValues,
+                        ),
+                      ),
+                    },
                   } satisfies ServiceCreationType,
                 ]
               : []),
@@ -1109,12 +1205,27 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     service: "functions" as const,
                     config: {
                       functionsRoot: `${projectRoot}/supabase/functions`,
+                      filesRoot: projectRoot,
+                      functions,
+                      env: functionsEnv,
                       bootstrap,
                       policy: validatedConfig.edge_runtime.policy,
                       verifyJwt: true,
                       jwtSecret: Redacted.value(effectiveJwtSecret),
                     },
-                    endpoints: { http: endpoint(apiPort) },
+                    endpoints: {
+                      http: endpoint(apiPort),
+                      inspector: endpoint(
+                        envPortOrConfigured(
+                          "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
+                          document,
+                          "edge_runtime",
+                          "inspector_port",
+                          validatedConfig.edge_runtime.inspector_port,
+                          context.projectEnvValues,
+                        ),
+                      ),
+                    },
                   } satisfies ServiceCreationType,
                 ]
               : []),
@@ -1122,7 +1233,15 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "studio" as const,
-                    config: { jwtSecret: Redacted.value(effectiveJwtSecret) },
+                    config: {
+                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(validatedConfig.studio.openai_api_key === undefined
+                        ? {}
+                        : { openaiApiKey: validatedConfig.studio.openai_api_key }),
+                      ...(validatedConfig.studio.api_url === getDefaultCliConfig().studio.api_url
+                        ? {}
+                        : { publicApiUrl: validatedConfig.studio.api_url }),
+                    },
                     endpoints: { http: endpoint(studioPort) },
                   } satisfies ServiceCreationType,
                 ]

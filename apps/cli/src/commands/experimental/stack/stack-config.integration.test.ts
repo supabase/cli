@@ -87,23 +87,6 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects unsupported function settings before creating recipes", () =>
-    Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-functions"
-[edge_runtime]
-enabled = true
-[functions.hello]
-entrypoint = "./hello/main.ts"
-`);
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit))
-        expect(String(exit.cause)).toContain(
-          "functions.hello.entrypoint is unsupported by the experimental stack",
-        );
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
   it.live("leaves stack-opt-in init listeners automatic except disabled pooler", () =>
     Effect.gen(function* () {
       const root = yield* project(renderCliConfigTemplate("stack-config-init", false, true));
@@ -112,24 +95,6 @@ entrypoint = "./hello/main.ts"
       expect(services.get("database")?.endpoints).toEqual({ sql: { port: "auto" } });
       expect(services.get("rest")?.endpoints).toEqual({ http: { port: "auto" } });
       expect(services.get("pooler")).toBeUndefined();
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("rejects an enabled unsupported provider in the initialized config shape", () =>
-    Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-enabled-provider"
-[auth.sms.twilio]
-enabled = true
-account_sid = "AC123"
-message_service_sid = "MG123"
-auth_token = "token"
-`);
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit))
-        expect(String(exit.cause)).toContain(
-          "auth.sms.twilio.enabled is unsupported by the experimental stack",
-        );
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -148,6 +113,31 @@ port = 55431
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("rejects Auth email template content paths deferred by the stack", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-auth-template"
+[auth.email.template.invite]
+content_path = "./templates/invite.html"
+`);
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.email");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects Auth third-party providers deferred by the stack", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-auth-third-party"
+[auth.third_party.firebase]
+enabled = true
+project_id = "firebase-project"
+`);
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.third_party");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("rejects an analytics backend the stack cannot represent", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-analytics"
@@ -162,58 +152,6 @@ backend = "bigquery"
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects unsupported effective auth hooks and accepts an explicit disabled hook", () =>
-    Effect.gen(function* () {
-      const unsupported = yield* project(`project_id = "stack-config-auth-hook"
-[auth.hook.custom_access_token]
-enabled = true
-uri = "pg-functions://custom-access-token"
-`);
-      const exit = yield* load(unsupported).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.hook");
-
-      const disabled = yield* project(`project_id = "stack-config-auth-hook-disabled"
-[auth.hook.custom_access_token]
-enabled = false
-`);
-      yield* load(disabled);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("rejects unsupported function JWT settings and edge secrets", () =>
-    Effect.gen(function* () {
-      const functionRoot = yield* project(`project_id = "stack-config-function-jwt"
-[functions.hello]
-verify_jwt = false
-`);
-      const functionExit = yield* load(functionRoot).pipe(Effect.exit);
-      expect(Exit.isFailure(functionExit)).toBe(true);
-      if (Exit.isFailure(functionExit))
-        expect(String(functionExit.cause)).toContain("functions.hello.verify_jwt");
-
-      const secretRoot = yield* project(`project_id = "stack-config-edge-secret"
-[edge_runtime.secrets]
-EXAMPLE = "secret"
-`);
-      const secretExit = yield* load(secretRoot).pipe(Effect.exit);
-      expect(Exit.isFailure(secretExit)).toBe(true);
-      if (Exit.isFailure(secretExit))
-        expect(String(secretExit.cause)).toContain("edge_runtime.secrets");
-
-      const authDisabledRoot = yield* project(`project_id = "stack-config-edge-secret-auth-disabled"
-[auth]
-enabled = false
-[edge_runtime.secrets]
-EXAMPLE = "secret"
-`);
-      const authDisabledExit = yield* load(authDisabledRoot).pipe(Effect.exit);
-      expect(Exit.isFailure(authDisabledExit)).toBe(true);
-      if (Exit.isFailure(authDisabledExit))
-        expect(String(authDisabledExit.cause)).toContain("edge_runtime.secrets");
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
   it.live("rejects unsupported database versions before creating recipes", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-db-version"
@@ -224,24 +162,6 @@ major_version = 14
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit))
         expect(String(exit.cause)).toContain("db.major_version must be 15 or 17");
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("accepts disabled storage vector settings but rejects custom vector limits", () =>
-    Effect.gen(function* () {
-      const disabled = yield* project(`project_id = "stack-config-vector-disabled"
-[storage.vector]
-enabled = false
-`);
-      yield* load(disabled);
-
-      const custom = yield* project(`project_id = "stack-config-vector-custom"
-[storage.vector]
-max_buckets = 11
-`);
-      const exit = yield* load(custom).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("storage.vector");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
