@@ -502,7 +502,10 @@ function applyExperimentalStackInitTemplate(source: string): string {
   for (const block of STACK_INIT_OMITTED_PORT_BLOCKS) {
     next = next.replace(block, "");
   }
-  return next;
+  return next.replace(
+    /^(openai_api_key|s3_host|s3_region|s3_access_key|s3_secret_key) = /gm,
+    "# $&",
+  );
 }
 
 export function renderCliConfigTemplate(

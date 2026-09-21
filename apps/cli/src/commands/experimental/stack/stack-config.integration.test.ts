@@ -118,14 +118,18 @@ entrypoint = "./hello/main.ts"
   it.live("rejects an enabled unsupported provider in the initialized config shape", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-enabled-provider"
-[auth.external.figma]
+[auth.sms.twilio]
 enabled = true
-client_id = "figma-client"
-secret = "figma-secret"
+account_sid = "AC123"
+message_service_sid = "MG123"
+auth_token = "token"
 `);
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.external.figma");
+      if (Exit.isFailure(exit))
+        expect(String(exit.cause)).toContain(
+          "auth.sms.twilio.enabled is unsupported by the experimental stack",
+        );
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
