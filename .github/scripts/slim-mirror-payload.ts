@@ -3,20 +3,20 @@
  * are derived here; payload strings are only accepted when they match.
  */
 
-export const SERVICE_PATTERN = /^[a-z][a-z0-9-]*$/;
-export const VERSION_PATTERN = /^[A-Za-z0-9._-]+$/;
-export const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const SERVICE_PATTERN = /^[a-z][a-z0-9-]*$/;
+const VERSION_PATTERN = /^[A-Za-z0-9._-]+$/;
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 export const SOURCE_REGISTRY = "ghcr.io/supabase/cli";
 export const DEST_REGISTRY = "public.ecr.aws/supabase/cli";
-export const NATIVE_TARGETS = ["linux-arm64", "linux-amd64", "darwin-arm64"] as const;
+const NATIVE_TARGETS = ["linux-arm64", "linux-amd64", "darwin-arm64"] as const;
 
 export class InvalidPayloadError extends Error {}
 
-export const imageSource = (service: string, version: string): string =>
+const imageSource = (service: string, version: string): string =>
   `${SOURCE_REGISTRY}/${service}:${version}`;
 
-export const imageDestination = (service: string, version: string): string =>
+const imageDestination = (service: string, version: string): string =>
   `${DEST_REGISTRY}/${service}:${version}`;
 
 export const digestReference = (tagged: string, digest: string): string => {
