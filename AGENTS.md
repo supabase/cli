@@ -72,6 +72,16 @@ pnpm exec turbo run supabase#build
 pnpm run test:live
 ```
 
+## Independent review
+
+For substantial redesigns, use an available independent reviewer at the design stage, after a
+meaningful implementation boundary, and for the final code and tests. Usually run two or three
+focused rounds per checkpoint and stop at consensus. The reviewer should assess how findings were
+fixed and verified, refuted with evidence, or accepted within the authorized tradeoff, with no
+material objections remaining; do not force agreement. Report unresolved decisions and continue
+only work that does not depend on them. A user-requested further round takes precedence;
+an authorized workflow needs no repeated permission, and review never replaces execution evidence.
+
 ## Comments
 
 Comments exist for the next reader, not as the author's audit trail. Code states what happens; a
@@ -117,11 +127,14 @@ Internal unreleased APIs may be simplified or reshaped; move responsibility to t
 and delete obsolete helpers, shims, and parallel paths instead of preserving compatibility
 scaffolding. Protect shipped interfaces and valuable persistent data; update consumers, tests, and
 docs when interfaces, ownership, or lifecycle changes.
+Base designs on consumer requirements and documented invariants rather than inherited code
+structure. Justify additional complexity with a current need or documented contract; prefer explicit
+limitations over speculative machinery while preserving required safeguards.
 
 ## Test quality
 
 - Write focused tests that read as stories: arrange, act, assert.
-- Assert behavior that matters to consumers, not implementation details. Prefer real parsers and observable outcomes over source-text or registry checks.
+- Assert behavior that matters to consumers, not implementation details. Prefer real parsers and observable outcomes over source-text or registry checks. Exercise shared contracts across supported implementations.
 - Make assertions meaningful: establish prerequisites, check specific failures, and choose matchers that express the intended contract.
 - Keep setup concise with small fixtures. Accept some duplication rather than introducing unnecessary test abstractions.
 - Remove redundant coverage. Push back on review suggestions that add assertions without protecting meaningful behavior.
@@ -140,7 +153,7 @@ Keep tests flake-resistant:
 - Subscribe before triggering a transition; use observable readiness/completion, never sleeps or polling delays for propagation, startup, cancellation, cleanup, or port release. Timeouts are guards; use controlled clocks or fake timers for timing semantics.
 - Assume file-level parallelism: use unique IDs, roots, process markers, and derived resources; never disable parallelism globally.
 - Never release and reuse an ephemeral port or assume a released endpoint is a dead backend; own a refusal listener or inject the failure.
-- Require subprocess readiness and stdout/stderr diagnostics; clean up only exact owned resources. Reproduce and stress flake fixes, then repeat the green case.
+- Require subprocess readiness and stdout/stderr diagnostics; clean up only exact owned resources and verify the cleanup required by the contract. Reproduce and stress flake fixes, then repeat the green case.
 
 ## Maintaining instructions
 
