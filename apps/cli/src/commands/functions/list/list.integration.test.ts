@@ -1,6 +1,6 @@
 import type { V1ListAllFunctionsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
@@ -204,7 +204,7 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("FunctionsEnvNotSupportedError");
         expect(json).toContain("--output env flag is not supported");
       }
@@ -270,7 +270,7 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("FunctionsListUnexpectedStatusError");
         expect(json).toContain("unexpected list functions status 503");
       }
@@ -283,7 +283,7 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("FunctionsListNetworkError");
         expect(json).toContain("failed to list functions");
       }
@@ -310,7 +310,7 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("FunctionsListNetworkError");
         expect(json).toContain("failed to list functions:");
       }
@@ -337,7 +337,7 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("FunctionsListUnexpectedStatusError");
         expect(json).toContain("unexpected list functions status 200");
         expect(json).toContain("Hello World");
@@ -351,7 +351,7 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("FunctionsListNetworkError");
         expect(json).toContain("failed to list functions");
       }
@@ -364,7 +364,7 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("FunctionsListNetworkError");
         expect(json).toContain("failed to list functions");
       }

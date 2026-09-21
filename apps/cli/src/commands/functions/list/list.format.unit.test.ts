@@ -10,4 +10,9 @@ describe("formatUnixMilliTimestamp", () => {
   it("pads single-digit UTC components", () => {
     expect(formatUnixMilliTimestamp(Date.UTC(2024, 0, 2, 3, 4, 5))).toBe("2024-01-02 03:04:05");
   });
+
+  it("renders invalid millis the way native Date getters do", () => {
+    expect(formatUnixMilliTimestamp(Number.NaN)).toBe("NaN-NaN-NaN NaN:NaN:NaN");
+    expect(formatUnixMilliTimestamp(1e20)).toBe("NaN-NaN-NaN NaN:NaN:NaN");
+  });
 });

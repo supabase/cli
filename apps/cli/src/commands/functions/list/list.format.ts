@@ -1,16 +1,16 @@
+import { DateTime, Option } from "effect";
+
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import type { Functions } from "./list.encoders.ts";
 
 export function formatUnixMilliTimestamp(value: number): string {
-  const date = new Date(value);
-  const parts = [
-    date.getUTCFullYear(),
-    date.getUTCMonth() + 1,
-    date.getUTCDate(),
-    date.getUTCHours(),
-    date.getUTCMinutes(),
-    date.getUTCSeconds(),
-  ];
+  const parts = DateTime.make(value).pipe(
+    Option.map((dateTime) => {
+      const utc = DateTime.toPartsUtc(dateTime);
+      return [utc.year, utc.month, utc.day, utc.hour, utc.minute, utc.second];
+    }),
+    Option.getOrElse(() => [NaN, NaN, NaN, NaN, NaN, NaN]),
+  );
   const [year, ...rest] = parts.map((part) => part.toString().padStart(2, "0"));
   return `${year}-${rest[0]}-${rest[1]} ${rest[2]}:${rest[3]}:${rest[4]}`;
 }
