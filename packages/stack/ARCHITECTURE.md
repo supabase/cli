@@ -622,7 +622,7 @@ The artifact cache is independent and shared across stacks. Normal stop preserve
 
 Snapshots are initially supported only for `database`, including the shadow-baseline cache use case. Start with that concrete case.
 
-Expose `saveSnapshot` and `restoreSnapshot` on `DatabaseInstance` only. The common service handle retains lifecycle, health and logs; REST and other instance types do not expose unsupported snapshot methods. Keep a database-specific snapshot descriptor. No generic snapshot provider registry, mandatory storage interface or whole-composition snapshot is needed until a second concrete use case requires one.
+Expose `saveSnapshot` and `restoreSnapshot` on `DatabaseInstance` only. The common service handle retains lifecycle, health and logs; REST and other instance types do not expose unsupported snapshot methods. Callers identify managed snapshots with opaque keys. No generic snapshot provider registry, mandatory storage interface or whole-composition snapshot is needed until a second concrete use case requires one.
 
 ```ts
 interface DatabaseInstance extends ServiceInstance {
