@@ -805,9 +805,10 @@ const smsBaseRows: ReadonlyArray<ProjectConfigMappingRow> = [
 ];
 
 // A single `sms_provider` string names exactly one active provider, but a provider whose identity
-// attribute is explicitly unset is unconfigured, never enabled (#6680). An unrecognized value maps
-// every provider's `enabled` to `false` rather than surfacing as a bug — there's no single field to
-// flag it against, but the raw string stays reachable at `_apiResponse.auth.sms_provider`.
+// attribute is explicitly unset (null/empty) is unconfigured, never enabled; an absent identity key
+// still counts as configured. A null/empty or unrecognized `sms_provider` maps every provider's
+// `enabled` to `false` — there's no single field to flag it against, but the raw value stays
+// reachable at `_apiResponse.auth.sms_provider`.
 const SMS_PROVIDERS = ["twilio", "twilio_verify", "messagebird", "textlocal", "vonage"] as const;
 
 const SMS_IDENTITY_ATTRIBUTES: Record<(typeof SMS_PROVIDERS)[number], string> = {
@@ -823,78 +824,38 @@ const smsProviderSelectionRows: ReadonlyArray<ProjectConfigMappingRow> = SMS_PRO
     configPath: ["auth", "sms", provider, "enabled"],
     apiPath: ["auth", "sms_provider"],
     alsoConsumes: [["auth", SMS_IDENTITY_ATTRIBUTES[provider]]],
-    // Null/empty → omit all five (no provider named); a non-string throws like every other
-    // mapped field.
+    // Absent (reached only through a present `alsoConsumes` sibling) → omit; null/empty → no
+    // provider, so every provider is disabled; a non-string throws like every other mapped field.
     transform: (value, attributes) => {
-      if (value === undefined || value === null) return undefined;
+      if (value === undefined) return undefined;
+      if (value === null) return false;
       const named = expectString(value, ["auth", "sms_provider"]);
-      if (named.length === 0) return undefined;
+      if (named.length === 0) return false;
       const identity = readAuthAttribute(attributes, SMS_IDENTITY_ATTRIBUTES[provider]);
       return named === provider && identity !== null && identity !== "";
     },
   }),
 );
 
-/**
- * Whether the response explicitly reports no active SMS provider (a `null` or `""`
- * `sms_provider`). An absent key does not gate — a sparse response that never mentioned the
- * provider says nothing about it.
- */
-function smsProviderExplicitlyUnset(attributes: Record<string, unknown>): boolean {
-  const provider = readAuthAttribute(attributes, "sms_provider");
-  return provider === null || provider === "";
-}
-
-/**
- * A {@link stringRow} for a non-secret SMS provider credential, omitted when
- * {@link smsProviderExplicitlyUnset}. Without this, a retained credential under an explicitly
- * unset provider would survive as an unmanaged phantom entry, since the selection rows all omit
- * on null/"" too and leave nothing for an entry sweep to key on.
- */
-function smsCredentialStringRow(
-  configPath: ReadonlyArray<string>,
-  apiKey: string,
-): ProjectConfigMappingRow {
-  const apiPath = ["auth", apiKey];
-  return {
-    configPath,
-    apiPath,
-    transform: (value, attributes) => {
-      if (value === null) return undefined;
-      const narrowed = expectString(value, apiPath);
-      return smsProviderExplicitlyUnset(attributes) ? undefined : narrowed;
-    },
-  };
-}
-
 // vonage.api_key isn't a secret field, unlike the other provider credentials below.
 const smsCredentialRows: ReadonlyArray<ProjectConfigMappingRow> = [
-  smsCredentialStringRow(["auth", "sms", "twilio", "account_sid"], "sms_twilio_account_sid"),
-  smsCredentialStringRow(
-    ["auth", "sms", "twilio", "message_service_sid"],
-    "sms_twilio_message_service_sid",
-  ),
+  stringRow(["auth", "sms", "twilio", "account_sid"], "sms_twilio_account_sid"),
+  stringRow(["auth", "sms", "twilio", "message_service_sid"], "sms_twilio_message_service_sid"),
   // Twilio-only: there's no `sms_twilio_verify_content_sid` counterpart.
-  smsCredentialStringRow(["auth", "sms", "twilio", "content_sid"], "sms_twilio_content_sid"),
+  stringRow(["auth", "sms", "twilio", "content_sid"], "sms_twilio_content_sid"),
   secretRow(["auth", "sms", "twilio", "auth_token"], "sms_twilio_auth_token"),
-  smsCredentialStringRow(
-    ["auth", "sms", "twilio_verify", "account_sid"],
-    "sms_twilio_verify_account_sid",
-  ),
-  smsCredentialStringRow(
+  stringRow(["auth", "sms", "twilio_verify", "account_sid"], "sms_twilio_verify_account_sid"),
+  stringRow(
     ["auth", "sms", "twilio_verify", "message_service_sid"],
     "sms_twilio_verify_message_service_sid",
   ),
   secretRow(["auth", "sms", "twilio_verify", "auth_token"], "sms_twilio_verify_auth_token"),
-  smsCredentialStringRow(
-    ["auth", "sms", "messagebird", "originator"],
-    "sms_messagebird_originator",
-  ),
+  stringRow(["auth", "sms", "messagebird", "originator"], "sms_messagebird_originator"),
   secretRow(["auth", "sms", "messagebird", "access_key"], "sms_messagebird_access_key"),
-  smsCredentialStringRow(["auth", "sms", "textlocal", "sender"], "sms_textlocal_sender"),
+  stringRow(["auth", "sms", "textlocal", "sender"], "sms_textlocal_sender"),
   secretRow(["auth", "sms", "textlocal", "api_key"], "sms_textlocal_api_key"),
-  smsCredentialStringRow(["auth", "sms", "vonage", "from"], "sms_vonage_from"),
-  smsCredentialStringRow(["auth", "sms", "vonage", "api_key"], "sms_vonage_api_key"),
+  stringRow(["auth", "sms", "vonage", "from"], "sms_vonage_from"),
+  stringRow(["auth", "sms", "vonage", "api_key"], "sms_vonage_api_key"),
   secretRow(["auth", "sms", "vonage", "api_secret"], "sms_vonage_api_secret"),
 ];
 

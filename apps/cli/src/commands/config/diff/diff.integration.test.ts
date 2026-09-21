@@ -210,6 +210,31 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live.each([
+    ["null", null],
+    ["empty", ""],
+  ] as const)(
+    "a %s remote sms_provider diffs clean against a declared enabled = false",
+    ([, provider]) => {
+      const { layer, out } = setup({
+        toml: 'project_id = "test"\n[auth.sms.twilio]\nenabled = false\n',
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (attributes) => ({
+              ...attributes,
+              auth: { ...(attributes["auth"] as Record<string, unknown>), sms_provider: provider },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* configDiff(noFlags);
+        expect(out.stdoutText).toContain("No config differences found.");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("a configured provider still diffs clean", () => {
     const { layer, out } = setup({
       toml: [
