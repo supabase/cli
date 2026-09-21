@@ -337,6 +337,7 @@ it.live("serves one detached owner through Effect RPC and retires after shutdown
           ),
       );
       yield* Deferred.await(attached);
+      expect(idleSocket.destroyed).toBe(false);
       yield* client.shutdown({ destroy: false });
       yield* awaitClosed(idleSocket).pipe(
         Effect.timeoutOrElse({
