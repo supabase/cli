@@ -198,9 +198,21 @@ describe("Podman database storage", { timeout: 120_000 }, () => {
               '{"version":"17","runtime":"podman","profile":"supabase"}',
             );
             yield* storage.saveSnapshot("17", "reopen");
+            yield* podman([
+              "run",
+              "--rm",
+              "--mount",
+              `type=bind,src=${instanceRoot},dst=/instance`,
+              helperImage,
+              "/bin/sh",
+              "-c",
+              "set -eu; mkdir -p /instance/.supabase-restore-stale/data; printf stale > /instance/.supabase-restore-stale/data/fixture; chown -R 0:0 /instance/.supabase-restore-stale",
+            ]);
           }),
         );
         yield* Scope.close(initialScope, Exit.void);
+        const staleRestorePath = path.join(instanceRoot, ".supabase-restore-stale");
+        expect(yield* fs.exists(staleRestorePath)).toBe(true);
         yield* fs.remove(cacheRoot, { recursive: true, force: true });
         expect(yield* fs.exists(cacheRoot)).toBe(false);
 
@@ -209,6 +221,8 @@ describe("Podman database storage", { timeout: 120_000 }, () => {
           Effect.gen(function* () {
             const storage = yield* makeStorage();
             yield* storage.prepare("17");
+            yield* storage.removeData("17");
+            expect(yield* fs.exists(staleRestorePath)).toBe(false);
             yield* storage.destroyData("17");
           }),
         );
