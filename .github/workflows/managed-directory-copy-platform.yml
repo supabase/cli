@@ -1,0 +1,21 @@
+name: Managed directory copy platform verification
+on:
+  push:
+    branches: [perf/managed-directory-copy-platform]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Verify production directory copying
+        run: pnpm --filter @supabase/stack exec vitest run --config vitest.config.ts --project integration src/storage/DirectoryCopy.integration.test.ts
