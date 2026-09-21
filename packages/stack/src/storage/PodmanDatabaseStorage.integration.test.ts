@@ -206,7 +206,7 @@ describe("Podman database storage", { timeout: 120_000 }, () => {
               helperImage,
               "/bin/sh",
               "-c",
-              "set -eu; mkdir -p /instance/.supabase-restore-stale/data; printf stale > /instance/.supabase-restore-stale/data/fixture; chown -R 0:0 /instance/.supabase-restore-stale",
+              "set -eu; mkdir -p /instance/.supabase-restore-stale/data; printf stale > /instance/.supabase-restore-stale/data/fixture; chown -R 100:101 /instance/.supabase-restore-stale; chmod 700 /instance/.supabase-restore-stale",
             ]);
           }),
         );
