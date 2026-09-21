@@ -63,6 +63,19 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.CLI_ARTIFACTS_AWS_ACCOUNT_ID }}:role/github-deploy
           aws-region: us-east-1
 
+      - name: Clear a failed initial create
+        # A create that rolled back leaves the stack in ROLLBACK_COMPLETE, which cannot be
+        # updated; it holds no resources, so deleting it is the only way to retry.
+        run: |
+          set -euo pipefail
+          status="$(aws cloudformation describe-stacks --stack-name cli-artifacts \
+            --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo NONE)"
+          echo "current stack status: ${status}"
+          if [ "${status}" = "ROLLBACK_COMPLETE" ]; then
+            aws cloudformation delete-stack --stack-name cli-artifacts
+            aws cloudformation wait stack-delete-complete --stack-name cli-artifacts
+          fi
+
       - name: Deploy stack
         run: |
           set -euo pipefail
@@ -71,6 +84,14 @@ jobs:
             --template-file infra/cli-artifacts/template.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
+
+      - name: Show stack events on failure
+        if: failure()
+        run: |
+          aws cloudformation describe-stack-events \
+            --stack-name cli-artifacts \
+            --query "StackEvents[?contains(ResourceStatus, 'FAILED')].[LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --output table || true
 
       - name: Show stack outputs
         run: |
