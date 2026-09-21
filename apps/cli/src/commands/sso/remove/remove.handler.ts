@@ -18,7 +18,7 @@ import {
   SsoRemoveUnexpectedStatusError,
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
-import { renderSingleProvider, validateUuid } from "../sso.format.ts";
+import { quoteSsoString, renderSingleProvider, validateUuid } from "../sso.format.ts";
 import type { SsoRemoveFlags } from "./remove.command.ts";
 
 const mapStatusOrNetwork = mapHttpError({
@@ -39,21 +39,17 @@ const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiEr
         response: gateResponse(cause),
       });
       if (mapped.status === 404) {
-        return yield* Effect.fail(
-          new SsoRemoveNotFoundError({
-            message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
-            upgradeSuggested,
-          }),
-        );
-      }
-      return yield* Effect.fail(
-        new SsoRemoveUnexpectedStatusError({
-          status: mapped.status,
-          body: mapped.body,
-          message: mapped.message,
+        return yield* new SsoRemoveNotFoundError({
+          message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
           upgradeSuggested,
-        }),
-      );
+        });
+      }
+      return yield* new SsoRemoveUnexpectedStatusError({
+        status: mapped.status,
+        body: mapped.body,
+        message: mapped.message,
+        upgradeSuggested,
+      });
     }
     return yield* Effect.fail(mapped);
   });

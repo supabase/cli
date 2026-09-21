@@ -12,13 +12,13 @@
 
 ## Files Written
 
-| Path                      | Format | When                                                                                                            |
-| ------------------------- | ------ | --------------------------------------------------------------------------------------------------------------- |
-| `supabase/config.toml`    | TOML   | always on success; created from default template                                                                |
-| `supabase/.gitignore`     | text   | when inside a git repo and the template is not already present                                                  |
-| `.vscode/settings.json`   | JSON   | when interactive VS Code setup is accepted, or when `--with-vscode-settings` / `--with-vscode-workspace` is set |
-| `.vscode/extensions.json` | JSON   | when interactive VS Code setup is accepted, or when `--with-vscode-settings` / `--with-vscode-workspace` is set |
-| `.idea/deno.xml`          | XML    | when interactive IntelliJ setup is accepted, or when `--with-intellij-settings` is set                          |
+| Path                      | Format | When                                                                                                                    |
+| ------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `supabase/config.toml`    | TOML   | always on success; created from the default template, or the stack-opt-in template when `SUPABASE_EXPERIMENTAL_STACK=1` |
+| `supabase/.gitignore`     | text   | when inside a git repo and the template is not already present                                                          |
+| `.vscode/settings.json`   | JSON   | when interactive VS Code setup is accepted, or when `--with-vscode-settings` / `--with-vscode-workspace` is set         |
+| `.vscode/extensions.json` | JSON   | when interactive VS Code setup is accepted, or when `--with-vscode-settings` / `--with-vscode-workspace` is set         |
+| `.idea/deno.xml`          | XML    | when interactive IntelliJ setup is accepted, or when `--with-intellij-settings` is set                                  |
 
 ## API Routes
 
@@ -28,7 +28,10 @@
 
 ## Environment Variables
 
-None.
+| Variable                      | Purpose                                                                                                                                 | Required? |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_YES`                | auto-accepts `-i` IDE prompts with the established stderr echo, same as `--yes`                                                         | no        |
+| `SUPABASE_EXPERIMENTAL_STACK` | when `1`, persist `[experimental] stack = true` and omit Docker-era default ports; `0`, unset, or empty writes the established template | no        |
 
 ## Exit Codes
 
@@ -36,6 +39,7 @@ None.
 | ---- | ------------------------------------------------------------------------------------ |
 | `0`  | success - prints "Finished supabase init."                                           |
 | `1`  | `supabase/config.toml` already exists and `--force` was not provided                 |
+| `1`  | `SUPABASE_EXPERIMENTAL_STACK` is a non-empty value other than `0` or `1`             |
 | `1`  | permission denied writing config file                                                |
 | `1`  | an existing `.vscode/settings.json` / `.vscode/extensions.json` is not valid JSON(C) |
 
@@ -76,11 +80,23 @@ required flag(s) "experimental" not set
 Try rerunning the command with --debug to troubleshoot the error.
 ```
 
+When `SUPABASE_EXPERIMENTAL_STACK` is a non-empty value other than `0` or `1` (stderr; the second line is the generic debug hint appended on error):
+
+```
+SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set
+Try rerunning the command with --debug to troubleshoot the error.
+```
+
 ## Notes
 
 - Uses the invocation cwd directly and does not recurse upward looking for an existing project.
 - The `--force` flag overwrites an existing `supabase/config.toml`.
 - The `--use-orioledb` flag sets `UseOrioleDB` in init params; requires `--experimental` flag.
+- `SUPABASE_EXPERIMENTAL_STACK=1` opts the new project into the experimental stack backend: the
+  written config includes `[experimental] stack = true` and omits the Docker-era default ports
+  (API, database, shadow, pooler, Studio, mail UI, Functions inspector, and Analytics).
+  A non-empty value other than `0` or `1` fails closed. `0`, unset, or empty keeps the
+  established template.
 - The `--interactive` / `-i` flag enables IDE settings prompts (only effective in TTY).
 - The `--with-vscode-settings` and `--with-vscode-workspace` flags are hidden backward-compat aliases for the same VS Code helper and both write `.vscode/settings.json` and `.vscode/extensions.json`.
 - The `--with-intellij-settings` flag is a hidden backward-compat alias for generating `.idea/deno.xml`.
