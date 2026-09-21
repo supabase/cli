@@ -172,6 +172,20 @@ const program = Effect.scoped(
           const exportStart = performance.now();
           yield* sourceStore.exportSnapshot({ destination: snapshot });
           const exportMs = performance.now() - exportStart;
+          if (repetition === 0) {
+            const sentinel = path.join(target, "data", "sentinel");
+            yield* fs.writeFileString(sentinel, "valuable data");
+            const failure = yield* targetStore
+              .restoreSnapshot({ source: snapshot })
+              .pipe(Effect.flip);
+            yield* assert(failure.operation === "restore", "Unexpected nonempty-target failure");
+            yield* assert(
+              (yield* fs.readFileString(sentinel)) === "valuable data",
+              "Restore modified a nonempty target",
+            );
+            yield* fs.remove(sentinel);
+          }
+
           yield* fs.writeFileString(sourceFirst, "source mutation");
           const restoreStart = performance.now();
           yield* targetStore.restoreSnapshot({ source: snapshot });

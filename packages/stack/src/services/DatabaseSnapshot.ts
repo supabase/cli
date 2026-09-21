@@ -1,6 +1,8 @@
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Crypto, Data, Effect, FileSystem, Path, Schema, Stream } from "effect";
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Windows cannot rename over an existing empty directory.
+import { rmdir } from "node:fs/promises";
 import type { DatabaseRuntime } from "./Database.ts";
 import { makeContainerRuntime, type ContainerRuntime } from "../runtime/Container.ts";
 
@@ -524,6 +526,11 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
             );
           }
           if (options.runtime === "native") {
+            if (dataExists)
+              yield* Effect.tryPromise({
+                try: () => rmdir(data),
+                catch: (cause) => errorFor("publish", cause),
+              });
             yield* fs
               .rename(path.join(extracted, "data"), data)
               .pipe(Effect.mapError((cause) => errorFor("publish", cause)));

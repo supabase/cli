@@ -1,6 +1,8 @@
 import { Crypto, Data, Effect, FileSystem, Path, Schema, Stream } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- Node's forced reflink flag has no Effect equivalent.
 import { copyFile, lstat } from "node:fs/promises";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Windows cannot rename over an existing empty directory.
+import { rmdir } from "node:fs/promises";
 import { constants } from "node:fs"; // oxlint-disable-line effecttsgo/node-builtin-import -- CoW flags are unavailable through Effect's filesystem abstraction.
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import type { DatabaseRuntime } from "./Database.ts";
@@ -481,6 +483,11 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
               "validate",
               "Snapshot data has an incompatible PostgreSQL major version",
             );
+          if (dataExists)
+            yield* Effect.tryPromise({
+              try: () => rmdir(data),
+              catch: (cause) => errorFor("publish", cause),
+            });
           yield* fs
             .rename(path.join(stagedSource, "data"), data)
             .pipe(Effect.mapError((cause) => errorFor("publish", cause)));
