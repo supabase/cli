@@ -214,7 +214,10 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
               : created;
             const statuses = yield* Effect.forEach(observed, (instance) =>
               instance.status.pipe(
-                Effect.map((status) => `${instance.service}=${status.lifecycle}`),
+                Effect.map(
+                  (status) =>
+                    `${instance.service}=${status.lifecycle}(health=${status.health ?? "undefined"},wakeEnabled=${status.wakeEnabled},error=${status.error?.message ?? "undefined"})`,
+                ),
                 Effect.catchCause(() => Effect.succeed(`${instance.service}=unknown`)),
               ),
             );

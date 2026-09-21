@@ -330,9 +330,9 @@ export const defaultLifecycle = (runtime: Runtime) =>
         stack: reopenedStack,
         services: yield* reopenedStack.services.list,
       };
-      yield* refreshLogTails(reopened);
       yield* assertPersistedPolicy(reopened);
       yield* clearIdleTimers(reopened);
+      yield* refreshLogTails(reopened);
       yield* reopened.stack.composition.start;
       yield* assertColdStart(reopened);
       const reopenedColdWorkloads = yield* captureWorkloads(runtime, reopened);
@@ -471,8 +471,8 @@ export const parallel = (runtime: Runtime) =>
             stack: reopenedLeft,
             services: yield* reopenedLeft.services.list,
           };
-          yield* refreshLogTails(reopenedLeftFixture);
           yield* clearIdleTimers(reopenedLeftFixture);
+          yield* refreshLogTails(reopenedLeftFixture);
           yield* reopenedLeft.composition.start;
           expect(
             yield* sql(
