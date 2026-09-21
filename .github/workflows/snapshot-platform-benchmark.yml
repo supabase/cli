@@ -40,7 +40,13 @@ jobs:
           fi
       - name: Snapshot correctness and benchmark
         shell: bash
-        run: pnpm --filter @supabase/stack run benchmark:snapshot-platform --root="$RUNNER_TEMP/snapshot-platform" --out="$GITHUB_WORKSPACE/results/native.json" --reps=5 --warmups=1
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            export PATH="$(cygpath -u "$WINDIR")/System32:$PATH"
+          fi
+          command -v tar
+          tar --version
+          pnpm --filter @supabase/stack run benchmark:snapshot-platform --root="$RUNNER_TEMP/snapshot-platform" --out="$GITHUB_WORKSPACE/results/native.json" --reps=5 --warmups=1
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
