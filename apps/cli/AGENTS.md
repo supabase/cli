@@ -25,9 +25,8 @@ src/commands/<command>/
   SIDE_EFFECTS.md        # required compatibility contract
 ```
 
-Register every command in `src/cli/root.ts`. Keep `.format.ts` and `.encoders.ts` pure. Use
-`Effect.fn` for exported command handlers and `Effect.fnUntraced` for small internal helpers;
-tracing is local observability and span names follow `<command>.<sub>`. Read `src/shared/` and the
+Register every command in `src/cli/root.ts`. Keep `.format.ts` and `.encoders.ts` pure. Tracing is
+local observability and span names follow `<command>.<sub>`. Read `src/shared/` and the
 command-level infrastructure under
 `src/config/`, `src/auth/`, `src/telemetry/`, `src/output/`, and `src/command-internal/` before
 adding an equivalent helper.
@@ -112,8 +111,8 @@ contracts remain unchanged. Update tests, generated schemas, and side-effect doc
 
 ## Telemetry
 
-> The string passed to `Data.TaggedError("...")` is the PostHog `error_fingerprint` identity
-> (`tag:<TagName>`); preserve it when renaming classes.
+> An error’s tag is the PostHog `error_fingerprint` identity (`tag:<TagName>`); preserve it when
+> renaming classes.
 > [`src/shared/telemetry/error-tag-stability.unit.test.ts`](src/shared/telemetry/error-tag-stability.unit.test.ts)
 > compares every CLI and `@supabase/config` tag with the committed snapshot.
 

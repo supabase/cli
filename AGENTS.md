@@ -33,6 +33,7 @@ Always use the [Effect skill](.agents/skills/effect/SKILL.md) when writing or ch
 the references relevant to the task before editing. Write
 all TypeScript runtime code in Effect. Promise-returning APIs are allowed only as package exports
 for consumers that do not use Effect.
+The skill is authoritative for Effect coding practices when repository instructions conflict.
 
 Effect linting uses oxlint via `.oxlintrc.effect.json`; run `pnpm lint:effect:check` or
 `pnpm lint:effect:fix` from the repository root.
