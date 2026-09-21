@@ -95,6 +95,9 @@ describe("Podman database storage", { timeout: 120_000 }, () => {
         const secondStorage = yield* makeStorage("second", secondInstanceRoot);
 
         yield* storage.prepare("17");
+        expect(
+          yield* fs.exists(path.join(secondInstanceRoot, ".supabase-database-storage.json")),
+        ).toBe(false);
         yield* secondStorage.prepare("17");
         const secondMarker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
           yield* fs.readFileString(

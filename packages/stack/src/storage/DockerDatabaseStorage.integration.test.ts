@@ -14,6 +14,7 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { makeContainerRuntime } from "../runtime/Container.ts";
+import { makeDatabaseSnapshots } from "../services/DatabaseSnapshot.ts";
 import { makeDockerDatabaseStorage } from "./DockerDatabaseStorage.ts";
 
 const helperImage =
@@ -240,6 +241,192 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("destroys legacy host data without a storage marker", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-legacy-" });
+        const storageRoot = path.join(root, "state", "stack", "data");
+        const cacheRoot = path.join(root, "cache");
+        const instanceRoot = path.join(storageRoot, "legacy");
+        const dataRoot = path.join(instanceRoot, "data");
+        yield* fs.makeDirectory(dataRoot, { recursive: true });
+        yield* fs.writeFileString(path.join(dataRoot, "PG_VERSION"), "17\n");
+        yield* fs.writeFileString(path.join(dataRoot, "fixture"), "legacy");
+        yield* fs.writeFileString(
+          path.join(instanceRoot, ".supabase-database-ready.json"),
+          '{"version":"17","runtime":"docker","profile":"supabase"}',
+        );
+        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        yield* docker([
+          "run",
+          "--rm",
+          "--mount",
+          `type=bind,src=${instanceRoot},dst=/instance`,
+          helperImage,
+          "/bin/sh",
+          "-c",
+          "chown -R 100:101 /instance/data; chmod 700 /instance/data",
+        ]);
+        const storage = yield* makeDockerDatabaseStorage({
+          runtime: "docker",
+          stackId: `storage-legacy-${yield* crypto.randomUUIDv4}`,
+          instanceId: "legacy",
+          instanceRoot,
+          root: storageRoot,
+          cacheRoot,
+          fs,
+          path,
+          crypto,
+          container,
+          spawner,
+        });
+        expect(yield* fs.exists(path.join(instanceRoot, ".supabase-database-storage.json"))).toBe(
+          false,
+        );
+        yield* storage.destroyData("17");
+        expect(yield* fs.exists(dataRoot)).toBe(false);
+        expect(yield* fs.exists(path.join(instanceRoot, ".supabase-database-ready.json"))).toBe(
+          false,
+        );
+        yield* fs.remove(cacheRoot, { recursive: true, force: true });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("recovers after an owned helper is removed externally", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-helper-" });
+        const storageRoot = path.join(root, "state", "stack", "data");
+        const cacheRoot = path.join(root, "cache");
+        const instanceRoot = path.join(storageRoot, "recovery");
+        yield* fs.makeDirectory(instanceRoot, { recursive: true });
+        yield* fs.makeDirectory(cacheRoot, { recursive: true });
+        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const stackId = `storage-helper-recovery-${yield* crypto.randomUUIDv4}`;
+        const instanceId = "recovery";
+        const storage = yield* makeDockerDatabaseStorage({
+          runtime: "docker",
+          stackId,
+          instanceId,
+          instanceRoot,
+          root: storageRoot,
+          cacheRoot,
+          fs,
+          path,
+          crypto,
+          container,
+          spawner,
+        });
+        yield* storage.prepare("17");
+        const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+          yield* fs.readFileString(path.join(instanceRoot, ".supabase-database-storage.json")),
+        );
+        const volume = marker.volume;
+        if (volume === undefined)
+          return yield* new DockerTestError({ message: "Docker storage volume missing" });
+        const helpers = yield* docker([
+          "ps",
+          "--filter",
+          "label=com.supabase.stack=" + stackId,
+          "--filter",
+          "label=com.supabase.instance=" + instanceId,
+          "--format",
+          "{{.Names}}",
+        ]);
+        const helper = helpers.split("\n").find((name) => name.length > 0);
+        if (helper === undefined)
+          return yield* new DockerTestError({ message: "Owned helper was not discoverable" });
+        yield* docker(["rm", "-f", helper]);
+        const failed = yield* storage.prepare("17").pipe(Effect.exit);
+        expect(failed).toSatisfy((exit) => Exit.isFailure(exit));
+        yield* storage.prepare("17");
+        yield* storage.destroyData("17");
+        yield* docker(["volume", "rm", volume]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("destroys an initialized storage after its volume is removed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-missing-" });
+        const storageRoot = path.join(root, "state", "stack", "data");
+        const cacheRoot = path.join(root, "cache");
+        const instanceRoot = path.join(storageRoot, "missing");
+        yield* fs.makeDirectory(instanceRoot, { recursive: true });
+        yield* fs.makeDirectory(cacheRoot, { recursive: true });
+        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const stackId = `storage-missing-${yield* crypto.randomUUIDv4}`;
+        const makeStorage = () =>
+          makeDockerDatabaseStorage({
+            runtime: "docker",
+            stackId,
+            instanceId: "missing",
+            instanceRoot,
+            root: storageRoot,
+            cacheRoot,
+            fs,
+            path,
+            crypto,
+            container,
+            spawner,
+          });
+        let volume: string | undefined;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const storage = yield* makeStorage();
+            yield* storage.prepare("17");
+            const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+              yield* fs.readFileString(path.join(instanceRoot, ".supabase-database-storage.json")),
+            );
+            volume = marker.volume;
+            if (volume === undefined)
+              return yield* new DockerTestError({ message: "Docker storage volume missing" });
+            const mount = yield* storage.mount("17");
+            if (mount.type !== "volume" || mount.volumeSubpath === undefined)
+              return yield* new DockerTestError({ message: "Docker volume backend unavailable" });
+            yield* docker([
+              "run",
+              "--rm",
+              "--mount",
+              `type=volume,src=${volume},dst=/data,volume-subpath=${mount.volumeSubpath}`,
+              helperImage,
+              "/bin/sh",
+              "-c",
+              "printf 17 > /data/PG_VERSION",
+            ]);
+            yield* storage.markInitialized("17");
+          }),
+        );
+        if (volume === undefined) return yield* new DockerTestError({ message: "Missing volume" });
+        yield* docker(["volume", "rm", volume]);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const storage = yield* makeStorage();
+            const prepare = yield* storage.prepare("17").pipe(Effect.exit);
+            expect(prepare).toSatisfy((exit) => Exit.isFailure(exit));
+            expect(yield* storage.destroyData("17").pipe(Effect.exit)).toSatisfy((exit) =>
+              Exit.isSuccess(exit),
+            );
+          }),
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("adopts root-owned host data through helper operations", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -292,6 +479,24 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         expect(marker.backend).toBe("host");
         expect(marker.initialized).toBe(true);
         yield* storage.saveSnapshot("17", "adopted");
+        const nativeRoot = path.join(root, "native");
+        yield* fs.makeDirectory(path.join(nativeRoot, "data"), { recursive: true });
+        yield* fs.writeFileString(path.join(nativeRoot, "data", "PG_VERSION"), "17\n");
+        yield* fs.writeFileString(
+          path.join(nativeRoot, ".supabase-database-ready.json"),
+          '{"version":"17.6.1.173","runtime":"native","profile":"supabase"}',
+        );
+        const nativeSnapshots = yield* makeDatabaseSnapshots({
+          instanceRoot: nativeRoot,
+          cacheRoot,
+          runtime: "native",
+          version: "17",
+          stackId: "native-interoperability",
+          instanceId: "database",
+        });
+        yield* nativeSnapshots.saveSnapshot("native");
+        yield* fs.remove(path.join(nativeRoot, "data"), { recursive: true });
+        expect(yield* nativeSnapshots.restoreSnapshot("native")).toBe(true);
         yield* storage.removeData("17");
         expect(yield* storage.restoreSnapshot("17", "adopted")).toBe(true);
         yield* storage.removeData("17");
@@ -385,10 +590,11 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
             yield* source.saveSnapshot("17", "reopened");
             yield* source.removeData("17");
             expect(yield* source.restoreSnapshot("17", "reopened")).toBe(true);
+            yield* source.saveSnapshot("17", "reopened-again");
             yield* source.destroyData("17");
             const target = yield* makeStorage("target", targetRoot);
             yield* target.prepare("17");
-            expect(yield* target.restoreSnapshot("17", "reopened")).toBe(true);
+            expect(yield* target.restoreSnapshot("17", "reopened-again")).toBe(true);
             const targetMount = yield* target.mount("17");
             if (targetMount.type !== "volume" || targetMount.volumeSubpath === undefined)
               return yield* new DockerTestError({ message: "Docker target volume unavailable" });
