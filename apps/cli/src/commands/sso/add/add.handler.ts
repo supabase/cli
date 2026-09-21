@@ -132,7 +132,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     // nothing after) is a pflag parse error; the TS parser accepts it as
     // unset, so this must run before every other validation.
     if (scan.missingValueError !== undefined) {
-      return yield* Effect.fail(new SsoFlagNeedsArgumentError({ message: scan.missingValueError }));
+      return yield* new SsoFlagNeedsArgumentError({ message: scan.missingValueError });
     }
 
     // Reconcile the effective `--profile` before the workdir check: when the
@@ -151,9 +151,9 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
       : undefined;
     const reconciledTokenForAux =
       reconciledTokenCached === undefined
-        ? Effect.succeed<Option.Option<Redacted.Redacted<string>> | undefined>(undefined)
-        : Effect.catch(reconciledTokenCached, () =>
-            Effect.succeed(Option.none<Redacted.Redacted<string>>()),
+        ? Effect.as(Effect.void, undefined)
+        : Effect.orElseSucceed(reconciledTokenCached, () =>
+            Option.none<Redacted.Redacted<string>>(),
           );
 
     // Validate the effective `--workdir` before the required-type and mutex
@@ -167,18 +167,14 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     // required-flag check must still fail — the TS parser can't see that
     // (it refuses flag-shaped values), so this reproduces it from the scan.
     if (!occurrences.has("type") && scan.consumedFlagNames.has("type")) {
-      return yield* Effect.fail(
-        new SsoAddRequiredFlagError({ message: `required flag(s) "type" not set` }),
-      );
+      return yield* new SsoAddRequiredFlagError({ message: `required flag(s) "type" not set` });
     }
 
     const changed = SSO_ADD_MUTEX_GROUP.filter((flagName) => occurrences.has(flagName));
     if (changed.length > 1) {
-      return yield* Effect.fail(
-        new SsoMutexFlagError({
-          message: cobraMutuallyExclusiveErrorMessage(SSO_ADD_MUTEX_GROUP, changed),
-        }),
-      );
+      return yield* new SsoMutexFlagError({
+        message: cobraMutuallyExclusiveErrorMessage(SSO_ADD_MUTEX_GROUP, changed),
+      });
     }
 
     // Everything below reads pflag-effective values from the scan rather
@@ -288,18 +284,17 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         });
         yield* creating?.fail() ?? Effect.void;
         if (response.status === 404) {
-          return yield* Effect.fail(
-            new SsoAddSamlDisabledError({ message: SAML_DISABLED_MESSAGE, upgradeSuggested }),
-          );
-        }
-        return yield* Effect.fail(
-          new SsoAddUnexpectedStatusError({
-            status: response.status,
-            body: bodyText,
-            message: `Unexpected error adding identity provider: ${bodyText}`,
+          return yield* new SsoAddSamlDisabledError({
+            message: SAML_DISABLED_MESSAGE,
             upgradeSuggested,
-          }),
-        );
+          });
+        }
+        return yield* new SsoAddUnexpectedStatusError({
+          status: response.status,
+          body: bodyText,
+          message: `Unexpected error adding identity provider: ${bodyText}`,
+          upgradeSuggested,
+        });
       }
 
       const parsedJson = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));

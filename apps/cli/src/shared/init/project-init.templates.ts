@@ -466,9 +466,53 @@ export const INTELLIJ_DENO_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 
 const ORIOLE_DB_VERSION = "15.1.0.150";
 
-export function renderCliConfigTemplate(projectId: string, useOrioledb: boolean): string {
-  return CONFIG_TEMPLATE_RAW.replace("__PROJECT_ID__", projectId).replace(
+const EXPERIMENTAL_STACK_INIT_FLAG = `# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.
+stack = true
+`;
+
+// Default ports omitted so the stack is not pinned to Docker-era values.
+const STACK_INIT_OMITTED_PORT_BLOCKS = [
+  `# Port to use for the API URL.
+port = 54321
+`,
+  `# Port to use for the local database URL.
+port = 54322
+`,
+  `# Port used by db diff command to initialize the shadow database.
+shadow_port = 54320
+`,
+  `# Port to use for the local connection pooler.
+port = 54329
+`,
+  `# Port to use for Supabase Studio.
+port = 54323
+`,
+  `# Port to use for the email testing server web interface.
+port = 54324
+`,
+  `# Port to attach the Chrome inspector for debugging edge functions.
+inspector_port = 8083
+`,
+  `port = 54327
+`,
+] as const;
+
+function applyExperimentalStackInitTemplate(source: string): string {
+  let next = source.replace("[experimental]\n", `[experimental]\n${EXPERIMENTAL_STACK_INIT_FLAG}`);
+  for (const block of STACK_INIT_OMITTED_PORT_BLOCKS) {
+    next = next.replace(block, "");
+  }
+  return next;
+}
+
+export function renderCliConfigTemplate(
+  projectId: string,
+  useOrioledb: boolean,
+  experimentalStack = false,
+): string {
+  const rendered = CONFIG_TEMPLATE_RAW.replace("__PROJECT_ID__", projectId).replace(
     "__ORIOLEDB_VERSION__",
     useOrioledb ? ORIOLE_DB_VERSION : "",
   );
+  return experimentalStack ? applyExperimentalStackInitTemplate(rendered) : rendered;
 }
