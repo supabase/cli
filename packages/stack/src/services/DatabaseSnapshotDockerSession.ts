@@ -273,6 +273,7 @@ export const makeDockerSnapshotSession = Effect.fn("DatabaseSnapshotDockerSessio
                   return yield* errorFor("export", "Instance metadata directory already exists");
                 }
                 try {
+                  yield* fs.writeFileString(archivePath, "", { mode: 0o600 });
                   yield* fs.makeDirectory(metadata, { recursive: true });
                   const encoded = yield* Schema.encodeEffect(
                     Schema.fromJsonString(SnapshotDescriptor),
@@ -295,6 +296,7 @@ export const makeDockerSnapshotSession = Effect.fn("DatabaseSnapshotDockerSessio
                   yield* fs.remove(archivePath);
                   return { descriptor, destination: destinationPath };
                 } finally {
+                  yield* fs.remove(archivePath, { force: true });
                   yield* fs.remove(path.join(instanceRoot, "metadata"), {
                     recursive: true,
                     force: true,
