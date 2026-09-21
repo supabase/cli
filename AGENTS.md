@@ -58,8 +58,8 @@ Keep the local feedback loop fast; full CI runs for ready PRs targeting `develop
 Use `pnpm test` only when its scope fits the change; the CLI's aggregate script includes full E2E,
 so use `pnpm run test:unit` and `pnpm run test:integration` with affected test files locally.
 When repo-wide validation is warranted, use root `pnpm check:all` or `pnpm fix:all`. These are the
-repo-wide quality entrypoints: `check:all` runs generic lint, format, knip, and type checks;
-`fix:all` applies generic lint, format, and knip fixes. Do not use production
+repo-wide quality entrypoints: `check:all` runs generic and Effect lint, format, knip, and type
+checks; `fix:all` applies generic and Effect lint, format, and knip fixes. Do not use production
 `as` casts to silence type errors.
 
 Use root Turbo entrypoints for live and auxiliary workflows:
