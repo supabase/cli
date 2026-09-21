@@ -57,9 +57,13 @@ Native public listeners bind to loopback. Docker and Podman public proxies bind 
 
 Functions configuration requires bootstrap source. Database versions belong in `config.version`; other recipes accept an optional top-level artifact `version`.
 
+On Linux, native Functions project files must be outside `/tmp`: Edge Runtime uses a private filesystem at that path. Docker and Podman mount project files at a separate runtime path.
+
 `open({ id, stateRoot, cacheRoot })` reconnects to a saved stack. The package stores the stack document at `<stateRoot>/<id>/state.json` and service data at `<stateRoot>/<id>/data/<instance-id>`. `discover({ stateRoot })` lists saved definitions and port assignments separately from live-owner availability. Offline definitions are not live lifecycle observations.
 
 The stack owns database, Functions bootstrap, and tool-job directories below its data directory. Storage uploads remain at the caller-supplied Storage `filePath` and are preserved when the stack is destroyed; the caller owns that directory.
+
+Without an explicit database root key, PostgreSQL generates one in its data directory. The key survives stop/reopen and is removed with the database data on reset or destroy.
 
 ## Composition and operation scope
 

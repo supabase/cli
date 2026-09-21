@@ -10,6 +10,7 @@ import {
   FileSystem,
   Fiber,
   Layer,
+  Redacted,
   Ref,
   Stream,
 } from "effect";
@@ -256,116 +257,154 @@ it.live("keeps serving when namespace shutdown fails", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.live("serves one detached owner through Effect RPC and retires after shutdown", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-" });
-      const state = yield* stateFor(`${root}/state`);
-      yield* state.save({
-        id: "stack",
-        runtime: "native",
-        identity: { projectRoot: root, branchContext: "main", stackName: "host" },
-        instances: [],
-        composition: { members: [], dependencies: [] },
-        ports: [],
-      });
-      const endpoint = yield* launchHost(state, {
-        stateRoot: `${root}/state`,
-        cacheRoot: "/tmp/supabase-stack-artifacts",
-        stackId: "stack",
-      });
-      const http = yield* HttpClient.HttpClient;
-      const identity = yield* http.get(`http://127.0.0.1:${endpoint.port}/identity`);
-      expect(identity.status).toBe(200);
-      const client = yield* clientFor(endpoint.port);
-      const stopped = yield* Ref.make(false);
-      yield* Effect.addFinalizer(() =>
-        Ref.get(stopped).pipe(
-          Effect.flatMap((value) =>
-            value ? Effect.void : client.shutdown({ destroy: true }).pipe(Effect.ignore),
+it.live(
+  "serves one detached owner through Effect RPC and retires after shutdown",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-" });
+        const state = yield* stateFor(`${root}/state`);
+        yield* state.save({
+          id: "stack",
+          runtime: "native",
+          identity: { projectRoot: root, branchContext: "main", stackName: "host" },
+          instances: [],
+          composition: { members: [], dependencies: [] },
+          ports: [],
+        });
+        const endpoint = yield* launchHost(state, {
+          stateRoot: `${root}/state`,
+          cacheRoot: "/tmp/supabase-stack-artifacts",
+          stackId: "stack",
+        });
+        const http = yield* HttpClient.HttpClient;
+        const identity = yield* http.get(`http://127.0.0.1:${endpoint.port}/identity`);
+        expect(identity.status).toBe(200);
+        const client = yield* clientFor(endpoint.port);
+        const stopped = yield* Ref.make(false);
+        yield* Effect.addFinalizer(() =>
+          Ref.get(stopped).pipe(
+            Effect.flatMap((value) =>
+              value ? Effect.void : client.shutdown({ destroy: true }).pipe(Effect.ignore),
+            ),
           ),
-        ),
-      );
-      yield* abortBeforeRpcBody(endpoint.port);
-      expect((yield* client.listServices()).length).toBe(0);
-      const mail = yield* client.createService({
-        service: "mail",
-        config: {},
-        endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
-      });
-      expect(mail.creation.service).toBe("mail");
-      expect((yield* client.listServices()).length).toBe(1);
-      const toolAttachment = "early-stdin";
-      const toolEvents = yield* client
-        .runTool({
-          attachmentId: toolAttachment,
-          tool: postgres.psql({ major: 17 }),
-          args: ["--version"],
-          env: {},
-          stdin: true,
-        })
-        .pipe(Stream.runCollect);
-      expect(Array.from(toolEvents).some((event) => event._tag === "Completed")).toBe(true);
-      const closedInput = yield* client
-        .toolInput({ attachmentId: toolAttachment, bytes: null })
-        .pipe(Effect.flip);
-      expect("operation" in closedInput).toBe(true);
-      if (!("operation" in closedInput)) return yield* Effect.die("Unexpected RPC error");
-      expect(closedInput.operation).toBe("tool-input-closed");
-      yield* client.startService({ id: mail.id });
-      yield* client.readyService({ id: mail.id });
-      expect((yield* client.status({ id: mail.id })).lifecycle).toBe("running");
-      const idleSocket = yield* Effect.acquireRelease(openIdleSocket(endpoint.port), (socket) =>
-        Effect.sync(() => socket.destroy()),
-      );
-      const logs = yield* Effect.forkScoped(client.logs({ id: mail.id }).pipe(Stream.runDrain));
-      const attached = yield* Deferred.make<void>();
-      const drainingTool = yield* Effect.forkScoped(
-        client
+        );
+        yield* abortBeforeRpcBody(endpoint.port);
+        expect((yield* client.listServices()).length).toBe(0);
+        const mail = yield* client.createService({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
+        });
+        expect(mail.creation.service).toBe("mail");
+        expect((yield* client.listServices()).length).toBe(1);
+        const toolAttachment = "early-stdin";
+        const toolEvents = yield* client
           .runTool({
-            attachmentId: "draining-stdin",
+            attachmentId: toolAttachment,
             tool: postgres.psql({ major: 17 }),
-            args: [],
+            args: ["--version"],
             env: {},
             stdin: true,
           })
-          .pipe(
-            Stream.runForEach((event) =>
-              event._tag === "Attached" ? Deferred.succeed(attached, undefined) : Effect.void,
+          .pipe(Stream.runCollect);
+        expect(Array.from(toolEvents).some((event) => event._tag === "Completed")).toBe(true);
+        const closedInput = yield* client
+          .toolInput({ attachmentId: toolAttachment, bytes: null })
+          .pipe(Effect.flip);
+        expect("operation" in closedInput).toBe(true);
+        if (!("operation" in closedInput)) return yield* Effect.die("Unexpected RPC error");
+        expect(closedInput.operation).toBe("tool-input-closed");
+        yield* client.startService({ id: mail.id });
+        yield* client.readyService({ id: mail.id });
+        expect((yield* client.status({ id: mail.id })).lifecycle).toBe("running");
+        const database = yield* client.createService({
+          service: "database",
+          config: {
+            version: "17",
+            databasePassword: Redacted.make("host-test-password"),
+            jwtSecret: Redacted.make("host-test-jwt-secret-at-least-thirty-two-characters"),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: { port: "auto" } },
+        });
+        yield* client.startService({ id: database.id });
+        yield* client.readyService({ id: database.id });
+        const databaseUrl = (yield* client.credentials({ id: database.id, from: "host" }))
+          .databaseUrl;
+        if (databaseUrl === undefined) return yield* Effect.die("Database credentials missing");
+        const databaseEndpoint = new URL(databaseUrl);
+        const databaseEnv = {
+          PGHOST: databaseEndpoint.hostname,
+          PGPORT: databaseEndpoint.port,
+          PGUSER: decodeURIComponent(databaseEndpoint.username),
+          PGPASSWORD: decodeURIComponent(databaseEndpoint.password),
+          PGDATABASE: databaseEndpoint.pathname.slice(1),
+        };
+        const idleSocket = yield* Effect.acquireRelease(openIdleSocket(endpoint.port), (socket) =>
+          Effect.sync(() => socket.destroy()),
+        );
+        const logs = yield* Effect.forkScoped(client.logs({ id: mail.id }).pipe(Stream.runDrain));
+        const ready = yield* Deferred.make<void>();
+        const drainingTool = yield* Effect.forkScoped(
+          client
+            .runTool({
+              attachmentId: "draining-stdin",
+              tool: postgres.psql({ major: 17 }),
+              args: [
+                "-X",
+                "-t",
+                "-A",
+                "-c",
+                "SELECT 'stack-host-tool-ready'",
+                "-c",
+                "SELECT pg_sleep(600)",
+              ],
+              env: databaseEnv,
+              stdin: true,
+            })
+            .pipe(
+              Stream.filter((event) => event._tag === "Stdout"),
+              Stream.map((event) => event.bytes),
+              Stream.decodeText,
+              Stream.splitLines,
+              Stream.runForEach((line) =>
+                line === "stack-host-tool-ready" ? Deferred.succeed(ready, undefined) : Effect.void,
+              ),
             ),
-          ),
-      );
-      yield* Deferred.await(attached);
-      expect(idleSocket.destroyed).toBe(false);
-      yield* client.shutdown({ destroy: false });
-      yield* awaitClosed(idleSocket).pipe(
-        Effect.timeoutOrElse({
-          duration: "5 seconds",
-          orElse: () =>
-            Effect.fail(
-              new HostTestError({
-                message: "Idle control connection did not close after shutdown",
-              }),
-            ),
-        }),
-      );
-      yield* Fiber.await(logs).pipe(
-        Effect.timeoutOrElse({
-          duration: "5 seconds",
-          orElse: () =>
-            Effect.fail(
-              new HostTestError({ message: "Log observation did not close after shutdown" }),
-            ),
-        }),
-      );
-      const drainingToolExit = yield* Fiber.await(drainingTool);
-      expect(Exit.isFailure(drainingToolExit)).toBe(true);
-      if (Exit.isFailure(drainingToolExit))
-        expect(Cause.pretty(drainingToolExit.cause)).toContain("Stack host is draining");
-      yield* Ref.set(stopped, true);
-    }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+        );
+        yield* Deferred.await(ready);
+        expect(idleSocket.destroyed).toBe(false);
+        yield* client.shutdown({ destroy: false });
+        yield* awaitClosed(idleSocket).pipe(
+          Effect.timeoutOrElse({
+            duration: "5 seconds",
+            orElse: () =>
+              Effect.fail(
+                new HostTestError({
+                  message: "Idle control connection did not close after shutdown",
+                }),
+              ),
+          }),
+        );
+        yield* Fiber.await(logs).pipe(
+          Effect.timeoutOrElse({
+            duration: "5 seconds",
+            orElse: () =>
+              Effect.fail(
+                new HostTestError({ message: "Log observation did not close after shutdown" }),
+              ),
+          }),
+        );
+        const drainingToolExit = yield* Fiber.await(drainingTool);
+        expect(Exit.isFailure(drainingToolExit)).toBe(true);
+        if (Exit.isFailure(drainingToolExit))
+          expect(Cause.pretty(drainingToolExit.cause)).toContain("Stack host is draining");
+        yield* Ref.set(stopped, true);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  { timeout: 120_000 },
 );
 
 it.live("finishes detached shutdown after the caller disconnects", () =>

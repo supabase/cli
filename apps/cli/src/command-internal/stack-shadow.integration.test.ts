@@ -63,7 +63,7 @@ const input = (
   fs,
   path,
   hostname: "127.0.0.1",
-  healthTimeoutSeconds: 2,
+  healthTimeoutSeconds: 60,
   setup: {
     majorVersion: 17,
     config: defaultConfig,

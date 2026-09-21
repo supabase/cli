@@ -3,11 +3,11 @@ import { expect, it } from "@effect/vitest";
 import {
   Context,
   Data,
+  Deferred,
   Effect,
   Fiber,
   FileSystem,
   Layer,
-  Queue,
   Ref,
   Schema,
   Stream,
@@ -99,11 +99,23 @@ for (const compiled of [false, true]) {
           ]);
 
           const holder = yield* spawn(executable, args("hold"));
-          const lines = yield* Queue.unbounded<string>();
+          const locked = yield* Deferred.make<void>();
+          const childReady = yield* Deferred.make<string>();
+          const observed = yield* Ref.make<ReadonlyArray<string>>([]);
           const output = yield* holder.stdout.pipe(
             Stream.decodeText,
             Stream.splitLines,
-            Stream.runForEach((line) => Queue.offer(lines, line)),
+            Stream.runForEach((line) =>
+              Ref.update(observed, (lines) => [...lines, line]).pipe(
+                Effect.andThen(
+                  line === "locked"
+                    ? Deferred.succeed(locked, undefined).pipe(Effect.asVoid)
+                    : line.startsWith("child:")
+                      ? Deferred.succeed(childReady, line.slice(6)).pipe(Effect.asVoid)
+                      : Effect.void,
+                ),
+              ),
+            ),
             Effect.forkScoped,
           );
           const stderr = yield* Ref.make("");
@@ -112,7 +124,7 @@ for (const compiled of [false, true]) {
             Stream.runForEach((chunk) => Ref.update(stderr, (text) => text + chunk)),
             Effect.forkScoped,
           );
-          const ready = yield* Effect.all([Queue.take(lines), Queue.take(lines)]).pipe(
+          yield* Effect.all([Deferred.await(locked), Deferred.await(childReady)]).pipe(
             Effect.raceFirst(
               holder.exitCode.pipe(
                 Effect.matchEffect({
@@ -142,20 +154,20 @@ for (const compiled of [false, true]) {
             Effect.timeoutOrElse({
               duration: "10 seconds",
               orElse: () =>
-                Ref.get(stderr).pipe(
-                  Effect.flatMap((text) =>
+                Effect.all([Ref.get(stderr), Ref.get(observed)]).pipe(
+                  Effect.flatMap(([text, lines]) =>
                     Effect.fail(
-                      new FixtureError({ message: `Holder readiness timed out: ${text}` }),
+                      new FixtureError({
+                        message: `Holder readiness timed out: ${lines.join("\n")}\n${text}`,
+                      }),
                     ),
                   ),
                 ),
             }),
           );
-          expect(ready).toContain("locked");
-          const childLine = ready.find((line) => line.startsWith("child:"));
-          if (childLine === undefined)
-            return yield* new FixtureError({ message: "Child readiness missing" });
-          const childPid = yield* Schema.decodeEffect(Schema.FiniteFromString)(childLine.slice(6));
+          const childPid = yield* Schema.decodeEffect(Schema.FiniteFromString)(
+            yield* Deferred.await(childReady),
+          );
           const kill = (pid: number) =>
             Effect.try({
               try: () => process.kill(pid, "SIGKILL"),

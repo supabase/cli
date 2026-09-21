@@ -39,7 +39,8 @@ const program = Effect.scoped(
                 root,
               ],
               {
-                detached: false,
+                // Keep the child independent on Windows so holder termination tests lock recovery.
+                detached: process.platform === "win32",
                 stdin: "ignore",
                 stdout: "inherit",
                 stderr: "inherit",

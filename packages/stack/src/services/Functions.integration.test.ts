@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Ref, Stream } from "effect";
+import { Effect, FileSystem, Layer, Ref, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeService } from "../Service.ts";
 import { bundleServeMainTemplate } from "../../tests/serve-main-bundler.ts";
@@ -102,7 +102,13 @@ for (const runtime of ["native", "docker"] as const) {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-configured-" });
+          // Edge Runtime's Linux sandbox does not expose host paths under /tmp.
+          const temporaryRoot = `${process.cwd()}/tmp`;
+          yield* fs.makeDirectory(temporaryRoot, { recursive: true });
+          const root = yield* fs.makeTempDirectoryScoped({
+            directory: temporaryRoot,
+            prefix: "functions-configured-",
+          });
           const filesRoot = `${root}/project`;
           const functionsRoot = `${filesRoot}/supabase/functions`;
           yield* fs.makeDirectory(`${functionsRoot}/locked`, { recursive: true });
@@ -133,7 +139,11 @@ for (const runtime of ["native", "docker"] as const) {
                 bootstrap: yield* bundleServeMainTemplate,
                 jwtSecret: "test-function-jwt-with-at-least-32-characters",
                 verifyJwt: true,
-                env: { SHARED: "shared", LOCAL: "global" },
+                env: {
+                  SHARED: "shared",
+                  LOCAL: "global",
+                  SUPABASE_INTERNAL_DEBUG: "true",
+                },
                 functions: {
                   hello: {
                     verifyJWT: false,
@@ -169,9 +179,19 @@ for (const runtime of ["native", "docker"] as const) {
           yield* instance.ready;
           const endpoint = yield* recipe.endpoint("http");
           const base = `http://${endpoint.host}:${endpoint.port}`;
-          const response = yield* client.get(`${base}/hello`);
-          const body = yield* response.json;
-          expect(response.status, yield* Ref.get(logs)).toBe(200);
+          const response = yield* client.execute(HttpClientRequest.get(`${base}/hello`));
+          const responseText = yield* response.text;
+          expect(response.status, `${yield* Ref.get(logs)}\n${responseText}`).toBe(200);
+          const body = yield* Schema.decodeEffect(
+            Schema.fromJsonString(
+              Schema.Struct({
+                message: Schema.String,
+                local: Schema.String,
+                shared: Schema.String,
+                asset: Schema.String,
+              }),
+            ),
+          )(responseText);
           expect(body).toEqual({
             message: "custom entrypoint",
             local: "function",
