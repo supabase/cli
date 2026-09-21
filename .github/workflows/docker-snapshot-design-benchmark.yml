@@ -1,0 +1,27 @@
+name: Docker snapshot design benchmark
+on:
+  workflow_dispatch:
+  push:
+    branches: [perf/docker-snapshot-designs]
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup
+      - name: Prepare Docker images
+        run: |
+          docker pull ghcr.io/supabase/cli/postgres:17.6.1.173@sha256:1581c433d71a48a81e356a3ed2d4aa5ecfc8fc0465ea98661da7a88023317dcf
+          docker pull oven/bun:1.4.1-slim
+      - name: Benchmark verified PostgreSQL snapshots
+        run: pnpm exec bun packages/stack/tools/docker-snapshot-design-benchmark.ts --reps=5 --warmups=1 --out="$RUNNER_TEMP/snapshot-design-results" > "$RUNNER_TEMP/snapshot-design.log" 2>&1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: docker-snapshot-design-linux
+          path: |
+            ${{ runner.temp }}/snapshot-design-results
+            ${{ runner.temp }}/snapshot-design.log

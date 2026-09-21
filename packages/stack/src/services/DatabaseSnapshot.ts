@@ -142,17 +142,21 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
       ),
   );
 
+  type ToolMount = {
+    readonly source: string;
+    readonly target: string;
+    readonly readOnly: boolean;
+  };
   const toolCommand = Effect.fn("DatabaseSnapshot.toolCommand")(
     (
       stage: string,
       script: string,
       writableInstance = false,
-      onLine?: (line: string) => Effect.Effect<void, DatabaseSnapshotError>,
+      mounts?: ReadonlyArray<ToolMount>,
+      onFailure?: (code: number, stderr: string) => DatabaseSnapshotError,
     ) =>
       Effect.gen(function* () {
-        if (container === undefined)
-          return yield* errorFor("container", "Container runtime missing");
-        if (helperImage === undefined)
+        if (container === undefined || helperImage === undefined)
           return yield* errorFor("container", "Container runtime missing");
         yield* container
           .prepare(helperImage.image)
@@ -166,7 +170,7 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
                 instanceId: options.instanceId,
                 entrypoint: "/usr/bin/busybox",
                 env: {},
-                mounts: [
+                mounts: mounts ?? [
                   {
                     source: options.instanceRoot,
                     target: "/instance",
@@ -190,20 +194,13 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
               (owned) =>
                 Effect.all(
                   [
-                    onLine === undefined
-                      ? owned.stdout.pipe(
-                          Stream.decodeText,
-                          Stream.runFold(
-                            () => "",
-                            (all, chunk) => `${all}${chunk}`.slice(0, 65536),
-                          ),
-                        )
-                      : owned.stdout.pipe(
-                          Stream.decodeText,
-                          Stream.splitLines,
-                          Stream.runForEach(onLine),
-                          Effect.as(""),
-                        ),
+                    owned.stdout.pipe(
+                      Stream.decodeText,
+                      Stream.runFold(
+                        () => "",
+                        (all, chunk) => `${all}${chunk}`.slice(0, 65536),
+                      ),
+                    ),
                     owned.stderr.pipe(
                       Stream.decodeText,
                       Stream.runFold(
@@ -219,10 +216,11 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
                     Number(code) === 0
                       ? Effect.succeed(stdout)
                       : Effect.fail(
-                          errorFor(
-                            "container",
-                            stderr.trim() || `Helper exited with ${String(code)}`,
-                          ),
+                          onFailure?.(Number(code), stderr.trim()) ??
+                            errorFor(
+                              "container",
+                              stderr.trim() || `Helper exited with ${String(code)}`,
+                            ),
                         ),
                   ),
                 ),
@@ -239,12 +237,8 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
 
   const cleanupStage = Effect.fn("DatabaseSnapshot.cleanupStage")((directory: string) =>
     Effect.gen(function* () {
-      if (
-        options.runtime !== "native" &&
-        ((yield* fs.exists(path.join(directory, "input"))) ||
-          (yield* fs.exists(path.join(directory, "extracted"))))
-      ) {
-        yield* toolCommand(directory, "/usr/bin/busybox rm -rf /stage/extracted /stage/input");
+      if (options.runtime !== "native" && (yield* fs.exists(path.join(directory, "extracted")))) {
+        yield* toolCommand(directory, "/usr/bin/busybox rm -rf /stage/extracted");
       }
       yield* fs.remove(directory, { recursive: true, force: true });
     }).pipe(Effect.mapError((cause) => errorFor("cleanup", cause))),
@@ -348,7 +342,16 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
               .pipe(Effect.mapError((cause) => errorFor("stage", cause)));
             yield* toolCommand(
               stage,
-              "/usr/bin/busybox mkdir -p /stage/input && /usr/bin/busybox cp -R /instance/data /stage/input/data && /usr/bin/busybox cp -R /stage/metadata /stage/input/metadata && /usr/bin/busybox tar -cf /stage/snapshot.tar -C /stage/input data metadata",
+              "/usr/bin/busybox tar -cf /snapshot/snapshot.tar -C /snapshot data metadata",
+              false,
+              [
+                { source: stage, target: "/snapshot", readOnly: false },
+                {
+                  source: path.join(options.instanceRoot, "data"),
+                  target: "/snapshot/data",
+                  readOnly: true,
+                },
+              ],
             );
           }
           yield* fs
@@ -377,22 +380,6 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
           .length > 0
       )
         return yield* errorFor("restore", "Restore target data directory must be empty");
-    } else {
-      yield* toolCommand(
-        options.instanceRoot,
-        'test ! -e /instance/data || test -z "$(/usr/bin/busybox ls -A /instance/data)"',
-        true,
-      ).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof DatabaseSnapshotError && cause.operation === "container"
-            ? new DatabaseSnapshotError({
-                operation: "restore",
-                message: cause.message,
-                cause,
-              })
-            : cause,
-        ),
-      );
     }
     const stageToken = yield* crypto.randomUUIDv4.pipe(
       Effect.mapError((cause) => errorFor("restore", cause)),
@@ -410,13 +397,49 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
           yield* fs
             .copyFile(source, archive)
             .pipe(Effect.mapError((cause) => errorFor("stage", cause)));
-          const descriptorText =
-            options.runtime === "native"
-              ? yield* command(["-xOf", archive, "metadata/descriptor.json"])
-              : yield* toolCommand(
-                  stage,
-                  "/usr/bin/busybox tar -xOf /stage/source.tar metadata/descriptor.json",
-                );
+          const descriptorPath = path.join(stage, "descriptor.json");
+          const namesPath = path.join(stage, "names");
+          const typesPath = path.join(stage, "types");
+          let descriptorText: string;
+          if (options.runtime === "native")
+            descriptorText = yield* command(["-xOf", archive, "metadata/descriptor.json"]);
+          else {
+            yield* Effect.all(
+              [descriptorPath, namesPath, typesPath].map((file) =>
+                fs
+                  .writeFileString(file, "", { mode: 0o600 })
+                  .pipe(Effect.mapError((cause) => errorFor("stage", cause))),
+              ),
+            );
+            yield* toolCommand(
+              stage,
+              'set -eo pipefail; if test -e /instance/data && test -n "$(/usr/bin/busybox ls -A /instance/data)"; then echo target data directory is not empty >&2; exit 42; fi; /usr/bin/busybox tar -xOf /stage/source.tar metadata/descriptor.json | /usr/bin/busybox head -c 65537 > /stage/descriptor.json; if test "$(/usr/bin/busybox wc -c < /stage/descriptor.json)" -ge 65537; then echo snapshot descriptor exceeds 64 KiB >&2; exit 44; fi; /usr/bin/busybox tar -tf /stage/source.tar > /stage/names; /usr/bin/busybox tar -tvf /stage/source.tar > /stage/types',
+              false,
+              undefined,
+              (code, stderr) =>
+                code === 42
+                  ? errorFor("restore", stderr || "Restore target data directory must be empty")
+                  : code === 44
+                    ? errorFor("descriptor", stderr || "Snapshot descriptor exceeds 64 KiB")
+                    : errorFor("container", stderr || `Helper exited with ${String(code)}`),
+            );
+            if (
+              (yield* fs
+                .stat(descriptorPath)
+                .pipe(Effect.mapError((cause) => errorFor("descriptor", cause)))).size > 65536n
+            )
+              return yield* errorFor("descriptor", "Snapshot descriptor exceeds 64 KiB");
+            descriptorText = yield* fs
+              .stream(descriptorPath, { bytesToRead: 65536, chunkSize: 65536 })
+              .pipe(
+                Stream.decodeText,
+                Stream.runFold(
+                  () => "",
+                  (all, chunk) => `${all}${chunk}`,
+                ),
+                Effect.mapError((cause) => errorFor("descriptor", cause)),
+              );
+          }
           const incoming = yield* Schema.decodeEffect(Schema.fromJsonString(SnapshotDescriptor))(
             descriptorText,
           ).pipe(Effect.mapError((cause) => errorFor("descriptor", cause)));
@@ -441,36 +464,31 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
               ? Effect.void
               : Effect.fail(errorFor("validate", `Unsafe snapshot member: ${name}`));
           };
-          if (options.runtime === "native") yield* commandLines(["-tf", archive], validateName);
-          else
-            yield* toolCommand(
-              stage,
-              "/usr/bin/busybox tar -tf /stage/source.tar",
-              false,
-              validateName,
+          const validateListing = (
+            listing: string,
+            validator: (line: string) => Effect.Effect<void, DatabaseSnapshotError>,
+          ) =>
+            fs.stream(listing).pipe(
+              Stream.decodeText,
+              Stream.splitLines,
+              Stream.runForEach(validator),
+              Effect.mapError((cause) =>
+                cause instanceof DatabaseSnapshotError ? cause : errorFor("validate", cause),
+              ),
             );
+          if (options.runtime === "native") yield* commandLines(["-tf", archive], validateName);
+          else yield* validateListing(namesPath, validateName);
           const validateType = (line: string) =>
             line.length === 0 || line[0] === "-" || line[0] === "d"
               ? Effect.void
               : Effect.fail(errorFor("validate", "Snapshot contains a non-regular member"));
           if (options.runtime === "native") yield* commandLines(["-tvf", archive], validateType);
-          else
-            yield* toolCommand(
-              stage,
-              "/usr/bin/busybox tar -tvf /stage/source.tar",
-              false,
-              validateType,
-            );
+          else yield* validateListing(typesPath, validateType);
           const extracted = path.join(stage, "extracted");
           yield* fs
             .makeDirectory(extracted, { recursive: true })
             .pipe(Effect.mapError((cause) => errorFor("extract", cause)));
           if (options.runtime === "native") yield* command(["-xf", archive, "-C", extracted]);
-          else
-            yield* toolCommand(
-              stage,
-              "/usr/bin/busybox tar -xf /stage/source.tar -C /stage/extracted",
-            );
           const expectedMajor = version.split(".")[0];
           if (options.runtime === "native") {
             const restoredVersion = path.join(extracted, "data", "PG_VERSION");
@@ -489,32 +507,26 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
                 "Snapshot data has an incompatible PostgreSQL major version",
               );
           } else {
+            const stageName = path.basename(stage);
             yield* toolCommand(
               stage,
-              "/usr/bin/busybox test -f /stage/extracted/data/PG_VERSION && /usr/bin/busybox cat /stage/extracted/data/PG_VERSION || /usr/bin/busybox echo __missing_pg_version__",
-              false,
-              (line) =>
-                line.trim() === expectedMajor
-                  ? Effect.void
-                  : Effect.fail(
-                      errorFor(
-                        "validate",
+              `set -e; trap '/usr/bin/busybox rm -rf /stage/extracted' EXIT; /usr/bin/busybox tar -xf /stage/source.tar -C /stage/extracted; if test ! -f /stage/extracted/data/PG_VERSION; then echo Snapshot data is not initialized >&2; exit 43; fi; if test "$(/usr/bin/busybox cat /stage/extracted/data/PG_VERSION)" != "${expectedMajor}"; then echo Snapshot data has an incompatible PostgreSQL major version >&2; exit 43; fi; /usr/bin/busybox chown -R 100:101 /instance/${stageName}/extracted/data; /usr/bin/busybox chmod 700 /instance/${stageName}/extracted/data; if test -e /instance/data; then /usr/bin/busybox rmdir /instance/data; fi; /usr/bin/busybox mv /instance/${stageName}/extracted/data /instance/data; /usr/bin/busybox rm -rf /stage/extracted`,
+              true,
+              undefined,
+              (code, stderr) =>
+                code === 43
+                  ? errorFor(
+                      "validate",
+                      stderr ||
                         "Snapshot data is missing or has an incompatible PostgreSQL major version",
-                      ),
-                    ),
+                    )
+                  : errorFor("container", stderr || `Helper exited with ${String(code)}`),
             );
           }
           if (options.runtime === "native") {
             yield* fs
               .rename(path.join(extracted, "data"), data)
               .pipe(Effect.mapError((cause) => errorFor("publish", cause)));
-          } else {
-            const stageName = path.basename(stage);
-            yield* toolCommand(
-              stage,
-              `if test -e /instance/data; then /usr/bin/busybox rmdir /instance/data; fi && /usr/bin/busybox mv /instance/${stageName}/extracted/data /instance/data && /usr/bin/busybox chown -R 100:101 /instance/data && /usr/bin/busybox chmod 700 /instance/data`,
-              true,
-            );
           }
           const marker = yield* Schema.encodeEffect(Schema.fromJsonString(ReadyMarker))({
             version,
