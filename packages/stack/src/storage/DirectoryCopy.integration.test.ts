@@ -30,6 +30,12 @@ describe("copyDirectory", () => {
         expect(yield* fs.readFileString(path.join(destination, "nested", "child.txt"))).toBe(
           "child\n",
         );
+        yield* fs.writeFileString(path.join(destination, "root.txt"), "destination\n");
+        yield* fs.writeFileString(path.join(source, "nested", "child.txt"), "source\n");
+        expect(yield* fs.readFileString(path.join(source, "root.txt"))).toBe("root\n");
+        expect(yield* fs.readFileString(path.join(destination, "nested", "child.txt"))).toBe(
+          "child\n",
+        );
         if (process.platform !== "win32") {
           expect(Number((yield* fs.stat(path.join(destination, "root.txt"))).mode) & 0o777).toBe(
             0o640,
