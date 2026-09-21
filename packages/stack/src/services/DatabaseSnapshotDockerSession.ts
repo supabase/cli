@@ -281,26 +281,15 @@ export const makeDockerSnapshotSession = Effect.fn("DatabaseSnapshotDockerSessio
                     mode: 0o600,
                   });
                   yield* withHelper((helper) =>
-                    Effect.gen(function* () {
-                      yield* phase(
-                        "verify-data",
-                        exec(
-                          helper,
-                          engine,
-                          `/usr/bin/busybox test -d ${workspacePath(dataPath)} && /usr/bin/busybox test -f ${workspacePath(path.join(dataPath, "PG_VERSION"))} && /usr/bin/busybox test ! -e ${workspacePath(path.join(dataPath, "postmaster.pid"))}`,
-                          "data",
-                        ),
-                      );
-                      yield* phase(
+                    phase(
+                      "export",
+                      exec(
+                        helper,
+                        engine,
+                        `/usr/bin/busybox test -d ${workspacePath(dataPath)} && /usr/bin/busybox test -f ${workspacePath(path.join(dataPath, "PG_VERSION"))} && /usr/bin/busybox test ! -e ${workspacePath(path.join(dataPath, "postmaster.pid"))} && /usr/bin/busybox tar -cf ${workspacePath(archivePath)} -C ${workspacePath(instanceRoot)} data metadata`,
                         "export",
-                        exec(
-                          helper,
-                          engine,
-                          `/usr/bin/busybox tar -cf ${workspacePath(archivePath)} -C ${workspacePath(instanceRoot)} data metadata`,
-                          "export",
-                        ),
-                      );
-                    }),
+                      ),
+                    ),
                   );
                   yield* phase("publish", fs.link(archivePath, destinationPath));
                   yield* fs.remove(archivePath);
