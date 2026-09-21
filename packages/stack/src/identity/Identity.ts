@@ -1,7 +1,7 @@
-import { Effect, FileSystem, Path, Schema, Crypto } from "effect";
+import { Crypto, Effect, FileSystem, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
-import { InvalidProjectRootError, InvalidStackIdentityError } from "../public/Errors.ts";
-import { StackIdSchema, type StackId } from "../public/StackId.ts";
+import { InvalidProjectRootError, InvalidStackIdentityError } from "./Errors.ts";
+import { StackIdSchema } from "./StackId.ts";
 import { resolveGitBranchContext } from "./GitBranchContext.ts";
 
 export interface StackIdentity {
@@ -36,10 +36,10 @@ const encodeTuple = (identity: StackIdentity): Uint8Array => {
 };
 
 /** Hashes the complete identity tuple using length-delimited UTF-8 fields. */
-export const deriveStackId = (
+export const deriveStackId = Effect.fn("Identity.deriveStackId")(function* (
   identity: StackIdentity,
-): Effect.Effect<StackId, InvalidStackIdentityError, Crypto.Crypto> =>
-  Effect.gen(function* () {
+) {
+  return yield* Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const digest = yield* crypto.digest("SHA-256", encodeTuple(identity));
     let hexadecimal = "";
@@ -63,16 +63,13 @@ export const deriveStackId = (
       ),
     ),
   );
+});
 
 /** Resolves a canonical Git or ordinary-folder identity without writing state. */
-export const resolveStackIdentity = (
+export const resolveStackIdentity = Effect.fn("Identity.resolveStackIdentity")(function* (
   options: ResolveStackIdentityOptions,
-): Effect.Effect<
-  StackIdentity,
-  InvalidProjectRootError | InvalidStackIdentityError,
-  FileSystem.FileSystem | Path.Path
-> =>
-  Effect.gen(function* () {
+) {
+  return yield* Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const projectRoot = options.projectRoot;
     if (projectRoot.trim().length === 0) {
@@ -112,3 +109,4 @@ export const resolveStackIdentity = (
       ),
     ),
   );
+});

@@ -1,4 +1,4 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { Command } from "effect/unstable/cli";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
@@ -19,13 +19,22 @@ import { stackListCommand as stackListCommandBase } from "./list/list.command.ts
 import { stackRestartCommand as stackRestartCommandBase } from "./restart/restart.command.ts";
 import { stackPrepareCommand as stackPrepareCommandBase } from "./prepare/prepare.command.ts";
 import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
+import { configureLoopbackProxyBypass } from "../../../command-internal/hostname.ts";
+
+const stackCommandSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
+const stackTarget = stackTargetResolverLayer.pipe(
+  Layer.provideMerge(stackApiLayer),
+  Layer.provideMerge(stackCommandSettings),
+);
+const stackLoopbackProxyLayer = Layer.effectDiscard(
+  Effect.sync(() => configureLoopbackProxyBypass()),
+);
 
 export const stackRuntimeLayer = Layer.mergeAll(
-  stackTargetResolverLayer,
-  stackApiLayer,
+  stackLoopbackProxyLayer,
+  stackTarget,
   dbConnectionLayer,
   stackCatalogSetupLayer,
-  commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer)),
   telemetryStateLayer,
 );
 

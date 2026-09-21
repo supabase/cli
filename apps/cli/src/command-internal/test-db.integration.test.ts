@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Exit, Layer, Option, Stream } from "effect";
+import { ConfigProvider, Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import {
@@ -18,13 +18,7 @@ import { DbConnectError, DbExecError } from "./db-connection.errors.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
 import { DockerRunError } from "./docker-run.errors.ts";
 import { DockerRun, type DockerRunOpts } from "./docker-run.service.ts";
-import { BundledPostgresClient } from "./bundled-postgres-client.ts";
-import {
-  ContainerEngineResolver,
-  StackIdSchema,
-  type EffectStack,
-  type RunPostgresClientOptions,
-} from "@supabase/stack/effect";
+import { BundledPostgresClient, type RunPostgresClientOptions } from "./bundled-postgres-client.ts";
 import { testDb } from "./test-db.handler.ts";
 import { stackBackendLayer } from "./stack-backend.ts";
 import { StackApi } from "./stack-api.ts";
@@ -43,6 +37,13 @@ const REMOTE_CONN: PgConnInput = {
   password: "secret",
   database: "postgres",
 };
+
+const stackApiStub = Layer.succeed(StackApi, {
+  create: () => Effect.die("stack API unused"),
+  open: () => Effect.die("stack API unused"),
+  discover: () => Effect.die("stack API unused"),
+  resolveIdentity: () => Effect.die("stack API unused"),
+});
 
 function mockResolver(opts: { conn?: PgConnInput; isLocal?: boolean } = {}) {
   const calls: Array<{
@@ -216,12 +217,6 @@ function mockBundledPostgresClient(opts: {
   };
 }
 
-const containerEngineResolver = (installed: boolean) =>
-  Layer.succeed(ContainerEngineResolver, {
-    isInstalled: () => Effect.succeed(installed),
-    resolve: () => Effect.die("unused"),
-  });
-
 const runtimeInfoLayer = (platform: NodeJS.Platform, arch?: NodeJS.Architecture) =>
   Layer.succeed(RuntimeInfo, {
     cwd: "/work/project",
@@ -267,7 +262,7 @@ function setup(opts: SetupOpts = {}) {
     connection.layer,
     docker.layer,
     bundled.layer,
-    containerEngineResolver(opts.dockerInstalled ?? true),
+    stackApiStub,
     mockCommandSettings({ workdir: opts.workdir ?? "/work/project", projectId: Option.none() }),
     telemetry.layer,
     runtimeInfoLayer(opts.platform ?? "linux", opts.arch),
@@ -420,134 +415,13 @@ describe("test db integration", () => {
         }),
       );
       expect(docker.lastOpts).toBeUndefined();
-      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
       expect(bundled.lastOpts?.network).toBe("host");
       expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("127.0.0.1");
       expect(bundled.lastOpts?.env?.["PGPORT"]).toBe("54322");
       expect(bundled.lastOpts?.argv[0]).toBe("pg_prove");
     }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });
-
-  const PROVE_STACK_ID = StackIdSchema.make("e".repeat(64));
-  const unusedProve = () => Effect.die("unused");
-  const proveStackApi = (
-    runtime: { kind: "native" } | { kind: "container"; engine: "docker" },
-    databaseVersion = "17.6.1.168",
-  ) => {
-    const stack: EffectStack = {
-      id: PROVE_STACK_ID,
-      status: Effect.succeed({
-        id: PROVE_STACK_ID,
-        lifecycle: "running",
-        desiredLifecycle: "running",
-        runtime,
-        endpoints: {},
-        versions: { database: databaseVersion },
-        capabilities: [],
-        artifacts: [],
-      }),
-      credentials: Effect.die("unused"),
-      prepare: unusedProve,
-      start: unusedProve,
-      stop: Effect.die("unused"),
-      destroy: Effect.die("unused"),
-      resetDatabase: Effect.die("unused"),
-      logs: unusedProve,
-      followLogs: () => Stream.empty,
-    };
-    return Layer.succeed(StackApi, {
-      createStack: unusedProve,
-      findStack: () =>
-        Effect.succeed(
-          Option.some({
-            id: PROVE_STACK_ID,
-            projectRoot: "/work/project",
-            name: "default",
-            branchContext: "main",
-            runtime,
-            desiredLifecycle: "running",
-          }),
-        ),
-      discoverStacks: unusedProve,
-      openStack: () => Effect.succeed(stack),
-      inspectStack: unusedProve,
-    });
-  };
-
-  it.live("stack --local native uses bundled pg_prove, not supabase/pg_prove", () => {
-    const { layer, docker, bundled } = setup({ isLocal: true });
-    return Effect.gen(function* () {
-      yield* testDb(flags({ local: true }));
-      expect(docker.lastOpts).toBeUndefined();
-      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
-      expect(bundled.lastOpts?.argv.slice(0, 5)).toEqual([
-        "pg_prove",
-        "--ext",
-        ".pg",
-        "--ext",
-        ".sql",
-      ]);
-      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("127.0.0.1");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(layer, stackBackendLayer("stack"), proveStackApi({ kind: "native" })),
-      ),
-    );
-  });
-
-  it.live("stack --local docker uses catalog pg_prove, not supabase/pg_prove", () => {
-    const { layer, docker, bundled } = setup({ isLocal: true });
-    return Effect.gen(function* () {
-      yield* testDb(flags({ local: true }));
-      expect(docker.lastOpts).toBeUndefined();
-      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
-      expect(bundled.lastOpts?.argv.slice(0, 5)).toEqual([
-        "pg_prove",
-        "--ext",
-        ".pg",
-        "--ext",
-        ".sql",
-      ]);
-      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("127.0.0.1");
-      expect(bundled.lastOpts?.mounts).toEqual([
-        {
-          source: "/work/project/supabase/tests",
-          target: "/work/project/supabase/tests",
-          readOnly: true,
-        },
-      ]);
-      expect(bundled.lastOpts?.cwd).toBe("/work/project/supabase/tests");
-      expect(bundled.lastOpts?.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
-      expect(bundled.lastOpts?.securityOpt).toEqual(["label:disable"]);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layer,
-          stackBackendLayer("stack"),
-          proveStackApi({ kind: "container", engine: "docker" }),
-        ),
-      ),
-    );
-  });
-
-  it.live(
-    "stack --local on Windows uses catalog container pg_prove against host.docker.internal",
-    () => {
-      const { layer, docker, bundled } = setup({ isLocal: true, platform: "win32" });
-      return Effect.gen(function* () {
-        yield* testDb(flags({ local: true }));
-        expect(docker.lastOpts).toBeUndefined();
-        expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
-        expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("host.docker.internal");
-        expect(bundled.lastOpts?.network).toBe("host");
-        expect(bundled.lastOpts?.extraHosts).toEqual([]);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(layer, stackBackendLayer("stack"), proveStackApi({ kind: "native" })),
-        ),
-      );
-    },
-  );
 
   it.live("stack --db-url native keeps PGHOST when isLocal is true", () => {
     const { layer, docker, bundled } = setup({

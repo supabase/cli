@@ -6,8 +6,12 @@ import { DebugFlag, NetworkIdFlag } from "../../../command-internal/global-flags
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { serveFunctions, type FunctionsServeFlags } from "../../../shared/functions/serve.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import { functionsServeStack } from "./serve.stack.handler.ts";
 
 export const functionsServe = Effect.fn("functions.serve")(function* (flags: FunctionsServeFlags) {
+  const backend = yield* currentStackBackend;
+  if (backend.kind === "stack") return yield* functionsServeStack(flags);
   const cliSettings = yield* CommandSettings;
   const runtimeInfo = yield* RuntimeInfo;
   const telemetryState = yield* TelemetryState;

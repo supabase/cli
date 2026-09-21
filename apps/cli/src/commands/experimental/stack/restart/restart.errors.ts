@@ -17,6 +17,7 @@ export class StackCommandRestartError extends Data.TaggedError("ExperimentalStac
     | "artifact"
     | "unknown";
   readonly message: string;
+  readonly detail?: string;
   readonly suggestion?: string;
   readonly cause?: unknown;
 }> {

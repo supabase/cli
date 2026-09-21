@@ -579,6 +579,7 @@ const dbConfigResolverLayer = Layer.effect(
           const conn = yield* stackLocalDatabaseConn.pipe(
             Effect.provideService(CommandSettings, cliSettings),
             Effect.provideService(StackApi, stackApi),
+            Effect.provideService(Path.Path, path),
           );
           return { conn, isLocal: true };
         }

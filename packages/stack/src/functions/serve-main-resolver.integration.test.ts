@@ -110,10 +110,11 @@ describe("Edge Runtime request-time function resolver", () => {
         fs: nodeFileSystem,
       });
       expect(config).toBeDefined();
+      if (config === undefined) return yield* Effect.die("function config was not resolved");
       expect(
         yield* packageJsonContainedFor({
           root,
-          config: { ...config!, importMapPath: "" },
+          config: { ...config, importMapPath: "" },
           fs: nodeFileSystem,
         }),
       ).toBe(true);
@@ -310,10 +311,11 @@ describe("Edge Runtime request-time function resolver", () => {
         fs: nodeFileSystem,
       });
       expect(config).toBeDefined();
+      if (config === undefined) return yield* Effect.die("function config was not resolved");
       expect(
         yield* packageJsonContainedFor({
           root: configured,
-          config: { ...config!, importMapPath: "" },
+          config: { ...config, importMapPath: "" },
           fs: nodeFileSystem,
         }),
       ).toBe(true);

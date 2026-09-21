@@ -10,6 +10,7 @@ import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.t
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { functionsServe } from "./serve.handler.ts";
+import { stackApiLayer } from "../../../command-internal/stack-api.ts";
 
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const functionsServeRuntimeLayer = Layer.mergeAll(
@@ -19,6 +20,7 @@ const functionsServeRuntimeLayer = Layer.mergeAll(
   debugLoggerLayer,
   telemetryStateLayer,
   commandRuntimeLayer(["functions", "serve"]),
+  stackApiLayer,
 );
 
 const config = {

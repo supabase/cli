@@ -16,7 +16,6 @@ import { declarativeSeamLayer } from "../commands/db/shared/pgdelta.seam.layer.t
 import { localDockerEngineLayer } from "./db-bootstrap/local-db-running.ts";
 import { stackApiLayer } from "./stack-api.ts";
 import { bundledPostgresClientLayer } from "./bundled-postgres-client.ts";
-import { ephemeralPostgresLayer } from "./stack-shadow.ts";
 import { stackCatalogSetupLayer } from "./stack-catalog-setup.ts";
 
 /** The in-process pg-delta engine — the only implementation. */
@@ -50,6 +49,7 @@ export const migraRuntimeLayer = Layer.mergeAll(
 const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
 const localDockerEngine = localDockerEngineLayer.pipe(Layer.provide(debugLoggerLayer));
 const seam = declarativeSeamLayer.pipe(
+  Layer.provide(stackCatalogSetupLayer),
   Layer.provide(pgDeltaCommandSettingsRuntimeLayer),
   Layer.provide(dbConnectionLayer),
   Layer.provide(dockerRunLayer),
@@ -58,6 +58,7 @@ const seam = declarativeSeamLayer.pipe(
   Layer.provide(localDockerEngine),
 );
 const nextShadow = pgDeltaNextShadowLayer.pipe(
+  Layer.provide(stackApiLayer),
   Layer.provide(dockerRunLayer),
   Layer.provide(dbConnectionLayer),
   Layer.provide(httpClient),
@@ -83,7 +84,9 @@ export const pgDeltaCommandRuntimeLayer = Layer.mergeAll(
   // Exposed for handlers' own direct `isLocalDbRunning` calls (`db diff --use-pgadmin`).
   localDockerEngine,
   stackApiLayer,
-  bundledPostgresClientLayer,
-  ephemeralPostgresLayer,
+  bundledPostgresClientLayer.pipe(
+    Layer.provide(dockerRunLayer),
+    Layer.provide(pgDeltaCommandSettingsRuntimeLayer),
+  ),
   stackCatalogSetupLayer,
 );

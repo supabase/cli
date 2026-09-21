@@ -15,6 +15,7 @@ import {
   useShadowCacheDisabled,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
+import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
@@ -119,6 +120,7 @@ function setup(
     // satisfy as it's applied, so `BunServices.layer` only ever fills in `FileSystem`/`Path`.
     Layer.provide(shadowSpawner.layer),
     Layer.provide(mockLocalDockerEngineUnavailableLayer),
+    Layer.provide(unusedStackServices),
     Layer.provide(BunServices.layer),
   );
 

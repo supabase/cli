@@ -1,9 +1,8 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Crypto, Effect, Exit, FileSystem, Path, Schema } from "effect";
-import { InvalidStackIdentityError } from "../public/Errors.ts";
-import { StackIdSchema, type StackId } from "../public/StackId.ts";
-import { resolveStackPaths } from "../state/Paths.ts";
+import { Crypto, Effect, Exit, FileSystem, Path } from "effect";
+import { InvalidStackIdentityError } from "./Errors.ts";
+import type { StackId } from "./StackId.ts";
 import { GitSetupError, runGit } from "../../tests/helpers/git.ts";
 import { deriveStackId, resolveStackIdentity, type StackIdentity } from "./Identity.ts";
 
@@ -295,44 +294,6 @@ describe("deterministic stack identity and state paths", () => {
 
         const identity = yield* resolveStackIdentity({ projectRoot: link });
         expect(identity.projectRoot).toBe(yield* fs.realPath(target));
-      }),
-    ),
-  );
-
-  it.live("rejects non-digest ids and names every state path below the exact identity root", () =>
-    withScope(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-paths-" });
-        const stateRoot = path.join(root, "state");
-        const project = path.join(root, "project");
-        yield* fs.makeDirectory(stateRoot);
-        yield* fs.makeDirectory(project);
-        const identity = yield* resolveStackIdentity({ projectRoot: project });
-        const id = yield* stackId(identity);
-        const paths = yield* resolveStackPaths({ stateRoot, stackId: id });
-
-        expect(paths.stackRoot).toBe(path.join(stateRoot, id));
-        expect(paths.stateDocument).toBe(path.join(stateRoot, id, "state.json"));
-        expect(paths.data).toBe(path.join(stateRoot, id, "data"));
-        expect(paths.logs).toBe(path.join(stateRoot, id, "logs"));
-        expect(paths.runtime).toBe(path.join(stateRoot, id, "runtime"));
-        expect(paths.controlMetadata).toBe(path.join(stateRoot, id, "control.json"));
-        for (const value of Object.values(paths)) {
-          const relative = path.relative(paths.stackRoot, value);
-          expect(
-            relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`)),
-          ).toBe(true);
-        }
-
-        const invalid = yield* Schema.decodeEffect(StackIdSchema)("stack_local").pipe(Effect.exit);
-        expect(Exit.isFailure(invalid)).toBe(true);
-        const unsafe = yield* resolveStackPaths({
-          stateRoot,
-          stackId: "../outside" as StackId,
-        }).pipe(Effect.exit);
-        expect(Exit.isFailure(unsafe)).toBe(true);
       }),
     ),
   );

@@ -31,7 +31,9 @@ describe("rewriteDumpHostForToolContainer", () => {
 
 describe("bundledPostgresClientRuntime", () => {
   it("keeps a unix native stack on the native client", () => {
-    expect(bundledPostgresClientRuntime({ kind: "native" }, "darwin")).toEqual({ kind: "native" });
+    expect(bundledPostgresClientRuntime({ kind: "native" }, "darwin", "arm64")).toEqual({
+      kind: "native",
+    });
   });
 
   it("forces a container client for Windows native stacks", () => {
