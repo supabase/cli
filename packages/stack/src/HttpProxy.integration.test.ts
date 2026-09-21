@@ -334,13 +334,23 @@ it.live("closes an upgrade naming the route and cause when a target cannot wake"
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureErrors(logs))));
 });
 
-it.live("disconnects a pending upstream response when its client closes", () =>
-  Effect.scoped(
+it.live("disconnects a pending upstream response quietly when its client closes", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
     Effect.gen(function* () {
       const backend = createServer();
       const address = yield* listen(backend);
       const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
-      yield* proxy.setRoutes([{ id: "pending", prefix: "/", target: Effect.succeed(address) }]);
+      const released = yield* Deferred.make<void>();
+      yield* proxy.setRoutes([
+        {
+          id: "pending",
+          prefix: "/",
+          target: Effect.acquireRelease(Effect.succeed(address), () =>
+            Deferred.succeed(released, undefined),
+          ),
+        },
+      ]);
       yield* Effect.callback<void, HttpProxyTestError>((resume) => {
         const client = new Socket();
         client.on("error", (cause) =>
@@ -355,12 +365,15 @@ it.live("disconnects a pending upstream response when its client closes", () =>
         );
         return Effect.sync(() => client.destroy());
       }).pipe(Effect.timeout("5 seconds"));
+      yield* Deferred.await(released).pipe(Effect.timeout("5 seconds"));
+      expect(logs).toEqual([]);
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureErrors(logs))));
+});
 
-it.live("releases a waiting WebSocket target when its client resets the connection", () =>
-  Effect.scoped(
+it.live("releases a waiting WebSocket target quietly when its client resets", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
     Effect.gen(function* () {
       const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
       const acquiring = yield* Deferred.make<void>();
@@ -393,6 +406,7 @@ it.live("releases a waiting WebSocket target when its client resets the connecti
       yield* Deferred.await(acquiring);
       yield* Effect.sync(() => socket.resetAndDestroy());
       yield* Deferred.await(released).pipe(Effect.timeout("5 seconds"));
+      expect(logs).toEqual([]);
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureErrors(logs))));
+});

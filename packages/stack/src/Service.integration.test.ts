@@ -308,6 +308,47 @@ describe("service kernel", () => {
     ),
   );
 
+  it.live("keeps a stale preparation failure off a relaunched observation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const plans = yield* Queue.unbounded<RuntimePlan>();
+        const staleStarted = yield* Deferred.make<void>();
+        const staleGate = yield* Deferred.make<void>();
+        const attempts = yield* Ref.make(0);
+        const service = yield* makeService(
+          {
+            ...makeDefinition(plans),
+            prepare: () =>
+              Effect.gen(function* () {
+                if ((yield* Ref.updateAndGet(attempts, (value) => value + 1)) > 1) return;
+                yield* Deferred.succeed(staleStarted, undefined);
+                yield* Deferred.await(staleGate);
+                return yield* new ServiceError({
+                  operation: "prepare",
+                  message: "stale preparation",
+                });
+              }),
+          },
+          { id: "database-stale-failure", config: { version: 17 } },
+        );
+        const plan = yield* makeRuntimePlan;
+        yield* Queue.offer(plans, plan);
+        yield* open(plan.launchGate);
+        const stale = yield* service.start.pipe(Effect.forkScoped);
+        yield* Deferred.await(staleStarted);
+        yield* service.start;
+        expect((yield* service.get).lifecycle).toBe("running");
+
+        yield* open(staleGate);
+        expect(Exit.isFailure(yield* Fiber.await(stale))).toBe(true);
+        const observation = yield* service.get;
+        expect(observation.lifecycle).toBe("running");
+        expect(observation.error).toBeUndefined();
+        yield* stopFixture(service, plan);
+      }),
+    ),
+  );
+
   it.live("does not prepare concurrent starts more than once", () =>
     Effect.scoped(
       Effect.gen(function* () {

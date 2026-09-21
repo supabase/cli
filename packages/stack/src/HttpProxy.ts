@@ -134,33 +134,35 @@ const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
   (request: IncomingMessage, response: ServerResponse, route: HttpRoute) =>
     Effect.gen(function* () {
       const backend = yield* Effect.raceFirst(route.target, disconnected(request, response));
-      yield* Effect.callback<void, HttpProxyError>((resume) => {
+      yield* Effect.callback<void, HttpProxyError | HttpProxyDisconnected>((resume) => {
         let outgoing: ReturnType<typeof upstreamRequest> | undefined;
         let incoming: IncomingMessage | undefined;
         let settled = false;
         // Error listeners remain until collection because destroy may emit errors asynchronously.
         const cleanup = () => {
-          request.off("aborted", onError);
+          request.off("aborted", onClientGone);
           response.off("close", onResponseClose);
           response.off("finish", onFinish);
 
           incoming?.off("aborted", onError);
         };
-        const finish = (result: Effect.Effect<void, HttpProxyError>) => {
+        const finish = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
           if (settled) return;
           settled = true;
           cleanup();
           resume(result);
         };
-        const onError = (cause: Error) => {
+        const abandon = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
           if (settled) return;
           outgoing?.destroy();
           incoming?.destroy();
-          finish(Effect.fail(errorFor(cause)));
+          finish(result);
         };
+        const onError = (cause: Error) => abandon(Effect.fail(errorFor(cause)));
+        const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
         const onFinish = () => finish(Effect.void);
         const onResponseClose = () => {
-          if (!response.writableEnded) onError(new Error("client response closed"));
+          if (!response.writableEnded) onClientGone();
         };
         outgoing = upstreamRequest(
           {
@@ -186,7 +188,7 @@ const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
           },
         );
         outgoing.on("error", onError);
-        request.once("aborted", onError);
+        request.once("aborted", onClientGone);
         response.once("close", onResponseClose);
         request.pipe(outgoing);
         return Effect.sync(() => {
@@ -212,7 +214,7 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
         }),
       );
       const upstream = yield* connectInterruptibly(backend);
-      yield* Effect.callback<void, HttpProxyError>((resume) => {
+      yield* Effect.callback<void, HttpProxyError | HttpProxyDisconnected>((resume) => {
         let settled = false;
         const cleanup = () => {
           client.off("close", onClose);
@@ -221,25 +223,23 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
           client.off("end", onClientEnd);
           upstream.off("end", onUpstreamEnd);
         };
-        const finish = (result: Effect.Effect<void, HttpProxyError>) => {
+        const finish = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
           if (settled) return;
           settled = true;
           cleanup();
           resume(result);
         };
-        const onError = (cause: Error) => {
+        const abandon = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
           client.destroy();
           upstream.destroy();
-          finish(Effect.fail(errorFor(cause)));
+          finish(result);
         };
-        const onClose = () => {
-          client.destroy();
-          upstream.destroy();
-          finish(Effect.void);
-        };
+        const onError = (cause: Error) => abandon(Effect.fail(errorFor(cause)));
+        const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
+        const onClose = () => abandon(Effect.void);
         const onClientEnd = () => upstream.end();
         const onUpstreamEnd = () => client.end();
-        client.on("error", onError);
+        client.on("error", onClientGone);
         client.once("close", onClose);
         upstream.on("error", onError);
         upstream.once("close", onClose);

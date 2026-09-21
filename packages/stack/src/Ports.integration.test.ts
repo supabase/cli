@@ -93,7 +93,8 @@ it.live("allocates an auto port outside a contiguous range that refuses to bind"
         ports: [],
       });
       const ports = yield* makePorts(state);
-      const reservedBelow = 40000;
+      // Reserves most of the span contiguously, as Windows excluded ranges do.
+      const reservedBelow = 30000;
       const acquired = yield* ports.acquire(
         { stackId: "stack", key: "api", host: "127.0.0.1", port: "auto" },
         (host, port) =>
