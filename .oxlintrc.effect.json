@@ -17,8 +17,10 @@
     "!apps/cli/src/commands/feedback/**",
     "!apps/cli/src/commands/functions/functions.command.ts",
     "!apps/cli/src/commands/functions/delete/**",
+    "!apps/cli/src/commands/functions/deploy/**",
     "!apps/cli/src/commands/functions/list/**",
     "!apps/cli/src/commands/functions/new/**",
+    "!apps/cli/src/commands/functions/serve/serve.handler.ts",
     "!apps/cli/src/commands/init/**",
     "!apps/cli/src/commands/issue/**",
     "!apps/cli/src/commands/link/**",
@@ -54,6 +56,7 @@
     "!apps/cli/src/commands/start/**",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
+    "apps/cli/src/commands/functions/deploy/deploy.integration.test.ts",
     "apps/cli/src/shared/compute/stacks/**",
     "!apps/cli/tests/helpers/branches-live.ts",
     "!apps/cli/tests/helpers/compute.ts",
