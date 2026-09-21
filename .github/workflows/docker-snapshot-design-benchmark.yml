@@ -9,19 +9,38 @@ jobs:
   benchmark:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        filesystem: [ext4, xfs]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: ./.github/actions/setup
+      - name: Prepare cloning filesystem
+        if: matrix.filesystem == 'xfs'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y xfsprogs
+          truncate -s 8G "$RUNNER_TEMP/snapshot-xfs.img"
+          sudo mkfs.xfs -f -m reflink=1 "$RUNNER_TEMP/snapshot-xfs.img"
+          sudo mkdir -p /mnt/snapshot-xfs
+          sudo mount -o loop "$RUNNER_TEMP/snapshot-xfs.img" /mnt/snapshot-xfs
+          sudo chown "$(id -u):$(id -g)" /mnt/snapshot-xfs
       - name: Prepare Docker images
         run: |
           docker pull ghcr.io/supabase/cli/postgres:17.6.1.173@sha256:1581c433d71a48a81e356a3ed2d4aa5ecfc8fc0465ea98661da7a88023317dcf
           docker pull oven/bun:1.4.1-slim
       - name: Benchmark verified PostgreSQL snapshots
-        run: pnpm exec bun packages/stack/tools/docker-snapshot-design-benchmark.ts --reps=5 --warmups=1 --out="$RUNNER_TEMP/snapshot-design-results" > "$RUNNER_TEMP/snapshot-design.log" 2>&1
+        env:
+          BENCHMARK_FILESYSTEM: ${{ matrix.filesystem }}
+        run: |
+          volume_parent=""
+          if [ "$BENCHMARK_FILESYSTEM" = "xfs" ]; then volume_parent=/mnt/snapshot-xfs; fi
+          pnpm exec bun packages/stack/tools/docker-snapshot-design-benchmark.ts --reps=5 --warmups=1 --volume-parent="$volume_parent" --out="$RUNNER_TEMP/snapshot-design-results" > "$RUNNER_TEMP/snapshot-design.log" 2>&1
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: docker-snapshot-design-linux
+          name: docker-snapshot-design-${{ matrix.filesystem }}
           path: |
             ${{ runner.temp }}/snapshot-design-results
             ${{ runner.temp }}/snapshot-design.log

@@ -236,8 +236,21 @@ const program = Effect.scoped(
         Effect.gen(function* () {
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-snapshot-design-" });
           const volume = `snapshot-design-${yield* crypto.randomUUIDv4}`;
-          yield* Effect.acquireRelease(command(["volume", "create", volume]), () =>
-            command(["volume", "rm", volume]).pipe(Effect.ignore),
+          const volumeParent = flag("volume-parent", "");
+          const volumeDirectory =
+            volumeParent === ""
+              ? undefined
+              : yield* fs.makeTempDirectoryScoped({ directory: volumeParent, prefix: "snapshot-" });
+          yield* Effect.acquireRelease(
+            command([
+              "volume",
+              "create",
+              ...(volumeDirectory === undefined
+                ? []
+                : ["--opt", "type=none", "--opt", "o=bind", "--opt", `device=${volumeDirectory}`]),
+              volume,
+            ]),
+            () => command(["volume", "rm", volume]).pipe(Effect.ignore),
           );
           const mounts: Mount[] = [];
           if (selected.some((v) => !v.startsWith("volume")))
@@ -379,7 +392,12 @@ const program = Effect.scoped(
               );
               yield* restored.stop;
               yield* command(["rm", restored.id]);
-              yield* helper(mount, `rm -rf ${quote(`/workspace/${target}`)}`);
+              const disposable = canonical.get(variant) !== destination;
+              yield* helper(
+                mount,
+                `rm -rf ${quote(`/workspace/${target}`)}${mount.kind === "volume" && disposable ? ` ${quote(`/workspace/${destination}`)}` : ""}`,
+              );
+              if (mount.kind === "bind" && disposable) yield* fs.remove(destination);
               const row: Row = {
                 kind: "measurement",
                 dataset,
