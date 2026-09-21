@@ -204,9 +204,9 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = Cause.pretty(exit.cause);
-        expect(json).toContain("FunctionsEnvNotSupportedError");
-        expect(json).toContain("--output env flag is not supported");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("FunctionsEnvNotSupportedError");
+        expect(causeText).toContain("--output env flag is not supported");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -270,9 +270,9 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = Cause.pretty(exit.cause);
-        expect(json).toContain("FunctionsListUnexpectedStatusError");
-        expect(json).toContain("unexpected list functions status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("FunctionsListUnexpectedStatusError");
+        expect(causeText).toContain("unexpected list functions status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -283,9 +283,9 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = Cause.pretty(exit.cause);
-        expect(json).toContain("FunctionsListNetworkError");
-        expect(json).toContain("failed to list functions");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("FunctionsListNetworkError");
+        expect(causeText).toContain("failed to list functions");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -310,9 +310,9 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = Cause.pretty(exit.cause);
-        expect(json).toContain("FunctionsListNetworkError");
-        expect(json).toContain("failed to list functions:");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("FunctionsListNetworkError");
+        expect(causeText).toContain("failed to list functions:");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -337,10 +337,10 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = Cause.pretty(exit.cause);
-        expect(json).toContain("FunctionsListUnexpectedStatusError");
-        expect(json).toContain("unexpected list functions status 200");
-        expect(json).toContain("Hello World");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("FunctionsListUnexpectedStatusError");
+        expect(causeText).toContain("unexpected list functions status 200");
+        expect(causeText).toContain("Hello World");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -351,9 +351,9 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = Cause.pretty(exit.cause);
-        expect(json).toContain("FunctionsListNetworkError");
-        expect(json).toContain("failed to list functions");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("FunctionsListNetworkError");
+        expect(causeText).toContain("failed to list functions");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -364,9 +364,9 @@ describe("functions list integration", () => {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = Cause.pretty(exit.cause);
-        expect(json).toContain("FunctionsListNetworkError");
-        expect(json).toContain("failed to list functions");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("FunctionsListNetworkError");
+        expect(causeText).toContain("failed to list functions");
       }
     }).pipe(Effect.provide(layer));
   });

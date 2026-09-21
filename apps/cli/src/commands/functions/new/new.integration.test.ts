@@ -229,7 +229,7 @@ describe("functions new integration", () => {
       yield* functionsNew({ functionName: "with-env-yes", auth: "apikey" });
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y");
       expect(yield* fs.exists(path.join(workdir, ".vscode", "settings.json"))).toBe(true);
-    }).pipe((effect) => withEnvVar("SUPABASE_YES", "1", effect), Effect.provide(layer));
+    }).pipe(Effect.provide(layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
   });
 
   it.live("piped `n` then `y` declines VS Code and writes IntelliJ settings (Go parity)", () => {

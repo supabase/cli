@@ -3,16 +3,16 @@ import { DateTime, Option } from "effect";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import type { Functions } from "./list.encoders.ts";
 
+const pad2 = (value: number): string => value.toString().padStart(2, "0");
+
 export function formatUnixMilliTimestamp(value: number): string {
-  const parts = DateTime.make(value).pipe(
+  return DateTime.make(value).pipe(
     Option.map((dateTime) => {
       const utc = DateTime.toPartsUtc(dateTime);
-      return [utc.year, utc.month, utc.day, utc.hour, utc.minute, utc.second];
+      return `${pad2(utc.year)}-${pad2(utc.month)}-${pad2(utc.day)} ${pad2(utc.hour)}:${pad2(utc.minute)}:${pad2(utc.second)}`;
     }),
-    Option.getOrElse(() => [NaN, NaN, NaN, NaN, NaN, NaN]),
+    Option.getOrElse(() => "NaN-NaN-NaN NaN:NaN:NaN"),
   );
-  const [year, ...rest] = parts.map((part) => part.toString().padStart(2, "0"));
-  return `${year}-${rest[0]}-${rest[1]} ${rest[2]}:${rest[3]}:${rest[4]}`;
 }
 
 export function renderFunctionsTable(functions: Functions): string {
