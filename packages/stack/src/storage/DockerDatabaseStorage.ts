@@ -399,6 +399,14 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             if (active !== undefined) return active;
             if (options.container === undefined)
               return yield* errorFor("helper", "Container runtime is unavailable");
+            if (
+              mounts.some(
+                (mount) => mount.source === options.cacheRoot && mount.target === "/cache",
+              )
+            )
+              yield* options.fs
+                .makeDirectory(options.cacheRoot, { recursive: true })
+                .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
             yield* options.container.prepare(HELPER_IMAGE);
             const token = yield* options.crypto.randomUUIDv4.pipe(
               Effect.mapError((cause) => errorFor("helper", cause)),
@@ -614,7 +622,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           const marker = markerOption.value;
           if (marker.backend === "host") {
             yield* runHelper(
-              `set -eu; rm -rf /instance/data; mkdir -p /instance/data; chown 100:101 /instance/data`,
+              `set -eu; rm -rf /instance/data /instance/.supabase-restore-*; mkdir -p /instance/data; chown 100:101 /instance/data`,
               snapshotPaths(marker).mounts,
             );
           } else {
@@ -639,7 +647,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           const marker = markerOption.value;
           if (marker.backend === "host") {
             yield* runHelper(
-              `set -eu; rm -rf /instance/data /instance/.supabase-database-ready.json`,
+              `set -eu; rm -rf /instance/data /instance/.supabase-restore-* /instance/.supabase-database-ready.json`,
               snapshotPaths(marker).mounts,
             );
             yield* removeHelper();
@@ -650,7 +658,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             if (marker.daemonId !== daemonId)
               return yield* errorFor(
                 "destroy",
-                "Recorded Docker database storage belongs to another daemon",
+                "Recorded Docker database storage belongs to another daemon; switch back to the original Docker context before destroying it",
               );
             if (marker.volume === undefined)
               return yield* errorFor("destroy", "Recorded Docker storage volume is missing");
