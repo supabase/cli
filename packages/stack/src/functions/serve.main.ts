@@ -43,7 +43,6 @@ interface WorkerCreateOptions {
   readonly workerTimeoutMs: number;
   readonly noModuleCache: boolean;
   readonly noNpm: boolean;
-  readonly importMapPath?: string;
   readonly envVars: ReadonlyArray<readonly [string, string]>;
   readonly forceCreate: boolean;
   readonly customModuleRoot: string;
@@ -51,7 +50,7 @@ interface WorkerCreateOptions {
   readonly cpuTimeHardLimitMs: number;
   readonly decoratorType: string;
   readonly maybeEntrypoint: string;
-  readonly context: { readonly useReadSyncFileAPI: boolean };
+  readonly context: { readonly useReadSyncFileAPI: boolean; readonly importMapPath?: string };
   readonly staticPatterns: ReadonlyArray<string>;
 }
 declare const Deno: DenoApi;
@@ -76,6 +75,7 @@ const bootstrapConfig = Effect.runSync(
     return {
       hostPort: yield* read(Config.string("SUPABASE_INTERNAL_HOST_PORT")),
       functionsRoot: yield* read(Config.string("SUPABASE_INTERNAL_FUNCTIONS_ROOT")),
+      filesRoot: yield* read(Config.string("SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT")),
       jwtSecret: yield* read(Config.string("SUPABASE_INTERNAL_JWT_SECRET")),
       supabaseUrl: yield* read(Config.string("SUPABASE_URL")),
       wallclock: yield* read(Config.string("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC")),
@@ -338,7 +338,13 @@ const denoFileSystem: FunctionFileSystem = {
 };
 
 const functionConfig = (slug: string): Effect.Effect<FunctionConfig | undefined> =>
-  resolveFunctionConfig({ root: FUNCTIONS_ROOT, slug, overrides: configured, fs: denoFileSystem });
+  resolveFunctionConfig({
+    root: FUNCTIONS_ROOT,
+    filesRoot: Option.getOrUndefined(bootstrapConfig.filesRoot),
+    slug,
+    overrides: configured,
+    fs: denoFileSystem,
+  });
 const workerServicePath = createWorkerServicePathResolver(() =>
   Deno.makeTempDirSync({ prefix: "supabase-worker-" }),
 );
@@ -346,7 +352,11 @@ const workerServicePath = createWorkerServicePathResolver(() =>
 const shouldUsePackageJsonDiscovery = (config: FunctionConfig): Effect.Effect<boolean> =>
   config.importMapPath
     ? Effect.succeed(false)
-    : packageJsonContainedFor({ root: FUNCTIONS_ROOT, config, fs: denoFileSystem });
+    : packageJsonContainedFor({
+        root: valueOr(bootstrapConfig.filesRoot, FUNCTIONS_ROOT),
+        config,
+        fs: denoFileSystem,
+      });
 
 export function prepareUserRequest(request: Request): Request {
   const url = new URL(request.url);
@@ -406,7 +416,6 @@ Deno.serve({
                 : 400_000,
               noModuleCache: true,
               noNpm,
-              importMapPath: config.importMapPath,
               envVars,
               forceCreate: true,
               customModuleRoot: "",
@@ -414,7 +423,10 @@ Deno.serve({
               cpuTimeHardLimitMs: 2000,
               decoratorType: "tc39",
               maybeEntrypoint: toFileUrl(config.entrypointPath).href,
-              context: { useReadSyncFileAPI: true },
+              context: {
+                useReadSyncFileAPI: true,
+                ...(config.importMapPath === "" ? {} : { importMapPath: config.importMapPath }),
+              },
               staticPatterns: config.staticFiles,
             }),
           );

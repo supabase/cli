@@ -97,6 +97,7 @@ const relativePath = (base: string, value: string): string =>
 export const resolveFunctionConfig = Effect.fn("Functions.resolveFunctionConfig")(
   function* (options: {
     readonly root: string;
+    readonly filesRoot?: string;
     readonly slug: string;
     readonly overrides: FunctionOverrides;
     readonly fs: FunctionFileSystem;
@@ -111,6 +112,11 @@ export const resolveFunctionConfig = Effect.fn("Functions.resolveFunctionConfig"
     if (!canonicalRoot.startsWith("/")) return undefined;
     const canonicalInfo = yield* optionalInfo(fs, canonicalRoot);
     if (canonicalInfo === undefined || !canonicalInfo.isDirectory) return undefined;
+    const filesRoot =
+      options.filesRoot === undefined
+        ? canonicalRoot
+        : yield* fs.realPath(options.filesRoot).pipe(Effect.orElseSucceed(() => ""));
+    if (!filesRoot.startsWith("/") || !contained(filesRoot, canonicalRoot)) return undefined;
     const globalDefaults = overrides.$default;
     const functionOverride = overrides[slug];
     // `$default` cannot be a function slug (the slug schema only accepts letters, digits, `_`,
@@ -134,7 +140,7 @@ export const resolveFunctionConfig = Effect.fn("Functions.resolveFunctionConfig"
       if (!(yield* safeRealPath(fs, canonicalRoot, functionDirectory))) return undefined;
     }
     const entrypointPath = relativePath(functionDirectory, rawEntrypoint);
-    if (!(yield* safeRealPath(fs, canonicalRoot, entrypointPath))) return undefined;
+    if (!(yield* safeRealPath(fs, filesRoot, entrypointPath))) return undefined;
     const entrypointInfo = yield* optionalInfo(fs, entrypointPath);
     if (entrypointInfo === undefined || !entrypointInfo.isFile || entrypointInfo.isSymbolicLink)
       return undefined;
@@ -150,7 +156,7 @@ export const resolveFunctionConfig = Effect.fn("Functions.resolveFunctionConfig"
           ? relativePath(canonicalRoot, globalImportMap)
           : relativePath(functionDirectory, "");
     if (importMapPath.length > 0) {
-      if (!(yield* safeRealPath(fs, canonicalRoot, importMapPath))) return undefined;
+      if (!(yield* safeRealPath(fs, filesRoot, importMapPath))) return undefined;
       const info = yield* optionalInfo(fs, importMapPath);
       if (info === undefined || !info.isFile || info.isSymbolicLink) return undefined;
     } else {
@@ -158,11 +164,7 @@ export const resolveFunctionConfig = Effect.fn("Functions.resolveFunctionConfig"
         const path = join(functionDirectory, candidate);
         const info = yield* optionalInfo(fs, path);
         if (info !== undefined) {
-          if (
-            !info.isFile ||
-            info.isSymbolicLink ||
-            !(yield* safeRealPath(fs, canonicalRoot, path))
-          )
+          if (!info.isFile || info.isSymbolicLink || !(yield* safeRealPath(fs, filesRoot, path)))
             return undefined;
           importMapPath = path;
           break;
@@ -174,19 +176,19 @@ export const resolveFunctionConfig = Effect.fn("Functions.resolveFunctionConfig"
       relativePath(functionDirectory, pattern),
     );
     for (const pattern of staticFiles) {
-      if (!contained(canonicalRoot, pattern)) return undefined;
+      if (!contained(filesRoot, pattern)) return undefined;
       const wildcardIndex = pattern.search(globPattern);
       const prefix = wildcardIndex < 0 ? pattern : pattern.slice(0, wildcardIndex);
       const searchRoot =
         wildcardIndex < 0
           ? dirname(pattern)
           : prefix.slice(0, Math.max(0, prefix.lastIndexOf("/"))) || canonicalRoot;
-      if (!(yield* rejectSymlinkDescendants(fs, canonicalRoot, searchRoot))) return undefined;
+      if (!(yield* rejectSymlinkDescendants(fs, filesRoot, searchRoot))) return undefined;
       if (!globPattern.test(pattern)) {
         const info = yield* optionalInfo(fs, pattern);
         if (
           info !== undefined &&
-          (!(yield* safeRealPath(fs, canonicalRoot, pattern)) || info.isSymbolicLink)
+          (!(yield* safeRealPath(fs, filesRoot, pattern)) || info.isSymbolicLink)
         )
           return undefined;
       }

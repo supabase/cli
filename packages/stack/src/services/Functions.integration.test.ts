@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer } from "effect";
+import { Effect, FileSystem, Layer, Ref, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeService } from "../Service.ts";
 import { bundleServeMainTemplate } from "../../tests/serve-main-bundler.ts";
@@ -93,3 +93,96 @@ describe("service catalog", () => {
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
 });
+
+for (const runtime of ["native", "docker"] as const) {
+  it.live(
+    `serves configured function files, secrets and JWT policies in ${runtime}`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const client = yield* HttpClient.HttpClient;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-configured-" });
+          const filesRoot = `${root}/project`;
+          const functionsRoot = `${filesRoot}/supabase/functions`;
+          yield* fs.makeDirectory(`${functionsRoot}/locked`, { recursive: true });
+          yield* fs.makeDirectory(`${filesRoot}/source`, { recursive: true });
+          yield* fs.writeFileString(
+            `${filesRoot}/source/main.ts`,
+            `import {message} from "message"; Deno.serve(async () => Response.json({message, local: Deno.env.get("LOCAL"), shared: Deno.env.get("SHARED"), asset: await Deno.readTextFile(new URL("./asset.txt", import.meta.url))}));`,
+          );
+          yield* fs.writeFileString(
+            `${filesRoot}/source/message.ts`,
+            'export const message = "custom entrypoint";',
+          );
+          yield* fs.writeFileString(`${filesRoot}/source/asset.txt`, "static content");
+          yield* fs.writeFileString(
+            `${filesRoot}/supabase/import_map.json`,
+            '{"imports":{"message":"../source/message.ts"}}',
+          );
+          yield* fs.writeFileString(
+            `${functionsRoot}/locked/index.ts`,
+            'Deno.serve(() => new Response("locked"));',
+          );
+          const recipe = yield* makeServiceRecipe(
+            {
+              service: "functions",
+              config: {
+                functionsRoot,
+                filesRoot,
+                bootstrap: yield* bundleServeMainTemplate,
+                jwtSecret: "test-function-jwt-with-at-least-32-characters",
+                verifyJwt: true,
+                env: { SHARED: "shared", LOCAL: "global" },
+                functions: {
+                  hello: {
+                    verifyJWT: false,
+                    entrypoint: `${filesRoot}/source/main.ts`,
+                    import_map: `${filesRoot}/supabase/import_map.json`,
+                    static_files: [`${filesRoot}/source/*.txt`],
+                    env: { LOCAL: "function" },
+                  },
+                  disabled: { enabled: false, entrypoint: `${filesRoot}/source/main.ts` },
+                },
+              },
+            },
+            {
+              ...options(root),
+              stackId: "c".repeat(64),
+              instanceId: "configured",
+              runtime,
+              cacheRoot: "/tmp/supabase-stack-artifacts",
+            },
+          );
+          const logs = yield* Ref.make("");
+          yield* recipe.logs.pipe(
+            Stream.runForEach(({ bytes }) =>
+              Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
+            ),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          const instance = yield* makeService(recipe.definition, {
+            id: "configured",
+            config: recipe.creation,
+          });
+          yield* instance.start;
+          yield* instance.ready;
+          const endpoint = yield* recipe.endpoint("http");
+          const base = `http://${endpoint.host}:${endpoint.port}`;
+          const response = yield* client.get(`${base}/hello`);
+          const body = yield* response.json;
+          expect(response.status, yield* Ref.get(logs)).toBe(200);
+          expect(body).toEqual({
+            message: "custom entrypoint",
+            local: "function",
+            shared: "shared",
+            asset: "static content",
+          });
+          expect((yield* client.get(`${base}/disabled`)).status).toBe(404);
+          expect((yield* client.get(`${base}/locked`)).status).toBe(401);
+          yield* instance.stop;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    { timeout: 120_000 },
+  );
+}

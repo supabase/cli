@@ -4,6 +4,17 @@ import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { localJwtSecret } from "./ServiceConfig.ts";
 import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
 
+import { Settings, settingsEnvironment } from "./AuthSettings.ts";
+
+const Smtp = Schema.Struct({
+  host: Schema.String,
+  port: Schema.Finite,
+  user: Schema.String,
+  pass: Schema.String,
+  adminEmail: Schema.String,
+  senderName: Schema.optionalKey(Schema.String),
+});
+
 export const Config = Schema.Struct({
   databaseUrl: Schema.String,
   siteUrl: Schema.optionalKey(Schema.String),
@@ -12,6 +23,10 @@ export const Config = Schema.Struct({
   jwtExpiry: Schema.optionalKey(Schema.Finite),
   disableSignup: Schema.optionalKey(Schema.Boolean),
   smtpUrl: Schema.optionalKey(Schema.String),
+  smtpAdminEmail: Schema.optionalKey(Schema.String),
+  smtpSenderName: Schema.optionalKey(Schema.String),
+  settings: Schema.optionalKey(Settings),
+  smtp: Schema.optionalKey(Smtp),
 });
 
 export interface Config extends Schema.Schema.Type<typeof Config> {}
@@ -63,10 +78,37 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       ...(creation.config.jwtExpiry === undefined
         ? {}
         : { GOTRUE_JWT_EXP: String(creation.config.jwtExpiry) }),
+      ...settingsEnvironment(
+        creation.config.settings,
+        creation.config.externalApiUrl ?? creation.config.siteUrl ?? "http://localhost:3000",
+      ),
     };
+    const smtp = creation.config.smtp;
+    if (smtp !== undefined) {
+      return Effect.succeed({
+        ...base,
+        GOTRUE_SMTP_HOST: smtp.host,
+        GOTRUE_SMTP_PORT: String(smtp.port),
+        GOTRUE_SMTP_USER: smtp.user,
+        GOTRUE_SMTP_PASS: smtp.pass,
+        GOTRUE_SMTP_ADMIN_EMAIL: smtp.adminEmail,
+        ...(smtp.senderName === undefined ? {} : { GOTRUE_SMTP_SENDER_NAME: smtp.senderName }),
+      });
+    }
     return creation.config.smtpUrl === undefined
       ? Effect.succeed(base)
-      : smtpEnvironment(creation.config.smtpUrl).pipe(Effect.map((smtp) => ({ ...base, ...smtp })));
+      : smtpEnvironment(creation.config.smtpUrl).pipe(
+          Effect.map((value) => ({
+            ...base,
+            ...value,
+            ...(creation.config.smtpAdminEmail === undefined
+              ? {}
+              : { GOTRUE_SMTP_ADMIN_EMAIL: creation.config.smtpAdminEmail }),
+            ...(creation.config.smtpSenderName === undefined
+              ? {}
+              : { GOTRUE_SMTP_SENDER_NAME: creation.config.smtpSenderName }),
+          })),
+        );
   },
   args: () => Effect.succeed([]),
   mounts: () => Effect.succeed([]),

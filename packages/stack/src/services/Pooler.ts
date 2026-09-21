@@ -7,6 +7,8 @@ export const Config = Schema.Struct({
   databaseUrl: Schema.String,
   jwtSecret: Schema.optionalKey(Schema.String),
   tenant: Schema.optionalKey(Schema.String),
+  defaultPoolSize: Schema.optionalKey(Schema.Finite),
+  maxClientConnections: Schema.optionalKey(Schema.Finite),
   poolMode: Schema.optionalKey(Schema.Literals(["transaction", "session"])),
 });
 export interface Config extends Schema.Schema.Type<typeof Config> {}
@@ -43,8 +45,8 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         CLUSTER_POSTGRES: "true",
         SECRET_KEY_BASE: localJwtSecret,
         VAULT_ENC_KEY: "0123456789abcdef0123456789abcdef",
-        DEFAULT_POOL_SIZE: "20",
-        MAX_CLIENT_CONN: "100",
+        DEFAULT_POOL_SIZE: String(creation.config.defaultPoolSize ?? 20),
+        MAX_CLIENT_CONN: String(creation.config.maxClientConnections ?? 100),
         POOL_MODE: mode,
         // Supavisor advertises Ranch-bound ports, so native instances can use ephemeral internal listeners.
         ...(container

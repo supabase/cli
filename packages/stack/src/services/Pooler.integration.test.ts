@@ -59,7 +59,14 @@ describe("service catalog", () => {
             const poolerRecipe = yield* makeServiceRecipe(
               {
                 service: "pooler",
-                config: { databaseUrl, jwtSecret: secret, tenant, poolMode },
+                config: {
+                  databaseUrl,
+                  jwtSecret: secret,
+                  tenant,
+                  poolMode,
+                  defaultPoolSize: 7,
+                  maxClientConnections: 42,
+                },
               },
               dockerOptions(root),
             );

@@ -11,6 +11,7 @@ const config: DatabaseConfig = {
   databasePassword: Redacted.make("supabase-test-password"),
   jwtSecret: Redacted.make("supabase-test-jwt-secret"),
   jwtExpiry: 3600,
+  rootKey: Redacted.make("a".repeat(64)),
 };
 
 const artifactCacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
@@ -81,6 +82,14 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* query(
             firstEndpoint,
             config.databasePassword,
+            "CREATE EXTENSION IF NOT EXISTS pgsodium",
+          );
+          const derivation = "SELECT encode(pgsodium.derive_key(1), 'hex') AS key";
+          const firstKey = yield* query(firstEndpoint, config.databasePassword, derivation);
+          expect(firstKey).toEqual([{ key: expect.stringMatching(/^[a-f0-9]{64}$/u) }]);
+          yield* query(
+            firstEndpoint,
+            config.databasePassword,
             "ALTER ROLE supabase_admin SET log_statement = 'all'; ALTER ROLE supabase_admin SET log_min_duration_statement = 0",
           );
           yield* service.restart(loggedConfig);
@@ -130,6 +139,9 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* reopenedService.ready;
           const reopenedEndpoint = yield* reopened.endpoint;
           expect(reopenedEndpoint.kind).toBe("unix");
+          expect(yield* query(reopenedEndpoint, config.databasePassword, derivation)).toEqual(
+            firstKey,
+          );
           const rows = yield* query(
             reopenedEndpoint,
             config.databasePassword,
@@ -153,6 +165,14 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* secondService.ready;
           const secondEndpoint = yield* second.endpoint;
           expect(secondEndpoint.kind).toBe("unix");
+          yield* query(
+            secondEndpoint,
+            config.databasePassword,
+            "CREATE EXTENSION IF NOT EXISTS pgsodium",
+          );
+          expect(yield* query(secondEndpoint, config.databasePassword, derivation)).toEqual(
+            firstKey,
+          );
           if (
             firstEndpoint.kind === "unix" &&
             reopenedEndpoint.kind === "unix" &&
@@ -197,7 +217,13 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* service.ready;
           const endpoint = yield* database.endpoint;
           expect(endpoint.kind).toBe("tcp");
-          yield* query(endpoint, databaseConfig.databasePassword, "SELECT 1");
+          yield* query(
+            endpoint,
+            databaseConfig.databasePassword,
+            "CREATE EXTENSION IF NOT EXISTS pgsodium",
+          );
+          const deriveKey = "SELECT encode(pgsodium.derive_key(1), 'hex') AS key";
+          const originalKey = yield* query(endpoint, databaseConfig.databasePassword, deriveKey);
           const schemas = yield* query(
             endpoint,
             databaseConfig.databasePassword,
@@ -216,10 +242,14 @@ describe("database component", { timeout: 180_000 }, () => {
             "INSERT INTO persisted(value) VALUES ('docker')",
           );
           const rotated = Redacted.make("supabase-rotated-password");
-          yield* service.restart({ ...databaseConfig, databasePassword: rotated });
+          yield* service.restart({
+            ...databaseConfig,
+            databasePassword: rotated,
+            rootKey: Redacted.make("b".repeat(64)),
+          });
           yield* service.ready;
           const rotatedEndpoint = yield* database.endpoint;
-          yield* query(rotatedEndpoint, rotated, "SELECT 1");
+          expect(yield* query(rotatedEndpoint, rotated, deriveKey)).not.toEqual(originalKey);
           const persisted = yield* query(rotatedEndpoint, rotated, "SELECT value FROM persisted");
           expect(persisted).toEqual([{ value: "docker" }]);
           yield* service
@@ -241,6 +271,9 @@ describe("database component", { timeout: 180_000 }, () => {
           });
           yield* reopenedService.start;
           yield* reopenedService.ready;
+          expect(yield* query(yield* reopened.endpoint, replacementPassword, deriveKey)).toEqual(
+            originalKey,
+          );
           expect(
             yield* query(
               yield* reopened.endpoint,

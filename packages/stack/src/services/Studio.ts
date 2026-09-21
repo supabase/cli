@@ -12,6 +12,7 @@ export const Config = Schema.Struct({
   apiUrl: Schema.optionalKey(Schema.String),
   publicApiUrl: Schema.optionalKey(Schema.String),
   jwtSecret: Schema.optionalKey(Schema.String),
+  openaiApiKey: Schema.optionalKey(Schema.String),
 });
 
 export interface Config extends Schema.Schema.Type<typeof Config> {}
@@ -50,6 +51,8 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       if (creation.config.apiUrl !== undefined) values.SUPABASE_URL = creation.config.apiUrl;
       if (creation.config.publicApiUrl !== undefined)
         values.SUPABASE_PUBLIC_URL = creation.config.publicApiUrl;
+      if (creation.config.openaiApiKey !== undefined)
+        values.OPENAI_API_KEY = creation.config.openaiApiKey;
       if (creation.config.functionsRoot !== undefined)
         values.EDGE_FUNCTIONS_MANAGEMENT_FOLDER = container
           ? "/__supabase_functions"

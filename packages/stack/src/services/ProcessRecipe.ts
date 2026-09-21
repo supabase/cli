@@ -1,4 +1,5 @@
 import {
+  Cause,
   Crypto,
   Effect,
   Exit,
@@ -90,7 +91,11 @@ const serviceError = (operation: string, cause: unknown): ServiceError =>
     ? cause
     : new ServiceError({
         operation,
-        message: cause instanceof Error ? cause.message : String(cause),
+        message: Cause.isTimeoutError(cause)
+          ? `Service ${operation} timed out`
+          : cause instanceof Error
+            ? cause.message
+            : String(cause),
         cause,
       });
 

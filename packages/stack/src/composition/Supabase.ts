@@ -216,6 +216,13 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           sourceKind: "database",
           sourceEndpoint: "sql",
           output: "databaseUrl",
+          targetKind: "storage",
+          input: "vectorDatabaseUrl",
+        },
+        {
+          sourceKind: "database",
+          sourceEndpoint: "sql",
+          output: "databaseUrl",
           targetKind: "realtime",
           input: "databaseUrl",
         },
@@ -267,6 +274,13 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           output: "url",
           targetKind: "vector",
           input: "analyticsUrl",
+        },
+        {
+          sourceKind: "functions",
+          sourceEndpoint: "http",
+          output: "url",
+          targetKind: "studio",
+          input: "functionsUrl",
         },
         {
           sourceKind: "mail",
@@ -378,11 +392,25 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
                 : entry.creation.service === "studio" &&
                     apiHostUrl !== undefined &&
                     apiRuntimeUrl !== undefined
-                  ? { apiUrl: apiRuntimeUrl, publicApiUrl: apiHostUrl }
+                  ? {
+                      apiUrl: apiRuntimeUrl,
+                      publicApiUrl: entry.creation.config.publicApiUrl ?? apiHostUrl,
+                    }
                   : entry.creation.service === "functions" && apiRuntimeUrl !== undefined
                     ? { apiUrl: apiRuntimeUrl }
                     : {};
             const values = { ...configInputs.get(entry.id), ...extra };
+            if (entry.creation.service === "studio") {
+              const analytics = entriesByKind.get("analytics");
+              if (
+                analytics?.creation.service === "analytics" &&
+                analytics.creation.config.apiKey !== undefined
+              )
+                values.analyticsApiKey = analytics.creation.config.apiKey;
+              const functions = entriesByKind.get("functions");
+              if (functions?.creation.service === "functions")
+                values.functionsRoot = functions.creation.config.functionsRoot;
+            }
             const database = entriesByKind.get("database");
             if (
               entry.creation.service === "functions" &&

@@ -8,6 +8,8 @@ export const Config = Schema.Struct({
   jwtSecret: Schema.optionalKey(Schema.String),
   dbEncryptionKey: Schema.optionalKey(Schema.String),
   secretKeyBase: Schema.optionalKey(Schema.String),
+  ipVersion: Schema.optionalKey(Schema.Literals(["IPv4", "IPv6"])),
+  maxHeaderLength: Schema.optionalKey(Schema.Finite),
 });
 
 export interface Config extends Schema.Schema.Type<typeof Config> {}
@@ -49,8 +51,9 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         DNS_NODES: "''",
         APP_NAME: "realtime",
         SEED_SELF_HOST: "true",
-        MAX_HEADER_LENGTH: "4096",
-        ERL_AFLAGS: "-proto_dist inet_tcp",
+        MAX_HEADER_LENGTH: String(creation.config.maxHeaderLength ?? 4096),
+        ERL_AFLAGS:
+          creation.config.ipVersion === "IPv6" ? "-proto_dist inet6_tcp" : "-proto_dist inet_tcp",
         RUN_JANITOR: "true",
         ...(rpc === undefined
           ? {}

@@ -15,9 +15,13 @@ type DatabaseCreation = Extract<EffectCreation, { service: "database" }>;
 export type ServiceCreation =
   | Exclude<EffectCreation, DatabaseCreation>
   | (Omit<DatabaseCreation, "config"> & {
-      readonly config: Omit<DatabaseCreation["config"], "databasePassword" | "jwtSecret"> & {
+      readonly config: Omit<
+        DatabaseCreation["config"],
+        "databasePassword" | "jwtSecret" | "rootKey"
+      > & {
         readonly databasePassword: string;
         readonly jwtSecret: string;
+        readonly rootKey?: string;
       };
     });
 const creationJson = Schema.toCodecJson(CreationSchema);

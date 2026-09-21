@@ -6,6 +6,7 @@ export const Config = Schema.Struct({
   databaseUrl: Schema.String,
   externalApiUrl: Schema.optionalKey(Schema.String),
   schemas: Schema.optionalKey(Schema.String),
+  extraSearchPath: Schema.optionalKey(Schema.String),
   anonRole: Schema.optionalKey(Schema.String),
   jwtSecret: Schema.optionalKey(Schema.String),
   jwks: Schema.optionalKey(Schema.String),
@@ -33,6 +34,9 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       PGRST_DB_URI: creation.config.databaseUrl,
       ...(http === undefined ? {} : { PGRST_SERVER_PORT: String(http.port) }),
       PGRST_DB_SCHEMAS: creation.config.schemas ?? "public,graphql_public",
+      ...(creation.config.extraSearchPath === undefined
+        ? {}
+        : { PGRST_DB_EXTRA_SEARCH_PATH: creation.config.extraSearchPath }),
       PGRST_DB_ANON_ROLE: creation.config.anonRole ?? "anon",
       PGRST_DB_MAX_ROWS: String(creation.config.maxRows ?? 1000),
       ...(jwtSecret === undefined ? {} : { PGRST_JWT_SECRET: jwtSecret }),

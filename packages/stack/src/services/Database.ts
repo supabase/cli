@@ -55,6 +55,8 @@ export const DatabaseConfig = Schema.Struct({
   databasePassword: Schema.Redacted(Schema.String),
   jwtSecret: Schema.Redacted(Schema.String),
   jwtExpiry: Schema.Finite,
+  healthTimeoutMs: Schema.optionalKey(Schema.Finite),
+  rootKey: Schema.optionalKey(Schema.Redacted(Schema.String)),
   settings: Schema.optionalKey(
     Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Finite, Schema.Boolean])),
   ),
@@ -286,7 +288,7 @@ const health = Effect.fn("Database.health")((
         }),
       ),
     ),
-    Effect.timeout("60 seconds"),
+    Effect.timeout(config.healthTimeoutMs ?? 60_000),
     Effect.mapError((cause) => errorFor("health", cause)),
   );
 });
@@ -391,6 +393,7 @@ const nativeProcess = (
   config: DatabaseConfig,
   dataPath: string,
   socketPath: string,
+  rootKeyPath: string | undefined,
   settings: ReadonlyArray<string>,
   context: ServiceInstanceContext<DatabaseConfig>,
   stackId: string,
@@ -413,6 +416,7 @@ const nativeProcess = (
       ],
       env: {
         PGDATA: dataPath,
+        ...(rootKeyPath === undefined ? {} : { PGSODIUM_KEY_FILE: rootKeyPath }),
         POSTGRES_USER: "supabase_admin",
         POSTGRES_DB: "postgres",
         POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
@@ -614,6 +618,14 @@ export const makeDatabase = (
           yield* fs
             .makeDirectory(dataPath, { recursive: true, mode: 0o700 })
             .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
+          const rootKeyPath =
+            config.rootKey === undefined ? undefined : path.join(instanceRoot, "pgsodium_root.key");
+          if (rootKeyPath !== undefined && config.rootKey !== undefined)
+            yield* fs
+              .writeFileString(rootKeyPath, Redacted.value(config.rootKey), {
+                mode: options.runtime === "native" ? 0o600 : 0o644,
+              })
+              .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
           const settings = Object.entries(config.settings ?? {}).flatMap(([key, value]) => [
             "-c",
             `${key}=${String(value)}`,
@@ -638,6 +650,7 @@ export const makeDatabase = (
               config,
               dataPath,
               socketPath,
+              rootKeyPath,
               settings,
               context,
               String(options.stackId),
@@ -681,12 +694,26 @@ export const makeDatabase = (
               instanceId: options.instanceId,
               env: {
                 PGDATA: "/var/lib/postgresql/data",
+                ...(rootKeyPath === undefined
+                  ? {}
+                  : { PGSODIUM_KEY_FILE: "/etc/postgresql-custom/pgsodium_root.key" }),
                 POSTGRES_USER: "supabase_admin",
                 POSTGRES_DB: "postgres",
                 POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
               },
               args: ["-p", "5432", "-c", "listen_addresses=*", ...settings],
-              mounts: [{ source: dataPath, target: "/var/lib/postgresql/data", readOnly: false }],
+              mounts: [
+                { source: dataPath, target: "/var/lib/postgresql/data", readOnly: false },
+                ...(rootKeyPath === undefined
+                  ? []
+                  : [
+                      {
+                        source: rootKeyPath,
+                        target: "/etc/postgresql-custom/pgsodium_root.key",
+                        readOnly: true,
+                      },
+                    ]),
+              ],
               ports: [5432],
             })
             .pipe(

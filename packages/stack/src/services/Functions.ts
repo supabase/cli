@@ -19,8 +19,19 @@ import {
   type ProcessRecipeSpec,
 } from "./ProcessRecipe.ts";
 
+const FunctionSettings = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  verifyJWT: Schema.optionalKey(Schema.Boolean),
+  entrypoint: Schema.optionalKey(Schema.String),
+  import_map: Schema.optionalKey(Schema.String),
+  static_files: Schema.optionalKey(Schema.Array(Schema.String)),
+  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+});
+
 export const Config = Schema.Struct({
   functionsRoot: Schema.String,
+  filesRoot: Schema.optionalKey(Schema.String),
+  functions: Schema.optionalKey(Schema.Record(Schema.String, FunctionSettings)),
   bootstrap: Schema.String,
   databaseUrl: Schema.optionalKey(Schema.String),
   env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
@@ -43,13 +54,14 @@ export const Creation = serviceCreation("functions", Config, Endpoints);
 export interface Creation extends Schema.Schema.Type<typeof Creation> {}
 
 const FunctionsRuntimeConfigJson = Schema.fromJsonString(
-  Schema.Struct({ $default: Schema.Struct({ verifyJWT: Schema.Boolean }) }),
+  Schema.Record(Schema.String, FunctionSettings),
 );
 
 const makeSpec = (
   functionsRoot: Ref.Ref<string | undefined>,
   bootstrap: FunctionsBootstrapOwner,
   path: Path.Path,
+  fs: FileSystem.FileSystem,
 ): ProcessRecipeSpec<Creation> => ({
   service: "functions",
   executable: "bin/edge-runtime",
@@ -59,12 +71,57 @@ const makeSpec = (
   env: (creation, endpoints, container) =>
     Effect.gen(function* () {
       const http = endpoints.get("http");
-      const root = container ? "/__supabase_functions" : creation.config.functionsRoot;
+      const filesRoot = creation.config.filesRoot;
+      const canonicalFilesRoot =
+        filesRoot === undefined || container
+          ? filesRoot
+          : yield* fs.realPath(filesRoot).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServiceError({
+                    operation: "launch",
+                    message: "Unable to resolve Functions project directory",
+                    cause,
+                  }),
+              ),
+            );
+      const runtimePath = (value: string) =>
+        !path.isAbsolute(value) || filesRoot === undefined || canonicalFilesRoot === undefined
+          ? value
+          : path.join(
+              container ? "/__supabase_project" : canonicalFilesRoot,
+              path.relative(filesRoot, value),
+            );
+      const root =
+        container && filesRoot === undefined
+          ? "/__supabase_functions"
+          : runtimePath(creation.config.functionsRoot);
+      const functions = Object.fromEntries(
+        Object.entries(creation.config.functions ?? {}).map(([name, settings]) => [
+          name,
+          {
+            ...settings,
+            ...(settings.entrypoint === undefined
+              ? {}
+              : { entrypoint: runtimePath(settings.entrypoint) }),
+            ...(settings.import_map === undefined
+              ? {}
+              : { import_map: runtimePath(settings.import_map) }),
+            ...(settings.static_files === undefined
+              ? {}
+              : { static_files: settings.static_files.map(runtimePath) }),
+            ...(creation.config.verifyJwt === false ? { verifyJWT: false } : {}),
+          },
+        ]),
+      );
       const jwt = creation.config.jwtSecret;
       return {
         ...creation.config.env,
         ...(http === undefined ? {} : { EDGE_RUNTIME_PORT: String(http.port) }),
         SUPABASE_INTERNAL_FUNCTIONS_ROOT: root,
+        ...(filesRoot === undefined
+          ? {}
+          : { SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT: runtimePath(filesRoot) }),
         ...(jwt === undefined
           ? {}
           : {
@@ -72,12 +129,12 @@ const makeSpec = (
               SUPABASE_ANON_KEY: yield* serviceJwt("anon", jwt),
               SUPABASE_SERVICE_ROLE_KEY: yield* serviceJwt("service_role", jwt),
             }),
-        ...(creation.config.verifyJwt === undefined
+        ...(creation.config.verifyJwt === undefined && creation.config.functions === undefined
           ? {}
           : {
               SUPABASE_INTERNAL_FUNCTIONS_CONFIG: yield* Schema.encodeEffect(
                 FunctionsRuntimeConfigJson,
-              )({ $default: { verifyJWT: creation.config.verifyJwt } }).pipe(
+              )({ $default: { verifyJWT: creation.config.verifyJwt ?? true }, ...functions }).pipe(
                 Effect.mapError(
                   (cause) =>
                     new ServiceError({
@@ -120,22 +177,15 @@ const makeSpec = (
   mounts: (creation) =>
     Effect.gen(function* () {
       const override = yield* Ref.get(functionsRoot);
-      return override === undefined
-        ? [
-            {
-              source: creation.config.functionsRoot,
-              target: "/__supabase_functions",
-              readOnly: true,
-            },
-          ]
-        : [
-            {
-              source: creation.config.functionsRoot,
-              target: "/__supabase_functions",
-              readOnly: true,
-            },
-            { source: override, target: "/__supabase_bootstrap", readOnly: true },
-          ];
+      const files = creation.config.filesRoot;
+      const source = files ?? creation.config.functionsRoot;
+      const target = files === undefined ? "/__supabase_functions" : "/__supabase_project";
+      return [
+        { source, target, readOnly: true },
+        ...(override === undefined
+          ? []
+          : [{ source: override, target: "/__supabase_bootstrap", readOnly: true }]),
+      ];
     }),
   startup: [],
   prepare: (creation) =>
@@ -204,7 +254,7 @@ export const makeRecipe = Effect.fn("Functions.makeRecipe")(
         creation,
         options,
         deps,
-        makeSpec(functionsRoot, bootstrap, deps.path),
+        makeSpec(functionsRoot, bootstrap, deps.path, deps.fs),
       );
     }),
 );
