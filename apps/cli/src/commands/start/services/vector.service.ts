@@ -149,7 +149,7 @@ export function resolveVectorDockerSocketPlan(
   return { env, binds, securityOpt, isNpipe: parsed.scheme === "npipe" };
 }
 
-function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
+function collectText<E, R>(stream: Stream.Stream<Uint8Array, E, R>) {
   const decoder = new TextDecoder();
   return Stream.runFold(
     stream,

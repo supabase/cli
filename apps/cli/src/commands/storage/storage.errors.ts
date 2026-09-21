@@ -130,6 +130,25 @@ export class StorageMissingFlagError extends Data.TaggedError("StorageMissingFla
   }
 }
 
+export class StorageRmConfirmationRequiredError extends Data.TaggedError(
+  "StorageRmConfirmationRequiredError",
+)<{
+  readonly message: string;
+  readonly suggestion: string;
+}> {
+  constructor() {
+    super({
+      message:
+        "Deleting objects needs confirmation, and a non-text output format has no prompt to ask on.",
+      suggestion: "Re-run with --yes (or set SUPABASE_YES=1) to confirm without a prompt.",
+    });
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 /** Raised by recursive `cp`/`mv`/`rm` when no objects match the given path. */
 export class StorageObjectNotFoundError extends Data.TaggedError("StorageObjectNotFoundError")<{
   readonly message: string;

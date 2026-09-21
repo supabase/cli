@@ -55,15 +55,16 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                   |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success (including a declined confirmation, and a tolerated `Bucket not found`)                                                                                                                                             |
-| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard, including any `DELETE` call                                                                   |
-| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`) — also beats any `DELETE` call                                                                    |
-| `1`  | invalid/parse url, missing bucket (root path), missing `-r` flag (directory or no args), object-not-found (recursive empty prefix), API non-2xx, network, auth, config parse                                                |
-| `1`  | `--project-ref` set with `--local` (see Notes)                                                                                                                                                                              |
-| `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                             |
-| `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`) |
+| Code | Condition                                                                                                                                                                                                                                                             |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success (including a confirmation declined at the text-mode prompt, and a tolerated `Bucket not found`)                                                                                                                                                               |
+| `1`  | any resolved non-text output mode without `--yes`/`SUPABASE_YES` (`StorageRmConfirmationRequiredError`) — there is no prompt to ask on, so nothing is deleted and no Storage request is sent (a run with no paths and no `-r` reports the missing-`-r` failure first) |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard, including any `DELETE` call                                                                                                             |
+| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`) — also beats any `DELETE` call                                                                                                              |
+| `1`  | invalid/parse url, missing bucket (root path), missing `-r` flag (directory or no args), object-not-found (recursive empty prefix), API non-2xx, network, auth, config parse                                                                                          |
+| `1`  | `--project-ref` set with `--local` (see Notes)                                                                                                                                                                                                                        |
+| `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                                                                       |
+| `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`)                                           |
 
 ## Output
 
@@ -77,11 +78,18 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
 
 ### `--output-format json`
 
+Requires `--yes`/`SUPABASE_YES`; without it the run fails before any Storage request rather
+than defaulting the unaskable confirmation to no and reporting an empty deletion. This
+applies to the resolved output mode, so it also covers the JSON a detected or
+`--agent yes` coding agent selects when neither `--output-format` nor `-o`/`--output` is given.
+
 ```json
 { "deleted": ["abstract.pdf"], "buckets_deleted": ["private"] }
 ```
 
 ### `--output-format stream-json`
+
+Requires `--yes`/`SUPABASE_YES` on the same terms as `json`.
 
 ```ndjson
 {"type":"result","data":{"deleted":["abstract.pdf"],"buckets_deleted":["private"]}}
@@ -100,8 +108,15 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
   It never implies `--linked`: passing it with `--local` is a hard error
   rather than a silently discarded flag.
 - Validation (missing bucket, missing `-r` for a directory) runs before any network call;
-  the no-args missing-`-r` error runs after the client is built.
-- A declined confirmation skips that bucket and is not an error.
+  the no-args missing-`-r` error runs after the client is built, and keeps beating the
+  confirmation refusal in every output mode.
+- A confirmation declined at the text-mode prompt skips that bucket and is not an error;
+  a resolved non-text output mode has no prompt to decline, so it hard-fails without
+  `--yes` instead (`StorageRmConfirmationRequiredError`), before the Storage gateway is
+  contacted. "Resolved" covers `--output-format json|stream-json` and agent-selected JSON
+  alike; `-o`/`--output` does not select an output format for `rm` (it stays text), so `rm`
+  keeps the text prompt and its piped-answer handling, and an explicit `-o` also opts out of
+  the agent JSON default.
 - Explicit deletes are attempted first ("in case the paths resolve to extensionless files");
   prefixes not returned as removed are then walked recursively when `-r` is set.
 - Object deletes are chunked at `DELETE_OBJECTS_LIMIT` (1000) per request.
