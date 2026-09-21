@@ -150,6 +150,7 @@ jobs:
           pnpm test:integration
           src/Ports.integration.test.ts
           src/State.integration.test.ts
+          src/State.process.integration.test.ts
           src/HostProcess.integration.test.ts
           src/Network.integration.test.ts
           src/Proxy.integration.test.ts

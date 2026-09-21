@@ -607,6 +607,15 @@ The state root is the stack registry root. Each stack keeps one state document a
 <stateRoot>/<stack-id>/data/<instance-id>/...
 ```
 
+Registry updates use an OS-backed lock through a private `node:sqlite` connection to
+`<stateRoot>/.registry-lock.sqlite`. Each `withLock` call opens its own connection, disables
+SQLite busy waiting, and retries `BEGIN IMMEDIATE` contention for up to five seconds through
+Effect. Closing the scoped connection releases the lock, including on cancellation or failure;
+process death also releases ownership. The file stays in place and is accessed only through
+SQLite. No tables, state records, or WAL are created there. Saved stack data remains in JSON;
+the lock does not make multi-file operations transactional or recover interrupted operations.
+This uses the built-in SQLite API available in the pinned Bun runtime and modern Node.js.
+
 The artifact cache is independent and shared across stacks. Normal stop preserves the stack directory and service data. Destroy removes the state document and proven-owned, empty parents; caller-owned paths such as Storage uploads remain untouched.
 
 ### Snapshots belong to the database instance

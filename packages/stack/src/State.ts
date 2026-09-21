@@ -1,18 +1,18 @@
 import {
   Data,
-  Duration,
   Effect,
   FileSystem,
   Context,
   Layer,
   Path,
-  PlatformError,
   Predicate,
   Schedule,
   Schema,
 } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no non-recursive directory removal operation.
 import { rmdir } from "node:fs/promises";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no OS-owned cross-process lock primitive.
+import { DatabaseSync } from "node:sqlite";
 
 const SafeId = Schema.String.pipe(
   Schema.refine((value): value is string => /^[a-zA-Z0-9_-]+$/u.test(value), {
@@ -106,7 +106,8 @@ const makeState = (
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const root = path.normalize(options.root);
-    const lock = path.join(root, ".registry.lock");
+    // SQLite alone opens this persistent file; other descriptors can invalidate its POSIX locks.
+    const lock = path.join(root, ".registry-lock.sqlite");
     yield* fs
       .makeDirectory(root, { recursive: true })
       .pipe(Effect.mapError((cause) => stateError("root", cause)));
@@ -203,28 +204,45 @@ const makeState = (
       yield* removeEmptyDirectory(stackRoot(id));
     });
     const withLock = Effect.fn("State.withLock")(<A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      Effect.uninterruptibleMask((restore) =>
-        Effect.acquireUseRelease(
-          // Protect mkdir through release registration; only contention delays are interruptible.
-          fs.makeDirectory(lock).pipe(
-            Effect.retry({
-              schedule: Schedule.spaced("50 millis").pipe(
-                Schedule.upTo({ duration: "5 seconds" }),
-                Schedule.modifyDelay(({ duration }) =>
-                  restore(Effect.sleep(duration)).pipe(Effect.as(Duration.zero)),
+      Effect.acquireUseRelease(
+        Effect.try({
+          try: () => new DatabaseSync(lock),
+          catch: (cause) => stateError("lock", cause),
+        }),
+        (connection) =>
+          Effect.gen(function* () {
+            yield* Effect.try({
+              try: () => connection.exec("PRAGMA busy_timeout = 0"),
+              catch: (cause) => stateError("lock", cause),
+            });
+            yield* Effect.try({
+              try: () => connection.exec("BEGIN IMMEDIATE"),
+              catch: (cause) => stateError("lock", cause),
+            }).pipe(
+              Effect.retry({
+                schedule: Schedule.spaced("50 millis").pipe(
+                  Schedule.upTo({ duration: "5 seconds" }),
                 ),
+                while: (error) =>
+                  Predicate.hasProperty(error.cause, "errcode") && error.cause.errcode === 5,
+              }),
+              Effect.mapError((error) =>
+                Predicate.hasProperty(error.cause, "errcode") && error.cause.errcode === 5
+                  ? new StateError({
+                      operation: "lock",
+                      message: "Stack registry is locked by another operation; retry shortly",
+                      cause: error.cause,
+                    })
+                  : error,
               ),
-              while: (cause: PlatformError.PlatformError) =>
-                Predicate.isTagged(cause.reason, "AlreadyExists"),
-            }),
-            Effect.mapError((cause) => stateError("lock", cause)),
-          ),
-          () => restore(effect),
-          () =>
-            fs
-              .remove(lock, { recursive: true, force: true })
-              .pipe(Effect.mapError((cause) => stateError("unlock", cause))),
-        ),
+            );
+            return yield* effect;
+          }),
+        (connection) =>
+          Effect.try({
+            try: () => connection.close(),
+            catch: (cause) => stateError("unlock", cause),
+          }),
       ),
     );
     return { read, list: list(), save, remove, withLock };

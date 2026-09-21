@@ -1,5 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
+import { TestClock } from "effect/testing";
 import { Context, Deferred, Effect, Exit, Fiber, FileSystem, Layer, Path, Schema } from "effect";
 import * as State from "./State.ts";
 import type { SavedStack } from "./State.ts";
@@ -109,7 +110,7 @@ describe("durable stack state", () => {
     ),
   );
 
-  it.live("keeps a lock owner protected when a waiting fiber is cancelled", () =>
+  it.effect("keeps a lock owner protected when a waiting fiber is cancelled", () =>
     run(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -128,53 +129,79 @@ describe("durable stack state", () => {
         );
         yield* Deferred.await(entered);
         const waiter = yield* Effect.forkScoped(second.withLock(second.save(initial)));
-        yield* Effect.yieldNow;
+        yield* TestClock.adjust("100 millis");
         yield* Fiber.interrupt(waiter);
-        expect(yield* fs.exists(`${root}/.registry.lock`)).toBe(true);
+        expect(yield* second.read(initial.id)).toBeUndefined();
+        const later = yield* Effect.forkScoped(second.withLock(second.save(initial)));
+        yield* TestClock.adjust("100 millis");
+        expect(yield* second.read(initial.id)).toBeUndefined();
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(owner);
-        yield* second.save(initial);
+        yield* TestClock.adjust("50 millis");
+        yield* Fiber.join(later);
+        expect(yield* second.read(initial.id)).toEqual(initial);
       }),
     ),
   );
-  it.live(
-    "releases a registry lock when cancellation arrives before mkdir acknowledges acquisition",
-    () =>
-      run(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-lock-acquisition-" });
-          const lockPath = path.join(root, ".registry.lock");
-          const created = yield* Deferred.make<void>();
-          const acknowledge = yield* Deferred.make<void>();
-          const delayedFs = {
-            ...fs,
-            makeDirectory: (directory: string, options?: Parameters<typeof fs.makeDirectory>[1]) =>
-              fs
-                .makeDirectory(directory, options)
-                .pipe(
-                  Effect.andThen(
-                    directory === lockPath
-                      ? Deferred.succeed(created, undefined).pipe(
-                          Effect.andThen(Deferred.await(acknowledge)),
-                        )
-                      : Effect.void,
-                  ),
-                ),
-          };
-          const store = yield* makeTestState(root).pipe(
-            Effect.provideService(FileSystem.FileSystem, delayedFs),
-          );
-          const operation = yield* store.withLock(Effect.void).pipe(Effect.forkScoped);
-          yield* Deferred.await(created);
-          yield* Effect.sync(() => {
-            operation.interruptUnsafe();
-          });
-          yield* Deferred.succeed(acknowledge, undefined);
-          expect(Exit.hasInterrupts(yield* Fiber.await(operation))).toBe(true);
-          expect(yield* fs.exists(lockPath)).toBe(false);
-        }),
-      ),
+  it.effect("times out contention without releasing the holder's lock", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-lock-timeout-" });
+        const first = yield* makeTestState(root);
+        const second = yield* makeTestState(root);
+        const entered = yield* Deferred.make<void>();
+        const owner = yield* first
+          .withLock(Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)))
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        const waiter = yield* second
+          .withLock(second.save(initial))
+          .pipe(Effect.flip, Effect.forkScoped);
+        yield* TestClock.adjust("6 seconds");
+        const result = yield* Fiber.join(waiter);
+        expect(result.operation).toBe("lock");
+        expect(result.message).toBe("Stack registry is locked by another operation; retry shortly");
+        expect(yield* second.read(initial.id)).toBeUndefined();
+        yield* Fiber.interrupt(owner);
+        yield* second.withLock(second.save(initial));
+        expect(yield* second.read(initial.id)).toEqual(initial);
+      }),
+    ),
+  );
+
+  it.live("releases ownership after failure and defects without replacing the lock file", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-lock-failure-" });
+        const state = yield* makeTestState(root);
+        const failure = new State.StateError({ operation: "test", message: "body failed" });
+        expect(yield* state.withLock(Effect.fail(failure)).pipe(Effect.flip)).toBe(failure);
+        const defect = yield* state.withLock(Effect.die("body defect")).pipe(Effect.exit);
+        expect(Exit.hasDies(defect)).toBe(true);
+        yield* state.withLock(state.save(initial));
+        expect(yield* state.read(initial.id)).toEqual(initial);
+        expect((yield* fs.readDirectory(root)).sort()).toEqual([
+          ".registry-lock.sqlite",
+          initial.id,
+        ]);
+        expect((yield* fs.stat(`${root}/.registry-lock.sqlite`)).size).toBe(0n);
+      }),
+    ),
+  );
+  it.effect("fails invalid lock files without retrying or changing saved state", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-lock-invalid-" });
+        const state = yield* makeTestState(root);
+        yield* fs.writeFileString(`${root}/.registry-lock.sqlite`, "not a database");
+        const error = yield* state.withLock(state.save(initial)).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(State.StateError);
+        expect(error.operation).toBe("lock");
+        expect(yield* state.read(initial.id)).toBeUndefined();
+      }),
+    ),
   );
 });
