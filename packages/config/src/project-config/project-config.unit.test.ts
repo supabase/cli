@@ -1204,7 +1204,7 @@ describe("fromApiProjectConfig — auth section", () => {
   });
 
   // Twilio-only: no `sms_twilio_verify_content_sid` API counterpart.
-  test("sms_twilio_content_sid maps to auth.sms.twilio.content_sid, pruned with its siblings when no provider is active", () => {
+  test("sms_twilio_content_sid maps to auth.sms.twilio.content_sid, gated the same as its siblings", () => {
     const apiSide = fromApiProjectConfig({
       auth: { sms_provider: "twilio", sms_twilio_content_sid: "HXreal00000000000000000000000000" },
     });
@@ -2531,25 +2531,17 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     expect(plain.api?.schemas).toEqual(["public", "storage"]);
   });
 
-  test("an explicitly-unset SMS provider disables every provider and drops retained credentials", () => {
-    // A null/empty sms_provider means no provider is active: every provider projects
-    // `enabled: false` (so a declared local `enabled = false` diffs clean) and the entry sweep
-    // prunes retained credentials instead of leaving them as unmanaged phantom entries.
-    const allDisabled = {
-      twilio: { enabled: false },
-      twilio_verify: { enabled: false },
-      messagebird: { enabled: false },
-      textlocal: { enabled: false },
-      vonage: { enabled: false },
-    };
+  test("an explicitly-unset SMS provider omits retained credentials entirely", () => {
+    // Nothing about the providers projects when sms_provider is null/empty: no fabricated
+    // enabled flags, no retained credentials surviving as unmanaged phantom entries.
     const nullProvider = fromApiProjectConfig({
       auth: { sms_provider: null, sms_messagebird_originator: "retained" },
     });
-    expect(nullProvider.auth?.sms).toEqual(allDisabled);
+    expect(Object.hasOwn(nullProvider, "auth")).toBe(false);
     const emptyProvider = fromApiProjectConfig({
       auth: { sms_provider: "", sms_twilio_account_sid: "AC1" },
     });
-    expect(emptyProvider.auth?.sms).toEqual(allDisabled);
+    expect(Object.hasOwn(emptyProvider, "auth")).toBe(false);
     // An absent provider key says nothing — the credential still maps.
     const absentProvider = fromApiProjectConfig({
       auth: { sms_messagebird_originator: "retained" },
@@ -2565,7 +2557,7 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     });
     expect(named.auth?.sms?.twilio).toEqual({ enabled: true, account_sid: "AC1" });
     expect(named.auth?.sms?.messagebird).toEqual({ enabled: false });
-    // Validation still runs before the entry sweep.
+    // Validation still runs before the gate.
     expect(() =>
       fromApiProjectConfig({ auth: { sms_provider: null, sms_messagebird_originator: 42 } }),
     ).toThrow(ProjectConfigParseError);
