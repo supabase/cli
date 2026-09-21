@@ -1,0 +1,104 @@
+name: Snapshot platform benchmark
+
+on:
+  push:
+    branches: [perf/snapshot-platform-cloning]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: snapshot-platform-benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native snapshot (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Describe filesystem
+        shell: bash
+        run: |
+          mkdir -p results
+          if [ "$RUNNER_OS" = Linux ]; then
+            findmnt -T "$RUNNER_TEMP" | tee results/filesystem.txt
+          elif [ "$RUNNER_OS" = macOS ]; then
+            df -h "$RUNNER_TEMP" > results/filesystem.txt
+            diskutil info / >> results/filesystem.txt
+          else
+            powershell -NoProfile -Command 'Get-Volume | Format-Table DriveLetter, FileSystem, Size, SizeRemaining' > results/filesystem.txt
+          fi
+      - name: Snapshot correctness and benchmark
+        shell: bash
+        run: pnpm --filter @supabase/stack run benchmark:snapshot-platform --root="$RUNNER_TEMP/snapshot-platform" --out="$GITHUB_WORKSPACE/results/native.json" --reps=5 --warmups=1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: snapshot-${{ matrix.os }}
+          path: results/
+          retention-days: 7
+
+  linux-reflink:
+    name: Linux reflink filesystem (glibc and musl)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Create isolated XFS filesystem
+        shell: bash
+        run: |
+          mkdir -p results "$RUNNER_TEMP/snapshot-xfs"
+          sudo apt-get update -qq
+          sudo apt-get install -y xfsprogs
+          truncate -s 4G "$RUNNER_TEMP/snapshot-xfs.img"
+          mkfs.xfs -m reflink=1 "$RUNNER_TEMP/snapshot-xfs.img"
+          sudo mount -o loop "$RUNNER_TEMP/snapshot-xfs.img" "$RUNNER_TEMP/snapshot-xfs"
+          sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/snapshot-xfs"
+          findmnt -T "$RUNNER_TEMP/snapshot-xfs" | tee results/filesystem.txt
+          dd if=/dev/urandom of="$RUNNER_TEMP/snapshot-xfs/probe" bs=1M count=1 status=none
+          cp --reflink=always "$RUNNER_TEMP/snapshot-xfs/probe" "$RUNNER_TEMP/snapshot-xfs/probe-clone"
+          filefrag -v "$RUNNER_TEMP/snapshot-xfs/probe" "$RUNNER_TEMP/snapshot-xfs/probe-clone" | tee results/reflink-proof.txt
+          rm "$RUNNER_TEMP/snapshot-xfs/probe" "$RUNNER_TEMP/snapshot-xfs/probe-clone"
+      - name: Benchmark native Linux on XFS
+        shell: bash
+        run: pnpm --filter @supabase/stack run benchmark:snapshot-platform --root="$RUNNER_TEMP/snapshot-xfs/native" --out="$GITHUB_WORKSPACE/results/linux-xfs.json" --reps=5 --warmups=1
+      - name: Bundle portable benchmark
+        shell: bash
+        run: pnpm exec bun build packages/stack/tools/snapshot-platform-benchmark.ts --target=bun --outfile=results/benchmark.js
+      - name: Benchmark glibc and musl containers on XFS
+        shell: bash
+        run: |
+          for flavor in slim alpine; do
+            docker run --rm \
+              --mount "type=bind,source=$GITHUB_WORKSPACE/results,target=/benchmark" \
+              --mount "type=bind,source=$RUNNER_TEMP/snapshot-xfs,target=/fixtures" \
+              "oven/bun:$(cat .bun-version)-$flavor" \
+              sh -c 'if command -v apk >/dev/null; then apk add --no-cache tar; fi; uname -a; (ldd --version || true) 2>&1; bun /benchmark/benchmark.js --root=/fixtures/'"$flavor"' --out=/benchmark/linux-'"$flavor"'.json --reps=5 --warmups=1' \
+              2>&1 | tee "results/linux-$flavor.log"
+          done
+      - name: Unmount isolated filesystem
+        if: always()
+        shell: bash
+        run: |
+          if mountpoint -q "$RUNNER_TEMP/snapshot-xfs"; then
+            sudo umount "$RUNNER_TEMP/snapshot-xfs"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: snapshot-linux-reflink
+          path: results/
+          retention-days: 7
