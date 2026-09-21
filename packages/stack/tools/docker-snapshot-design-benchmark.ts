@@ -260,9 +260,15 @@ const program = Effect.scoped(
           const expected = new Map<string, string>();
           for (const mount of mounts) {
             yield* Console.error(`Prepare ${dataset}/${mount.kind}`);
+            yield* Effect.addFinalizer(() =>
+              helper(mount, "rm -rf /workspace/* /workspace/.[!.]* /workspace/..?*").pipe(
+                Effect.ignore,
+              ),
+            );
+            if (mount.kind === "bind") yield* fs.makeDirectory(join(root, "source"));
             yield* helper(
               mount,
-              "mkdir -p /workspace/source/data && chown -R 100:101 /workspace/source",
+              "mkdir -p /workspace/source/data && chown -R 100:101 /workspace/source/data",
             );
             const source = yield* startDatabase(mount, "source");
             yield* sql(source.id, populate(dataset));
