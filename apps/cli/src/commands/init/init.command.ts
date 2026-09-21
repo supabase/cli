@@ -2,6 +2,7 @@ import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
+import { cliConfigProviderLayer } from "../../shared/config/cli-config-provider.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
@@ -49,6 +50,9 @@ export const initCommand = Command.make("init", config).pipe(
   // `stdinLayer` satisfies `promptYesNo`'s `Stdin` requirement (via the
   // shared `initProject` IDE prompts). The prompts are gated on a TTY stdin, so
   // init never actually reads a piped line at runtime — the layer is here for
-  // the effect's type requirements only.
-  Command.provide(Layer.mergeAll(commandRuntimeLayer(["init"]), stdinLayer)),
+  // the effect's type requirements only. `cliConfigProviderLayer` satisfies
+  // experimental-stack env reads so ConfigProvider does not leak to the root.
+  Command.provide(
+    Layer.mergeAll(commandRuntimeLayer(["init"]), stdinLayer, cliConfigProviderLayer),
+  ),
 );
