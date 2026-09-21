@@ -47,16 +47,21 @@ import type { OutputFormat } from "../../../shared/output/types.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
-import { recordingStackCatalogSetup } from "../../../command-internal/stack-catalog-setup.ts";
 import {
-  CAPABILITY_NAMES,
-  StackIdSchema,
-  type CapabilityState,
-  type EffectStack,
+  StackCatalogSetup,
+  type StackCatalogSetupInput,
+} from "../../../command-internal/stack-catalog-setup.ts";
+import type {
+  ServiceCreation,
+  ServiceInstance,
+  ServiceInstances,
+  Stack,
+  Observation,
 } from "@supabase/stack/effect";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
+import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
@@ -476,115 +481,318 @@ function recordingStackStorageHttpClientBucketListTransportFails() {
   return { layer, requests };
 }
 
-const RESET_STACK_ID = StackIdSchema.make("c".repeat(64));
+const RESET_STACK_ID = "c".repeat(64);
+const RESET_JWT = "stack-jwt-secret-with-at-least-32-characters";
+
+type ResetServiceKind = "database" | "auth" | "storage" | "realtime" | "pooler";
+type StackService = ServiceInstances[ResetServiceKind];
+
+const serviceCreation = (
+  service: ResetServiceKind,
+  databaseUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+): Extract<ServiceCreation, { readonly service: ResetServiceKind }> => {
+  switch (service) {
+    case "database":
+      return {
+        service,
+        config: {
+          version: "15",
+          databasePassword: Redacted.make("postgres"),
+          jwtSecret: Redacted.make(RESET_JWT),
+          jwtExpiry: 3600,
+        },
+        endpoints: {},
+      };
+    case "auth":
+      return { service, config: { databaseUrl, jwtSecret: RESET_JWT }, endpoints: {} };
+    case "storage":
+      return {
+        service,
+        config: { databaseUrl, filePath: "/tmp/storage", jwtSecret: RESET_JWT },
+        endpoints: {},
+      };
+    case "realtime":
+      return { service, config: { databaseUrl, jwtSecret: RESET_JWT }, endpoints: {} };
+    case "pooler":
+      return { service, config: { databaseUrl, jwtSecret: RESET_JWT }, endpoints: {} };
+  }
+};
+
+const stackService = (
+  id: string,
+  creation: Extract<ServiceCreation, { readonly service: ResetServiceKind }>,
+  observation: Effect.Effect<Observation>,
+  overrides: {
+    readonly start?: Effect.Effect<void>;
+    readonly ready?: Effect.Effect<void>;
+    readonly stop?: Effect.Effect<void>;
+    readonly resetData?: Effect.Effect<void>;
+  } = {},
+): StackService => {
+  const base = {
+    id,
+    start: overrides.start ?? Effect.void,
+    ready: overrides.ready ?? Effect.void,
+    stop: overrides.stop ?? Effect.void,
+    restart: () => Effect.void,
+    destroy: Effect.void,
+    prepare: Effect.void,
+    status: observation,
+    followStatus: Stream.empty,
+    logs: Stream.empty,
+    credentials: () => Effect.succeed({}),
+  } satisfies Omit<ServiceInstance, "service">;
+  switch (creation.service) {
+    case "database":
+      return {
+        ...base,
+        service: "database",
+        credentials: () =>
+          Effect.succeed({ databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres" }),
+        exportSnapshot: () => Effect.die("unused"),
+        restoreSnapshot: () => Effect.die("unused"),
+        resetData: overrides.resetData ?? Effect.die("unused"),
+      };
+    case "auth":
+      return { ...base, service: "auth" };
+    case "storage":
+      return { ...base, service: "storage" };
+    case "realtime":
+      return { ...base, service: "realtime" };
+    case "pooler":
+      return { ...base, service: "pooler" };
+  }
+};
+
+function makeStackObservation(
+  id: string,
+  creation: Extract<ServiceCreation, { readonly service: ResetServiceKind }>,
+  opts: {
+    lifecycle?: "stopped" | "starting" | "running" | "stopping";
+    health?: "starting" | "healthy" | "unhealthy";
+    wakeEnabled?: boolean;
+    endpoints?: ReadonlyArray<{
+      name: string;
+      protocol: "tcp" | "http";
+      host: string;
+      port: number;
+    }>;
+    error?: { readonly _tag: "ServiceError"; readonly operation: string; readonly message: string };
+  } = {},
+): Observation {
+  return {
+    id,
+    endpoints: opts.endpoints ?? [],
+    config: creation,
+    lifecycle: opts.lifecycle ?? "stopped",
+    health: opts.health,
+    error: opts.error,
+    cleanupError: undefined,
+    exit: undefined,
+    currentOperation: undefined,
+    launchId: undefined,
+    intentRevision: 0,
+    wakeEnabled: opts.wakeEnabled ?? false,
+    registered: true,
+  };
+}
 
 function mockResetStackApi(opts: {
   readonly workdir: string;
   readonly ready: boolean;
   readonly storageReady?: boolean;
-  /** Overrides the derived storage capability state (default: `ready` when `storageReady`, else `stopped`). */
-  readonly storageState?: CapabilityState;
+  /** Overrides the derived storage observation state (default: `ready` when `storageReady`, else `stopped`). */
+  readonly storageState?:
+    | "ready"
+    | "dormant"
+    | "starting"
+    | "stopping"
+    | "stopped"
+    | "failed"
+    | "disabled";
   readonly storageError?: string;
   readonly apiEndpoint?: { readonly url: string; readonly port: number };
-  readonly serviceRoleJwt?: string;
-  readonly capabilityStates?: Partial<Record<(typeof CAPABILITY_NAMES)[number], CapabilityState>>;
 }) {
   let resetCalls = 0;
-  const unused = Effect.die("unused");
-  const unusedFn = () => unused;
-  const stack: EffectStack = {
+  let stopCalls = 0;
+  let startCalls = 0;
+  let databaseRunning = opts.ready;
+  const database = serviceCreation("database");
+  const storage = serviceCreation("storage");
+  const auth = serviceCreation("auth");
+  const realtime = serviceCreation("realtime");
+  const pooler = serviceCreation("pooler");
+  const endpoint =
+    opts.apiEndpoint === undefined
+      ? []
+      : [
+          {
+            name: "http",
+            protocol: "http" as const,
+            host: "127.0.0.1",
+            port: opts.apiEndpoint.port,
+          },
+        ];
+  const storageState = opts.storageState ?? (opts.storageReady === true ? "ready" : "stopped");
+  const storageMember =
+    storageState === "disabled"
+      ? undefined
+      : stackService(
+          STORAGE_ID,
+          storage,
+          Effect.succeed(
+            makeStackObservation(STORAGE_ID, storage, {
+              lifecycle:
+                storageState === "dormant"
+                  ? "stopped"
+                  : storageState === "stopping"
+                    ? "stopping"
+                    : storageState === "failed"
+                      ? "running"
+                      : storageState === "starting"
+                        ? "running"
+                        : storageState === "ready"
+                          ? "running"
+                          : "stopped",
+              health:
+                storageState === "ready"
+                  ? "healthy"
+                  : storageState === "starting"
+                    ? "starting"
+                    : storageState === "failed"
+                      ? "unhealthy"
+                      : undefined,
+              wakeEnabled:
+                storageState === "dormant" ||
+                storageState === "starting" ||
+                storageState === "stopping",
+              endpoints: endpoint,
+              ...(opts.storageError === undefined
+                ? {}
+                : {
+                    error: {
+                      _tag: "ServiceError" as const,
+                      operation: "start",
+                      message: opts.storageError,
+                    },
+                  }),
+            }),
+          ),
+        );
+  const dbStatus = Effect.sync(() =>
+    makeStackObservation(DB_ID, database, {
+      lifecycle: databaseRunning ? "running" : "stopped",
+      health: databaseRunning ? "healthy" : undefined,
+      endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54329 }],
+    }),
+  );
+  const db = stackService(DB_ID, database, dbStatus, {
+    resetData: Effect.suspend(() =>
+      databaseRunning
+        ? Effect.die("database reset while running")
+        : Effect.sync(() => {
+            resetCalls++;
+          }),
+    ),
+    start: Effect.sync(() => {
+      databaseRunning = true;
+      startCalls++;
+    }),
+    ready: Effect.void,
+  });
+  const members: Array<StackService> = [
+    db,
+    stackService(
+      "supabase_auth_test",
+      auth,
+      Effect.succeed(makeStackObservation("supabase_auth_test", auth)),
+    ),
+    ...(storageMember === undefined ? [] : [storageMember]),
+    stackService(
+      "supabase_realtime_test",
+      realtime,
+      Effect.succeed(makeStackObservation("supabase_realtime_test", realtime)),
+    ),
+    stackService(
+      "supabase_pooler_test",
+      pooler,
+      Effect.succeed(makeStackObservation("supabase_pooler_test", pooler)),
+    ),
+  ];
+  const stack: Stack = {
     id: RESET_STACK_ID,
-    status: Effect.succeed({
-      id: RESET_STACK_ID,
-      lifecycle: opts.ready ? "running" : "stopped",
-      desiredLifecycle: opts.ready ? "running" : "stopped",
-      runtime: { kind: "native" },
-      endpoints:
-        opts.apiEndpoint === undefined
-          ? {}
-          : {
-              api: {
-                protocol: "http" as const,
-                address: "127.0.0.1",
-                port: opts.apiEndpoint.port,
-                url: opts.apiEndpoint.url,
-              },
-            },
-      versions: {},
-      capabilities: CAPABILITY_NAMES.map((name) => ({
-        name,
-        activation: name === "database" ? "eager" : "lazy",
-        state:
-          opts.capabilityStates?.[name] ??
-          (name === "database"
-            ? opts.ready
-              ? "ready"
-              : "stopped"
-            : name === "storage"
-              ? (opts.storageState ?? (opts.storageReady === true ? "ready" : "stopped"))
-              : "stopped"),
-        ...(name === "storage" && opts.storageError !== undefined
-          ? { error: opts.storageError }
-          : {}),
-      })),
-      artifacts: [],
-    }),
-    credentials: Effect.succeed({
-      database: {
-        url: Redacted.make("postgresql://postgres:postgres@127.0.0.1:54329/postgres"),
-        password: Redacted.make("postgres"),
+    services: {
+      create: () => Effect.die("unused"),
+      get: (id) => {
+        const found = members.find((member) => member.id === id);
+        return found === undefined ? Effect.die(`missing service ${id}`) : Effect.succeed(found);
       },
-      api: {
-        publishableKey: "anon",
-        secretKey: Redacted.make("service"),
-        anonJwt: "anon",
-        serviceRoleJwt: Redacted.make(opts.serviceRoleJwt ?? "service"),
-      },
-    }),
-    prepare: unusedFn,
-    start: unusedFn,
-    stop: unused,
-    destroy: unused,
-    resetDatabase: Effect.sync(() => {
-      resetCalls++;
-      return {
-        id: RESET_STACK_ID,
-        lifecycle: "running" as const,
-        desiredLifecycle: "running" as const,
-        runtime: { kind: "native" as const },
-        endpoints: {},
-        versions: {},
-        capabilities: CAPABILITY_NAMES.map((name) => ({
-          name,
-          activation: name === "database" ? ("eager" as const) : ("lazy" as const),
-          state: name === "database" ? ("ready" as const) : ("dormant" as const),
+      list: Effect.succeed(members),
+    },
+    composition: {
+      describe: Effect.succeed({
+        members: members.map(({ id }, index) => ({
+          id,
+          activation: index === 0 ? ("eager" as const) : ("lazy" as const),
         })),
-        artifacts: [],
-      };
-    }),
-    logs: unusedFn,
-    followLogs: () => Stream.empty,
+        dependencies: [],
+      }),
+      supabase: () => Effect.die("unused"),
+      configure: () => Effect.die("unused"),
+      stop: Effect.sync(() => {
+        stopCalls++;
+        databaseRunning = false;
+        return members.map((member) =>
+          makeStackObservation(member.id, serviceCreation(member.service), {
+            lifecycle: "stopped",
+          }),
+        );
+      }),
+      start: Effect.sync(() => {
+        startCalls++;
+        databaseRunning = true;
+        return members.map((member) =>
+          makeStackObservation(member.id, serviceCreation(member.service), {
+            lifecycle: "running",
+            health: "healthy",
+          }),
+        );
+      }),
+      restart: Effect.die("unused"),
+    },
+    stop: Effect.die("unused"),
+    destroy: Effect.die("unused"),
+    tools: { run: () => Effect.die("unused") },
   };
   return {
     layer: Layer.succeed(StackApi, {
-      createStack: unusedFn,
-      findStack: () =>
-        Effect.succeed(
-          Option.some({
-            id: RESET_STACK_ID,
-            projectRoot: opts.workdir,
-            name: "default",
-            branchContext: "main",
-            runtime: { kind: "native" as const },
-            desiredLifecycle: "running" as const,
-          }),
-        ),
-      discoverStacks: unusedFn,
-      openStack: () => Effect.succeed(stack),
-      inspectStack: unusedFn,
+      create: () => Effect.die("unused"),
+      resolveIdentity: () =>
+        Effect.succeed({ projectRoot: opts.workdir, branchContext: "main", stackName: "default" }),
+      discover: () =>
+        Effect.succeed([
+          {
+            definition: {
+              id: RESET_STACK_ID,
+              identity: { projectRoot: opts.workdir, branchContext: "main", stackName: "default" },
+              runtime: "native" as const,
+              instances: members.map((member) => ({ id: member.id, creation: {} })),
+              composition: { members: [], dependencies: [] },
+              ports: [],
+            },
+            host: undefined,
+          },
+        ]),
+      open: () => Effect.succeed(stack),
     }),
     get resetCalls() {
       return resetCalls;
+    },
+    get stopCalls() {
+      return stopCalls;
+    },
+    get startCalls() {
+      return startCalls;
     },
   };
 }
@@ -634,11 +842,16 @@ function setup(
     stackBackend?: boolean;
     stackDatabaseReady?: boolean;
     stackStorageReady?: boolean;
-    stackStorageState?: CapabilityState;
+    stackStorageState?:
+      | "ready"
+      | "dormant"
+      | "starting"
+      | "stopping"
+      | "stopped"
+      | "failed"
+      | "disabled";
     stackStorageError?: string;
     stackApiEndpoint?: { readonly url: string; readonly port: number };
-    stackServiceRoleJwt?: string;
-    stackCapabilityStates?: Partial<Record<(typeof CAPABILITY_NAMES)[number], CapabilityState>>;
     httpClient?: Layer.Layer<HttpClient.HttpClient>;
   },
 ) {
@@ -674,15 +887,18 @@ function setup(
     storageState: opts.stackStorageState,
     storageError: opts.stackStorageError,
     apiEndpoint: opts.stackApiEndpoint,
-    serviceRoleJwt: opts.stackServiceRoleJwt,
-    capabilityStates: opts.stackCapabilityStates,
   });
   const catalog =
     opts.stackBackend === true
-      ? recordingStackCatalogSetup((input) => ({
-          kind: input.target.kind,
-          analytics: input.optionalConfig?.capabilities?.analytics?.enabled,
-        }))
+      ? (() => {
+          const applied: Array<StackCatalogSetupInput> = [];
+          return {
+            layer: Layer.succeed(StackCatalogSetup, {
+              apply: (input) => Effect.sync(() => void applied.push(input)),
+            }),
+            applied,
+          };
+        })()
       : undefined;
   const requests: Array<{ method: string; url: string; body: unknown }> = [];
   const storageRoutes = opts.storageRoutes;
@@ -949,7 +1165,10 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(stackApi.resetCalls).toBe(1);
-        expect(catalogApplied).toEqual([{ kind: "live", analytics: undefined }]);
+        expect(stackApi.stopCalls).toBe(1);
+        expect(stackApi.startCalls).toBe(2);
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "storage", "realtime"]);
+        expect(catalogApplied[0]?.target.jwtSecret).toBe(RESET_JWT);
         expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
           false,
         );
@@ -959,31 +1178,33 @@ describe("db reset", () => {
       });
     });
 
-    it.live("skips optional analytics catalog when the running stack has it disabled", () => {
+    it.live("preserves the existing stack composition while rebuilding the database", () => {
       const { layer, catalogApplied } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         args: ["db", "reset", "--local"],
         isLocal: true,
         stackBackend: true,
-        stackCapabilityStates: { analytics: "disabled" },
       });
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(catalogApplied).toEqual([{ kind: "live", analytics: false }]);
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "storage", "realtime"]);
       });
     });
 
-    it.live("re-inits optional analytics catalog when the running stack has it ready", () => {
-      const { layer, catalogApplied } = setup(tmp.current, {
+    it.live("leaves the stopped composition after a migration failure", () => {
+      const { layer, stackApi } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
+        files: { ...migrationFile("20240101000000", "create table stack_reset_failure ();") },
+        execFailsOn: "create table stack_reset_failure",
         args: ["db", "reset", "--local"],
         isLocal: true,
         stackBackend: true,
-        stackCapabilityStates: { analytics: "ready" },
       });
       return Effect.gen(function* () {
-        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(catalogApplied).toEqual([{ kind: "live", analytics: undefined }]);
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(stackApi.stopCalls).toBe(1);
+        expect(stackApi.startCalls).toBe(1);
       });
     });
 
@@ -1005,7 +1226,6 @@ describe("db reset", () => {
         stackBackend: true,
         stackStorageReady: true,
         stackApiEndpoint: { url: "http://127.0.0.1:55421", port: 55421 },
-        stackServiceRoleJwt: "stack-service-role-jwt-not-from-config",
         httpClient: Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make((request) => {
@@ -1033,8 +1253,9 @@ describe("db reset", () => {
         );
         expect(requests.some((request) => request.url.includes("127.0.0.1:54321"))).toBe(false);
         expect(
-          requests.some((request) =>
-            request.authorization.includes("stack-service-role-jwt-not-from-config"),
+          requests.some(
+            (request) =>
+              request.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
           ),
         ).toBe(true);
       });
@@ -1070,7 +1291,6 @@ describe("db reset", () => {
         stackBackend: true,
         stackStorageState: "dormant",
         stackApiEndpoint: { url: "http://127.0.0.1:55422", port: 55422 },
-        stackServiceRoleJwt: "dormant-stack-jwt",
         httpClient: client.layer,
       });
       return Effect.gen(function* () {
@@ -1078,9 +1298,11 @@ describe("db reset", () => {
         expect(client.requests.some((r) => r.url.includes("127.0.0.1:55422/storage/v1"))).toBe(
           true,
         );
-        expect(client.requests.some((r) => r.authorization.includes("dormant-stack-jwt"))).toBe(
-          true,
-        );
+        expect(
+          client.requests.some(
+            (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+          ),
+        ).toBe(true);
       });
     });
 
@@ -1167,7 +1389,6 @@ describe("db reset", () => {
           stackBackend: true,
           stackStorageState: "starting",
           stackApiEndpoint: { url: "http://127.0.0.1:55425", port: 55425 },
-          stackServiceRoleJwt: "starting-stack-jwt",
           httpClient: client.layer,
         });
         return Effect.gen(function* () {
@@ -1175,9 +1396,11 @@ describe("db reset", () => {
           expect(client.requests.some((r) => r.url.includes("127.0.0.1:55425/storage/v1"))).toBe(
             true,
           );
-          expect(client.requests.some((r) => r.authorization.includes("starting-stack-jwt"))).toBe(
-            true,
-          );
+          expect(
+            client.requests.some(
+              (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+            ),
+          ).toBe(true);
         });
       },
     );
@@ -1192,7 +1415,6 @@ describe("db reset", () => {
         stackBackend: true,
         stackStorageState: "stopping",
         stackApiEndpoint: { url: "http://127.0.0.1:55430", port: 55430 },
-        stackServiceRoleJwt: "stopping-stack-jwt",
         httpClient: client.layer,
       });
       return Effect.gen(function* () {
@@ -1200,9 +1422,11 @@ describe("db reset", () => {
         expect(client.requests.some((r) => r.url.includes("127.0.0.1:55430/storage/v1"))).toBe(
           true,
         );
-        expect(client.requests.some((r) => r.authorization.includes("stopping-stack-jwt"))).toBe(
-          true,
-        );
+        expect(
+          client.requests.some(
+            (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+          ),
+        ).toBe(true);
         expect(out.stderrText).not.toContain("skipped seeding storage buckets");
       });
     });
@@ -1296,12 +1520,9 @@ describe("db reset", () => {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(out.stderrText).toContain(
-            "WARNING: skipped seeding storage buckets: The stack exposes no API gateway endpoint.",
+            "WARNING: skipped seeding storage buckets: The stack exposes no Storage endpoint.",
           );
           expect(out.stderrText).toContain(
-            "Run supabase stack status to inspect the stack, or supabase stack restart.",
-          );
-          expect(out.stderrText).not.toContain(
             "Run supabase seed buckets --local once Storage is available.",
           );
         });
@@ -1329,22 +1550,6 @@ describe("db reset", () => {
         });
       },
     );
-
-    it.live("fails stack reset on a bad functions/.env before wiping", () => {
-      const { layer, stackApi } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        files: { "supabase/functions/.env": "lowercase=value\nSECRET=value\n" },
-        args: ["db", "reset", "--local"],
-        isLocal: true,
-        stackBackend: true,
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("functions/.env");
-        expect(stackApi.resetCalls).toBe(0);
-      });
-    });
 
     it.live(
       "fails a local reset before the destructive recreate on a malformed config.toml",

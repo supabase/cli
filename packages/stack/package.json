@@ -6,8 +6,11 @@
   "exports": {
     ".": "./src/index.ts",
     "./effect": "./src/effect.ts",
-    "./testing": "./src/testing.ts",
-    "./internal/supervisor": "./src/internal/supervisor-process.ts"
+    "./tools": "./src/Tools.ts",
+    "./internal/dispatch": "./src/internal/dispatch.ts",
+    "./internal/identity": "./src/identity/Identity.ts",
+    "./internal/functions/serve-main": "./src/functions/serve.main.ts",
+    "./internal/postgres-artifact": "./src/internal/postgres-artifact.ts"
   },
   "scripts": {
     "test": "pnpm run test:unit && pnpm run test:integration",

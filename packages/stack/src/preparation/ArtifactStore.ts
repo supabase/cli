@@ -1,6 +1,7 @@
 import { Crypto, Effect, FileSystem, Option, Path, PlatformError, Predicate, Schema } from "effect";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { ArtifactIntegrityError, StackPreparationError } from "../public/Errors.ts";
+import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
 import { validateRelativePath, validateSha256 } from "./Integrity.ts";
 
 /** A concrete artifact identity. `key` may contain subdirectories but never an absolute or traversing path. */
@@ -15,12 +16,14 @@ export interface ArtifactRequest {
 
 /**
  * The source is the only download/archive boundary: it writes an unpacked artifact tree
- * below `destination` after verifying the downloaded archive digest. The store stays
- * independent of transport and archive formats.
+ * below `destination` after verifying the downloaded archive digest. HTTP transport remains
+ * supplied by the caller through the Effect HttpClient service.
  */
 export interface ArtifactSource {
   /** Resolves the published digest only when the store has no valid cached artifact. */
-  readonly checksum: (request: ArtifactRequest) => Effect.Effect<string, StackPreparationError>;
+  readonly checksum: (
+    request: ArtifactRequest,
+  ) => Effect.Effect<string, PreparationError, HttpClient.HttpClient>;
   readonly materialize: (
     request: ArtifactRequest,
     destination: string,
@@ -28,8 +31,12 @@ export interface ArtifactSource {
     onProgress?: (state: "downloading" | "preparing") => void,
   ) => Effect.Effect<
     void,
-    StackPreparationError | ArtifactIntegrityError,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawner.ChildProcessSpawner
+    PreparationError | ArtifactIntegrityError,
+    | FileSystem.FileSystem
+    | Path.Path
+    | Crypto.Crypto
+    | ChildProcessSpawner.ChildProcessSpawner
+    | HttpClient.HttpClient
   >;
 }
 
@@ -38,7 +45,7 @@ export interface ArtifactStoreOptions {
   readonly source: ArtifactSource;
 }
 
-export interface PreparedArtifact {
+interface PreparedArtifact {
   readonly key: string;
   /** Installed artifact directory. Required runtime paths are relative to this directory. */
   readonly path: string;
@@ -48,14 +55,7 @@ export interface PreparedArtifact {
   readonly outcome: "cached" | "downloaded";
 }
 
-export type ArtifactStoreError = StackPreparationError | ArtifactIntegrityError;
-
-export interface ArtifactStore {
-  readonly prepare: (
-    request: ArtifactRequest,
-    onProgress?: (state: "downloading" | "preparing") => void,
-  ) => Effect.Effect<PreparedArtifact, ArtifactStoreError>;
-}
+type ArtifactStoreError = PreparationError | ArtifactIntegrityError;
 
 const ARTIFACT_FORMAT = "supabase-stack-artifact-v3";
 const METADATA_NAME = ".artifact.json";
@@ -70,7 +70,7 @@ type InspectedArtifactPath = {
 };
 
 const artifactError = (message: string, fields: Readonly<Record<string, unknown>> = {}) =>
-  new StackPreparationError({ ...fields, message });
+  new PreparationError({ ...fields, message });
 
 const metadataError = (message: string, fields: Readonly<Record<string, unknown>> = {}) =>
   new ArtifactIntegrityError({ ...fields, message });
@@ -92,7 +92,7 @@ const mapFs = <A>(
   path: string,
   operation: string,
   effect: Effect.Effect<A, PlatformError.PlatformError>,
-): Effect.Effect<A, StackPreparationError> =>
+): Effect.Effect<A, PreparationError> =>
   effect.pipe(
     Effect.mapError((cause) =>
       artifactError(
@@ -119,7 +119,7 @@ const isNotFound = (cause: unknown): cause is PlatformError.PlatformError =>
 const isMissingArtifactRoot = (error: ArtifactIntegrityError): boolean =>
   Predicate.hasProperty(error, "cause") && isNotFound(error.cause);
 
-const validateKey = (key: string): Effect.Effect<void, StackPreparationError> =>
+const validateKey = (key: string): Effect.Effect<void, PreparationError> =>
   validateRelativePath(key, "artifact key").pipe(
     Effect.flatMap(() =>
       /^[A-Za-z0-9][A-Za-z0-9._-]*(?:[\\/][A-Za-z0-9][A-Za-z0-9._-]*)*$/u.test(key)
@@ -128,7 +128,7 @@ const validateKey = (key: string): Effect.Effect<void, StackPreparationError> =>
     ),
   );
 
-const validateRequest = (request: ArtifactRequest): Effect.Effect<void, StackPreparationError> =>
+const validateRequest = (request: ArtifactRequest): Effect.Effect<void, PreparationError> =>
   Effect.gen(function* () {
     yield* validateKey(request.key);
     const seen = new Set<string>();
@@ -160,7 +160,7 @@ const metadataFor = (
   ...(request.executablePath === undefined ? {} : { executablePath: request.executablePath }),
 });
 
-const encodeMetadata = (metadata: ArtifactMetadata): Effect.Effect<string, StackPreparationError> =>
+const encodeMetadata = (metadata: ArtifactMetadata): Effect.Effect<string, PreparationError> =>
   Schema.encodeEffect(Schema.fromJsonString(ArtifactMetadataSchema))(metadata).pipe(
     Effect.mapError((cause) =>
       artifactError(`Unable to encode artifact metadata: ${String(cause)}`),
@@ -193,7 +193,7 @@ const ensureDirectory = (
   path: Path.Path,
   directory: string,
   canonicalRoot: string,
-): Effect.Effect<void, StackPreparationError> =>
+): Effect.Effect<void, PreparationError> =>
   Effect.gen(function* () {
     const root = path.resolve(canonicalRoot);
     const resolved = path.resolve(directory);
@@ -538,7 +538,7 @@ const writeBytesSync = (
   fs: FileSystem.FileSystem,
   path: string,
   bytes: Uint8Array,
-): Effect.Effect<void, StackPreparationError> =>
+): Effect.Effect<void, PreparationError> =>
   Effect.scoped(
     Effect.gen(function* () {
       const file = yield* fs.open(path, { flag: "wx", mode: 0o600 }).pipe(
@@ -569,16 +569,13 @@ const writeMetadataSync = (
   fs: FileSystem.FileSystem,
   path: string,
   metadata: ArtifactMetadata,
-): Effect.Effect<void, StackPreparationError> =>
+): Effect.Effect<void, PreparationError> =>
   Effect.gen(function* () {
     const encoded = yield* encodeMetadata(metadata);
     yield* writeBytesSync(fs, path, new TextEncoder().encode(encoded));
   });
 
-const cleanup = (
-  fs: FileSystem.FileSystem,
-  path: string,
-): Effect.Effect<void, StackPreparationError> =>
+const cleanup = (fs: FileSystem.FileSystem, path: string): Effect.Effect<void, PreparationError> =>
   fs
     .remove(path, { recursive: true, force: true })
     .pipe(
@@ -587,7 +584,7 @@ const cleanup = (
       ),
     );
 
-const makeArtifactOperation = (
+const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   crypto: Crypto.Crypto,
@@ -596,8 +593,8 @@ const makeArtifactOperation = (
   source: ArtifactSource,
   request: ArtifactRequest,
   onProgress?: (state: "downloading" | "preparing") => void,
-): Effect.Effect<PreparedArtifact, ArtifactStoreError> =>
-  Effect.gen(function* () {
+) {
+  return yield* Effect.gen(function* () {
     const target = path.resolve(cacheRoot, request.key);
     const targetParent = path.dirname(target);
     yield* ensureDirectory(fs, path, targetParent, cacheRoot);
@@ -783,65 +780,60 @@ const makeArtifactOperation = (
       outcome: "downloaded" as const,
     };
   });
+});
 
-export const makeArtifactStore = (
+export const makeArtifactStore = Effect.fn("ArtifactStore.makeStore")(function* (
   options: ArtifactStoreOptions,
-): Effect.Effect<
-  ArtifactStore,
-  StackPreparationError,
-  FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawner.ChildProcessSpawner
-> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
-    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    if (options.cacheRoot.trim().length === 0)
-      return yield* artifactError("Artifact cache root must not be blank");
-    const requestedRoot = path.resolve(options.cacheRoot);
-    yield* mapFs(
-      requestedRoot,
-      "create artifact cache root",
-      fs.makeDirectory(requestedRoot, { recursive: true, mode: 0o700 }),
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  if (options.cacheRoot.trim().length === 0)
+    return yield* artifactError("Artifact cache root must not be blank");
+  const requestedRoot = path.resolve(options.cacheRoot);
+  yield* mapFs(
+    requestedRoot,
+    "create artifact cache root",
+    fs.makeDirectory(requestedRoot, { recursive: true, mode: 0o700 }),
+  );
+  const cacheRoot = yield* fs.realPath(requestedRoot).pipe(
+    Effect.mapError((cause) =>
+      artifactError(`Unable to resolve artifact cache root: ${cause.message}`, {
+        path: requestedRoot,
+        cause,
+      }),
+    ),
+  );
+  const rootInfo = yield* fs.stat(cacheRoot).pipe(
+    Effect.mapError((cause) =>
+      artifactError(`Unable to inspect artifact cache root: ${cause.message}`, {
+        path: cacheRoot,
+        cause,
+      }),
+    ),
+  );
+  if (rootInfo.type !== "Directory")
+    return yield* artifactError("Artifact cache root must be a directory", { path: cacheRoot });
+  yield* mapFs(cacheRoot, "secure artifact cache root", fs.chmod(cacheRoot, 0o700));
+  const prepare = Effect.fn("ArtifactStore.prepare")(function* (
+    request: ArtifactRequest,
+    onProgress?: (state: "downloading" | "preparing") => void,
+  ) {
+    yield* validateRequest(request);
+    const target = path.resolve(cacheRoot, request.key);
+    if (!pathWithin(cacheRoot, target, path.sep))
+      return yield* artifactError("Artifact key escapes cache root", { key: request.key });
+    return yield* makeArtifactOperation(
+      fs,
+      path,
+      crypto,
+      childProcessSpawner,
+      cacheRoot,
+      options.source,
+      request,
+      onProgress,
     );
-    const cacheRoot = yield* fs.realPath(requestedRoot).pipe(
-      Effect.mapError((cause) =>
-        artifactError(`Unable to resolve artifact cache root: ${cause.message}`, {
-          path: requestedRoot,
-          cause,
-        }),
-      ),
-    );
-    const rootInfo = yield* fs.stat(cacheRoot).pipe(
-      Effect.mapError((cause) =>
-        artifactError(`Unable to inspect artifact cache root: ${cause.message}`, {
-          path: cacheRoot,
-          cause,
-        }),
-      ),
-    );
-    if (rootInfo.type !== "Directory")
-      return yield* artifactError("Artifact cache root must be a directory", { path: cacheRoot });
-    yield* mapFs(cacheRoot, "secure artifact cache root", fs.chmod(cacheRoot, 0o700));
-    const prepare = (
-      request: ArtifactRequest,
-      onProgress?: (state: "downloading" | "preparing") => void,
-    ) =>
-      Effect.gen(function* () {
-        yield* validateRequest(request);
-        const target = path.resolve(cacheRoot, request.key);
-        if (!pathWithin(cacheRoot, target, path.sep))
-          return yield* artifactError("Artifact key escapes cache root", { key: request.key });
-        return yield* makeArtifactOperation(
-          fs,
-          path,
-          crypto,
-          childProcessSpawner,
-          cacheRoot,
-          options.source,
-          request,
-          onProgress,
-        );
-      });
-    return { prepare };
   });
+  return { prepare };
+});

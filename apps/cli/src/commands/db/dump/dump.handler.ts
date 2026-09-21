@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Option, Path, Predicate } from "effect";
+import type { Stack } from "@supabase/stack/effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -7,6 +8,7 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
 import { loadProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import {
   ipv6Suggestion,
@@ -43,6 +45,7 @@ import {
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import {
   stackProjectDatabaseVersion,
+  stackOpenReadyProject,
   stackRequireProjectRuntime,
 } from "../../../command-internal/stack-local-database.ts";
 import { resolveBundledPostgresRuntime } from "../../../command-internal/bundled-postgres-client.ts";
@@ -194,12 +197,20 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
 
     const backend = yield* currentStackBackend;
+    const managedProject =
+      backend.kind === "stack" && connType === "local"
+        ? yield* stackOpenReadyProject.pipe(
+            Effect.mapError((cause) => new DbDumpRunError({ message: cause.message })),
+            Effect.map(Option.getOrUndefined),
+          )
+        : undefined;
+    const managedStack: Stack | undefined = managedProject?.stack;
     const stackRuntime =
       backend.kind === "stack" && connType === "local"
         ? yield* stackRequireProjectRuntime
         : undefined;
     const bundledRuntime =
-      backend.kind === "stack"
+      backend.kind === "stack" && managedStack === undefined
         ? yield* resolveBundledPostgresRuntime(stackRuntime, runtimeInfo.platform, runtimeInfo.arch)
         : undefined;
     const useNativeClient = bundledRuntime?.kind === "native";
@@ -215,7 +226,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                 ? undefined
                 : envNetworkId,
           );
-    const stackPublishedTarget = backend.kind === "stack" && isLocal;
+    const stackPublishedTarget = backend.kind === "stack" && isLocal && managedStack === undefined;
     const dumpConn = useNativeClient
       ? connType === "local"
         ? dumpConnForHostClient(conn)
@@ -235,14 +246,21 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : String(tomlValues.majorVersion);
     const dumpMajor = tomlValues.majorVersion;
     const dumpClient =
-      backend.kind === "stack"
+      managedStack !== undefined
         ? {
-            kind: "bundled" as const,
+            kind: "stack" as const,
+            stack: managedStack,
             command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
-            version: catalogVersion,
-            runtime: bundledRuntime,
+            major: Number(catalogVersion.split(".")[0]) === 15 ? (15 as const) : (17 as const),
           }
-        : { kind: "container" as const };
+        : backend.kind === "stack"
+          ? {
+              kind: "bundled" as const,
+              command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
+              version: catalogVersion,
+              runtime: bundledRuntime,
+            }
+          : { kind: "container" as const };
 
     // 4. Pick the mode-specific script + env. --schema/-s and --exclude/-x arrive here
     //    already CSV-parsed by `parseSchemaFlags`.
@@ -267,7 +285,20 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
             script: dumpSchemaScript,
             buildEnv: buildSchemaDumpEnv,
           } as const);
-    const modeEnv = mode.buildEnv(dumpConn, opt);
+    const managedDumpConn =
+      managedProject === undefined
+        ? undefined
+        : parseConnectionString(
+            yield* managedProject.database.credentials({ from: "runtime" }).pipe(
+              Effect.mapError((cause) => new DbDumpRunError({ message: cause.message })),
+              Effect.map((credentials) => credentials.databaseUrl ?? ""),
+            ),
+          );
+    if (managedProject !== undefined && managedDumpConn === undefined)
+      return yield* new DbDumpRunError({
+        message: "The local stack runtime database URL is unavailable.",
+      });
+    const modeEnv = mode.buildEnv(managedDumpConn ?? dumpConn, opt);
 
     // Keys off `path.length > 0`, not flag presence: `--file ""` means stdout, no
     // file opened.
@@ -406,7 +437,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       Effect.catchIf(
         (error): error is DockerRunError =>
           Predicate.isTagged(error, "DockerRunError") &&
-          stackRuntime?.kind === "native" &&
+          stackRuntime === "native" &&
           runtimeInfo.platform === "win32",
         (error) =>
           Effect.fail(

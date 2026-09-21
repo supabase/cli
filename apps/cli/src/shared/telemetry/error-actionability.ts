@@ -1,4 +1,4 @@
-import { Cause, Option } from "effect";
+import { Cause, Option, Predicate } from "effect";
 import type { CliError as EffectCliError } from "effect/unstable/cli";
 
 /**
@@ -852,7 +852,19 @@ export function classifyCliErrorActionability(error: unknown): CliErrorActionabi
   }
 }
 
+/** Removes the typed native boundary without changing its diagnostics or cause-depth budget. */
+export function unwrapNativeFailure(error: unknown): unknown {
+  const visited = new Set<Error>();
+  while (error instanceof Error && Predicate.isTagged(error, "NativeFailure")) {
+    if (visited.has(error) || !(error.cause instanceof Error)) return undefined;
+    visited.add(error);
+    error = error.cause;
+  }
+  return error;
+}
+
 function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
+  error = unwrapNativeFailure(error);
   if (depth >= MAX_CAUSE_DEPTH) {
     return toActionability(actionability.unknown, "error", "CauseChainLimit");
   }

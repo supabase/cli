@@ -54,6 +54,7 @@ import {
   stackAcquireShadowDatabase,
   stackMigrateShadow,
 } from "../../../command-internal/stack-shadow.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
 import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
 
 const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => {
@@ -145,6 +146,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
     const dbConnection = yield* DbConnection;
     const httpClient = yield* HttpClient.HttpClient;
     const cliSettings = yield* CommandSettings;
+    const stackApi = yield* StackApi;
 
     const runtimeWith = (outputService: typeof Output.Service) => {
       const deps = Layer.mergeAll(
@@ -162,6 +164,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         Layer.succeed(HttpClient.HttpClient, httpClient),
         Layer.succeed(Crypto.Crypto, crypto),
         Layer.succeed(CommandSettings, cliSettings),
+        Layer.succeed(StackApi, stackApi),
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
       return Layer.mergeAll(deps, stackCatalogSetupLayer.pipe(Layer.provide(deps)));
@@ -290,19 +293,18 @@ export const pgDeltaNextShadowLayer = Layer.effect(
       }).pipe(Effect.provide(runtimeWith(outputService)), Effect.mapError(nextShadowError));
 
     const stackAcquire = (input: NativeShadowInput, opts: ShadowCacheOpts) =>
-      stackAcquireShadowDatabase(input.base, {
-        ...(opts.bypassCache === true ? { bypassCache: true } : {}),
-        port: input.base.shadowPort,
-        ...(opts.webhooks === undefined ? {} : { webhooks: opts.webhooks }),
-      });
+      stackAcquireShadowDatabase(
+        input.base,
+        opts.webhooks === undefined ? {} : { webhooks: opts.webhooks },
+      );
 
     const stackProvisionMigrations = (input: NativeShadowInput, opts: ShadowCacheOpts) =>
       Effect.gen(function* () {
         const handle = yield* stackAcquire(input, opts);
-        yield* stackMigrateShadow(handle, input.base);
+        yield* Effect.scoped(stackMigrateShadow(handle, input.base));
         return {
           migrationsUrl: handle.url,
-          snapshotKey: handle.snapshotKey,
+          snapshotKey: undefined,
         } satisfies ProvisionedMigrationsShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
@@ -311,8 +313,8 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         const handle = yield* stackAcquire(input, opts);
         return {
           declarativeUrl: handle.url,
-          restoredFromPgDataSnapshot: handle.baselinePresent,
-          snapshotKey: handle.snapshotKey,
+          restoredFromPgDataSnapshot: false,
+          snapshotKey: undefined,
         } satisfies ProvisionedDeclarativeShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
@@ -327,22 +329,22 @@ export const pgDeltaNextShadowLayer = Layer.effect(
     return PgDeltaNextShadow.of({
       provisionMigrations: (opts) =>
         Effect.gen(function* () {
-          const port = yield* nextPort();
+          const backend = yield* currentStackBackend;
+          const port = backend.kind === "stack" ? 0 : yield* nextPort();
           const built = yield* buildNativeBase(opts);
           const input = buildNativeInput(opts, built, port);
-          const backend = yield* currentStackBackend;
           return backend.kind === "stack"
             ? yield* stackProvisionMigrations(input, cacheOpts(opts, "config"))
             : yield* provisionMigrations(input, cacheOpts(opts, "config"));
         }).pipe(Effect.mapError(nextShadowError)),
       provisionPlan: (opts) =>
         Effect.gen(function* () {
-          const migrationsPort = yield* nextPort();
-          const declarativePort = yield* nextPort(migrationsPort);
+          const backend = yield* currentStackBackend;
+          const migrationsPort = backend.kind === "stack" ? 0 : yield* nextPort();
+          const declarativePort = backend.kind === "stack" ? 0 : yield* nextPort(migrationsPort);
           const built = yield* buildNativeBase(opts);
           const migrationsInput = buildNativeInput(opts, built, migrationsPort);
           const declarativeInput = buildNativeInput(opts, built, declarativePort);
-          const backend = yield* currentStackBackend;
           if (backend.kind === "stack") {
             const migrations = yield* stackProvisionMigrations(
               migrationsInput,

@@ -1,5 +1,5 @@
 /**
- * Pins one workload in `packages/stack/src/model/WorkloadCatalog.ts` to a
+ * Pins one workload in `packages/stack/src/Artifacts.ts` to a
  * slim-services release, driven by the same `mirror-slim-image` dispatch as the
  * ECR mirror (`mirror-slim-image.yml`).
  *
@@ -13,7 +13,7 @@
  * service or release line is a successful no-op.
  */
 
-export const CATALOG_PATH = "packages/stack/src/model/WorkloadCatalog.ts";
+export const CATALOG_PATH = "packages/stack/src/Artifacts.ts";
 
 /** Mirrors the payload validation in `mirror-slim-image.yml`. */
 const SERVICE_PATTERN = /^[a-z][a-z0-9-]*$/;
@@ -70,15 +70,15 @@ export function validatePayload(input: {
   }
 }
 
-/** `native("<service>", "<version>", "<image>"` — image anchored so postgres != postgrest. */
+/** `definition("<service>", "<version>", "<image>"` — image anchored so postgres != postgrest. */
 function defaultEntryPattern(service: string): RegExp {
   const s = escapeRegExp(service);
   return new RegExp(
-    `(native\\(\\s*"${s}",\\s*")([^"]+)("\\s*,\\s*")(${escapeRegExp(SLIM_IMAGE_PREFIX)}${s}:[^"]+)(")`,
+    `(definition\\(\\s*"${s}",\\s*")([^"]+)("\\s*,\\s*")(${escapeRegExp(SLIM_IMAGE_PREFIX)}${s}:[^"]+)(")`,
   );
 }
 
-/** `additionalReleases` entries: `"<version>": "<image>"`. The `:` is what distinguishes them. */
+/** Additional release entries: `"<version>": "<image>"`. The `:` is what distinguishes them. */
 function additionalEntryPattern(service: string, version?: string): RegExp {
   const s = escapeRegExp(service);
   const key = version === undefined ? `[^"]+` : escapeRegExp(version);

@@ -153,7 +153,7 @@ export const runNativeLauncher = (): void => {
     }
     ownerLossGraceful = true;
     // The fiber is process-scoped: the launcher exits on group termination, so
-    // no detached work can outlive this supervisor process.
+    // no detached work can outlive its owner process.
     Effect.runFork(
       Effect.sleep(Duration.millis(specGracefulStopTimeoutMs)).pipe(
         Effect.andThen(Effect.sync(() => terminateGroup("SIGKILL"))),
@@ -171,7 +171,7 @@ export const runNativeLauncher = (): void => {
           fd: 3,
           autoClose: false,
         });
-  // Owner-loss is an abrupt supervisor crash, not an explicit graceful stop.
+  // Owner-loss is an abrupt owner crash, not an explicit graceful stop.
   // Apply a workload's bounded graceful policy when present, then guarantee
   // tree termination so descendants cannot be orphaned after owner loss.
   ownerPipe.on("end", handleOwnerLoss);

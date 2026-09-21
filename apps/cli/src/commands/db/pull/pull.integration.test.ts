@@ -1,3 +1,4 @@
+import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -421,6 +422,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const baseLayer = Layer.mergeAll(
+    unusedStackServices,
     // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
     // override its real implementations, matching `start.integration.test.ts`.
     BunServices.layer,

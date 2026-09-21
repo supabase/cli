@@ -1,6 +1,6 @@
 name: Sync Stack Workload Catalog
 
-# Pins `packages/stack/src/model/WorkloadCatalog.ts` to slim-services releases,
+# Pins `packages/stack/src/Artifacts.ts` to slim-services releases,
 # off the same `mirror-slim-image` dispatch that drives the ECR mirror.
 # Dependabot owns the Dockerfile and cannot own this table: these pins carry
 # image digests, which tag resolution never produces (ADR 0017).
@@ -69,7 +69,7 @@ jobs:
       - name: Check for catalog changes
         id: check
         run: |
-          if git diff --exit-code --quiet packages/stack/src/model/WorkloadCatalog.ts; then
+          if git diff --exit-code --quiet packages/stack/src/Artifacts.ts; then
             echo "Workload catalog is already in sync."
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
@@ -77,7 +77,7 @@ jobs:
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Prove the rewritten pin compiles and passes the catalog's own tests.
+      # Prove the rewritten pin compiles and the affected catalog surfaces pass.
       - name: Type-check stack
         if: steps.check.outputs.has_changes == 'true'
         run: pnpm types:check
@@ -85,8 +85,15 @@ jobs:
 
       - name: Test catalog
         if: steps.check.outputs.has_changes == 'true'
-        run: pnpm run test:unit && pnpm run test:integration
-        working-directory: packages/stack
+        run: pnpm run test:github-scripts
+
+      - name: Test affected stack preparation
+        if: steps.check.outputs.has_changes == 'true'
+        run: >-
+          pnpm --filter @supabase/stack test:integration:run
+          src/preparation/artifacts.integration.test.ts
+          src/preparation/slim-services.integration.test.ts
+          --passWithNoTests=false
 
       - name: Generate token
         if: steps.check.outputs.has_changes == 'true'
@@ -106,7 +113,7 @@ jobs:
           commit-message: "chore(stack): pin ${{ github.event.client_payload.service || inputs.service }} to ${{ github.event.client_payload.version || inputs.version }}"
           title: "chore(stack): pin ${{ github.event.client_payload.service || inputs.service }} to ${{ github.event.client_payload.version || inputs.version }}"
           body: |
-            Pins `packages/stack/src/model/WorkloadCatalog.ts` to the
+            Pins `packages/stack/src/Artifacts.ts` to the
             `${{ github.event.client_payload.service || inputs.service }}` `${{ github.event.client_payload.version || inputs.version }}`
             slim-services release and its image digest.
 

@@ -2,6 +2,10 @@ import { Effect, Option, Path } from "effect";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { initProject } from "../../shared/init/project-init.ts";
 import { Output } from "../../shared/output/output.service.ts";
+import {
+  experimentalFeatureEnv,
+  resolveExperimentalFeature,
+} from "../../command-internal/experimental-feature.ts";
 import { ExperimentalFlag, WorkdirFlag, resolveYes } from "../../command-internal/global-flags.ts";
 import { InitConfigExistsError, InitExperimentalRequiredError } from "./init.errors.ts";
 import type { InitFlags } from "./init.command.ts";
@@ -19,6 +23,12 @@ export const init = Effect.fn("init")(function* (flags: InitFlags) {
     });
   }
 
+  const experimentalStack = yield* resolveExperimentalFeature({
+    feature: "stack",
+    configValue: Effect.succeed(false),
+    env: yield* experimentalFeatureEnv("stack"),
+  });
+
   const result = yield* initProject({
     cwd: Option.isSome(workdir) ? path.resolve(runtimeInfo.cwd, workdir.value) : runtimeInfo.cwd,
     force: flags.force,
@@ -29,6 +39,7 @@ export const init = Effect.fn("init")(function* (flags: InitFlags) {
     yes: yield* resolveYes,
     withVscodeSettings: flags.withVscodeWorkspace || flags.withVscodeSettings,
     withIntellijSettings: flags.withIntellijSettings,
+    experimentalStack,
   });
 
   if (!result.created) {

@@ -19,12 +19,17 @@
  * already-generated API keys.
  */
 
-import * as nodePath from "node:path";
+import type { Path } from "effect";
 
 import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
 import { envOrDefault } from "../lib/env-or-default.ts";
 import { renderStartKongYml } from "../lib/template-render.ts";
 import { START_CUSTOM_NGINX_TEMPLATE } from "../templates/custom_nginx.template.ts";
+
+interface KongPaths {
+  readonly path: Pick<Path.Path, "extname">;
+  readonly posixPath: Pick<Path.Path, "join">;
+}
 
 /** The Kong network aliases — a fixed, non-configurable constant. */
 const KONG_NETWORK_ALIASES = ["kong", "api.supabase.internal"];
@@ -115,10 +120,13 @@ export interface KongEmailTemplateMount {
  * `resolvedPath` is already validated; makes no containment or existence
  * checks of its own.
  */
-export function buildKongEmailTemplateBind(mount: KongEmailTemplateMount): string {
-  const dockerPath = nodePath.posix.join(
+export function buildKongEmailTemplateBind(
+  mount: KongEmailTemplateMount,
+  { path, posixPath }: KongPaths,
+): string {
+  const dockerPath = posixPath.join(
     KONG_NGINX_EMAIL_TEMPLATE_DIR,
-    `${mount.id}${nodePath.extname(mount.resolvedPath)}`,
+    `${mount.id}${path.extname(mount.resolvedPath)}`,
   );
   return `${mount.resolvedPath}:${dockerPath}:rw,z`;
 }
@@ -199,7 +207,10 @@ export interface KongContainerSpecInput {
  * ambient I/O — matching every other `start`-service builder in this
  * directory.
  */
-export function buildKongContainerSpec(input: KongContainerSpecInput): StartContainerSpec {
+export function buildKongContainerSpec(
+  input: KongContainerSpecInput,
+  paths: KongPaths,
+): StartContainerSpec {
   const kongYml = renderStartKongYml({
     gotrueId: input.gotrueId,
     restId: input.restId,
@@ -216,7 +227,9 @@ export function buildKongContainerSpec(input: KongContainerSpecInput): StartCont
     queryToken: buildKongQueryToken(input.apiKeys),
   });
 
-  const binds = (input.emailTemplateMounts ?? []).map((mount) => buildKongEmailTemplateBind(mount));
+  const binds = (input.emailTemplateMounts ?? []).map((mount) =>
+    buildKongEmailTemplateBind(mount, paths),
+  );
 
   const dockerPort = input.apiTlsEnabled ? 8443 : 8000;
 

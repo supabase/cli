@@ -1,7 +1,10 @@
 # 0017. Simplified managed stack architecture
 
-**Status**: accepted
+**Status**: superseded by [the Stack package architecture](../../packages/stack/ARCHITECTURE.md)
 **Date**: 2026-08-17
+
+> This decision record describes an earlier managed-stack architecture. The current package
+> architecture and lifecycle contract are maintained in `packages/stack/ARCHITECTURE.md`.
 
 ## Decision
 
@@ -100,7 +103,8 @@ public and private claims before one state commit; successful public sockets
 remain held and are adopted directly. Temporary private TCP listeners remain
 held until commit and then close, so a private workload gap remains possible.
 Fresh automatic claims draw from
-`20000..32767` with a random start and stride `257`, making up to 64 bounded
+`20000..32767` with a start derived from the stack's project root, identifier, and
+listener key, and stride `257`, making up to 64 bounded
 `EADDRINUSE`/`EACCES` attempts per newly selected binding while skipping
 durable sibling claims. Sticky values do not migrate. Failed acquisition
 preserves the

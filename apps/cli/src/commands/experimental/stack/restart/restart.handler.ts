@@ -1,154 +1,114 @@
-import { Effect, Match, Option } from "effect";
-import type { StackDescriptor, StackError, StackId } from "@supabase/stack/effect";
+import { Cause, Effect, Exit, Option, Path } from "effect";
+import type { StackError } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
   StackApi,
-  StackTargetError,
+  StackTargetResolver,
   rejectStackOutput,
-  renderStackStatus,
-  stackStatusPayload,
-  validateStackId,
   validateStackTarget,
 } from "../stack.shared.ts";
-import type { StackRestartFlags } from "./restart.command.ts";
 import { StackCommandRestartError } from "./restart.errors.ts";
+import type { StackRestartFlags } from "./restart.command.ts";
 
-const mapTargetError = (error: StackTargetError) =>
+const runtimeError = (cause: StackError) =>
   new StackCommandRestartError({
-    reason: error.reason,
-    message: error.message,
-    ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
-    cause: error,
+    reason: "unknown",
+    message: cause.message,
+    ...(cause.outcomes === undefined
+      ? {}
+      : {
+          detail: cause.outcomes
+            .filter((outcome) => !outcome.succeeded)
+            .map((outcome) => `${outcome.id}: ${outcome.error ?? "failed"}`)
+            .join("\n"),
+        }),
+    cause,
   });
-
-const mapStackError = (error: StackError) => {
-  const classification = Match.value(error).pipe(
-    Match.tag("StackNotFoundError", () => ({ reason: "not-found" as const })),
-    Match.tag("InvalidStackIdentityError", () => ({ reason: "flags" as const })),
-    Match.tag("PortUnavailableError", "PortAllocationError", () => ({
-      reason: "port" as const,
-      suggestion:
-        "Free the conflicting port and retry, or stop the stack and use supabase stack start to apply updated project port configuration.",
-    })),
-    Match.tag(
-      "InvalidStackConfigError",
-      "StackVersionUnsupportedError",
-      "InvalidProjectRootError",
-      "StackStateInvalidError",
-      "StackStateFormatUnsupportedError",
-      "StackSecretMismatchError",
-      "InvalidJwtSigningMaterialError",
-      () => ({ reason: "invalid-config" as const }),
-    ),
-    Match.tag("StackRuntimeMismatchError", () => ({
-      reason: "flags" as const,
-      suggestion:
-        "Restart preserves the existing runtime; choose a different existing stack if needed.",
-    })),
-    Match.tag(
-      "StackLifecycleConflictError",
-      "StackNotRunningError",
-      "StackMustBeStoppedError",
-      "StackOwnershipConflictError",
-      "StackUpgradeRequiredError",
-      () => ({
-        reason: "lifecycle" as const,
-        suggestion: "Run supabase stack status to inspect the stack state.",
-      }),
-    ),
-    Match.tag("ContainerEngineError", () => ({
-      reason: "runtime" as const,
-      suggestion: "Ensure the selected container engine is running and retry the command.",
-    })),
-    Match.tag("ContainerPullError", () => ({
-      reason: "registry" as const,
-      suggestion: "Check registry connectivity and image availability, then retry the command.",
-    })),
-    Match.tag("ArtifactIntegrityError", "StackPreparationError", () => ({
-      reason: "artifact" as const,
-      suggestion: "Retry the stack restart with --debug if the artifact cannot be prepared.",
-    })),
-    Match.tag("StackRuntimeError", () => ({
-      reason: "unknown" as const,
-      suggestion: "Retry the stack restart with --debug and inspect the runtime diagnostics.",
-    })),
-    Match.tag("StackCleanupError", () => ({
-      reason: "unknown" as const,
-      suggestion: "Retry the stack restart with --debug and inspect cleanup diagnostics.",
-    })),
-    Match.orElse(() => ({ reason: "unknown" as const })),
-  );
-  return new StackCommandRestartError({
-    ...classification,
-    message: error.message,
-    cause: error,
-  });
-};
 
 export const stackRestart = Effect.fn("experimental.stack.restart")(function* (
   flags: StackRestartFlags,
 ) {
-  const telemetryState = yield* TelemetryState;
-  const body = Effect.gen(function* () {
+  const telemetry = yield* TelemetryState;
+  return yield* Effect.gen(function* () {
     const output = yield* Output;
     const settings = yield* CommandSettings;
+    const path = yield* Path.Path;
     const api = yield* StackApi;
-    const outputFlag = yield* Effect.serviceOption(OutputFlag);
-    yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
+    const resolver = yield* StackTargetResolver;
+    const mapTargetError = (cause: {
+      readonly reason: "flags" | "invalid-config";
+      readonly message: string;
+      readonly suggestion?: string;
+    }) =>
+      new StackCommandRestartError({
+        reason: cause.reason,
+        message: cause.message,
+        ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
+        cause,
+      });
+    yield* rejectStackOutput(yield* Effect.serviceOption(OutputFlag)).pipe(
+      Effect.mapError(mapTargetError),
+    );
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
     }).pipe(Effect.mapError(mapTargetError));
-
-    let id: StackId;
-    let desiredLifecycle: StackDescriptor["desiredLifecycle"];
-    if (Option.isSome(flags.stackId)) {
-      id = yield* validateStackId(flags.stackId.value).pipe(Effect.mapError(mapTargetError));
-      const inspection = yield* api.inspectStack(id).pipe(Effect.mapError(mapStackError));
-      desiredLifecycle = inspection.descriptor.desiredLifecycle;
-    } else {
-      const found = yield* api
-        .findStack({
-          projectRoot: settings.workdir,
-          ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
-        })
-        .pipe(Effect.mapError(mapStackError));
-      if (Option.isNone(found))
-        return yield* new StackCommandRestartError({
-          reason: "not-found",
-          message: Option.isSome(flags.stack)
-            ? `No managed stack named "${flags.stack.value}" was found for this project.`
-            : "No managed stack exists for the selected project.",
-          suggestion: Option.isSome(flags.stack)
-            ? "Choose an existing --stack name or omit --stack for the current project."
-            : "Run supabase stack start first.",
-        });
-      id = found.value.id;
-      desiredLifecycle = found.value.desiredLifecycle;
-    }
-    if (desiredLifecycle === "unconfigured")
+    const target = yield* resolver
+      .resolve({
+        projectRoot: settings.workdir,
+        runtime: "auto",
+        ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
+        ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
+      })
+      .pipe(Effect.mapError(mapTargetError));
+    if (target.id === undefined)
+      return yield* new StackCommandRestartError({
+        reason: "not-found",
+        message: "No managed stack exists for the selected project.",
+        suggestion: "Run supabase stack start first.",
+      });
+    const stack = yield* api
+      .open({
+        id: target.id,
+        stateRoot: path.join(settings.supabaseHome, "stacks"),
+        cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
+      })
+      .pipe(Effect.mapError(runtimeError));
+    const composition = yield* stack.composition.describe.pipe(Effect.mapError(runtimeError));
+    if (composition.members.length === 0)
       return yield* new StackCommandRestartError({
         reason: "lifecycle",
         message: "The selected stack has not been configured yet.",
-        suggestion: "Run supabase stack start to configure the stack first.",
+        suggestion: "Run supabase stack start first.",
       });
-    const stack = yield* api.openStack(id).pipe(Effect.mapError(mapStackError));
-    const task = yield* output.task("Restarting local Supabase stack...");
-    yield* stack.stop.pipe(
-      Effect.mapError(mapStackError),
-      Effect.tapError((error) => task.fail(error.message)),
+    const task = yield* output.task("Restarting the saved stack composition...");
+    const observations = yield* stack.composition.restart.pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? task.clear()
+          : Cause.hasInterruptsOnly(exit.cause)
+            ? task.cancel()
+            : task.fail(Option.getOrUndefined(Exit.findErrorOption(exit))?.message),
+      ),
+      Effect.mapError(runtimeError),
     );
-    const status = yield* stack.start().pipe(
-      Effect.mapError(mapStackError),
-      Effect.tapError((error) => task.fail(error.message)),
-      Effect.tap(() => task.clear()),
-    );
-    if (output.format === "text") yield* output.raw(renderStackStatus(status));
-    else yield* output.success("", stackStatusPayload(status));
-    return status;
-  });
-  return yield* body.pipe(Effect.ensuring(telemetryState.flush));
+    const services = observations.map(({ id, config, lifecycle, health, wakeEnabled }) => ({
+      id,
+      service: config.service,
+      lifecycle,
+      health,
+      wake_enabled: wakeEnabled,
+    }));
+    if (output.format === "text") {
+      yield* output.raw(`Stack ${stack.id} restarted using its saved configuration.\n`);
+      for (const service of services)
+        yield* output.raw(
+          `  ${service.service}: ${service.lifecycle}, health ${service.health ?? "unavailable"}\n`,
+        );
+    } else yield* output.success("", { id: stack.id, services });
+    return services;
+  }).pipe(Effect.ensuring(telemetry.flush));
 });

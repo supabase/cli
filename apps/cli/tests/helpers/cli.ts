@@ -1,3 +1,4 @@
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -6,7 +7,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { Data, Effect, Exit } from "effect";
+import { Data, Effect, Exit, Stream } from "effect";
 import {
   noteStackCliProjectHome,
   registerTempHome,
@@ -745,3 +746,70 @@ export function requireCliSuccess(
     );
   }
 }
+
+class DockerCommandError extends Data.TaggedError("DockerCommandError")<{
+  readonly message: string;
+  readonly stdout: string;
+  readonly stderr: string;
+}> {}
+
+/** Owns a Docker CLI process and drains its output while it runs. */
+export const runDockerEffect = (
+  args: ReadonlyArray<string>,
+  options: { readonly timeout?: number } = {},
+) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make("docker", args, {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    );
+    // Keep recent diagnostics while draining both pipes completely so the child can exit.
+    const captureTail = <E, R>(stream: Stream.Stream<Uint8Array, E, R>) =>
+      Stream.runFold(
+        Stream.decodeText(stream),
+        () => ({ text: "", truncated: false }),
+        (state, chunk) => {
+          const tail = (state.text + chunk.slice(-65_536)).slice(-65_536);
+          const first = tail.charCodeAt(0);
+          return {
+            // A UTF-16 bound can cut a surrogate pair; discard its orphaned low half.
+            text: first >= 0xdc00 && first <= 0xdfff ? tail.slice(1) : tail,
+            truncated: state.truncated || state.text.length + chunk.length > 65_536,
+          };
+        },
+      ).pipe(
+        Effect.map(({ text, truncated }) =>
+          truncated ? `[output truncated; showing at most 65536 UTF-16 code units]\n${text}` : text,
+        ),
+      );
+    const [exitCode, stdout, stderr] = yield* Effect.all(
+      [child.exitCode, captureTail(child.stdout), captureTail(child.stderr)],
+      { concurrency: "unbounded" },
+    );
+    if (exitCode !== 0) {
+      return yield* new DockerCommandError({
+        message: `docker ${args.join(" ")} exited ${exitCode}: ${stderr}`,
+        stdout,
+        stderr,
+      });
+    }
+    return { stdout, stderr };
+  }).pipe(
+    (effect) =>
+      options.timeout === undefined
+        ? effect
+        : Effect.timeoutOrElse(effect, {
+            duration: options.timeout,
+            orElse: () =>
+              new DockerCommandError({
+                message: `docker ${args.join(" ")} timed out after ${options.timeout}ms`,
+                stdout: "",
+                stderr: "",
+              }),
+          }),
+    Effect.scoped,
+  );

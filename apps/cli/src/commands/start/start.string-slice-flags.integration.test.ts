@@ -14,6 +14,7 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
+import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
 import { startCommand } from "./start.command.ts";
 
 // Malformed CSV aborts flag parsing before the handler runs, with pflag's exact
@@ -41,6 +42,7 @@ function setup() {
     runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
   });
   const layer = Layer.mergeAll(
+    unusedStackServices,
     runtime,
     CliOutput.layer(textCliOutputFormatter()),
     processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),

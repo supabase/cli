@@ -9,7 +9,7 @@
  * mount for the GCP service-account JSON.
  */
 
-import { join } from "node:path";
+import type { Path } from "effect";
 
 import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
 import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
@@ -87,7 +87,10 @@ export interface LogflareContainerSpecInput {
 }
 
 /** Builds the `docker create` spec for the Logflare/analytics container. */
-export function buildLogflareContainerSpec(input: LogflareContainerSpecInput): StartContainerSpec {
+export function buildLogflareContainerSpec(
+  input: LogflareContainerSpecInput,
+  path: Pick<Path.Path, "join">,
+): StartContainerSpec {
   const env: Record<string, string> = {
     DB_DATABASE: "_supabase",
     DB_HOSTNAME: input.dbHost,
@@ -111,7 +114,7 @@ export function buildLogflareContainerSpec(input: LogflareContainerSpecInput): S
   const slim = usesSlimImageRuntime(input.image);
 
   if (input.backend === "bigquery") {
-    const hostJwtPath = join(input.workdir, input.gcpJwtPath);
+    const hostJwtPath = path.join(input.workdir, input.gcpJwtPath);
     binds.push(`${hostJwtPath}:/opt/app/rel/logflare/bin/gcloud.json`);
     env.GOOGLE_DATASET_ID_APPEND = "_prod";
     env.GOOGLE_PROJECT_ID = input.gcpProjectId;
