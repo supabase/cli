@@ -39,6 +39,102 @@ const query = (
   );
 
 describe("database component", { timeout: 180_000 }, () => {
+  for (const target of [
+    { runtime: "native", version: "17" },
+    { runtime: "docker", version: "15" },
+    { runtime: "docker", version: "17" },
+  ] as const)
+    it.live(
+      `preserves default encryption keys and Vault secrets after ${target.runtime} PostgreSQL ${target.version} recreation`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-default-key-" });
+            const recipe = yield* makeDatabase({
+              stackId: "default-key-test",
+              instanceId: "database",
+              root,
+              cacheRoot: artifactCacheRoot,
+              runtime: target.runtime,
+            });
+            const defaults: DatabaseConfig = {
+              healthTimeoutMs: 120_000,
+              version: target.version,
+              databasePassword: config.databasePassword,
+              jwtSecret: config.jwtSecret,
+              jwtExpiry: config.jwtExpiry,
+            };
+            const service = yield* makeService(recipe.definition, {
+              id: "database",
+              config: defaults,
+            });
+            yield* service.start;
+            yield* service.ready;
+            const endpoint = yield* recipe.endpoint;
+            yield* query(
+              endpoint,
+              defaults.databasePassword,
+              "CREATE EXTENSION IF NOT EXISTS pgsodium; CREATE EXTENSION IF NOT EXISTS supabase_vault",
+            );
+            const derivation = "SELECT encode(pgsodium.derive_key(1), 'hex') AS key";
+            const originalKey = yield* query(endpoint, defaults.databasePassword, derivation);
+            yield* query(
+              endpoint,
+              defaults.databasePassword,
+              "SELECT vault.create_secret('preserved-value', 'persistence-probe')",
+            );
+            expect(
+              yield* query(
+                endpoint,
+                defaults.databasePassword,
+                "SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'persistence-probe'",
+              ),
+            ).toEqual([{ decrypted_secret: "preserved-value" }]);
+            yield* service.stop;
+            yield* service.start;
+            yield* service.ready;
+            const restarted = yield* recipe.endpoint;
+            expect(yield* query(restarted, defaults.databasePassword, derivation)).toEqual(
+              originalKey,
+            );
+            expect(
+              yield* query(
+                restarted,
+                defaults.databasePassword,
+                "SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'persistence-probe'",
+              ),
+            ).toEqual([{ decrypted_secret: "preserved-value" }]);
+            if (target.runtime === "native") {
+              const second = yield* makeDatabase({
+                stackId: "default-key-test",
+                instanceId: "database-second",
+                root,
+                cacheRoot: artifactCacheRoot,
+                runtime: target.runtime,
+              });
+              const secondService = yield* makeService(second.definition, {
+                id: "database-second",
+                config: defaults,
+              });
+              yield* secondService.start;
+              yield* secondService.ready;
+              const secondEndpoint = yield* second.endpoint;
+              yield* query(
+                secondEndpoint,
+                defaults.databasePassword,
+                "CREATE EXTENSION IF NOT EXISTS pgsodium",
+              );
+              expect(
+                yield* query(secondEndpoint, defaults.databasePassword, derivation),
+              ).not.toEqual(originalKey);
+              yield* secondService.destroy;
+            }
+            yield* service.destroy;
+          }),
+        ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    );
+
   it.live(
     "persists SQL data across exact-session stop and reopen, isolates instances, and validates restart before stopping",
     () =>

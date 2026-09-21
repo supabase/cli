@@ -288,7 +288,10 @@ const health = Effect.fn("Database.health")((
         }),
       ),
     ),
-    Effect.timeout(config.healthTimeoutMs ?? 60_000),
+    Effect.timeoutOrElse({
+      duration: config.healthTimeoutMs ?? 60_000,
+      orElse: () => Effect.fail(errorFor("health", "Database readiness timed out")),
+    }),
     Effect.mapError((cause) => errorFor("health", cause)),
   );
 });
@@ -393,7 +396,7 @@ const nativeProcess = (
   config: DatabaseConfig,
   dataPath: string,
   socketPath: string,
-  rootKeyPath: string | undefined,
+  rootKeyPath: string,
   settings: ReadonlyArray<string>,
   context: ServiceInstanceContext<DatabaseConfig>,
   stackId: string,
@@ -416,7 +419,7 @@ const nativeProcess = (
       ],
       env: {
         PGDATA: dataPath,
-        ...(rootKeyPath === undefined ? {} : { PGSODIUM_KEY_FILE: rootKeyPath }),
+        PGSODIUM_KEY_FILE: rootKeyPath,
         POSTGRES_USER: "supabase_admin",
         POSTGRES_DB: "postgres",
         POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
@@ -650,7 +653,7 @@ export const makeDatabase = (
               config,
               dataPath,
               socketPath,
-              rootKeyPath,
+              rootKeyPath ?? path.join(dataPath, "pgsodium_root.key"),
               settings,
               context,
               String(options.stackId),
@@ -694,9 +697,10 @@ export const makeDatabase = (
               instanceId: options.instanceId,
               env: {
                 PGDATA: "/var/lib/postgresql/data",
-                ...(rootKeyPath === undefined
-                  ? {}
-                  : { PGSODIUM_KEY_FILE: "/etc/postgresql-custom/pgsodium_root.key" }),
+                PGSODIUM_KEY_FILE:
+                  rootKeyPath === undefined
+                    ? "/var/lib/postgresql/data/pgsodium_root.key"
+                    : "/etc/postgresql-custom/pgsodium_root.key",
                 POSTGRES_USER: "supabase_admin",
                 POSTGRES_DB: "postgres",
                 POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
