@@ -30,9 +30,12 @@ Use a family-neutral name when a symbol deliberately spans both families. See th
 ## Effect
 
 Always use the [Effect skill](.agents/skills/effect/SKILL.md) when writing or changing code. Read
-its required repository guidance and the references relevant to the task before editing. Write
+the references relevant to the task before editing. Write
 all TypeScript runtime code in Effect. Promise-returning APIs are allowed only as package exports
 for consumers that do not use Effect.
+
+Effect linting uses oxlint via `.oxlintrc.effect.json`; run `pnpm lint:effect:check` or
+`pnpm lint:effect:fix` from the repository root.
 
 ## Commands, validation, and workflows
 

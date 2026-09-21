@@ -15,7 +15,6 @@ Use current Effect v4 APIs and the production defaults in this skill. Establishe
 Check these before guessing:
 
 - the nearest `AGENTS.md` and any project-local Effect practices doc
-- `references/REPOSITORY.md` for repository-specific Effect conventions
 - the project-pinned `effect` package source and version
 - current upstream Effect source when the installed package does not answer the question
 
@@ -49,7 +48,6 @@ If a task spans several branches, read all matching files before editing.
 - Prefer Effect HTTP client modules for outgoing HTTP in Effect applications when their typed errors, layers, and client transforms are useful.
 - Prefer Effect-aware tests, explicit layers, and deterministic synchronization over sleeps.
 - Prefer decoders and `schema.makeEffect(...)` at untrusted boundaries; reserve throwing `schema.make(...)` for trusted construction, and never use casts to skip validation.
-- Promise-returning APIs belong only at package exports for consumers that do not use Effect.
 
 ## Quick Selection Guide
 
