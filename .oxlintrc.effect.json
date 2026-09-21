@@ -50,7 +50,6 @@
     "!apps/cli/src/commands/start/**",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
-    "apps/cli/src/commands/start/start.integration.test.ts",
     "apps/cli/src/shared/compute/stacks/**",
     "!apps/cli/tests/helpers/branches-live.ts",
     "!apps/cli/tests/helpers/compute.ts",
