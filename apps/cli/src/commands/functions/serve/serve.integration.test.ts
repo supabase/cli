@@ -3498,7 +3498,7 @@ describe("functions serve integration", () => {
       const { layer } = setupServe();
       const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(error).toHaveProperty("_tag", "CliConfigParseError");
+      expect(error).toBeInstanceOf(CliConfigParseError);
       expect(deployMockState.runCalls).toHaveLength(0);
     });
   });
