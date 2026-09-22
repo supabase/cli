@@ -1,0 +1,138 @@
+name: Plain directory copy platform benchmark
+
+on:
+  push:
+    branches: [perf/plain-directory-copy-benchmark]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plain-directory-copy-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native fallback (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Prepare filesystem
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -eu
+          image="$RUNNER_TEMP/plain-copy-hfs.dmg"
+          mountpoint="$RUNNER_TEMP/plain-copy-hfs"
+          mkdir -p "$mountpoint"
+          hdiutil create -size 8g -fs HFS+ -volname PlainCopy "$image"
+          hdiutil attach -nobrowse -mountpoint "$mountpoint" "$image"
+          printf 'BENCHMARK_ROOT=%s\n' "$mountpoint" >> "$GITHUB_ENV"
+          diskutil info "$mountpoint" > "$GITHUB_WORKSPACE/filesystem.txt"
+      - name: Prepare Linux or Windows filesystem
+        if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          set -eu
+          root="$RUNNER_TEMP/plain-copy"
+          mkdir -p "$root"
+          printf 'BENCHMARK_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = Linux ]; then
+            findmnt -T "$root" -o SOURCE,FSTYPE,TARGET > "$GITHUB_WORKSPACE/filesystem.txt"
+          fi
+      - name: Describe Windows filesystem
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "plain-copy"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          "BENCHMARK_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $drive = Split-Path $env:BENCHMARK_ROOT -Qualifier
+          fsutil fsinfo volumeinfo $drive | Out-File -FilePath "$env:GITHUB_WORKSPACE/filesystem.txt"
+      - name: Benchmark native fallback
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p results
+          filesystem="${RUNNER_OS}-native"
+          if [ "$RUNNER_OS" = macOS ]; then filesystem="macos-hfs"; fi
+          for dataset in small large; do
+            pnpm exec bun packages/stack/tools/plain-directory-copy-platform-benchmark.ts \
+              --dataset="$dataset" \
+              --root="$BENCHMARK_ROOT" \
+              --out="$GITHUB_WORKSPACE/results/$dataset.json" \
+              --filesystem="$filesystem" \
+              --filesystem-proof="$GITHUB_WORKSPACE/filesystem.txt" \
+              --reps=5 --warmups=1
+          done
+      - name: Benchmark Windows fallback
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE/results" | Out-Null
+          foreach ($dataset in @("small", "large")) {
+            pnpm exec bun packages/stack/tools/plain-directory-copy-platform-benchmark.ts `
+              "--dataset=$dataset" `
+              "--root=$env:BENCHMARK_ROOT" `
+              "--out=$env:GITHUB_WORKSPACE/results/$dataset.json" `
+              "--filesystem=windows-ntfs" `
+              "--filesystem-proof=$env:GITHUB_WORKSPACE/filesystem.txt" `
+              --reps=5 --warmups=1
+          }
+      - name: Unmount HFS filesystem
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: hdiutil detach "$RUNNER_TEMP/plain-copy-hfs" || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: plain-directory-copy-${{ matrix.os }}
+          path: |
+            results/
+            filesystem.txt
+          retention-days: 7
+
+  musl:
+    name: Linux musl fallback
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Prepare benchmark bundle
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p results "$RUNNER_TEMP/plain-copy-musl"
+          findmnt -T "$RUNNER_TEMP/plain-copy-musl" -o SOURCE,FSTYPE,TARGET > results/filesystem.txt
+          pnpm exec bun build packages/stack/tools/plain-directory-copy-platform-benchmark.ts \
+            --target=bun --outfile=results/plain-copy-benchmark.js
+      - name: Benchmark Alpine musl fallback
+        shell: bash
+        run: |
+          set -eu
+          for dataset in small large; do
+            docker run --rm \
+              --mount "type=bind,source=$GITHUB_WORKSPACE/results,target=/benchmark" \
+              --mount "type=bind,source=$RUNNER_TEMP/plain-copy-musl,target=/fixtures" \
+              oven/bun:1.4.1-alpine \
+              sh -c "df -T /fixtures > /benchmark/filesystem-musl.txt; bun /benchmark/plain-copy-benchmark.js --dataset=$dataset --root=/fixtures --out=/benchmark/$dataset-musl.json --filesystem=linux-musl-ext4 --filesystem-proof=/benchmark/filesystem-musl.txt --reps=5 --warmups=1"
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: plain-directory-copy-linux-musl
+          path: results/
+          retention-days: 7
