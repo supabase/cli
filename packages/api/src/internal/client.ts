@@ -206,6 +206,7 @@ function applySupabaseRetryPolicy(
   const timeoutMs = options?.requestTimeoutMs ?? 60_000;
 
   return HttpClient.transform(client, (requestEffect, request) => {
+    const retriesTransportErrors = isIdempotentMethod(request.method);
     const attempt = (
       retries: number,
     ): Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError> =>
@@ -223,7 +224,7 @@ function applySupabaseRetryPolicy(
           ),
         ),
         Effect.catchIf(isRetryableTransportError, (error) =>
-          retries < maxRetries && isIdempotentMethod(request.method)
+          retries < maxRetries && retriesTransportErrors
             ? attempt(retries + 1)
             : Effect.fail(error),
         ),

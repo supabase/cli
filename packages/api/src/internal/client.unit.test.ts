@@ -704,6 +704,36 @@ describe("makeSupabaseApiClient", () => {
     expect(Exit.isFailure(exit)).toBe(true);
   });
 
+  test("does not retry transport errors for PATCH requests", async () => {
+    let attempts = 0;
+
+    const exit = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1PatchAMigration">(operationDefinitions.v1PatchAMigration, {
+            ref: "abcdefghijklmnopqrst",
+            version: "20240101000000",
+            name: "renamed",
+          }),
+        ),
+        Effect.exit,
+        Effect.provide(
+          httpClientLayer((request) => {
+            attempts += 1;
+            return attempts === 1
+              ? Effect.fail(transportError(request, "connection reset"))
+              : Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response(null, { status: 204 })),
+                );
+          }),
+        ),
+      ),
+    );
+
+    expect(attempts).toBe(1);
+    expect(Exit.isFailure(exit)).toBe(true);
+  });
+
   test("stops after the configured number of transport retries", async () => {
     let attempts = 0;
 
