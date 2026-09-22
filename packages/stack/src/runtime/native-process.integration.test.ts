@@ -114,16 +114,21 @@ const makeSpawner = (options: FakeProcessOptions) => {
 
 const spec: NativeProcessSpec = { executable: "test-native-process" };
 
-const withMockedTargetKill = <A, E>(
-  effect: Effect.Effect<A, E, never>,
+const withMockedTargetKill = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
   target: number,
   code: "EPERM" | "ESRCH" = "EPERM",
+  failAlways = true,
 ) =>
   Effect.acquireUseRelease(
     Effect.sync(() => {
       const originalKill = globalThis.process.kill;
+      let failed = false;
       globalThis.process.kill = (pid, signal) => {
         if (pid === -target) {
+          if (!failAlways && failed)
+            throw Object.assign(new Error("operation ESRCH"), { code: "ESRCH" });
+          failed = true;
           throw Object.assign(new Error(`operation ${code}`), { code });
         }
         return originalKill(pid, signal);
@@ -149,7 +154,71 @@ const runKill = (options: FakeProcessOptions) => {
       return { result };
     }),
   ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
-  return withMockedTargetKill(effect, options.targetPid ?? targetPid, options.killCode);
+  return withMockedTargetKill(effect, options.targetPid ?? targetPid, options.killCode, false);
+};
+
+interface ProcessProbeError {
+  readonly code?: string;
+}
+
+const processProbeError = (cause: unknown): ProcessProbeError => {
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    typeof cause.code === "string"
+  )
+    return { code: cause.code };
+  return {};
+};
+
+const assertExited = (pid: number) =>
+  Effect.gen(function* () {
+    const alive = yield* Effect.try({
+      try: () => process.kill(pid, 0),
+      catch: processProbeError,
+    }).pipe(
+      Effect.as(true),
+      Effect.catchIf(
+        ({ code }) => code === "ESRCH",
+        () => Effect.succeed(false),
+      ),
+    );
+    if (!alive) return true;
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const probe = yield* ChildProcess.make("/bin/ps", ["-o", "stat=", "-p", String(pid)], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+        });
+        const [output, exitCode] = yield* Effect.all(
+          [probe.stdout.pipe(Stream.decodeText, Stream.mkString), probe.exitCode],
+          { concurrency: 2 },
+        );
+        const state = output.trim();
+        return (
+          Number(exitCode) !== 0 ||
+          state.length === 0 ||
+          state.startsWith("Z") ||
+          state.includes("E")
+        );
+      }),
+    );
+  });
+
+const descendantSpec = (): NativeProcessSpec => {
+  const descendantCode =
+    "process.stdout.write(`READY ${process.ppid} ${process.pid}\\n`); setInterval(() => {}, 1000)";
+  const workloadCode = [
+    'import { spawn } from "node:child_process";',
+    `spawn(${JSON.stringify(process.execPath)}, ["--input-type=module", "-e", ${JSON.stringify(descendantCode)}], { stdio: ["ignore", "inherit", "ignore"] });`,
+    "setInterval(() => {}, 1000);",
+  ].join(" ");
+  return {
+    executable: process.execPath,
+    args: ["--input-type=module", "-e", workloadCode],
+  };
 };
 
 describe("native process group cleanup", () => {
@@ -352,6 +421,99 @@ describe("native process group cleanup", () => {
     runKill({ killCode: "ESRCH" }).pipe(
       Effect.tap(({ result }) => Effect.sync(() => expect(Exit.isSuccess(result)).toBe(true))),
     ),
+  );
+
+  it.live.skipIf(process.platform === "win32")(
+    "reports a scope finalizer failure while an owned process group remains live",
+    () =>
+      withMockedTargetKill(
+        Effect.scoped(
+          spawnNativeProcess(spec, { command: "test-launcher", args: [] }).pipe(Effect.asVoid),
+        ).pipe(Effect.exit),
+        targetPid,
+        "EPERM",
+        true,
+      ).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(result)).toBe(true);
+          }),
+        ),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          makeSpawner({ groupOutput: `${targetPid} S\n` }),
+        ),
+      ),
+  );
+
+  it.live("reports a native launcher startup failure through exitCode", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const native = yield* spawnNativeProcess({
+          executable: "/definitely/missing/native-workload",
+        });
+        expect(Number(yield* native.exitCode)).toBe(127);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.skipIf(process.platform === "win32")(
+    "cleans the workload and its descendant when a native scope closes",
+    () =>
+      Effect.gen(function* () {
+        const pids = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const native = yield* spawnNativeProcess(descendantSpec());
+            const ready = yield* native.stdout.pipe(
+              Stream.decodeText,
+              Stream.splitLines,
+              Stream.runHead,
+            );
+            expect(Option.isSome(ready)).toBe(true);
+            if (Option.isNone(ready))
+              return yield* Effect.die("native process exited before readiness");
+            const [, workloadPid, descendantPid] = ready.value.split(" ");
+            expect(workloadPid).toBeDefined();
+            expect(descendantPid).toBeDefined();
+            return [Number(native.pid), Number(workloadPid), Number(descendantPid)] as const;
+          }),
+        );
+        expect(pids).toHaveLength(3);
+        for (const pid of pids) expect(yield* assertExited(pid), `pid ${pid}`).toBe(true);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.skipIf(process.platform === "win32")(
+    "cleans the workload and its descendant when the owning fiber is interrupted",
+    () =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<readonly [number, number, number]>();
+        const fiber = yield* Effect.forkChild(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const native = yield* spawnNativeProcess(descendantSpec());
+              const ready = yield* native.stdout.pipe(
+                Stream.decodeText,
+                Stream.splitLines,
+                Stream.runHead,
+              );
+              if (Option.isNone(ready))
+                return yield* Effect.die("native process exited before readiness");
+              const [, workloadPid, descendantPid] = ready.value.split(" ");
+              yield* Deferred.succeed(started, [
+                Number(native.pid),
+                Number(workloadPid),
+                Number(descendantPid),
+              ]);
+              return yield* Effect.never;
+            }),
+          ),
+        );
+        const pids = yield* Deferred.await(started);
+        yield* Fiber.interrupt(fiber);
+        yield* Fiber.await(fiber);
+        for (const pid of pids) expect(yield* assertExited(pid), `pid ${pid}`).toBe(true);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("keeps the shared exit observation alive after a canceled waiter", () =>

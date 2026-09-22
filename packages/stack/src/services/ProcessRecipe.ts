@@ -129,6 +129,13 @@ const runtimeFromContainer = (process: ContainerProcess): RuntimeSession => ({
   remove: process.remove.pipe(Effect.mapError((cause) => serviceError("remove", cause))),
 });
 
+const runtimeFromNative = (process: NativeProcess): RuntimeSession => ({
+  health: Effect.void,
+  exit: processExit(process.exitCode),
+  stop: process.kill.pipe(Effect.mapError((cause) => serviceError("stop", cause))),
+  remove: Effect.void,
+});
+
 const reserveNativePort = Effect.fn("ProcessRecipe.reserveNativePort")(
   (requested: number): Effect.Effect<number, CatalogError> =>
     Effect.scoped(
@@ -351,12 +358,23 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
             Effect.mapError((cause) => serviceError("launch", cause)),
           );
-          const result = yield* awaitStartup(startupProcess, logs);
+          const result = yield* awaitStartup(startupProcess, logs).pipe(
+            Effect.mapError(
+              (failure) =>
+                new ServiceLaunchError({
+                  failure,
+                  runtime: runtimeFromNative(startupProcess),
+                }),
+            ),
+          );
           if (result.code !== 0)
-            return yield* serviceError(
-              "launch",
-              `${context.config.service} startup exited with ${result.code}: ${result.stderr.trim()}`,
-            );
+            return yield* new ServiceLaunchError({
+              failure: serviceError(
+                "launch",
+                `${context.config.service} startup exited with ${result.code}: ${result.stderr.trim()}`,
+              ),
+              runtime: runtimeFromNative(startupProcess),
+            });
         }
         const native: NativeProcess = yield* spawnNativeProcess(
           {
@@ -376,13 +394,14 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         yield* Ref.set(endpoints, desired);
         yield* publishLogs(native, logs, context.scope);
         const ready = desired.get("http");
+        const runtime = runtimeFromNative(native);
         return {
           health:
             ready === undefined
               ? Effect.fail(serviceError("health", "Recipe has no HTTP readiness endpoint"))
               : readiness(deps.client, ready, spec.healthPath),
-          exit: processExit(native.exitCode),
-          stop: native.kill.pipe(Effect.mapError((cause) => serviceError("stop", cause))),
+          exit: runtime.exit,
+          stop: runtime.stop,
           remove: Ref.set(endpoints, new Map()),
         } satisfies RuntimeSession;
       }
@@ -413,18 +432,45 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             mounts: yield* spec.mounts(context.config, { container: true }),
           })
           .pipe(
-            Effect.mapError((cause) => serviceError("launch", cause)),
+            Effect.catchTag("ContainerLaunchError", ({ failure, process }) =>
+              Effect.fail(
+                new ServiceLaunchError({
+                  failure: serviceError("launch", failure),
+                  runtime: runtimeFromContainer(process),
+                }),
+              ),
+            ),
+            Effect.mapError((cause) =>
+              cause instanceof ServiceLaunchError ? cause : serviceError("launch", cause),
+            ),
             Scope.provide(context.scope),
           );
-        const result = yield* awaitStartup(startupProcess, logs);
+        const result = yield* awaitStartup(startupProcess, logs).pipe(
+          Effect.mapError(
+            (failure) =>
+              new ServiceLaunchError({
+                failure,
+                runtime: runtimeFromContainer(startupProcess),
+              }),
+          ),
+        );
         yield* startupProcess.remove.pipe(
-          Effect.mapError((cause) => serviceError("launch", cause)),
+          Effect.mapError(
+            (cause) =>
+              new ServiceLaunchError({
+                failure: serviceError("launch", cause),
+                runtime: runtimeFromContainer(startupProcess),
+              }),
+          ),
         );
         if (result.code !== 0)
-          return yield* serviceError(
-            "launch",
-            `${context.config.service} startup exited with ${result.code}: ${result.stderr.trim()}`,
-          );
+          return yield* new ServiceLaunchError({
+            failure: serviceError(
+              "launch",
+              `${context.config.service} startup exited with ${result.code}: ${result.stderr.trim()}`,
+            ),
+            runtime: runtimeFromContainer(startupProcess),
+          });
       }
       const launched = yield* deps.container
         .launch({
@@ -455,7 +501,10 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       for (const [name, endpoint] of containerDesired) {
         const published = launched.ports[endpoint.port];
         if (published === undefined)
-          return yield* serviceError("launch", `Container did not publish ${name}`);
+          return yield* new ServiceLaunchError({
+            failure: serviceError("launch", `Container did not publish ${name}`),
+            runtime: runtimeFromContainer(launched),
+          });
         selected.set(name, { kind: "tcp", host: "127.0.0.1", port: published });
       }
       yield* Ref.set(endpoints, selected);

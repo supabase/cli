@@ -1,7 +1,8 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Data, Deferred, Effect, Exit, Fiber, Option, Stream } from "effect";
+import { Cause, Crypto, Data, Deferred, Effect, Exit, Fiber, Option, Ref, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { HttpClient } from "effect/unstable/http";
 import { ContainerLaunchError, makeContainerRuntime, type ContainerProcess } from "./Container.ts";
 
@@ -176,7 +177,161 @@ describe("container process adapter", () => {
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.live("reports a scope failure when stop fails and leaves cleanup authority", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const failStop = yield* Ref.make(true);
+      const processRef = yield* Ref.make<Option.Option<ContainerProcess>>(Option.none());
+      const spawner = makeStopFailureSpawner(delegate, failStop);
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const instanceId = `failed-stop-${token}`;
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const result = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              yield* runtime.prepare(image);
+              const process = yield* runtime.launch({
+                image,
+                stackId: "f".repeat(64),
+                instanceId,
+                env: {},
+                args: [
+                  "-e",
+                  "process.on('SIGTERM', () => process.exit(0)); console.log('ready'); setInterval(() => {}, 1000)",
+                ],
+              });
+              yield* Ref.set(processRef, Option.some(process));
+              const logs = yield* ready(process);
+              yield* Fiber.interrupt(logs);
+            }),
+          ).pipe(
+            Effect.exit,
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          expect(Exit.isFailure(result)).toBe(true);
+          if (Exit.isFailure(result))
+            expect(Cause.pretty(result.cause)).toContain("injected stop failure");
+          const process = yield* Ref.get(processRef).pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.die("launch did not retain cleanup authority"),
+                onSome: Effect.succeed,
+              }),
+            ),
+          );
+          expect(yield* running(process.id)).toBe(true);
+          yield* Ref.set(failStop, false);
+          yield* process.stop;
+          yield* process.remove;
+          expect(yield* exists(process.id)).toBe(false);
+        }),
+        removeByInstance(instanceId).pipe(Effect.orDie),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("recovers the container identity when create acknowledgement is interrupted", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const instanceId = `interrupted-create-${token}`;
+      const acknowledged = yield* Deferred.make<void>();
+      const createConsumed = yield* Ref.make(false);
+      const spawner = makeCreateInterruptionSpawner(delegate, createConsumed, acknowledged);
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const id = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              yield* runtime.prepare(image);
+              const launch = yield* runtime
+                .launch({
+                  image,
+                  stackId: "g".repeat(64),
+                  instanceId,
+                  env: {},
+                  args: ["-e", "setInterval(() => {}, 1000)"],
+                })
+                .pipe(Effect.forkChild({ startImmediately: true }));
+              yield* Deferred.await(acknowledged);
+              yield* Fiber.interrupt(launch);
+              const result = yield* Fiber.await(launch);
+              expect(Exit.isFailure(result)).toBe(true);
+              if (Exit.isSuccess(result)) return yield* Effect.die("launch unexpectedly succeeded");
+              expect(Exit.hasInterrupts(result)).toBe(true);
+              const ids = yield* idsByInstance(instanceId);
+              expect(ids).toHaveLength(1);
+              const [id] = ids;
+              if (id === undefined)
+                return yield* Effect.die("missing recovered container identity");
+              expect(yield* exists(id)).toBe(true);
+              return id;
+            }),
+          );
+          expect(yield* exists(id)).toBe(false);
+        }),
+        removeByInstance(instanceId).pipe(Effect.orDie),
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
+
+const makeStopFailureSpawner = (
+  delegate: ChildProcessSpawnerService["Service"],
+  failStop: Ref.Ref<boolean>,
+) =>
+  ChildProcessSpawner.make((command) => {
+    if (
+      ChildProcess.isStandardCommand(command) &&
+      command.command === "docker" &&
+      command.args[0] === "stop"
+    ) {
+      return Effect.gen(function* () {
+        if (!(yield* Ref.get(failStop))) return yield* delegate.spawn(command);
+        return yield* delegate.spawn(
+          ChildProcess.make(
+            process.execPath,
+            ["-e", "console.error('injected stop failure'); process.exit(1)"],
+            { stdin: "ignore" },
+          ),
+        );
+      });
+    }
+    return delegate.spawn(command);
+  });
+
+const makeCreateInterruptionSpawner = (
+  delegate: ChildProcessSpawnerService["Service"],
+  createConsumed: Ref.Ref<boolean>,
+  acknowledged: Deferred.Deferred<void>,
+) =>
+  ChildProcessSpawner.make((command) => {
+    if (
+      ChildProcess.isStandardCommand(command) &&
+      command.command === "docker" &&
+      command.args[0] === "create"
+    ) {
+      return Effect.gen(function* () {
+        if (yield* Ref.get(createConsumed)) return yield* delegate.spawn(command);
+        yield* Ref.set(createConsumed, true);
+        const cidfile = command.args.indexOf("--cidfile");
+        if (cidfile < 0 || cidfile + 1 >= command.args.length)
+          return yield* delegate.spawn(command);
+        const args = command.args.filter((_, index) => index !== cidfile && index !== cidfile + 1);
+        const created = yield* delegate.spawn(
+          ChildProcess.make(command.command, args, command.options),
+        );
+        yield* created.exitCode;
+        yield* Deferred.succeed(acknowledged, undefined);
+        return yield* Effect.never;
+      });
+    }
+    return delegate.spawn(command);
+  });
 
 const ready = (process: ContainerProcess) =>
   Effect.gen(function* () {
@@ -204,6 +359,52 @@ const exists = (id: string) =>
       }),
     );
     return Number(yield* child.exitCode) === 0;
+  });
+
+const idsByInstance = (instanceId: string) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make(
+        "docker",
+        [
+          "ps",
+          "--all",
+          "--quiet",
+          "--no-trunc",
+          "--filter",
+          `label=com.supabase.instance=${instanceId}`,
+        ],
+        { stdin: "ignore" },
+      ),
+    );
+    const output = yield* child.stdout.pipe(Stream.decodeText, Stream.mkString);
+    return output
+      .split("\n")
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0);
+  });
+
+const removeByInstance = (instanceId: string) =>
+  Effect.gen(function* () {
+    const ids = yield* idsByInstance(instanceId);
+    if (ids.length === 0) return;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make("docker", ["rm", "--force", ...ids], { stdin: "ignore" }),
+    );
+    yield* child.exitCode;
+  });
+
+const running = (id: string) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make("docker", ["inspect", "--format", "{{.State.Running}}", id], {
+        stdin: "ignore",
+      }),
+    );
+    return (yield* child.stdout.pipe(Stream.decodeText, Stream.mkString)).trim() === "true";
   });
 
 const get = (port: number | undefined, path = "/") => {

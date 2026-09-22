@@ -181,6 +181,7 @@ export const makeContainerRuntime = (options: {
       const token = yield* crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) => errorFor("identity", cause)),
       );
+      const name = `supabase-${token}`;
       const args = [
         "create",
         "--pull",
@@ -192,7 +193,7 @@ export const makeContainerRuntime = (options: {
           ? ["--add-host", "host.docker.internal:host-gateway"]
           : []),
         "--name",
-        `supabase-${token}`,
+        name,
         "--label",
         `com.supabase.stack=${spec.stackId}`,
         "--label",
@@ -218,17 +219,48 @@ export const makeContainerRuntime = (options: {
             Option.isSome(recorded) && recorded.value.trim().length > 0
               ? Option.some(recorded.value.trim())
               : Option.none<string>();
+          const fromCreation =
+            Exit.isSuccess(creation) && creation.value.trim().length > 0
+              ? Option.some(creation.value.trim())
+              : Option.none<string>();
+          const recovered =
+            Option.isSome(fromFile) || Option.isSome(fromCreation)
+              ? Exit.succeed("")
+              : yield* run(
+                  ["ps", "--all", "--quiet", "--no-trunc", "--filter", `name=^/?${name}$`],
+                  { timeout: "5 seconds" },
+                ).pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new ContainerError({
+                        operation: error.operation,
+                        message: `${error.message} (container name ${name})`,
+                        cause: error,
+                      }),
+                  ),
+                  Effect.exit,
+                );
+          const recoveredId = Exit.isSuccess(recovered) ? recovered.value.trim() : undefined;
           const id = Option.isSome(fromFile)
             ? fromFile.value
-            : Exit.isSuccess(creation)
-              ? creation.value
-              : undefined;
+            : Option.isSome(fromCreation)
+              ? fromCreation.value
+              : recoveredId === undefined || recoveredId.length === 0
+                ? undefined
+                : recoveredId;
           if (id === undefined)
-            return yield* creation.pipe(
-              Effect.andThen(
-                Effect.fail(errorFor("create", "Engine returned no container identity")),
-              ),
-            );
+            return yield* Exit.isFailure(recovered)
+              ? Effect.failCause(
+                  Cause.combine(
+                    Exit.isFailure(creation) ? creation.cause : Cause.empty,
+                    recovered.cause,
+                  ),
+                )
+              : creation.pipe(
+                  Effect.andThen(
+                    Effect.fail(errorFor("create", "Engine returned no container identity")),
+                  ),
+                );
           if (!/^[a-f0-9]{12,64}$/u.test(id))
             return yield* errorFor("create", "Engine returned an invalid container identity");
           const stopped = yield* Ref.make(false);
@@ -247,7 +279,10 @@ export const makeContainerRuntime = (options: {
             owner,
             stop.pipe(
               Effect.andThen(remove),
-              Effect.catch((error) => Effect.logError(error)),
+              Effect.tapError((error) =>
+                Effect.logError(`Failed to clean up container ${id}: ${error.message}`),
+              ),
+              Effect.orDie,
             ),
           );
           const partial: ContainerProcess = {

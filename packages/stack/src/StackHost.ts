@@ -409,9 +409,10 @@ export const runStackHost = Effect.fn("StackHost.run")(
             Effect.raceFirst(Queue.take(signals).pipe(Effect.map(() => "signal" as const))),
           );
           if (event === "done") break;
-          const shutdownSucceeded = yield* started
-            .shutdown(false)
-            .pipe(Effect.match({ onSuccess: () => true, onFailure: () => false }));
+          const shutdownSucceeded = yield* started.shutdown(false).pipe(
+            Effect.tapCause((cause) => Effect.logError("Stack shutdown failed", cause)),
+            Effect.match({ onSuccess: () => true, onFailure: () => false }),
+          );
           if (shutdownSucceeded) break;
         }
       }),

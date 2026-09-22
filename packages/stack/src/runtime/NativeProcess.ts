@@ -259,7 +259,12 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
     });
     yield* Scope.addFinalizer(
       processScope,
-      killProcess().pipe(Effect.catch((error) => Effect.logError(error.message))),
+      killProcess().pipe(
+        Effect.tapError((error) =>
+          Effect.logError(`Native process launcher ${String(handle.pid)} cleanup failed`, error),
+        ),
+        Effect.orDie,
+      ),
     );
     yield* Stream.run(Stream.succeed(encodeSpec(spec)), handle.getInputFd(4));
     const waitForExit = mapError(handle.exitCode).pipe(Effect.tap(() => cleanupProcessGroup()));
