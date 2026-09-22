@@ -187,6 +187,7 @@ jobs:
           echo "c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467  ${RUNNER_TEMP}/regctl-bin/regctl" | sha256sum -c -
           chmod +x "${RUNNER_TEMP}/regctl-bin/regctl"
           echo "${RUNNER_TEMP}/regctl-bin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/regctl-bin/regctl" version
 
       - name: Log in to ghcr.io
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0

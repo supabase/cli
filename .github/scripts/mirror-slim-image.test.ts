@@ -334,10 +334,10 @@ describe("native triplet helpers", () => {
 });
 
 describe("fetchNatives", () => {
-  const files: Record<string, string> = {};
   const io = (
     overrides: { readonly sha?: string; readonly manifest?: string; readonly head?: string } = {},
   ) => {
+    const files: Record<string, string> = {};
     const calls: string[][] = [];
     const run: RunCommand = async (argv) => {
       calls.push([...argv]);

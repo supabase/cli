@@ -113,7 +113,7 @@ const ARCHIVE_MEDIA_TYPE = "application/vnd.supabase.slim.archive.v1.tar+zstd";
 const MANIFEST_MEDIA_TYPE = "application/vnd.supabase.slim.manifest.v1+json";
 const CHECKSUM_MEDIA_TYPE = "application/vnd.supabase.slim.checksum.v1";
 
-export type NativeTarget = (typeof NATIVE_TARGETS)[number];
+type NativeTarget = (typeof NATIVE_TARGETS)[number];
 
 export const nativeTargetOf = (tag: string, version: string): NativeTarget | undefined => {
   const match = nativeTagPattern(version).exec(tag);
@@ -199,7 +199,7 @@ export const nativeTripletDigests = (rawManifest: string): NativeFiles | undefin
     (layer) => layer.mediaType === MANIFEST_MEDIA_TYPE || layer.title.endsWith(".manifest.json"),
   );
   const checksum = layers.find(
-    (layer) => layer.mediaType === CHECKSUM_MEDIA_TYPE || layer.title.includes("SHA256SUMS"),
+    (layer) => layer.mediaType === CHECKSUM_MEDIA_TYPE || layer.title.endsWith(".SHA256SUMS"),
   );
   if (archive === undefined || manifest === undefined || checksum === undefined) return undefined;
   return {
