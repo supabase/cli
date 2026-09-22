@@ -214,7 +214,7 @@ Draft, upload, verify, and finalize by the shared workflow:
 - run: gh release edit v${VERSION} --draft=false
 ```
 
-Assets are uploaded sequentially with a per-asset retry rather than through the action's `files:` input because `uploads.github.com` drops or stalls individual uploads often enough that one failure per release is routine, and the action's parallel upload has no retry. See [release-process.md](../../apps/cli/docs/release-process.md) for the operational details.
+Assets go through `gh release upload` one at a time with a retry instead of the action's `files:` input: `uploads.github.com` fails single uploads often enough that one per release is routine, and the action uploads everything in parallel with no retry. Details in [release-process.md](../../apps/cli/docs/release-process.md).
 
 Archive layout (per-platform):
 
