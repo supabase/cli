@@ -1,12 +1,14 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Redacted, Stream } from "effect";
 import type {
   ServiceCreation,
+  ServiceCreationInput,
   ServiceInstance,
   ServiceInstances,
   Stack,
 } from "@supabase/stack/effect";
+import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "@supabase/stack/effect";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -128,6 +130,18 @@ const instance = (
   }
 };
 
+const normalizeCreation = (creation: ServiceCreationInput): ServiceCreation =>
+  creation.service === "database"
+    ? {
+        ...creation,
+        config: {
+          ...creation.config,
+          jwtSecret: creation.config.jwtSecret ?? Redacted.make(DEFAULT_LOCAL_JWT_SECRET),
+          rootKey: creation.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
+        },
+      }
+    : creation;
+
 const fakeStack = () => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   let stopped = 0;
@@ -135,7 +149,7 @@ const fakeStack = () => {
   const stack: Stack = {
     id: "a".repeat(64),
     services: {
-      create: <Input extends ServiceCreation>(_creation: Input) => Effect.die("unused"),
+      create: <Input extends ServiceCreationInput>(_creation: Input) => Effect.die("unused"),
       get: (id: string) => {
         const found = members.find((entry) => entry.id === id);
         return found === undefined ? Effect.die(`missing instance ${id}`) : Effect.succeed(found);
@@ -149,10 +163,12 @@ const fakeStack = () => {
         members: members.map(({ id }) => ({ id, activation: "eager" as const })),
         dependencies: [],
       })),
-      supabase: (creations: ReadonlyArray<ServiceCreation>) =>
+      supabase: (creations: ReadonlyArray<ServiceCreationInput>) =>
         Effect.sync(() => {
           composed += 1;
-          members = creations.map((creation) => instance(creation, `${creation.service}-member`));
+          members = creations.map((creation) =>
+            instance(normalizeCreation(creation), `${creation.service}-member`),
+          );
           return members;
         }),
       configure: () => Effect.void,

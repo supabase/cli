@@ -7,6 +7,9 @@ import {
   type ServiceCreation as EffectCreation,
 } from "./services/Catalog.ts";
 import type { PostgresTool } from "./Tools.ts";
+import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.ts";
+
+export { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.ts";
 
 export { postgres } from "./Tools.ts";
 export { StackError } from "./Rpc.ts";
@@ -20,13 +23,36 @@ export type ServiceCreation =
         "databasePassword" | "jwtSecret" | "rootKey"
       > & {
         readonly databasePassword: string;
-        readonly jwtSecret: string;
+        readonly jwtSecret?: string;
         readonly rootKey?: string;
       };
     });
 const creationJson = Schema.toCodecJson(CreationSchema);
-const decodeCreation = (creation: ServiceCreation) =>
-  Schema.decodeEffect(creationJson)(creation).pipe(
+const decodeCreation = (creation: unknown) =>
+  Schema.decodeUnknownEffect(creationJson)(
+    typeof creation === "object" &&
+      creation !== null &&
+      "service" in creation &&
+      creation.service === "database" &&
+      "config" in creation &&
+      typeof creation.config === "object" &&
+      creation.config !== null
+      ? {
+          ...creation,
+          config: {
+            ...creation.config,
+            jwtSecret:
+              "jwtSecret" in creation.config && creation.config.jwtSecret !== undefined
+                ? creation.config.jwtSecret
+                : DEFAULT_LOCAL_JWT_SECRET,
+            rootKey:
+              "rootKey" in creation.config && creation.config.rootKey !== undefined
+                ? creation.config.rootKey
+                : DEFAULT_POSTGRES_ROOT_KEY,
+          },
+        }
+      : creation,
+  ).pipe(
     Effect.mapError((cause) => new StackError({ operation: "config", message: cause.message })),
   );
 export type { CompositionConfig } from "./Orchestrator.ts";
@@ -168,7 +194,7 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
       run(
         input === undefined
           ? service.restart()
-          : Schema.decodeUnknownEffect(creationJson)({
+          : decodeCreation({
               service: service.service,
               config: input.config,
             }).pipe(
@@ -182,7 +208,7 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
                   Pick<Extract<EffectCreation, { service: K }>, "config"> =>
                   candidate.service === service.service;
                 return matchesKind(decoded)
-                  ? service.restart(decoded)
+                  ? service.restart({ config: decoded.config })
                   : Effect.fail(
                       new StackError({
                         operation: "restart",
