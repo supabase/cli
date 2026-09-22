@@ -61,6 +61,9 @@ export default defineConfig({
           name: "integration",
           hookTimeout: 120_000,
           include: ["**/*.integration.test.ts"],
+          // Integration workers start real service processes and containers.
+          maxWorkers: 2,
+          sequence: { groupOrder: 1 },
         },
       },
       {

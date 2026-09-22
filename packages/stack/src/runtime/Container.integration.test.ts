@@ -228,6 +228,258 @@ describe("container process adapter", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("confirms absence after the remove client loses its result", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const instanceId = `lost-remove-result-${token}`;
+      const lostResult = yield* Ref.make(false);
+      const spawner = makeLostRemoveResultSpawner(delegate, lostResult);
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const result = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              yield* runtime.prepare(image);
+              const process = yield* runtime.launch({
+                image,
+                stackId: "k".repeat(64),
+                instanceId,
+                env: {},
+                args: ["-e", "setInterval(() => {}, 1000)"],
+              });
+              yield* process.stop;
+              yield* process.remove;
+            }),
+          ).pipe(
+            Effect.exit,
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          expect(yield* Ref.get(lostResult)).toBe(true);
+          expect(Exit.isSuccess(result)).toBe(true);
+          expect(yield* idsByInstance(instanceId)).toHaveLength(0);
+        }),
+        removeByInstance(instanceId).pipe(Effect.orDie),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("retains a remove failure for a still-present non-removing container", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const instanceId = `failed-remove-${token}`;
+      const failed = yield* Ref.make(false);
+      const spawner = makeRemoveFailureSpawner(delegate, failed);
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const result = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              yield* runtime.prepare(image);
+              const process = yield* runtime.launch({
+                image,
+                stackId: "l".repeat(64),
+                instanceId,
+                env: {},
+                args: ["-e", "setInterval(() => {}, 1000)"],
+              });
+              yield* process.stop;
+              const removeResult = yield* process.remove.pipe(Effect.exit);
+              expect(Exit.isFailure(removeResult)).toBe(true);
+              if (Exit.isFailure(removeResult))
+                expect(Cause.pretty(removeResult.cause)).toContain("injected remove failure");
+              expect(yield* exists(process.id)).toBe(true);
+            }),
+          ).pipe(
+            Effect.exit,
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          expect(yield* Ref.get(failed)).toBe(true);
+          expect(Exit.isSuccess(result)).toBe(true);
+          expect(yield* idsByInstance(instanceId)).toHaveLength(0);
+        }),
+        removeByInstance(instanceId).pipe(Effect.orDie),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("retains both remove and reconciliation failures", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const instanceId = `failed-reconciliation-${token}`;
+      const failed = yield* Ref.make(false);
+      const failProbe = yield* Ref.make(true);
+      const spawner = makeRemoveFailureSpawner(delegate, failed, failProbe);
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const result = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              yield* runtime.prepare(image);
+              const process = yield* runtime.launch({
+                image,
+                stackId: "m".repeat(64),
+                instanceId,
+                env: {},
+                args: ["-e", "setInterval(() => {}, 1000)"],
+              });
+              yield* process.stop;
+              const removeResult = yield* process.remove.pipe(Effect.exit);
+              expect(Exit.isFailure(removeResult)).toBe(true);
+              if (Exit.isFailure(removeResult)) {
+                const diagnostic = Cause.pretty(removeResult.cause);
+                expect(diagnostic).toContain("injected remove failure");
+                expect(diagnostic).toContain("injected reconciliation failure");
+              }
+            }),
+          ).pipe(
+            Effect.exit,
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          expect(yield* Ref.get(failed)).toBe(true);
+          expect(Exit.isSuccess(result)).toBe(true);
+          expect(yield* idsByInstance(instanceId)).toHaveLength(0);
+        }),
+        removeByInstance(instanceId).pipe(Effect.orDie),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("waits for a real removal observed as removing", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const instanceId = `pending-remove-${token}`;
+      const pendingProbes = yield* Ref.make(2);
+      const lostResult = yield* Ref.make(false);
+      const spawner = makePendingRemoveSpawner(delegate, pendingProbes, lostResult);
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const result = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              yield* runtime.prepare(image);
+              const process = yield* runtime.launch({
+                image,
+                stackId: "n".repeat(64),
+                instanceId,
+                env: {},
+                args: ["-e", "setInterval(() => {}, 1000)"],
+              });
+              yield* process.stop;
+              yield* process.remove;
+            }),
+          ).pipe(
+            Effect.exit,
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          expect(yield* Ref.get(lostResult)).toBe(true);
+          expect(yield* Ref.get(pendingProbes)).toBe(0);
+          expect(Exit.isSuccess(result)).toBe(true);
+          expect(yield* idsByInstance(instanceId)).toHaveLength(0);
+        }),
+        removeByInstance(instanceId).pipe(Effect.orDie),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("retains the remove failure when removing never reaches absence", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const instanceId = `stalled-remove-${token}`;
+      const pendingProbes = yield* Ref.make(Number.POSITIVE_INFINITY);
+      const lostResult = yield* Ref.make(false);
+      const spawner = makePendingRemoveSpawner(delegate, pendingProbes, lostResult);
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const result = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              yield* runtime.prepare(image);
+              const process = yield* runtime.launch({
+                image,
+                stackId: "p".repeat(64),
+                instanceId,
+                env: {},
+                args: ["-e", "setInterval(() => {}, 1000)"],
+              });
+              yield* process.stop;
+              const removeResult = yield* process.remove.pipe(Effect.exit);
+              expect(Exit.isFailure(removeResult)).toBe(true);
+              if (Exit.isFailure(removeResult)) {
+                const diagnostic = Cause.pretty(removeResult.cause);
+                expect(diagnostic).toContain("Engine exited with 73");
+                expect(diagnostic).toContain("TimeoutError");
+              }
+              expect(yield* exists(process.id)).toBe(false);
+              yield* Ref.set(pendingProbes, 0);
+              yield* process.remove;
+            }),
+          ).pipe(
+            Effect.exit,
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          expect(yield* Ref.get(lostResult)).toBe(true);
+          expect(Exit.isSuccess(result)).toBe(true);
+          expect(yield* idsByInstance(instanceId)).toHaveLength(0);
+        }),
+        removeByInstance(instanceId).pipe(Effect.orDie),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("preserves caller interruption and reconciles during scope close", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const instanceId = `interrupted-remove-${token}`;
+      const completed = yield* Deferred.make<void>();
+      const consumed = yield* Ref.make(false);
+      const spawner = makeInterruptedRemoveSpawner(delegate, consumed, completed);
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const result = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              yield* runtime.prepare(image);
+              const process = yield* runtime.launch({
+                image,
+                stackId: "o".repeat(64),
+                instanceId,
+                env: {},
+                args: ["-e", "setInterval(() => {}, 1000)"],
+              });
+              yield* process.stop;
+              const remover = yield* process.remove.pipe(
+                Effect.forkChild({ startImmediately: true }),
+              );
+              yield* Deferred.await(completed);
+              expect(yield* exists(process.id)).toBe(false);
+              yield* Fiber.interrupt(remover);
+              expect(Exit.hasInterrupts(yield* Fiber.await(remover))).toBe(true);
+            }),
+          ).pipe(
+            Effect.exit,
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          expect(yield* Ref.get(consumed)).toBe(true);
+          expect(Exit.isSuccess(result)).toBe(true);
+          expect(yield* idsByInstance(instanceId)).toHaveLength(0);
+        }),
+        removeByInstance(instanceId).pipe(Effect.orDie),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("reports a scope failure when stop fails and leaves cleanup authority", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -548,6 +800,173 @@ const makeStopFailureSpawner = (
             { stdin: "ignore" },
           ),
         );
+      });
+    }
+    return delegate.spawn(command);
+  });
+
+const makeLostRemoveResultSpawner = (
+  delegate: ChildProcessSpawnerService["Service"],
+  lostResult: Ref.Ref<boolean>,
+) =>
+  ChildProcessSpawner.make((command) => {
+    if (
+      ChildProcess.isStandardCommand(command) &&
+      command.command === "docker" &&
+      command.args[0] === "rm"
+    ) {
+      return Effect.gen(function* () {
+        if (yield* Ref.get(lostResult)) return yield* delegate.spawn(command);
+        yield* Ref.set(lostResult, true);
+        const child = yield* delegate.spawn(command);
+        return ChildProcessSpawner.makeHandle({
+          pid: child.pid,
+          exitCode: child.exitCode.pipe(Effect.as(ChildProcessSpawner.ExitCode(73))),
+          isRunning: child.isRunning,
+          kill: child.kill,
+          stdin: child.stdin,
+          stdout: child.stdout,
+          stderr: child.stderr,
+          all: child.all,
+          getInputFd: child.getInputFd,
+          getOutputFd: child.getOutputFd,
+          unref: child.unref,
+        });
+      });
+    }
+    return delegate.spawn(command);
+  });
+
+const makeRemoveFailureSpawner = (
+  delegate: ChildProcessSpawnerService["Service"],
+  failed: Ref.Ref<boolean>,
+  failProbe?: Ref.Ref<boolean>,
+) =>
+  ChildProcessSpawner.make((command) => {
+    if (
+      failProbe !== undefined &&
+      ChildProcess.isStandardCommand(command) &&
+      command.command === "docker" &&
+      command.args[0] === "ps" &&
+      command.args.some((arg) => arg.startsWith("id="))
+    ) {
+      return Effect.gen(function* () {
+        if (!(yield* Ref.get(failProbe))) return yield* delegate.spawn(command);
+        yield* Ref.set(failProbe, false);
+        return yield* delegate.spawn(
+          ChildProcess.make(
+            process.execPath,
+            ["-e", "console.error('injected reconciliation failure'); process.exit(1)"],
+            { stdin: "ignore" },
+          ),
+        );
+      });
+    }
+    if (
+      ChildProcess.isStandardCommand(command) &&
+      command.command === "docker" &&
+      command.args[0] === "rm"
+    ) {
+      return Effect.gen(function* () {
+        if (yield* Ref.get(failed)) return yield* delegate.spawn(command);
+        yield* Ref.set(failed, true);
+        return yield* delegate.spawn(
+          ChildProcess.make(
+            process.execPath,
+            ["-e", "console.error('injected remove failure'); process.exit(1)"],
+            { stdin: "ignore" },
+          ),
+        );
+      });
+    }
+    return delegate.spawn(command);
+  });
+
+const makePendingRemoveSpawner = (
+  delegate: ChildProcessSpawnerService["Service"],
+  pendingProbes: Ref.Ref<number>,
+  lostResult: Ref.Ref<boolean>,
+) =>
+  ChildProcessSpawner.make((command) => {
+    if (
+      ChildProcess.isStandardCommand(command) &&
+      command.command === "docker" &&
+      command.args[0] === "ps" &&
+      command.args.some((arg) => arg.startsWith("id="))
+    ) {
+      return Effect.gen(function* () {
+        const remaining = yield* Ref.get(pendingProbes);
+        if (remaining === 0) return yield* delegate.spawn(command);
+        yield* Ref.set(pendingProbes, remaining - 1);
+        const target = command.args.find((arg) => arg.startsWith("id="))?.slice(3);
+        if (target === undefined) return yield* delegate.spawn(command);
+        return yield* delegate.spawn(
+          ChildProcess.make(
+            process.execPath,
+            ["-e", "process.stdout.write(process.argv.at(-1) ?? '')", `${target} removing\n`],
+            { stdin: "ignore" },
+          ),
+        );
+      });
+    }
+    if (
+      ChildProcess.isStandardCommand(command) &&
+      command.command === "docker" &&
+      command.args[0] === "rm"
+    ) {
+      return Effect.gen(function* () {
+        if (yield* Ref.get(lostResult)) return yield* delegate.spawn(command);
+        yield* Ref.set(lostResult, true);
+        const child = yield* delegate.spawn(command);
+        return ChildProcessSpawner.makeHandle({
+          pid: child.pid,
+          exitCode: child.exitCode.pipe(Effect.as(ChildProcessSpawner.ExitCode(73))),
+          isRunning: child.isRunning,
+          kill: child.kill,
+          stdin: child.stdin,
+          stdout: child.stdout,
+          stderr: child.stderr,
+          all: child.all,
+          getInputFd: child.getInputFd,
+          getOutputFd: child.getOutputFd,
+          unref: child.unref,
+        });
+      });
+    }
+    return delegate.spawn(command);
+  });
+
+const makeInterruptedRemoveSpawner = (
+  delegate: ChildProcessSpawnerService["Service"],
+  consumed: Ref.Ref<boolean>,
+  completed: Deferred.Deferred<void>,
+) =>
+  ChildProcessSpawner.make((command) => {
+    if (
+      ChildProcess.isStandardCommand(command) &&
+      command.command === "docker" &&
+      command.args[0] === "rm"
+    ) {
+      return Effect.gen(function* () {
+        if (yield* Ref.get(consumed)) return yield* delegate.spawn(command);
+        yield* Ref.set(consumed, true);
+        const child = yield* delegate.spawn(command);
+        return ChildProcessSpawner.makeHandle({
+          pid: child.pid,
+          exitCode: child.exitCode.pipe(
+            Effect.tap(() => Deferred.succeed(completed, undefined)),
+            Effect.andThen(Effect.never),
+          ),
+          isRunning: child.isRunning,
+          kill: child.kill,
+          stdin: child.stdin,
+          stdout: child.stdout,
+          stderr: child.stderr,
+          all: child.all,
+          getInputFd: child.getInputFd,
+          getOutputFd: child.getOutputFd,
+          unref: child.unref,
+        });
       });
     }
     return delegate.spawn(command);

@@ -11,6 +11,7 @@ import {
   Path,
   Ref,
   Schema,
+  Schedule,
   Scope,
   Sink,
   Stream,
@@ -313,6 +314,47 @@ export const makeContainerRuntime = (options: {
             yield* Ref.set(resolved, resolvedId);
             return resolvedId;
           });
+          const reconcileRemoval = Effect.fn("Container.reconcileRemoval")(function* (
+            target: string,
+            failure: ContainerError,
+          ) {
+            const probe = run(
+              [
+                "ps",
+                "--all",
+                "--no-trunc",
+                "--filter",
+                `id=${target}`,
+                "--format",
+                "{{.ID}} {{.State}}",
+              ],
+              { timeout: "5 seconds" },
+            ).pipe(
+              Effect.map((output) =>
+                output === ""
+                  ? ("absent" as const)
+                  : output === `${target} removing`
+                    ? ("removing" as const)
+                    : ("retained" as const),
+              ),
+              Effect.repeat({
+                schedule: Schedule.spaced("250 millis"),
+                while: (state) => state === "removing",
+              }),
+              Effect.timeout("10 seconds"),
+              Effect.mapError((error) =>
+                error instanceof ContainerError ? error : errorFor("remove", error),
+              ),
+            );
+            const observed = yield* probe.pipe(Effect.exit);
+            if (Exit.isFailure(observed)) {
+              if (Cause.hasInterrupts(observed.cause))
+                return yield* Effect.failCause(observed.cause);
+              return yield* Effect.failCause(Cause.combine(Cause.fail(failure), observed.cause));
+            }
+            if (observed.value === "absent") return;
+            return yield* failure;
+          });
           const stop = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
             const target = yield* resolve;
@@ -324,7 +366,11 @@ export const makeContainerRuntime = (options: {
             if (yield* Ref.get(removed)) return;
             const target = yield* resolve;
             if (Option.isNone(target)) return;
-            yield* run(["rm", target.value]);
+            yield* run(["rm", target.value]).pipe(
+              Effect.catchTag("ContainerError", (failure) =>
+                reconcileRemoval(target.value, failure),
+              ),
+            );
             yield* Ref.set(removed, true);
           });
           yield* Scope.addFinalizer(
