@@ -1,8 +1,11 @@
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no lstat or clone-copy operation.
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no lstat or clone-copy operation.
 import { copyFile as nativeCopyFile, lstat } from "node:fs/promises";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no clone-copy flags.
 import { constants as fsConstants } from "node:fs";
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, Exit, FileSystem, Path, Schema } from "effect";
 
 export class DirectoryCopyError extends Schema.TaggedError<DirectoryCopyError>()(
   "DirectoryCopyError",
@@ -174,6 +177,69 @@ export const copyDirectory = Effect.fn("DirectoryCopy.copyDirectory")(function* 
       onSuccess: () => Effect.fail(errorFor("validate", source, destination, "destination exists")),
     }),
   );
+  // A PostgreSQL data directory is mostly small files. One clone is cheaper than a clone syscall per file.
+  if (process.platform === "darwin" && !(yield* findUnsupportedEntry(source, destination))) {
+    const cloned = yield* Effect.exit(cloneDirectoryWithCp(source, destination));
+    if (Exit.isSuccess(cloned)) return;
+    yield* fs.remove(destination, { recursive: true, force: true }).pipe(Effect.ignore);
+  }
   yield* validateTree(source, destination, fs, path);
   return yield* copyTree(source, destination, fs, path);
 });
+
+const execFileText = promisify(execFile);
+
+const runExec = (
+  command: string,
+  args: ReadonlyArray<string>,
+  source: string,
+  destination: string,
+  operation: string,
+): Effect.Effect<string, DirectoryCopyError> =>
+  Effect.uninterruptible(
+    Effect.tryPromise({
+      try: () =>
+        execFileText(command, [...args], { encoding: "utf8" }).then((result) =>
+          typeof result === "string" ? result : result.stdout,
+        ),
+      catch: (cause) => errorFor(operation, source, destination, cause),
+    }),
+  );
+
+const findUnsupportedEntry = (
+  source: string,
+  destination: string,
+): Effect.Effect<boolean, DirectoryCopyError> =>
+  runExec(
+    "find",
+    [
+      source,
+      "(",
+      "-type",
+      "l",
+      "-o",
+      "-type",
+      "p",
+      "-o",
+      "-type",
+      "s",
+      "-o",
+      "-type",
+      "b",
+      "-o",
+      "-type",
+      "c",
+      ")",
+      "-print",
+      "-quit",
+    ],
+    source,
+    destination,
+    "validate",
+  ).pipe(Effect.map((stdout) => stdout.trim().length > 0));
+
+const cloneDirectoryWithCp = (
+  source: string,
+  destination: string,
+): Effect.Effect<void, DirectoryCopyError> =>
+  runExec("cp", ["-cRp", source, destination], source, destination, "clone").pipe(Effect.asVoid);
