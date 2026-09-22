@@ -15,7 +15,6 @@ import { ChildProcess } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import type { ContainerRuntime } from "../runtime/Container.ts";
 import type { DatabaseRuntime } from "../services/Database.ts";
-import { shadowPhase } from "../services/shadowPhase.ts";
 import type { DockerHelperRegistry } from "./DockerHelperRegistry.ts";
 
 const HELPER_IMAGE =
@@ -157,7 +156,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u.test(marker.volume))
           )
             return yield* errorFor("data", "Recorded database storage identity is invalid");
-            return marker;
+          return marker;
         });
       // engineCommand is created just below; callers run only after this assignment.
       let resolveDaemon: (
@@ -279,7 +278,10 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               const updated =
                 validMarker.cacheNamespace === `cache-${resolved.cacheDigest.slice(0, 32)}`
                   ? validMarker
-                  : { ...validMarker, cacheNamespace: `cache-${resolved.cacheDigest.slice(0, 32)}` };
+                  : {
+                      ...validMarker,
+                      cacheNamespace: `cache-${resolved.cacheDigest.slice(0, 32)}`,
+                    };
               if (updated !== validMarker)
                 yield* options.fs
                   .writeFileString(markerPath, yield* encodeMarker(updated), { mode: 0o600 })
@@ -355,47 +357,40 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
 
       const engineCommand = Effect.fn("DockerDatabaseStorage.engineCommand")(
-        (args: ReadonlyArray<string>): Effect.Effect<string, DockerDatabaseStorageError> => {
-          const command = args[0] ?? "command";
-          return shadowPhase(`store-${command}-begin`).pipe(
-            Effect.andThen(
-              Effect.scoped(
-                Effect.gen(function* () {
-                  const child = yield* options.spawner
-                    .spawn(ChildProcess.make(options.runtime, args, { stdin: "ignore" }))
-                    .pipe(Effect.mapError((cause) => errorFor("engine", cause)));
-                  const [stdout, stderr, code] = yield* Effect.all(
-                    [
-                      child.stdout.pipe(
-                        Stream.decodeText,
-                        Stream.runFold(
-                          () => "",
-                          (all: string, chunk: string) => all + chunk,
-                        ),
-                      ),
-                      child.stderr.pipe(
-                        Stream.decodeText,
-                        Stream.runFold(
-                          () => "",
-                          (all: string, chunk: string) => all + chunk,
-                        ),
-                      ),
-                      child.exitCode.pipe(Effect.mapError((cause) => errorFor("engine", cause))),
-                    ],
-                    { concurrency: "unbounded" },
-                  );
-                  if (Number(code) !== 0)
-                    return yield* errorFor(
-                      "engine",
-                      stderr.trim() || `Container engine exited with ${code}`,
-                    );
-                  return stdout.trim();
-                }),
-              ).pipe(Effect.mapError((cause) => errorFor("engine", cause))),
-            ),
-            Effect.ensuring(shadowPhase(`store-${command}-end`)),
-          );
-        },
+        (args: ReadonlyArray<string>): Effect.Effect<string, DockerDatabaseStorageError> =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const child = yield* options.spawner
+                .spawn(ChildProcess.make(options.runtime, args, { stdin: "ignore" }))
+                .pipe(Effect.mapError((cause) => errorFor("engine", cause)));
+              const [stdout, stderr, code] = yield* Effect.all(
+                [
+                  child.stdout.pipe(
+                    Stream.decodeText,
+                    Stream.runFold(
+                      () => "",
+                      (all: string, chunk: string) => all + chunk,
+                    ),
+                  ),
+                  child.stderr.pipe(
+                    Stream.decodeText,
+                    Stream.runFold(
+                      () => "",
+                      (all: string, chunk: string) => all + chunk,
+                    ),
+                  ),
+                  child.exitCode.pipe(Effect.mapError((cause) => errorFor("engine", cause))),
+                ],
+                { concurrency: "unbounded" },
+              );
+              if (Number(code) !== 0)
+                return yield* errorFor(
+                  "engine",
+                  stderr.trim() || `Container engine exited with ${code}`,
+                );
+              return stdout.trim();
+            }),
+          ).pipe(Effect.mapError((cause) => errorFor("engine", cause))),
       );
       const daemonIdentityRef = yield* Ref.make<ResolvedDaemon | undefined>(undefined);
       const encodeDaemonIdentity = Schema.encodeEffect(Schema.fromJsonString(DaemonIdentity));
@@ -568,9 +563,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               yield* options.fs
                 .makeDirectory(options.cacheRoot, { recursive: true })
                 .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
-            yield* shadowPhase("helper-prepare-begin");
             yield* options.container.prepare(HELPER_IMAGE);
-            yield* shadowPhase("helper-prepare-end");
             const token = yield* options.crypto.randomUUIDv4.pipe(
               Effect.mapError((cause) => errorFor("helper", cause)),
             );
@@ -578,7 +571,6 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             // Register the deterministic owned name before the remote create starts so an
             // interrupted docker run can still be removed by the same scope.
             yield* Ref.set(helperId, name);
-            yield* shadowPhase("helper-run-begin");
             const created = yield* engineCommand([
               "run",
               "-d",
@@ -598,7 +590,6 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             ]);
             if (!/^[a-f0-9]{12,64}$/u.test(created))
               return yield* errorFor("helper", "Docker returned an invalid helper identity");
-            yield* shadowPhase("helper-run-end");
             return name;
           }),
       );
@@ -623,37 +614,46 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           ),
           Effect.asVoid,
         );
-      // A shadow stack finds the host helper already running and must not remove it.
-      const helperCreated = { current: false };
-      const closeOwnedHelper = (id: string) =>
-        helperCreated.current ? closeSharedHelper(id) : Effect.void;
+      // Only the process that created the container removes it. `docker rm` without -f
+      // fails while the container is running, so a racing creator cannot delete it.
       const openSharedHelper = (mounts: ReadonlyArray<DatabaseStorageMount>, key: string) =>
         Effect.gen(function* () {
           const name = `supabase-db-helper-${(yield* hash(key)).slice(0, 32)}`;
-          const running = yield* engineCommand([
+          const status = yield* engineCommand([
             "inspect",
             "--format",
-            "{{.State.Running}}",
+            "{{.State.Status}}",
             name,
           ]).pipe(
-            Effect.map((value) => value.trim() === "true"),
+            Effect.map((value) => value.trim()),
             Effect.catchTag("DockerDatabaseStorageError", (cause) =>
-              missingContainer(cause.message) ? Effect.succeed(false) : Effect.fail(cause),
+              missingContainer(cause.message) ? Effect.succeed("absent") : Effect.fail(cause),
             ),
           );
-          if (running) {
-            helperCreated.current = false;
-            return name;
+          if (
+            status === "running" ||
+            status === "created" ||
+            status === "restarting" ||
+            status === "paused"
+          )
+            return { id: name, created: false };
+          if (status === "exited" || status === "dead") {
+            const removed = yield* engineCommand(["rm", name]).pipe(
+              Effect.map(() => "removed"),
+              Effect.catchTag("DockerDatabaseStorageError", (cause) =>
+                missingContainer(cause.message)
+                  ? Effect.succeed("absent")
+                  : /is running|running container/iu.test(cause.message)
+                    ? Effect.succeed("running")
+                    : Effect.fail(cause),
+              ),
+            );
+            if (removed === "running") return { id: name, created: false };
           }
-          helperCreated.current = true;
-          yield* closeSharedHelper(name);
           if (options.container === undefined)
             return yield* errorFor("helper", "Container runtime is unavailable");
-          yield* shadowPhase("helper-prepare-begin");
           yield* options.container.prepare(HELPER_IMAGE);
-          yield* shadowPhase("helper-prepare-end");
-          yield* shadowPhase("helper-run-begin");
-          yield* engineCommand([
+          return yield* engineCommand([
             "run",
             "-d",
             "--name",
@@ -670,18 +670,13 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             "-c",
             "trap : TERM INT; while :; do sleep 3600; done",
           ]).pipe(
+            Effect.as({ id: name, created: true }),
             Effect.catchTag("DockerDatabaseStorageError", (cause) =>
               /already in use/iu.test(cause.message)
-                ? engineCommand(["inspect", "--format", "{{.State.Running}}", name]).pipe(
-                    Effect.flatMap((value) =>
-                      value.trim() === "true" ? Effect.succeed(name) : Effect.fail(cause),
-                    ),
-                  )
+                ? Effect.succeed({ id: name, created: false })
                 : Effect.fail(cause),
             ),
           );
-          yield* shadowPhase("helper-run-end");
-          return name;
         });
       const runHelper = Effect.fn("DockerDatabaseStorage.helper")((
         command: string,
@@ -692,12 +687,12 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           const helpers = options.helpers;
           const exec = (id: string) => engineCommand(["exec", id, "/bin/sh", "-c", command]);
           const open = openSharedHelper(mounts, sharedKey);
-          return helpers.use(sharedKey, open, closeOwnedHelper, exec).pipe(
+          return helpers.use(sharedKey, open, closeSharedHelper, exec).pipe(
             Effect.catchTag("DockerDatabaseStorageError", (cause) =>
               /no such container|is not running/iu.test(cause.message)
-                ? helpers.drop(sharedKey).pipe(
-                    Effect.andThen(helpers.use(sharedKey, open, closeOwnedHelper, exec)),
-                  )
+                ? helpers
+                    .drop(sharedKey)
+                    .pipe(Effect.andThen(helpers.use(sharedKey, open, closeSharedHelper, exec)))
                 : Effect.fail(cause),
             ),
             Effect.mapError((cause) => errorFor("helper", cause)),
@@ -1043,12 +1038,10 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               store.backend === "host"
                 ? `; owner=$(stat -c "%u:%g" /cache); mkdir -p /cache/stack-database-snapshots-helper; chown "$owner" /cache/stack-database-snapshots-helper; chown -R "$owner" ${root}`
                 : "";
-            yield* shadowPhase("restore-helper-begin");
             const result = yield* runHelper(
               `set -eu; mkdir -p ${root}; flock -x -w 120 ${shellQuote(`${root}/.lock`)} sh -eu -c ${shellQuote(`set -eu; mkdir -p ${root}/entries ${root}/stages; find ${root}/stages -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; find ${root}/entries -mindepth 1 -maxdepth 1 -name '*.retired' -exec rm -rf -- {} +; trap 'rm -rf ${stage}${cacheOwnership}' EXIT; if ! ${targetSetup}; then echo 'Initialized restore target data directory is missing' >&2; exit 1; fi; bad=$(find ${data} -mindepth 1 -print -quit); if [ -n "$bad" ]; then echo NONEMPTY; exit 0; fi; if [ ! -d ${source} ]; then echo MISS; exit 0; fi; if [ ! -f ${source}/descriptor.json ]; then echo 'Snapshot descriptor is missing' >&2; exit 1; fi; actual=$(cat ${source}/descriptor.json); expected=${shellQuote(descriptor)}; if [ "$actual" != "$expected" ]; then echo 'Snapshot descriptor does not match requested identity' >&2; exit 1; fi; bad=$(find ${source}/data \\( ! -type f ! -type d \\) -print -quit); if [ -n "$bad" ]; then echo "Snapshot contains unsupported filesystem entry $bad" >&2; exit 1; fi; if [ -e ${source}/data/postmaster.pid ]; then echo 'Snapshot contains postmaster.pid' >&2; exit 1; fi; rm -rf ${stage}; cp -a --reflink=auto ${source}/data ${stage}; actual=$(cat ${stage}/PG_VERSION); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Snapshot PostgreSQL major does not match requested version' >&2; exit 1; fi; ${store.backend === "host" ? `chown -R 100:101 ${stage};` : ""} rmdir ${data}; mv ${stage} ${data}; touch ${source}; echo HIT`)}; rm -rf ${shellQuote(stage)}`,
               paths.mounts,
             );
-            yield* shadowPhase("restore-helper-end");
             if (result === "MISS") return false;
             if (result === "NONEMPTY")
               return yield* errorFor("restore", "Restore target data directory must be empty");

@@ -12,7 +12,6 @@ import {
   SubscriptionRef,
 } from "effect";
 import type { Stream } from "effect";
-import { shadowPhase } from "./services/shadowPhase.ts";
 
 type ServiceLifecycle = "stopped" | "starting" | "running" | "stopping";
 type ServiceHealth = "starting" | "healthy" | "unhealthy";
@@ -247,9 +246,6 @@ export const makeService = <Config>(
         );
         yield* Scope.close(record.healthScope, Exit.void);
         if (!(yield* Ref.get(record.stopped))) {
-          yield* shadowPhase(
-            `stopNow discard=${String(discard)} has=${String(record.runtime.discard !== undefined)}`,
-          );
           const halt =
             discard && record.runtime.discard !== undefined
               ? record.runtime.discard

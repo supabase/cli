@@ -16,7 +16,6 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { shadowPhase } from "../services/shadowPhase.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
@@ -257,7 +256,6 @@ export const makeContainerRuntime = (options: {
           const removed = yield* Ref.make(false);
           const stop = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-            yield* shadowPhase("container-stop");
             const grace =
               spec.stopGraceSeconds !== undefined &&
               Number.isInteger(spec.stopGraceSeconds) &&
@@ -272,7 +270,6 @@ export const makeContainerRuntime = (options: {
           const beginStop = Effect.scoped(
             Effect.gen(function* () {
               if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-              yield* shadowPhase("container-stop-background");
               const script = `${options.engine} stop --time 10 ${id} && ${options.engine} rm ${id}`;
               const child = yield* Effect.mapError(
                 spawner.spawn(
@@ -299,7 +296,6 @@ export const makeContainerRuntime = (options: {
           );
           const kill = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-            yield* shadowPhase("container-kill");
             yield* run(["kill", id]);
             yield* Ref.set(stopped, true);
           });

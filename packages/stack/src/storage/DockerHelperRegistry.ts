@@ -1,10 +1,16 @@
 import { Effect, Ref, Scope, Semaphore } from "effect";
 
+export interface DockerHelperHandle {
+  readonly id: string;
+  /** False when this process found a helper another process already created. */
+  readonly created: boolean;
+}
+
 export interface DockerHelperRegistry {
   /** Runs `body` with the helper for `key`, opening it once per host lifetime. */
   readonly use: <A, E>(
     key: string,
-    open: Effect.Effect<string, E>,
+    open: Effect.Effect<DockerHelperHandle, E>,
     close: (id: string) => Effect.Effect<void, E>,
     body: (id: string) => Effect.Effect<A, E>,
   ) => Effect.Effect<A, E>;
@@ -26,8 +32,7 @@ export const makeDockerHelperRegistry: Effect.Effect<DockerHelperRegistry, never
     );
     const gate = yield* Semaphore.make(1);
     const scope = yield* Scope.Scope;
-    const release = (id: string, close: (id: string) => Effect.Effect<void>) =>
-      close(id).pipe(Effect.catch((cause) => Effect.logError(cause)));
+    const release = (id: string, close: (id: string) => Effect.Effect<void>) => close(id);
     yield* Scope.addFinalizer(
       scope,
       gate.withPermits(1)(
@@ -39,7 +44,7 @@ export const makeDockerHelperRegistry: Effect.Effect<DockerHelperRegistry, never
     );
     const use = <A, E>(
       key: string,
-      open: Effect.Effect<string, E>,
+      open: Effect.Effect<DockerHelperHandle, E>,
       close: (id: string) => Effect.Effect<void, E>,
       body: (id: string) => Effect.Effect<A, E>,
     ): Effect.Effect<A, E> =>
@@ -54,13 +59,16 @@ export const makeDockerHelperRegistry: Effect.Effect<DockerHelperRegistry, never
                 Ref.update(helpers, (map) => {
                   const next = new Map(map);
                   next.set(key, {
-                    id: opened,
+                    id: opened.id,
                     close: (helperId) =>
-                      close(helperId).pipe(Effect.catch((cause) => Effect.logError(cause))),
+                      (opened.created ? close(helperId) : Effect.void).pipe(
+                        Effect.catch((cause) => Effect.logError(cause)),
+                      ),
                   });
                   return next;
                 }),
               ),
+              Effect.map((opened) => opened.id),
             ));
           return yield* body(id);
         }),

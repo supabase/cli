@@ -36,7 +36,6 @@ import {
   reportPgDeltaNextDiagnostics,
 } from "./pgdelta-next-diagnostics.ts";
 import { PgDeltaNextShadow } from "./pgdelta-next-shadow.service.ts";
-import { shadowPhase } from "../../../command-internal/shadow-phase.ts";
 
 function pgDeltaNextConnectSuggestion(cause: unknown): string | undefined {
   if (cause instanceof DbConnectError) return cause.suggestion;
@@ -292,16 +291,9 @@ export const pgDeltaNextEngineLayer = Layer.effect(
       diffDatabase: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
-            yield* shadowPhase("diff-source-begin");
             const migrationsPool = yield* acquireDatabase(input.source, input.context.projectEnv);
-            yield* shadowPhase("diff-source-end");
-            yield* shadowPhase("diff-target-begin");
             const desiredPool = yield* acquireDatabase(input.target, input.context.projectEnv);
-            yield* shadowPhase("diff-target-end");
-            yield* shadowPhase("diff-adapter-begin");
-            const result = yield* diffPools(input, migrationsPool, desiredPool);
-            yield* shadowPhase("diff-adapter-end");
-            return result;
+            return yield* diffPools(input, migrationsPool, desiredPool);
           }),
         ).pipe(Effect.mapError(pgDeltaNextEngineError)),
       exportDeclarativeSchema: (input) =>
