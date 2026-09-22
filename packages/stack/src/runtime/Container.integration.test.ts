@@ -328,6 +328,114 @@ describe("container process adapter", () => {
       expect(yield* Ref.get(present)).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.live("retains cleanup authority when identity recovery fails", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const instanceId = `failed-recovery-${token}`;
+      const acknowledged = yield* Deferred.make<void>();
+      const createConsumed = yield* Ref.make(false);
+      const failRecovery = yield* Ref.make(true);
+      const spawner = makeCreateInterruptionSpawner(
+        delegate,
+        createConsumed,
+        acknowledged,
+        failRecovery,
+      );
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const result = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              yield* runtime.prepare(image);
+              const result = yield* runtime
+                .launch({
+                  image,
+                  stackId: "i".repeat(64),
+                  instanceId,
+                  env: {},
+                  args: ["-e", "setInterval(() => {}, 1000)"],
+                })
+                .pipe(Effect.exit);
+              yield* Ref.set(failRecovery, false);
+              return result;
+            }),
+          ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+          if (Exit.isSuccess(result)) return yield* Effect.die("launch unexpectedly succeeded");
+          const failure = Cause.findErrorOption(result.cause);
+          if (Option.isNone(failure) || !(failure.value instanceof ContainerLaunchError))
+            return yield* Effect.die("launch failure did not retain cleanup authority");
+          expect(failure.value.failure.message).toContain("injected recovery failure");
+          expect(yield* idsByInstance(instanceId)).toHaveLength(0);
+        }),
+        removeByInstance(instanceId).pipe(Effect.orDie),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("retains a partial cleanup handle when recovery fails during scope close", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const instanceId = `retry-recovery-${token}`;
+      const acknowledged = yield* Deferred.make<void>();
+      const createConsumed = yield* Ref.make(false);
+      const failRecovery = yield* Ref.make(true);
+      const partialRef = yield* Ref.make<Option.Option<ContainerProcess>>(Option.none());
+      const spawner = makeCreateInterruptionSpawner(
+        delegate,
+        createConsumed,
+        acknowledged,
+        failRecovery,
+      );
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const scopeResult = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              yield* runtime.prepare(image);
+              const result = yield* runtime
+                .launch({
+                  image,
+                  stackId: "j".repeat(64),
+                  instanceId,
+                  env: {},
+                  args: ["-e", "setInterval(() => {}, 1000)"],
+                })
+                .pipe(Effect.exit);
+              if (Exit.isFailure(result)) {
+                const failure = Cause.findErrorOption(result.cause);
+                if (Option.isSome(failure) && failure.value instanceof ContainerLaunchError)
+                  yield* Ref.set(partialRef, Option.some(failure.value.process));
+              }
+              return result;
+            }),
+          ).pipe(
+            Effect.exit,
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          expect(Exit.isFailure(scopeResult)).toBe(true);
+          if (Exit.isFailure(scopeResult))
+            expect(Cause.pretty(scopeResult.cause)).toContain("injected recovery failure");
+          const partial = yield* Ref.get(partialRef).pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.die("launch failure did not retain cleanup authority"),
+                onSome: Effect.succeed,
+              }),
+            ),
+          );
+          yield* Ref.set(failRecovery, false);
+          yield* partial.remove;
+          expect(yield* idsByInstance(instanceId)).toHaveLength(0);
+        }),
+        removeByInstance(instanceId).pipe(Effect.orDie),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 const makeStopFailureSpawner = (
@@ -358,8 +466,26 @@ const makeCreateInterruptionSpawner = (
   delegate: ChildProcessSpawnerService["Service"],
   createConsumed: Ref.Ref<boolean>,
   acknowledged: Deferred.Deferred<void>,
+  failRecovery?: Ref.Ref<boolean>,
 ) =>
   ChildProcessSpawner.make((command) => {
+    if (
+      failRecovery !== undefined &&
+      ChildProcess.isStandardCommand(command) &&
+      command.command === "docker" &&
+      command.args[0] === "ps" &&
+      command.args.some((arg) => arg.startsWith("name=^/?supabase-"))
+    )
+      return Effect.gen(function* () {
+        if (!(yield* Ref.get(failRecovery))) return yield* delegate.spawn(command);
+        return yield* delegate.spawn(
+          ChildProcess.make(
+            process.execPath,
+            ["-e", "console.error('injected recovery failure'); process.exit(1)"],
+            { stdin: "ignore" },
+          ),
+        );
+      });
     if (
       ChildProcess.isStandardCommand(command) &&
       command.command === "docker" &&
@@ -524,7 +650,15 @@ const removeByInstance = (instanceId: string) =>
     const child = yield* spawner.spawn(
       ChildProcess.make("docker", ["rm", "--force", ...ids], { stdin: "ignore" }),
     );
-    yield* child.exitCode;
+    const [stderr, code] = yield* Effect.all([
+      child.stderr.pipe(Stream.decodeText, Stream.mkString),
+      child.exitCode,
+    ]);
+    if (Number(code) !== 0)
+      return yield* new ContainerTestError({
+        message: `docker rm exited with ${String(code)}`,
+        cause: stderr.trim(),
+      });
   });
 
 const running = (id: string) =>

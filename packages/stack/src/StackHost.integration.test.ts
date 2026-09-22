@@ -257,6 +257,54 @@ it.live("keeps serving when namespace shutdown fails", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
+it.live("retains ownership when namespace shutdown defects and retries cleanup", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-drain-defect-" });
+      const state = yield* stateFor(`${root}/state`);
+      const saved = {
+        id: "stack",
+        runtime: "native" as const,
+        identity: { projectRoot: root, branchContext: "main", stackName: "host-drain-defect" },
+        instances: [],
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      };
+      yield* state.save(saved);
+      const owner = yield* ownerFor({
+        saved,
+        state,
+        root: `${root}/data`,
+        cacheRoot: "/tmp/supabase-stack-artifacts",
+      });
+      const failStop = yield* Ref.make(true);
+      const failedOwner = {
+        ...owner,
+        namespace: {
+          ...owner.namespace,
+          stop: Effect.gen(function* () {
+            if (yield* Ref.getAndSet(failStop, false)) return yield* Effect.die("cleanup failed");
+            yield* owner.namespace.stop;
+          }),
+        },
+      };
+      const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
+      const client = yield* clientFor(runtime.endpoint.port);
+      const failure = yield* runtime.shutdown(false).pipe(Effect.exit);
+      expect(Exit.isFailure(failure)).toBe(true);
+      if (Exit.isFailure(failure)) expect(Cause.pretty(failure.cause)).toContain("cleanup failed");
+      const http = yield* HttpClient.HttpClient;
+      expect((yield* http.get(`http://127.0.0.1:${runtime.endpoint.port}/identity`)).status).toBe(
+        200,
+      );
+      expect(yield* owner.getServing).toBe(true);
+      expect((yield* client.listServices()).length).toBe(0);
+      yield* runtime.shutdown(false);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
 it.live(
   "serves one detached owner through Effect RPC and retires after shutdown",
   () =>

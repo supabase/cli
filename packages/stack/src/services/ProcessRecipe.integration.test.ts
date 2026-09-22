@@ -1,8 +1,9 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Crypto, Effect, Exit, FileSystem, Layer, Path, Ref, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
+import { systemError } from "effect/PlatformError";
 import {
   ContainerError,
   ContainerLaunchError,
@@ -159,4 +160,83 @@ describe("ProcessRecipe launch cleanup", () => {
       ),
     );
   }
+
+  it.live("retains a native startup process for retry after cleanup failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const client = yield* HttpClient.HttpClient;
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const cleanupFailure = yield* Ref.make(true);
+        let startupWrapped = false;
+        const spawner = ChildProcessSpawner.make((command) =>
+          delegate.spawn(command).pipe(
+            Effect.map((handle) => {
+              if (
+                startupWrapped ||
+                !ChildProcess.isStandardCommand(command) ||
+                !command.args.some(
+                  (argument) =>
+                    argument === "__supabase_stack_native__" ||
+                    argument.endsWith("/native-launcher.ts"),
+                )
+              )
+                return handle;
+              startupWrapped = true;
+              return ChildProcessSpawner.makeHandle({
+                ...handle,
+                exitCode: handle.exitCode.pipe(Effect.map(() => ChildProcessSpawner.ExitCode(1))),
+                isRunning: Effect.gen(function* () {
+                  if (yield* Ref.get(cleanupFailure))
+                    return yield* systemError({
+                      _tag: "PermissionDenied",
+                      module: "ProcessRecipe.integration.test",
+                      method: "isRunning",
+                      description: "injected native cleanup failure",
+                    });
+                  return yield* handle.isRunning;
+                }),
+              });
+            }),
+          ),
+        );
+        const nativeOptions: CatalogOptions = {
+          ...options,
+          root: yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-native-" }),
+          cacheRoot: "/tmp/supabase-stack-artifacts",
+          runtime: "native",
+        };
+        const nativeSpec: ProcessRecipeSpec<TestCreation> = {
+          ...spec,
+          startup: [{ nativeExecutable: "postgrest", args: ["--version"] }],
+        };
+        const dependencies = {
+          fs,
+          path,
+          crypto,
+          client,
+          spawner,
+          container: undefined,
+        } satisfies ProcessDependencies;
+        const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
+        const service = yield* makeService(recipe.definition, {
+          id: "rest-process-recipe-native",
+          config: creation,
+        });
+
+        const failure = yield* service.start.pipe(Effect.exit);
+        expect(Exit.isFailure(failure)).toBe(true);
+        expect((yield* service.get).lifecycle).toBe("stopping");
+        expect((yield* service.get).cleanupError?.operation).toBe("stop");
+        expect(startupWrapped).toBe(true);
+
+        yield* Ref.set(cleanupFailure, false);
+        yield* service.stop;
+        expect((yield* service.get).lifecycle).toBe("stopped");
+        expect((yield* service.get).cleanupError).toBeUndefined();
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ),
+  );
 });

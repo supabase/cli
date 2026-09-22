@@ -411,7 +411,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
           if (event === "done") break;
           const shutdownSucceeded = yield* started.shutdown(false).pipe(
             Effect.tapCause((cause) => Effect.logError("Stack shutdown failed", cause)),
-            Effect.match({ onSuccess: () => true, onFailure: () => false }),
+            Effect.matchCause({ onSuccess: () => true, onFailure: () => false }),
           );
           if (shutdownSucceeded) break;
         }

@@ -40,6 +40,7 @@ interface ContainerSpec {
 }
 
 export interface ContainerProcess {
+  /** The engine ID, or the unique launch name when identity recovery failed. */
   readonly id: string;
   readonly ports: Readonly<Record<number, number>>;
   /** A single-consumer stream; callers that need fanout should publish observations. */
@@ -234,56 +235,93 @@ export const makeContainerRuntime = (options: {
             Exit.isSuccess(creation) && creation.value.trim().length > 0
               ? Option.some(creation.value.trim())
               : Option.none<string>();
+          const lookupByName = () =>
+            run(["ps", "--all", "--quiet", "--no-trunc", "--filter", `name=^/?${name}$`], {
+              timeout: "5 seconds",
+            }).pipe(
+              Effect.mapError(
+                (error) =>
+                  new ContainerError({
+                    operation: error.operation,
+                    message: `${error.message} (container name ${name})`,
+                    cause: error,
+                  }),
+              ),
+            );
           const recovered =
             Option.isSome(fromFile) || Option.isSome(fromCreation)
-              ? Exit.succeed("")
-              : yield* run(
-                  ["ps", "--all", "--quiet", "--no-trunc", "--filter", `name=^/?${name}$`],
-                  { timeout: "5 seconds" },
-                ).pipe(
-                  Effect.mapError(
-                    (error) =>
-                      new ContainerError({
-                        operation: error.operation,
-                        message: `${error.message} (container name ${name})`,
-                        cause: error,
-                      }),
-                  ),
-                  Effect.exit,
-                );
-          const recoveredId = Exit.isSuccess(recovered) ? recovered.value.trim() : undefined;
-          const id = Option.isSome(fromFile)
+              ? Option.none<Exit.Exit<string, ContainerError>>()
+              : Option.some(yield* lookupByName().pipe(Effect.exit));
+          const recoveredOutput =
+            Option.isSome(recovered) && Exit.isSuccess(recovered.value)
+              ? recovered.value.value.trim()
+              : undefined;
+          const candidate = Option.isSome(fromFile)
             ? fromFile.value
             : Option.isSome(fromCreation)
               ? fromCreation.value
-              : recoveredId === undefined || recoveredId.length === 0
-                ? undefined
-                : recoveredId;
-          if (id === undefined)
-            return yield* Exit.isFailure(recovered)
-              ? Effect.failCause(
-                  Cause.combine(
+              : recoveredOutput;
+          const id =
+            candidate !== undefined && /^[a-f0-9]{12,64}$/u.test(candidate) ? candidate : undefined;
+          if (
+            Exit.isFailure(creation) &&
+            Option.isSome(recovered) &&
+            Exit.isSuccess(recovered.value) &&
+            recovered.value.value.trim().length === 0
+          )
+            return yield* Effect.failCause(creation.cause);
+          const identityFailure =
+            candidate === undefined || candidate.length === 0
+              ? errorFor("create", "Engine returned no container identity")
+              : errorFor("create", "Engine returned an invalid container identity");
+          const recoveryFailure =
+            Option.isSome(recovered) && Exit.isFailure(recovered.value)
+              ? recovered.value.cause
+              : undefined;
+          const failure =
+            recoveryFailure === undefined
+              ? identityFailure
+              : new ContainerError({
+                  operation: "create",
+                  message: `Unable to recover container identity (container name ${name}): ${Cause.pretty(recoveryFailure)}`,
+                  cause: Cause.combine(
                     Exit.isFailure(creation) ? creation.cause : Cause.empty,
-                    recovered.cause,
+                    recoveryFailure,
                   ),
-                )
-              : creation.pipe(
-                  Effect.andThen(
-                    Effect.fail(errorFor("create", "Engine returned no container identity")),
-                  ),
-                );
-          if (!/^[a-f0-9]{12,64}$/u.test(id))
-            return yield* errorFor("create", "Engine returned an invalid container identity");
+                });
           const stopped = yield* Ref.make(false);
           const removed = yield* Ref.make(false);
+          const resolved = yield* Ref.make(
+            id === undefined ? Option.none<string>() : Option.some(id),
+          );
+          const resolve = Effect.gen(function* () {
+            const current = yield* Ref.get(resolved);
+            if (Option.isSome(current)) return current;
+            const output = yield* lookupByName();
+            const recoveredId = output.trim();
+            if (recoveredId.length === 0) {
+              yield* Ref.set(stopped, true);
+              yield* Ref.set(removed, true);
+              return Option.none<string>();
+            }
+            if (!/^[a-f0-9]{12,64}$/u.test(recoveredId))
+              return yield* errorFor("cleanup", "Engine returned an invalid container identity");
+            const resolvedId = Option.some(recoveredId);
+            yield* Ref.set(resolved, resolvedId);
+            return resolvedId;
+          });
           const stop = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-            yield* run(["stop", "--time", "10", id]);
+            const target = yield* resolve;
+            if (Option.isNone(target)) return;
+            yield* run(["stop", "--time", "10", target.value]);
             yield* Ref.set(stopped, true);
           });
           const remove = Effect.gen(function* () {
             if (yield* Ref.get(removed)) return;
-            yield* run(["rm", id]);
+            const target = yield* resolve;
+            if (Option.isNone(target)) return;
+            yield* run(["rm", target.value]);
             yield* Ref.set(removed, true);
           });
           yield* Scope.addFinalizer(
@@ -291,13 +329,13 @@ export const makeContainerRuntime = (options: {
             stop.pipe(
               Effect.andThen(remove),
               Effect.tapError((error) =>
-                Effect.logError(`Failed to clean up container ${id}: ${error.message}`),
+                Effect.logError(`Failed to clean up container ${name}: ${error.message}`),
               ),
               Effect.orDie,
             ),
           );
           const partial: ContainerProcess = {
-            id,
+            id: id ?? name,
             ports: {},
             stdout: Stream.empty,
             stderr: Stream.empty,
@@ -309,6 +347,7 @@ export const makeContainerRuntime = (options: {
           let owned = partial;
           const wrapFailure = (failure: ContainerError) =>
             new ContainerLaunchError({ failure, process: owned });
+          if (id === undefined) return yield* wrapFailure(failure);
           if (Exit.isFailure(creation)) {
             const failure = Cause.findErrorOption(creation.cause);
             return yield* Option.isSome(failure)

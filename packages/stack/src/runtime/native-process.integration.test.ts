@@ -437,6 +437,12 @@ describe("native process group cleanup", () => {
         Effect.tap((result) =>
           Effect.sync(() => {
             expect(Exit.isFailure(result)).toBe(true);
+            if (Exit.isFailure(result)) {
+              const defect = Exit.findDefect(result);
+              expect(defect._tag).toBe("Success");
+              if (defect._tag === "Success")
+                expect(defect.success).toMatchObject({ cause: { code: "EPERM" } });
+            }
           }),
         ),
         Effect.provideService(
