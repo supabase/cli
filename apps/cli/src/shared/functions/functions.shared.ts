@@ -16,7 +16,16 @@ export function validateFunctionSlugMessage(slug: string): string | undefined {
 export const FUNCTIONS_PROJECT_REF_SAFE_FLAGS = ["project-ref"] as const;
 
 // Order is rendered verbatim in the mutually-exclusive-flags error message.
-export const FUNCTIONS_BUNDLER_MUTEX_GROUP = ["use-api", "use-docker", "legacy-bundle"] as const;
+export const FUNCTIONS_DEPLOY_BUNDLER_MUTEX_GROUP = [
+  "use-api",
+  "use-docker",
+  "legacy-bundle",
+] as const;
+
+// Order is rendered verbatim in the mutually-exclusive-flags error message. `legacy-bundle` is
+// a removed, tombstoned flag on `functions download` (see `removedFlag`), rejected
+// unconditionally before this group is ever checked, so it is not a member here.
+export const FUNCTIONS_DOWNLOAD_BUNDLER_MUTEX_GROUP = ["use-api", "use-docker"] as const;
 
 /**
  * Full deno-1 edge-runtime image tag, resolved from the embedded Dockerfile

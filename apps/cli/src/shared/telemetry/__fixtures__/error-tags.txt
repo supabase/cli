@@ -290,7 +290,6 @@ GenTypesNetworkIdUnsupportedError
 GenTypesParseConfigError
 GenTypesUnexpectedStatusError
 GenTypesWorkdirError
-GoChildExitError
 HealthCheckProbeError
 HealthCheckTimeoutError
 HostPostgresClientError
@@ -437,6 +436,7 @@ PullParentRefInvalidError
 PullUncommittedChangesError
 PullWorkdirError
 RemoteJwksError
+RemovedSurfaceError
 ResetLocalDbFailedError
 ResetLocalDbNotRunningError
 ResetReplicationSlotsError

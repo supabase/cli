@@ -33,7 +33,6 @@ import {
   YesFlag,
 } from "../../../command-internal/global-flags.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import {
@@ -102,7 +101,6 @@ interface SetupOpts {
   readonly edgeFailFirstWith?: string;
   // `resolvePoolerFallback` returns `Some(pooler conn)` when true, `None` otherwise.
   readonly poolerAvailable?: boolean;
-  readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
   // Initial-migra pull: the bytes the native pg_dump container streams to its sink, its
   // exit code/stderr, and (when set) an IPv6 stderr that fails the first dump attempt so
   // the pooler retry runs (the second attempt then streams `dumpStdout`).
@@ -390,21 +388,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
 
-  const proxyCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
-  const proxyCaptureCalls: Array<{
-    args: ReadonlyArray<string>;
-    env?: Record<string, string>;
-    stdin?: "inherit" | "ignore";
-  }> = [];
-  const proxy = Layer.succeed(GoProxy, {
-    exec: (args, execOpts) => Effect.sync(() => void proxyCalls.push({ args, env: execOpts?.env })),
-    execCapture: (args, execOpts) =>
-      Effect.sync(() => {
-        proxyCaptureCalls.push({ args, env: execOpts?.env, stdin: execOpts?.stdin });
-        return opts.delegateStdout ?? "";
-      }),
-  });
-
   // Mirrors the same ref `resolver`'s own mock embeds above, and gives an explicit
   // `--project-ref` flag top precedence over `opts.resolvedRef` (mirrors
   // `reset.integration.test.ts`'s identical mock).
@@ -440,7 +423,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     alwaysReadyHttpClientLayer,
     resolver,
     projectRefResolver,
-    proxy,
     mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(
@@ -462,8 +444,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   return {
     layer: baseLayer,
     out,
-    proxyCalls,
-    proxyCaptureCalls,
     historyUpserts,
     execLog,
     connectedDatabases,
@@ -622,7 +602,6 @@ describe("db pull", () => {
       yield* dbPull(flags({ projectRef: Option.some(FLAG_REF) }));
       expect(s.engineCalls[0]?.operation).toBe("export");
       expect(s.engineCalls[0]?.projectRef).toBe(FLAG_REF);
-      expect(s.proxyCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1027,8 +1006,6 @@ describe("db pull", () => {
       });
       return Effect.gen(function* () {
         yield* dbPull(flags());
-        expect(s.proxyCalls).toHaveLength(0);
-        expect(s.proxyCaptureCalls).toHaveLength(0);
         // pg_dump ran with the schema-dump env (internal-schema exclude + comment strip).
         expect(s.dumpCalls).toHaveLength(1);
         expect(s.dumpCalls[0]?.env["EXTRA_SED"]).toBe("/^--/d");
@@ -1067,8 +1044,6 @@ describe("db pull", () => {
     });
     return Effect.gen(function* () {
       yield* dbPull(flags());
-      expect(s.proxyCalls).toHaveLength(0);
-      expect(s.proxyCaptureCalls).toHaveLength(0);
       const success = s.out.messages.find((m) => m.type === "success");
       // Machine mode never prompts, so history updates by default (true); `schemaWritten`
       // is the real native path (not null as when delegated).
@@ -1625,7 +1600,6 @@ describe("db pull", () => {
           if (prev === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
           else process.env["SUPABASE_EXPERIMENTAL"] = prev;
         }
-        expect(s.proxyCalls).toHaveLength(0);
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
         expect(streamText(s.out, "stderr")).toContain(
@@ -1686,7 +1660,6 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       yield* dbPull(flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }));
       expect(s.engineCalls[0]?.operation).toBe("export");
-      expect(s.proxyCalls).toHaveLength(0);
       expect(streamText(s.out, "stderr")).toContain(
         "The --experimental structured-dump mode for `db pull` is deprecated",
       );
@@ -1698,7 +1671,6 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       yield* dbPull(flags({ diffEngine: Option.some("migra") }));
       expect(s.engineCalls[0]?.operation).toBe("export");
-      expect(s.proxyCalls).toHaveLength(0);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1708,7 +1680,6 @@ describe("db pull", () => {
       const s = setup(tmp.current, { experimental: true, edgeStdout: EXPORT_JSON });
       return Effect.gen(function* () {
         yield* dbPull(flags());
-        expect(s.proxyCalls).toHaveLength(0);
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
         expect(streamText(s.out, "stderr")).toContain(
@@ -1728,7 +1699,6 @@ describe("db pull", () => {
       });
       return Effect.gen(function* () {
         yield* dbPull(flags());
-        expect(s.proxyCaptureCalls).toHaveLength(0);
         const success = s.out.messages.find((m) => m.type === "success");
         expect(success?.data).toMatchObject({
           declarative: true,
@@ -1750,7 +1720,6 @@ describe("db pull", () => {
         expect(streamText(s.out, "stderr")).toContain(
           "Preparing declarative schema export using pg-delta...",
         );
-        expect(s.proxyCalls).toHaveLength(0);
         expect(streamText(s.out, "stderr")).not.toContain("is deprecated");
       }).pipe(Effect.provide(s.layer));
     },
@@ -1801,7 +1770,6 @@ describe("db pull", () => {
       return Effect.gen(function* () {
         yield* dbPull(flags({ name: Option.some("--experimental=false") }));
         expect(s.engineCalls[0]?.operation).toBe("export");
-        expect(s.proxyCalls).toHaveLength(0);
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -1827,7 +1795,6 @@ describe("db pull", () => {
       return Effect.gen(function* () {
         yield* dbPull(flags());
         expect(s.engineCalls[0]?.operation).toBe("export");
-        expect(s.proxyCalls).toHaveLength(0);
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -1847,7 +1814,6 @@ describe("db pull", () => {
       return Effect.gen(function* () {
         yield* dbPull(flags());
         expect(s.engineCalls[0]?.operation).toBe("export");
-        expect(s.proxyCalls).toHaveLength(0);
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {

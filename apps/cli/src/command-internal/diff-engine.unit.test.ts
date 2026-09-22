@@ -29,7 +29,6 @@ describe("resolveDiffEngine", () => {
   const base = {
     useMigraChanged: false,
     usePgAdmin: false,
-    usePgSchema: false,
     pgDeltaDefault: true,
   };
 
@@ -44,10 +43,6 @@ describe("resolveDiffEngine", () => {
 
   it("--use-pgadmin clears pg-delta mode", () => {
     expect(resolveDiffEngine({ ...base, usePgAdmin: true })).toBe(false);
-  });
-
-  it("--use-pg-schema clears pg-delta mode", () => {
-    expect(resolveDiffEngine({ ...base, usePgSchema: true })).toBe(false);
   });
 });
 

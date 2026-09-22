@@ -120,8 +120,8 @@ export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext)
 
 /**
  * `functions` step: downloads every Edge Function's source, matching the standalone `functions
- * download` command's `--use-api`/`--use-docker` defaults. `legacyBundle: false` keeps
- * `proxyDownload` unreachable, so `resolveProjectRef` just returns the already-resolved ref.
+ * download` command's `--use-api`/`--use-docker` defaults. `resolveProjectRef` just returns the
+ * already-resolved ref.
  */
 export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const api = yield* CommandPlatformApi;
@@ -139,7 +139,6 @@ export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepC
       projectRef: Option.some(context.ref),
       useApi: false,
       useDocker: true,
-      legacyBundle: false,
     },
     {
       api,
@@ -151,12 +150,6 @@ export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepC
       styleAqua: (text) => aqua(text),
       styleWarning: (text) => yellow(text),
       resolveProjectRef: () => Effect.succeed(context.ref),
-      proxyDownload: () =>
-        Effect.die(
-          new Error(
-            "supabase pull: functions download unexpectedly delegated to the Go binary (legacyBundle is always false for pull)",
-          ),
-        ),
     },
   );
   return { kind: "downloaded", result } satisfies PullFunctionsStepOutcome;

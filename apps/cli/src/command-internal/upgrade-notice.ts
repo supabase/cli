@@ -354,26 +354,23 @@ export const upgradeNoticeHook = (
   args: ReadonlyArray<string>,
   info: {
     readonly cleanShowHelp: boolean;
-    readonly delegatedToGo: boolean;
     readonly workingDirectory?: string;
     readonly isValueTakingFlagToken: (token: string) => boolean;
   },
 ): Effect.Effect<void> =>
-  info.delegatedToGo
-    ? Effect.void
-    : Effect.promise(() =>
-        runUpgradeNotice({
-          env: process.env,
-          args,
-          cleanShowHelp: info.cleanShowHelp,
-          isValueTakingFlagToken: info.isValueTakingFlagToken,
-          cwd: process.cwd(),
-          resolvedCwd: info.workingDirectory,
-          currentVersion: CLI_VERSION,
-          now: Date.now,
-          fetchLatestTag: fetchLatestReleaseTag,
-          writeStderr: (text) => {
-            process.stderr.write(text);
-          },
-        }),
-      ).pipe(Effect.ignoreCause);
+  Effect.promise(() =>
+    runUpgradeNotice({
+      env: process.env,
+      args,
+      cleanShowHelp: info.cleanShowHelp,
+      isValueTakingFlagToken: info.isValueTakingFlagToken,
+      cwd: process.cwd(),
+      resolvedCwd: info.workingDirectory,
+      currentVersion: CLI_VERSION,
+      now: Date.now,
+      fetchLatestTag: fetchLatestReleaseTag,
+      writeStderr: (text) => {
+        process.stderr.write(text);
+      },
+    }),
+  ).pipe(Effect.ignoreCause);

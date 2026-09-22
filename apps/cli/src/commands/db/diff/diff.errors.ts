@@ -18,8 +18,9 @@ export class DbDiffTargetFlagsError extends Data.TaggedError("DbDiffTargetFlagsE
 }
 
 /**
- * Conflicting diff-engine flags (`use-migra`/`use-pgadmin`/`use-pg-schema`/
- * `use-pg-delta`); message text is an established output contract.
+ * Conflicting diff-engine flags (`use-migra`/`use-pgadmin`/`use-pg-delta`); message text is
+ * an established output contract. `use-pg-schema` is rejected unconditionally before this
+ * check runs, so it can never appear in a real conflict.
  */
 export class DbDiffEngineConflictError extends Data.TaggedError("DbDiffEngineConflictError")<{
   readonly message: string;
