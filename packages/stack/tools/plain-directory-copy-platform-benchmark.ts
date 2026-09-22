@@ -128,6 +128,11 @@ const sourceRoot = `${runRoot}/source`;
 const targetRoot = `${runRoot}/target`;
 const cacheRoot = `${runRoot}/cache`;
 const expected = await fixture(sourceRoot, fixtureLayout[dataset]);
+const fixtureManifestDigest = digest(
+  Buffer.from(
+    JSON.stringify(Object.entries(expected).sort(([left], [right]) => left.localeCompare(right))),
+  ),
+);
 const probe = await cloneProbe(runRoot);
 if (probe.supported)
   throw new Error("Forced clone probe succeeded; this environment cannot measure plain fallback");
@@ -213,6 +218,7 @@ const report = {
     sourceDirectories: fixtureLayout[dataset].directories.length,
     pgVersion: "17",
     payloadSource: "real PostgreSQL data-directory layout; no original contents copied",
+    manifestDigest: fixtureManifestDigest,
   },
   mechanism: probe.supported
     ? "copyFile clone succeeded on probe filesystem"
@@ -241,6 +247,12 @@ const report = {
     save: [Math.min(...values("saveMs")), Math.max(...values("saveMs"))],
     restore: [Math.min(...values("restoreMs")), Math.max(...values("restoreMs"))],
     total: [Math.min(...values("totalMs")), Math.max(...values("totalMs"))],
+  },
+  verification: {
+    sourceManifestDigest: fixtureManifestDigest,
+    cacheManifestCheckedOutsideTiming: true,
+    targetManifestCheckedOutsideTiming: true,
+    mutationIsolationCheckedOutsideTiming: true,
   },
 };
 await mkdir(output.split(/[\\/]/u).slice(0, -1).join("/") || ".", { recursive: true });
