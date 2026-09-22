@@ -20,7 +20,9 @@ Parameters:
 Resources:
   ArtifactBucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
+    # RetainExceptOnCreate: a rolled-back first create removes the fixed-name bucket so the
+    # retry can recreate it; once the stack exists, delete and replace keep the objects.
+    DeletionPolicy: RetainExceptOnCreate
     UpdateReplacePolicy: Retain
     # Objects are meant to be public through the bucket policy; only ACL-based public
     # access stays blocked. Listing is never granted, so keys must be known in advance.

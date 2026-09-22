@@ -75,7 +75,8 @@ jobs:
 
       - name: Clear a failed initial create
         # A create that rolled back leaves the stack in ROLLBACK_COMPLETE, which cannot be
-        # updated; it holds no resources, so deleting it is the only way to retry.
+        # updated. Its resources are already gone (the bucket uses RetainExceptOnCreate), so
+        # deleting the stack record is the only way to retry.
         run: |
           set -euo pipefail
           status="$(aws cloudformation describe-stacks --stack-name cli-artifacts \
