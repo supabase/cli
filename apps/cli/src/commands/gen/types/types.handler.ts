@@ -354,6 +354,12 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
               classifyError: classifyGenerateError,
             });
 
+      if (lang === "typescript") {
+        yield* output.raw(
+          "Generated TypeScript is unformatted. Format the saved file with:\n  npx oxfmt database.types.ts\n",
+          "stderr",
+        );
+      }
       yield* output.raw(types);
     });
 

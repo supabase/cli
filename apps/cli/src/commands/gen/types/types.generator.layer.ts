@@ -10,7 +10,6 @@ import {
 } from "@supabase/postgrest-typegen";
 
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
-import { oxfmtTypegenFormat } from "./types.oxfmt.ts";
 import { GenTypesGenerationError, GenTypesGenerator } from "./types.generator.service.ts";
 
 /**
@@ -58,7 +57,8 @@ export const genTypesGeneratorLayer = Layer.effect(
                 case "typescript":
                   return await generateTypescript(metadata, {
                     detectOneToOneRelationships: input.detectOneToOneRelationships,
-                    format: oxfmtTypegenFormat,
+                    // TypeScript is emitted as the generator wrote it. oxfmt is not bundled.
+                    format: (code) => Promise.resolve(code),
                   });
                 case "go":
                   return generateGo(metadata);

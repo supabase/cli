@@ -1,15 +1,15 @@
+import path from "node:path";
+import type { BunPlugin } from "bun";
+
+const oxfmtStub = path.join(import.meta.dir, "oxfmt-stub.ts");
+
 /**
- * Optional prettier plugins that `oxfmt`'s dist lazily `import()`s for non-TypeScript file
- * types. They are never installed — `gen types` only formats generated TypeScript, through the
- * statically embedded binding in `src/commands/gen/types/types.oxfmt.ts` — but `bun build`
- * still resolves every analyzable dynamic import, so each must be marked external.
+ * `Bun.build` `alias` does not rewrite imports inside dependencies.
+ * `@supabase/postgrest-typegen` imports `oxfmt`, which the CLI never calls.
  */
-export const OXFMT_OPTIONAL_PLUGIN_EXTERNALS = [
-  "@prettier/plugin-hermes",
-  "@prettier/plugin-oxc",
-  "@prettier/plugin-pug",
-  "@shopify/prettier-plugin-liquid",
-  "@zackad/prettier-plugin-twig",
-  "prettier-plugin-astro",
-  "prettier-plugin-marko",
-] as const;
+export const oxfmtStubPlugin: BunPlugin = {
+  name: "oxfmt-stub",
+  setup(build) {
+    build.onResolve({ filter: /^oxfmt$/ }, () => ({ path: oxfmtStub }));
+  },
+};

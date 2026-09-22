@@ -99,7 +99,8 @@ inspects a container; it resolves the stack's database connection through
 ### `--output-format text`
 
 Prints generated TypeScript (or other language) type definitions to stdout.
-Diagnostics (`Connecting to …`) go to stderr.
+Diagnostics (`Connecting to …`) go to stderr. In-process TypeScript also prints a stderr
+note that the output is unformatted.
 
 ### `--output-format json`
 
@@ -111,6 +112,8 @@ Not applicable.
 
 ## Notes
 
+- TypeScript generated in-process is unformatted. stderr suggests `npx oxfmt database.types.ts`.
+  `--linked` and `--project-id` TypeScript for a project still come from the Management API.
 - Exactly one of `--local`, `--linked`, `--project-id`, or `--db-url` must be specified.
   All four mutually exclusive flag groups are enforced with the exact error text and
   sorted group order: `local/linked/project-id/db-url`, plus `linked/project-id` against

@@ -753,7 +753,7 @@ describe("gen types", () => {
 
   it.live("generates from --project-id without a local project config", () => {
     const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-pid-no-config-"));
-    const { layer, api } = setup({ workdir, skipConfig: true, projectTypes: "ok" });
+    const { layer, out, api } = setup({ workdir, skipConfig: true, projectTypes: "ok" });
 
     return Effect.gen(function* () {
       yield* genTypes(defaultFlags({ projectId: Option.some(VALID_REF) })).pipe(
@@ -764,6 +764,7 @@ describe("gen types", () => {
         method: "generateTypescriptTypes",
         input: { ref: VALID_REF, included_schemas: "public" },
       });
+      expect(out.stderrText).not.toContain("unformatted");
     });
   });
 
@@ -1343,6 +1344,7 @@ describe("gen types", () => {
             expect.objectContaining({ method: "generateTypescriptTypes" }),
           );
           expect(out.stderrText).toContain("Connecting to 127.0.0.1 5432");
+          expect(out.stderrText).not.toContain("unformatted");
           expect(out.stdoutText).toContain(scenario.stdout);
           expect(dbConfig.resolves).toHaveLength(1);
           expect(dbConfig.resolves[0]?.connType).toBe("linked");
@@ -2171,6 +2173,9 @@ describe("gen types", () => {
           );
 
           expect(out.stderrText).toContain("Connecting to 127.0.0.1 54321");
+          expect(out.stderrText).toContain(
+            "Generated TypeScript is unformatted. Format the saved file with:\n  npx oxfmt database.types.ts",
+          );
           expect(out.stdoutText).toContain("generated");
           expect(child.calls).toHaveLength(1);
           expect(child.calls[0]).toMatchObject({
