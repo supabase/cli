@@ -419,8 +419,11 @@ jobs:
             "dist/supabase_windows_amd64.tar.gz"
             "install"
           )
+          manifest="${RUNNER_TEMP}/release-assets.txt"
+          : > "${manifest}"
           max_attempts=3
           for asset in "${assets[@]}"; do
+            basename "${asset}" >> "${manifest}"
             attempts=0
             while :; do
               attempts=$((attempts + 1))
@@ -436,6 +439,24 @@ jobs:
               sleep "$((attempts * 10))"
             done
           done
+
+      # Publishing makes the release immutable, so refuse to un-draft unless every asset the
+      # upload step expected is present and GitHub reports it fully uploaded.
+      - name: Verify release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          manifest="${RUNNER_TEMP}/release-assets.txt"
+          uploaded="$(gh release view "${tag}" --json assets --jq '.assets[] | select(.state == "uploaded") | .name' | sort)"
+          missing="$(comm -23 <(sort "${manifest}") <(printf '%s\n' "${uploaded}"))"
+          if [ -n "${missing}" ]; then
+            echo "::error::Release ${tag} is missing assets or has incomplete uploads:" >&2
+            printf '%s\n' "${missing}" >&2
+            exit 1
+          fi
+          echo "All $(wc -l < "${manifest}" | tr -d ' ') expected assets are present on ${tag}."
 
       - name: Publish GitHub Release (immutable)
         env:
