@@ -15,6 +15,7 @@ import { ChildProcess } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import type { ContainerRuntime } from "../runtime/Container.ts";
 import type { DatabaseRuntime } from "../services/Database.ts";
+import { shadowPhase } from "../services/shadowPhase.ts";
 
 const HELPER_IMAGE =
   "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
@@ -449,7 +450,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               yield* options.fs
                 .makeDirectory(options.cacheRoot, { recursive: true })
                 .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
+            yield* shadowPhase("helper-prepare-begin");
             yield* options.container.prepare(HELPER_IMAGE);
+            yield* shadowPhase("helper-prepare-end");
             const token = yield* options.crypto.randomUUIDv4.pipe(
               Effect.mapError((cause) => errorFor("helper", cause)),
             );
@@ -457,6 +460,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             // Register the deterministic owned name before the remote create starts so an
             // interrupted docker run can still be removed by the same scope.
             yield* Ref.set(helperId, name);
+            yield* shadowPhase("helper-run-begin");
             const created = yield* engineCommand([
               "run",
               "-d",
@@ -476,6 +480,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             ]);
             if (!/^[a-f0-9]{12,64}$/u.test(created))
               return yield* errorFor("helper", "Docker returned an invalid helper identity");
+            yield* shadowPhase("helper-run-end");
             return name;
           }),
       );
@@ -830,10 +835,12 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               store.backend === "host"
                 ? `; owner=$(stat -c "%u:%g" /cache); mkdir -p /cache/stack-database-snapshots-helper; chown "$owner" /cache/stack-database-snapshots-helper; chown -R "$owner" ${root}`
                 : "";
+            yield* shadowPhase("restore-helper-begin");
             const result = yield* runHelper(
               `set -eu; mkdir -p ${root}; flock -x -w 120 ${shellQuote(`${root}/.lock`)} sh -eu -c ${shellQuote(`set -eu; mkdir -p ${root}/entries ${root}/stages; find ${root}/stages -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; find ${root}/entries -mindepth 1 -maxdepth 1 -name '*.retired' -exec rm -rf -- {} +; trap 'rm -rf ${stage}${cacheOwnership}' EXIT; if ! ${targetSetup}; then echo 'Initialized restore target data directory is missing' >&2; exit 1; fi; bad=$(find ${data} -mindepth 1 -print -quit); if [ -n "$bad" ]; then echo NONEMPTY; exit 0; fi; if [ ! -d ${source} ]; then echo MISS; exit 0; fi; if [ ! -f ${source}/descriptor.json ]; then echo 'Snapshot descriptor is missing' >&2; exit 1; fi; actual=$(cat ${source}/descriptor.json); expected=${shellQuote(descriptor)}; if [ "$actual" != "$expected" ]; then echo 'Snapshot descriptor does not match requested identity' >&2; exit 1; fi; bad=$(find ${source}/data \\( ! -type f ! -type d \\) -print -quit); if [ -n "$bad" ]; then echo "Snapshot contains unsupported filesystem entry $bad" >&2; exit 1; fi; if [ -e ${source}/data/postmaster.pid ]; then echo 'Snapshot contains postmaster.pid' >&2; exit 1; fi; rm -rf ${stage}; cp -a --reflink=auto ${source}/data ${stage}; actual=$(cat ${stage}/PG_VERSION); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Snapshot PostgreSQL major does not match requested version' >&2; exit 1; fi; ${store.backend === "host" ? `chown -R 100:101 ${stage};` : ""} rmdir ${data}; mv ${stage} ${data}; touch ${source}; echo HIT`)}; rm -rf ${shellQuote(stage)}`,
               paths.mounts,
             );
+            yield* shadowPhase("restore-helper-end");
             if (result === "MISS") return false;
             if (result === "NONEMPTY")
               return yield* errorFor("restore", "Restore target data directory must be empty");

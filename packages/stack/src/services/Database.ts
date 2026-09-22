@@ -25,6 +25,7 @@ import {
   resolveArtifact,
   type PreparedNativeArtifact,
 } from "../Artifacts.ts";
+import { shadowPhase } from "./shadowPhase.ts";
 import {
   makeContainerRuntime,
   type ContainerProcess,
@@ -61,6 +62,8 @@ export const DatabaseConfig = Schema.Struct({
   jwtSecret: Schema.Redacted(Schema.String),
   jwtExpiry: Schema.Finite,
   healthTimeoutMs: Schema.optionalKey(Schema.Finite),
+  /** When 0, destroy issues stop in the background. An explicit stop still waits. */
+  stopGraceSeconds: Schema.optionalKey(Schema.Finite),
   rootKey: Schema.optionalKey(Schema.Redacted(Schema.String)),
   settings: Schema.optionalKey(
     Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Finite, Schema.Boolean])),
@@ -237,8 +240,10 @@ const health = Effect.fn("Database.health")((
     }),
   );
   const retryProbe = probe.pipe(Effect.retry(Schedule.spaced("250 millis")));
-  return reconcile.pipe(
+  return shadowPhase("health-probe-begin").pipe(
+    Effect.andThen(reconcile),
     Effect.andThen(retryProbe),
+    Effect.tap(() => shadowPhase("health-probe-ok")),
     Effect.andThen(
       Effect.scoped(
         Effect.gen(function* () {
@@ -275,6 +280,7 @@ const health = Effect.fn("Database.health")((
                 }),
             ),
           );
+          yield* shadowPhase("health-bootstrap-begin");
           yield* ensureInternalDatabase(session, openInternal).pipe(
             Effect.mapError((cause) => errorFor("bootstrap", cause)),
           );
@@ -283,6 +289,7 @@ const health = Effect.fn("Database.health")((
             jwtSecret: config.jwtSecret,
             jwtExpiry: config.jwtExpiry,
           }).pipe(Effect.mapError((cause) => errorFor("bootstrap", cause)));
+          yield* shadowPhase("health-bootstrap-end");
           const readyMarker = yield* Schema.encodeEffect(
             Schema.fromJsonString(DatabaseReadyMarker),
           )({
@@ -333,10 +340,15 @@ const publishLogs = Effect.fn("Database.publishLogs")((
   );
 });
 
-const runtimeFromContainer = (process: ContainerProcess): RuntimeSession => ({
+const runtimeFromContainer = (process: ContainerProcess, discard: boolean): RuntimeSession => ({
   health: Effect.void,
   exit: processExit(process.exitCode),
   stop: process.stop.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
+  ...(discard
+    ? {
+        discard: process.beginStop.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
+      }
+    : {}),
   remove: process.remove.pipe(Effect.mapError((cause) => errorFor("remove", cause))),
 });
 
@@ -750,10 +762,12 @@ export const makeDatabase = (
               ),
             } satisfies RuntimeSession;
           }
+          yield* shadowPhase("launch-image-begin");
           const image = yield* resolveArtifact({
             service: "database",
             version: config.version,
           }).pipe(Effect.mapError((cause) => errorFor("launch", cause)));
+          yield* shadowPhase("launch-image-end");
           const selectedContainer = container;
           if (selectedContainer === undefined)
             return yield* errorFor("launch", "Container runtime is unavailable");
@@ -762,8 +776,12 @@ export const makeDatabase = (
             (yield* storage.needsDataChown.pipe(
               Effect.mapError((cause) => errorFor("launch", cause)),
             ))
-          )
+          ) {
+            yield* shadowPhase("launch-chown-begin");
             yield* dataCommand(config.version, ["chown", "100:101", "/var/lib/postgresql/data"]);
+            yield* shadowPhase("launch-chown-end");
+          }
+          yield* shadowPhase("launch-container-begin");
           const launched = yield* selectedContainer
             .launch({
               image: image.image,
@@ -793,13 +811,16 @@ export const makeDatabase = (
                     ]),
               ],
               ports: [5432],
+              ...(config.stopGraceSeconds === undefined
+                ? {}
+                : { stopGraceSeconds: config.stopGraceSeconds }),
             })
             .pipe(
               Effect.catchTag("ContainerLaunchError", ({ failure, process }) =>
                 Effect.fail(
                   new ServiceLaunchError({
                     failure: errorFor("launch", failure),
-                    runtime: runtimeFromContainer(process),
+                    runtime: runtimeFromContainer(process, false),
                   }),
                 ),
               ),
@@ -808,14 +829,17 @@ export const makeDatabase = (
               ),
               Scope.provide(context.scope),
             );
+          yield* shadowPhase("launch-container-end");
           const port = launched.ports[5432];
           if (port === undefined)
             return yield* errorFor("launch", "Container did not publish PostgreSQL");
           const selectedEndpoint: BackendEndpoint = { kind: "tcp", host: "127.0.0.1", port };
           yield* Ref.set(endpoint, selectedEndpoint);
           yield* publishLogs(launched, logs, context.scope);
+          yield* shadowPhase(`stop-grace-${String(config.stopGraceSeconds)}`);
+          const session = runtimeFromContainer(launched, config.stopGraceSeconds === 0);
           return {
-            ...runtimeFromContainer(launched),
+            ...session,
             health: health(
               selectedEndpoint,
               config,
@@ -838,9 +862,7 @@ export const makeDatabase = (
                         .pipe(Effect.mapError((cause) => errorFor("health", cause))),
               },
             ),
-            remove: runtimeFromContainer(launched).remove.pipe(
-              Effect.tap(() => Ref.set(endpoint, undefined)),
-            ),
+            remove: session.remove.pipe(Effect.tap(() => Ref.set(endpoint, undefined))),
           } satisfies RuntimeSession;
         }),
     );

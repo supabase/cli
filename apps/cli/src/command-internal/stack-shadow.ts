@@ -17,6 +17,7 @@ import {
 import type { SetupDatabaseOptions } from "./db-bootstrap/db-setup.ts";
 import { listLocalMigrationPaths } from "./migration-history.ts";
 import { applyMigrations } from "./migration-apply.ts";
+import { shadowPhase } from "./shadow-phase.ts";
 import { stackShadowCacheEntry, stackShadowCacheRoles } from "./stack-shadow-cache.ts";
 
 type Runtime = "native" | "docker" | "podman";
@@ -57,12 +58,14 @@ const acquireNamespace = Effect.fn("StackShadow.acquireNamespace")(function* (op
   const runtimeInfo = yield* RuntimeInfo;
   const runtime = opts.runtime ?? (yield* stackProjectRuntime) ?? defaultStackRuntime(runtimeInfo);
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-shadow-" });
+  yield* shadowPhase("namespace-begin");
   const stack = yield* api.create({
     projectRoot: root,
     stateRoot: path.join(settings.supabaseHome, "stacks"),
     cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
     runtime,
   });
+  yield* shadowPhase("namespace-end");
   return { stack, runtime };
 });
 
@@ -89,12 +92,17 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
         jwtSecret: Redacted.make(input.jwtSecret),
         jwtExpiry: input.jwtExpiry,
         healthTimeoutMs: input.healthTimeoutSeconds * 1_000,
+        // Destroy issues stop without waiting. The stop before a snapshot still checkpoints.
+        stopGraceSeconds: 0,
         ...(input.rootKey === undefined ? {} : { rootKey: Redacted.make(input.rootKey) }),
         settings: dbSettings,
       },
       endpoints: { sql: { port: opts.port ?? "auto" } },
     });
+  yield* shadowPhase("create-db-begin");
   let database = yield* createDatabase();
+  yield* shadowPhase("create-db-end");
+  yield* shadowPhase("cache-begin");
   const cacheResolution = yield* Effect.result(
     stackShadowCacheEntry(
       input,
@@ -105,8 +113,18 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
       opts.bypassCache,
     ),
   );
+  yield* shadowPhase("cache-end");
   const output = yield* Output;
   const cache = Result.isSuccess(cacheResolution) ? cacheResolution.success : undefined;
+  const startReady = (db: DatabaseInstance) =>
+    Effect.gen(function* () {
+      yield* shadowPhase("start-begin");
+      yield* db.start;
+      yield* shadowPhase("start-end");
+      yield* shadowPhase("ready-begin");
+      yield* db.ready;
+      yield* shadowPhase("ready-end");
+    });
   if (Result.isFailure(cacheResolution))
     yield* output.raw(
       `Warning: stack shadow cache unavailable: ${causeMessage(cacheResolution.failure)}; continuing uncached.\n`,
@@ -115,32 +133,26 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
   let restored = false;
   if (cache !== undefined) {
     const warmAttempt = yield* Effect.result(
-      database
-        .restoreSnapshot(cache.key)
-        .pipe(
-          Effect.flatMap((restoredSnapshot) =>
-            restoredSnapshot
-              ? database.start.pipe(Effect.andThen(database.ready), Effect.as(true))
-              : Effect.succeed(false),
-          ),
-        ),
+      Effect.gen(function* () {
+        yield* shadowPhase("restore-begin");
+        const restoredSnapshot = yield* database.restoreSnapshot(cache.key);
+        yield* shadowPhase("restore-end");
+        if (!restoredSnapshot) return false;
+        yield* startReady(database);
+        return true;
+      }),
     );
     if (Result.isSuccess(warmAttempt)) {
       restored = warmAttempt.success;
-      if (!restored) {
-        yield* database.start;
-        yield* database.ready;
-      }
+      if (!restored) yield* startReady(database);
     } else {
       yield* output.raw("Warning: cached stack shadow baseline unusable; recreating.\n", "stderr");
       yield* database.destroy;
       database = yield* createDatabase();
-      yield* database.start;
-      yield* database.ready;
+      yield* startReady(database);
     }
   } else {
-    yield* database.start;
-    yield* database.ready;
+    yield* startReady(database);
   }
   const catalog = yield* StackCatalogSetup;
   if (!restored)
@@ -176,7 +188,7 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
       const published = yield* Effect.result(
         database.stop.pipe(Effect.flatMap(() => database.saveSnapshot(cache.key))),
       );
-      yield* database.start.pipe(Effect.andThen(database.ready));
+      yield* startReady(database);
       if (Result.isSuccess(published)) {
         snapshotKey = cache.key;
       } else {
@@ -187,7 +199,9 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
       }
     }
   }
+  yield* shadowPhase("credentials-begin");
   const credentials = yield* database.credentials({ from: "host" });
+  yield* shadowPhase("credentials-end");
   const credentialUrl = credentials.databaseUrl;
   const credentialsConn =
     credentialUrl === undefined ? undefined : parseConnectionString(credentialUrl);
@@ -218,13 +232,18 @@ export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(funct
 ) {
   const output = yield* Output;
   const namespace = yield* Effect.acquireRelease(acquireNamespace(opts), ({ stack }) =>
-    stack.destroy.pipe(
-      Effect.catch((cause) =>
-        output.raw(
-          `Failed to destroy shadow stack ${stack.id}: ${cause.message}. Run supabase stack destroy --stack-id ${stack.id} to remove it.\n`,
-          "stderr",
+    shadowPhase("destroy-begin").pipe(
+      Effect.andThen(
+        stack.destroy.pipe(
+          Effect.catch((cause) =>
+            output.raw(
+              `Failed to destroy shadow stack ${stack.id}: ${cause.message}. Run supabase stack destroy --stack-id ${stack.id} to remove it.\n`,
+              "stderr",
+            ),
+          ),
         ),
       ),
+      Effect.ensuring(shadowPhase("destroy-end")),
     ),
   );
   return yield* initialize(namespace.stack, namespace.runtime, input, opts);
@@ -243,6 +262,7 @@ export const stackMigrateShadow = Effect.fn("StackShadow.migrate")(function* (
   handle: StackShadowAcquiredHandle,
   input: ShadowSetupInput<unknown>,
 ) {
+  yield* shadowPhase("migrations-list-begin");
   const migrationsDir = input.path.join(input.workdir, "supabase", "migrations");
   const pending = yield* listLocalMigrationPaths(input.fs, input.path, migrationsDir).pipe(
     Effect.mapError((cause) => new ShadowDbError({ message: cause.message, reason: "filesystem" })),
@@ -250,7 +270,11 @@ export const stackMigrateShadow = Effect.fn("StackShadow.migrate")(function* (
   const conn = parseConnectionString(handle.url);
   if (conn === undefined)
     return yield* new ShadowDbError({ message: "Invalid shadow database URL", reason: "connect" });
+  yield* shadowPhase("migrations-list-end");
+  yield* shadowPhase("connect-begin");
   const session = yield* connectShadowDatabase(conn);
+  yield* shadowPhase("connect-end");
+  yield* shadowPhase("apply-begin");
   yield* applyMigrations(
     session,
     input.fs,
@@ -263,6 +287,7 @@ export const stackMigrateShadow = Effect.fn("StackShadow.migrate")(function* (
     ),
     Effect.mapError(shadowError),
   );
+  yield* shadowPhase("apply-end");
 });
 
 export const stackPrepareShadowSource = Effect.fn("StackShadow.prepareSource")(

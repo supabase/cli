@@ -16,6 +16,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { shadowPhase } from "../services/shadowPhase.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
@@ -39,6 +40,8 @@ interface ContainerSpec {
   }>;
   readonly workingDir?: string;
   readonly ports?: ReadonlyArray<number>;
+  /** Seconds `docker stop` waits before SIGKILL. Omitted means 10. */
+  readonly stopGraceSeconds?: number;
 }
 
 export interface ContainerProcess {
@@ -51,6 +54,9 @@ export interface ContainerProcess {
   readonly exitCode: Effect.Effect<number, ContainerError>;
   readonly stdin: Sink.Sink<void, Uint8Array, never, ContainerError>;
   readonly stop: Effect.Effect<void, ContainerError>;
+  /** Starts `stop` and a later `rm` without waiting for either to finish. */
+  readonly beginStop: Effect.Effect<void, ContainerError>;
+  readonly kill: Effect.Effect<void, ContainerError>;
   readonly remove: Effect.Effect<void, ContainerError>;
 }
 
@@ -251,7 +257,50 @@ export const makeContainerRuntime = (options: {
           const removed = yield* Ref.make(false);
           const stop = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-            yield* run(["stop", "--time", "10", id]);
+            yield* shadowPhase("container-stop");
+            const grace =
+              spec.stopGraceSeconds !== undefined &&
+              Number.isInteger(spec.stopGraceSeconds) &&
+              spec.stopGraceSeconds > 0 &&
+              spec.stopGraceSeconds <= 60
+                ? String(spec.stopGraceSeconds)
+                : "10";
+            yield* run(["stop", "--time", grace, id]);
+            yield* Ref.set(stopped, true);
+          });
+          // Issues stop, then removes the container, without waiting. The caller continues.
+          const beginStop = Effect.scoped(
+            Effect.gen(function* () {
+              if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
+              yield* shadowPhase("container-stop-background");
+              const script = `${options.engine} stop --time 10 ${id} && ${options.engine} rm ${id}`;
+              const child = yield* Effect.mapError(
+                spawner.spawn(
+                  ChildProcess.make(
+                    process.platform === "win32" ? "cmd" : "sh",
+                    process.platform === "win32" ? ["/d", "/c", script] : ["-c", script],
+                    {
+                      detached: true,
+                      stdin: "ignore",
+                      stdout: "ignore",
+                      stderr: "ignore",
+                    },
+                  ),
+                ),
+                (cause) => errorFor("stop", cause),
+              );
+              // `unref` succeeds with a reref effect. Drop it so the stop outlives this scope.
+              yield* Effect.asVoid(
+                Effect.mapError(child.unref, (cause) => errorFor("stop", cause)),
+              );
+              yield* Ref.set(stopped, true);
+              yield* Ref.set(removed, true);
+            }),
+          );
+          const kill = Effect.gen(function* () {
+            if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
+            yield* shadowPhase("container-kill");
+            yield* run(["kill", id]);
             yield* Ref.set(stopped, true);
           });
           const remove = Effect.gen(function* () {
@@ -274,6 +323,8 @@ export const makeContainerRuntime = (options: {
             exitCode: Effect.fail(errorFor("wait", "Container did not start")),
             stdin: Sink.fail(errorFor("stdin", "Container did not start")),
             stop,
+            beginStop,
+            kill,
             remove,
           };
           let owned = partial;
