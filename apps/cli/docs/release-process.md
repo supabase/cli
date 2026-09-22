@@ -232,7 +232,7 @@ flowchart TD
     shared --> build["build<br/>sync-versions, build.ts, nfpm<br/>upload-artifact"]
     build --> smoke["smoke-test matrix<br/>ubuntu-latest, macos-latest,<br/>macos-15-intel, windows-latest"]
     smoke --> pub["publish<br/>id-token: write (OIDC trusted publishing)<br/>bun publish --provenance × 8 platform pkgs<br/>then bun publish --provenance umbrella supabase"]
-    pub --> rel["softprops/action-gh-release<br/>(draft) → gh release edit --draft=false"]
+    pub --> rel["softprops/action-gh-release (empty draft)<br/>→ gh release upload --clobber per asset, 3 attempts<br/>→ verify assets → gh release edit --draft=false"]
     rel --> hb["publish-homebrew<br/>App-token-authed clone of homebrew-tap<br/>update-homebrew.ts --name <brew_name>"]
     rel --> sc["publish-scoop<br/>App-token-authed clone of scoop-bucket<br/>update-scoop.ts --name <scoop_name>"]
     rel --> sucs["setup-cli-smoke<br/>install via supabase/setup-cli<br/>(GitHub Release download)"]
@@ -300,8 +300,12 @@ The matrix does not yet include `windows-11-arm` (gate 6) or an Alpine musl runn
 
 1. Re-runs `sync-versions.ts` (download-artifact restores file modes but not JSON mutations).
 2. `[pnpm exec bun apps/cli/scripts/publish.ts --tag <latest|beta|alpha>](../scripts/publish.ts)` — publishes the eight platform packages in parallel via OIDC trusted publishing (`bun publish --provenance`, no `NPM_TOKEN`), then the umbrella package last so `optionalDependencies` resolve cleanly at install time.
-3. `softprops/action-gh-release` creates a **draft** Release `v<version>` on `supabase/cli` with all tar / zip / deb / rpm / apk + `checksums.txt`.
-4. `gh release edit v<version> --draft=false` finalises it (immutable from this point).
+3. `softprops/action-gh-release` creates an **empty draft** Release `v<version>` on `supabase/cli`.
+4. `gh release upload v<version> <asset> --clobber` uploads the tar / zip / deb / rpm / apk files, `checksums.txt`, the unversioned tarball aliases, and the `install` script **one asset at a time**, retrying each asset up to three times with a five-minute timeout per attempt. `uploads.github.com` drops or stalls single uploads often enough that a failure per release is routine (two beta releases failed this way in September 2026: one during a multi-hour degradation of the upload backend, one from a single dropped connection on an otherwise healthy backend), and the action's parallel upload has no per-asset retry. `--clobber` lets a re-run overwrite a partial upload instead of failing on "already exists".
+5. `gh release view v<version> --json assets` is checked against the list of expected asset names; the job fails if any asset is missing or not in the `uploaded` state, so a partial asset set is never published.
+6. `gh release edit v<version> --draft=false` finalises it (immutable from this point).
+
+A failed `publish` job can be re-run from the Actions UI while the run's build-artifact cache still exists (about a week); npm publish, the tag push, and the channel-note push all skip work that already happened. After the cache is evicted, the remaining options are a `workflow_dispatch` on the tag, which rebuilds different bytes from the ones on npm and re-pushes the Homebrew/Scoop manifests for that version, or deleting the draft.
 
 ### Post-publish: Homebrew + Scoop
 

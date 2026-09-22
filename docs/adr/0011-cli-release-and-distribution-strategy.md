@@ -141,8 +141,8 @@ flowchart TD
     build["build job<br/>sync-versions then build.ts then nfpm<br/>upload artifact"]
     smoke["smoke-test matrix<br/>ubuntu / macos-latest / macos-15-intel / windows-latest"]
     publish["publish job<br/>bun publish × 8 platform pkgs<br/>then bun publish umbrella"]
-    ghRelease["draft GitHub Release<br/>tar/zip/deb/rpm/apk/checksums"]
-    finalize["gh release edit --draft=false"]
+    ghRelease["empty draft GitHub Release<br/>gh release upload --clobber per asset<br/>tar/zip/deb/rpm/apk/checksums"]
+    finalize["verify assets then<br/>gh release edit --draft=false"]
     hbUpdate["update-homebrew.ts<br/>Formula push"]
     scoopUpdate["update-scoop.ts<br/>manifest push"]
 
@@ -197,7 +197,7 @@ Production bucket: `supabase/scoop-bucket`.
 
 #### GitHub Releases
 
-Draft + finalize by the shared workflow:
+Draft, upload, verify, and finalize by the shared workflow:
 
 ```yaml
 # .github/workflows/release-shared.yml (publish job, excerpt)
@@ -206,13 +206,15 @@ Draft + finalize by the shared workflow:
     tag_name: v${{ inputs.version }}
     draft: true
     prerelease: ${{ inputs.prerelease }}
-    files: |
-      dist/supabase_…_darwin_arm64.tar.gz
-      dist/supabase_…_linux_amd64.deb
-      …
-      dist/checksums.txt
-- run: gh release edit v${{ inputs.version }} --draft=false
+- run: | # one asset at a time, up to three attempts each
+    for asset in dist/supabase_…_darwin_arm64.tar.gz … dist/checksums.txt install; do
+      gh release upload v${VERSION} "$asset" --clobber
+    done
+- run: gh release view v${VERSION} --json assets # fail unless every expected asset is uploaded
+- run: gh release edit v${VERSION} --draft=false
 ```
+
+Assets are uploaded sequentially with a per-asset retry rather than through the action's `files:` input because `uploads.github.com` drops or stalls individual uploads often enough that one failure per release is routine, and the action's parallel upload has no retry. See [release-process.md](../../apps/cli/docs/release-process.md) for the operational details.
 
 Archive layout (per-platform):
 
