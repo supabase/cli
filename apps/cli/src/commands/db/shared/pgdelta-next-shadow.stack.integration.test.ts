@@ -135,8 +135,9 @@ describe("pg-delta next stack shadow provisioning", () => {
               context: { projectId: "test", cwd: root, denoVersion: 2, projectEnv: {} },
               toml,
               projectRef: "test",
-              bypassCache: true,
+              bypassCache: false,
             });
+            expect(plan.allowSameDatabaseIdentity).toBe(true);
             expect(plan.migrationsUrl).not.toBe(plan.declarativeUrl);
             expect(
               yield* query(db, plan.migrationsUrl, "SELECT value FROM public.pgdelta_next_probe"),

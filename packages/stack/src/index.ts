@@ -31,7 +31,6 @@ const decodeCreation = (creation: ServiceCreation) =>
   );
 export type { CompositionConfig } from "./Orchestrator.ts";
 export type { Observation } from "./Rpc.ts";
-export type { DatabaseSnapshot } from "./services/DatabaseSnapshot.ts";
 export type { PgProveOptions } from "./effect.ts";
 export type { SupabaseCompositionOptions } from "./effect.ts";
 export type { CreateOptions, OpenOptions, StackLocations } from "./effect.ts";
@@ -70,14 +69,8 @@ export interface ServiceInstance<K extends Kind = Kind> {
 }
 /** Database storage operations require a stopped instance with wake disabled. */
 export interface DatabaseInstance extends ServiceInstance<"database"> {
-  readonly exportSnapshot: (
-    destination: string,
-    options?: CallOptions,
-  ) => Promise<import("./services/DatabaseSnapshot.ts").DatabaseSnapshot>;
-  readonly restoreSnapshot: (
-    source: string,
-    options?: CallOptions,
-  ) => Promise<import("./services/DatabaseSnapshot.ts").DatabaseSnapshot>;
+  readonly saveSnapshot: (key: string, options?: CallOptions) => Promise<void>;
+  readonly restoreSnapshot: (key: string, options?: CallOptions) => Promise<boolean>;
   /** Removes database-owned data while preserving the instance registration. */
   readonly resetData: (options?: CallOptions) => Promise<void>;
 }
@@ -206,9 +199,8 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
       case "database":
         return {
           ...common(service),
-          exportSnapshot: (destination, options) =>
-            run(service.exportSnapshot(destination), options),
-          restoreSnapshot: (source, options) => run(service.restoreSnapshot(source), options),
+          saveSnapshot: (key, options) => run(service.saveSnapshot(key), options),
+          restoreSnapshot: (key, options) => run(service.restoreSnapshot(key), options),
           resetData: (options) => run(service.resetData, options),
         };
       case "rest":

@@ -101,7 +101,7 @@ function syncStackApi(workdir: string, port: number) {
     destroy: unusedSync,
     prepare: unusedSync,
     credentials: unusedSyncFn,
-    exportSnapshot: unusedSyncFn,
+    saveSnapshot: unusedSyncFn,
     restoreSnapshot: unusedSyncFn,
     resetData: unusedSync,
     logs: Stream.empty,
