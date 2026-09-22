@@ -937,7 +937,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             envOverride("SUPABASE_DB_ROOT_KEY", raw, context.projectEnvValues),
             context.projectEnvValues,
           );
-          return value === "" ? DEFAULT_POSTGRES_ROOT_KEY : (value ?? DEFAULT_POSTGRES_ROOT_KEY);
+          return value === undefined || value === "" ? DEFAULT_POSTGRES_ROOT_KEY : value;
         },
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });

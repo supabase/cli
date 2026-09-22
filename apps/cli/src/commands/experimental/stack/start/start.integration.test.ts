@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Redacted, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Stream } from "effect";
 import type {
   ServiceCreation,
   ServiceCreationInput,
@@ -8,7 +8,6 @@ import type {
   ServiceInstances,
   Stack,
 } from "@supabase/stack/effect";
-import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "@supabase/stack/effect";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -130,17 +129,21 @@ const instance = (
   }
 };
 
-const normalizeCreation = (creation: ServiceCreationInput): ServiceCreation =>
-  creation.service === "database"
-    ? {
-        ...creation,
-        config: {
-          ...creation.config,
-          jwtSecret: creation.config.jwtSecret ?? Redacted.make(DEFAULT_LOCAL_JWT_SECRET),
-          rootKey: creation.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
-        },
-      }
-    : creation;
+const requireConcreteCreation = (creation: ServiceCreationInput): ServiceCreation => {
+  if (creation.service !== "database") return creation;
+  if (creation.config.jwtSecret === undefined)
+    throw new Error("Database creation is missing jwtSecret");
+  if (creation.config.rootKey === undefined)
+    throw new Error("Database creation is missing rootKey");
+  return {
+    ...creation,
+    config: {
+      ...creation.config,
+      jwtSecret: creation.config.jwtSecret,
+      rootKey: creation.config.rootKey,
+    },
+  };
+};
 
 const fakeStack = () => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
@@ -167,7 +170,7 @@ const fakeStack = () => {
         Effect.sync(() => {
           composed += 1;
           members = creations.map((creation) =>
-            instance(normalizeCreation(creation), `${creation.service}-member`),
+            instance(requireConcreteCreation(creation), `${creation.service}-member`),
           );
           return members;
         }),
