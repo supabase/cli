@@ -335,10 +335,13 @@ describe("native triplet helpers", () => {
 
 describe("fetchNatives", () => {
   const files: Record<string, string> = {};
-  const io = (overrides: { readonly sha?: string; readonly manifest?: string } = {}) => {
+  const io = (
+    overrides: { readonly sha?: string; readonly manifest?: string; readonly head?: string } = {},
+  ) => {
     const calls: string[][] = [];
     const run: RunCommand = async (argv) => {
       calls.push([...argv]);
+      if (argv[1] === "manifest" && argv[2] === "head") return ok(`${overrides.head ?? DIGEST}\n`);
       return argv[1] === "manifest" ? ok(ociManifest) : fail("unexpected");
     };
     return {
@@ -378,12 +381,18 @@ describe("fetchNatives", () => {
     expect(deps.calls[0]).toEqual([
       "regctl",
       "manifest",
+      "head",
+      "ghcr.io/supabase/cli/postgrest:v16.2-native-linux-arm64",
+    ]);
+    expect(deps.calls[1]).toEqual([
+      "regctl",
+      "manifest",
       "get",
       `ghcr.io/supabase/cli/postgrest@${DIGEST}`,
       "--format",
       "raw-body",
     ]);
-    expect(deps.calls[1]).toEqual([
+    expect(deps.calls[2]).toEqual([
       "regctl",
       "blob",
       "get",
@@ -391,6 +400,19 @@ describe("fetchNatives", () => {
       ARCHIVE_BLOB,
       "> /tmp/natives/linux-arm64/postgrest-v16.2-linux-arm64.tar.zst",
     ]);
+  });
+
+  test("skips a native whose tag no longer resolves to the dispatched digest", async () => {
+    const deps = io({ head: OTHER });
+    const fetched = await fetchNatives({
+      service: "postgrest",
+      version: "v16.2",
+      natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
+      outputDir: "/tmp/natives",
+      ...deps,
+    });
+    expect(fetched).toEqual([]);
+    expect(deps.calls).toHaveLength(1);
   });
 
   test("drops a target whose archive does not match its sums file", async () => {

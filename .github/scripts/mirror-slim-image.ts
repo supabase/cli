@@ -250,6 +250,20 @@ export const fetchNatives = async (options: {
       log(`::warning::native tag ${tag} does not name a target`);
       continue;
     }
+    // The digest is untrusted dispatch data: only publish what the tag currently points to.
+    const source = `${repository}:${tag}`;
+    const head = await options.run(["regctl", "manifest", "head", source]);
+    if (!head.ok) {
+      log(`::warning::native source ${source} is missing`);
+      if (head.stderr.trim() !== "") log(head.stderr.trim());
+      continue;
+    }
+    if (head.stdout.trim() !== digest) {
+      log(
+        `::warning::native source ${source} resolves to ${head.stdout.trim()}, expected ${digest}`,
+      );
+      continue;
+    }
     const reference = `${repository}@${digest}`;
     const manifest = await options.run([
       "regctl",
