@@ -191,7 +191,7 @@ async function main() {
     const libc = libcForBunTarget(platform.bunTarget);
 
     console.log("[1/3] Compiling CLI binary...");
-    await $`bun build ${entrypoint} --compile --target=${platform.bunTarget} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${bunBinary} ${oxfmtExternalArgs}`;
+    await $`bun build ${entrypoint} --compile --minify --bytecode --bytecode-depth=2 --format=esm --target=${platform.bunTarget} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${bunBinary} ${oxfmtExternalArgs}`;
 
     {
       const goBinary = path.join(tmpPlatformBinDir, `supabase-go${platform.ext}`);

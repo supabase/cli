@@ -7,7 +7,7 @@ import { parseArgs } from "node:util";
 import { Effect } from "effect";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
 import { bundleStackFunctionsServeMainTemplate } from "../src/command-internal/stack-functions-bundler.ts";
-import { OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "./bundle-externals.ts";
+import { compiledBytecode, OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "./bundle-externals.ts";
 import { darwinBinaries, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
 const MUSL_TARGETS = [
@@ -121,6 +121,7 @@ function libcForBunTarget(target: string): "glibc" | "musl" | "" {
 async function runBunBuild(config: Bun.BuildConfig) {
   const result = await Bun.build({
     ...config,
+    ...compiledBytecode,
     external: [...(config.external ?? []), ...OXFMT_OPTIONAL_PLUGIN_EXTERNALS],
   });
   for (const log of result.logs) {

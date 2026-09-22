@@ -4,6 +4,17 @@
  * statically embedded binding in `src/commands/gen/types/types.oxfmt.ts` — but `bun build`
  * still resolves every analyzable dynamic import, so each must be marked external.
  */
+/**
+ * Compile flags for the published CLI binary. `bytecodeDepth` is accepted by Bun 1.4
+ * and is not yet on `Bun.BuildConfig` in bun-types 1.4.0, so it is spread from here.
+ */
+export const compiledBytecode = {
+  minify: true,
+  bytecode: true,
+  bytecodeDepth: 2,
+  format: "esm" as const,
+};
+
 export const OXFMT_OPTIONAL_PLUGIN_EXTERNALS = [
   "@prettier/plugin-hermes",
   "@prettier/plugin-oxc",
