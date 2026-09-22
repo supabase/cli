@@ -250,6 +250,8 @@ export function buildKongContainerSpec(
       KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: "160k",
       KONG_NGINX_PROXY_PROXY_BUFFERS: "64 160k",
       KONG_NGINX_WORKER_PROCESSES: input.nginxWorkerProcesses,
+      // Ref: https://github.com/supabase/cli/issues/6674
+      KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT: "20",
       KONG_SSL_CERT: "/home/kong/localhost.crt",
       KONG_SSL_CERT_KEY: "/home/kong/localhost.key",
     },
