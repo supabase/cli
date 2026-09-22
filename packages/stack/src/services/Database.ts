@@ -511,6 +511,7 @@ export const makeDatabase = (
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.mapError((cause) => errorFor("snapshot", cause)),
       );
 

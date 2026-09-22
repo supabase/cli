@@ -1,10 +1,18 @@
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Path, Scope } from "effect";
+import { Deferred, Effect, Exit, Fiber, FileSystem, Path, Scope, Sink, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { copyDirectory } from "./DirectoryCopy.ts";
 
-const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
+const run = <A, E>(
+  effect: Effect.Effect<
+    A,
+    E,
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Scope.Scope
+  >,
+) => Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
 describe("copyDirectory", () => {
   it.live("copies nested files and preserves modes", () =>
@@ -78,6 +86,24 @@ describe("copyDirectory", () => {
     ),
   );
 
+  it.live("rejects a file source and leaves the destination absent", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "directory-copy-file-" });
+        const source = path.join(root, "source.txt");
+        const destination = path.join(root, "destination");
+        yield* fs.writeFileString(source, "file\n");
+
+        const result = yield* copyDirectory(source, destination).pipe(Effect.exit);
+
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(yield* fs.exists(destination)).toBe(false);
+      }),
+    ),
+  );
+
   it.live("rejects an existing destination", () =>
     run(
       Effect.gen(function* () {
@@ -121,4 +147,60 @@ describe("copyDirectory", () => {
       }),
     ),
   );
+
+  it.live("removes a partial copy when the host copy is interrupted", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "directory-copy-interrupt-" });
+        const source = path.join(root, "source");
+        const destination = path.join(root, "destination");
+        const started = yield* Deferred.make<void>();
+        yield* fs.makeDirectory(source);
+        yield* fs.writeFileString(path.join(source, "file.txt"), "file\n");
+
+        const fiber = yield* copyDirectory(source, destination).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, hangingCopy(started)),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(fiber);
+
+        expect(yield* fs.exists(destination)).toBe(false);
+      }),
+    ),
+  );
 });
+
+const processHandle = (exitCode: Effect.Effect<ChildProcessSpawner.ExitCode>) =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode,
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    stdout: Stream.empty,
+    stderr: Stream.empty,
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+
+const hangingCopy = (started: Deferred.Deferred<void>) =>
+  ChildProcessSpawner.make((command) => {
+    if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
+    if (command.command === "find") {
+      return Effect.succeed(processHandle(Effect.succeed(ChildProcessSpawner.ExitCode(0))));
+    }
+    const destination = command.args.at(-1);
+    if (destination === undefined) return Effect.die("missing copy destination");
+    return Effect.sync(() => {
+      const nested = join(destination, "nested");
+      mkdirSync(nested, { recursive: true });
+      writeFileSync(join(nested, "child.txt"), "partial\n");
+      if (process.platform !== "win32") chmodSync(nested, 0o555);
+      return processHandle(Effect.never);
+    }).pipe(Effect.tap(() => Deferred.succeed(started, undefined)));
+  });

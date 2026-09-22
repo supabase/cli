@@ -1,11 +1,9 @@
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no lstat or clone-copy operation.
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no lstat or clone-copy operation.
-import { copyFile as nativeCopyFile, lstat } from "node:fs/promises";
+import { copyFile as nativeCopyFile, lstat, readdir } from "node:fs/promises";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no clone-copy flags.
 import { constants as fsConstants } from "node:fs";
-import { Effect, Exit, FileSystem, Path, Schema } from "effect";
+import { Cause, Effect, FileSystem, Option, Path, Schema, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 export class DirectoryCopyError extends Schema.TaggedError<DirectoryCopyError>()(
   "DirectoryCopyError",
@@ -177,17 +175,40 @@ export const copyDirectory = Effect.fn("DirectoryCopy.copyDirectory")(function* 
       onSuccess: () => Effect.fail(errorFor("validate", source, destination, "destination exists")),
     }),
   );
-  // A PostgreSQL data directory is mostly small files. One clone is cheaper than a clone syscall per file.
-  if (process.platform === "darwin" && !(yield* findUnsupportedEntry(source, destination))) {
-    const cloned = yield* Effect.exit(cloneDirectoryWithCp(source, destination));
-    if (Exit.isSuccess(cloned)) return;
-    yield* fs.remove(destination, { recursive: true, force: true }).pipe(Effect.ignore);
+  // cp and robocopy keep or follow links. Only a plain directory tree can use them.
+  const copies = hostCopies(source, destination);
+  if (copies.length > 0 && (yield* directoryTreeIsCopyable(source, destination, path))) {
+    for (const copy of copies) {
+      const copied = yield* runExec(
+        copy.command,
+        copy.args,
+        source,
+        destination,
+        "copy",
+        copy.acceptStatus,
+      ).pipe(
+        Effect.asVoid,
+        // matchCauseEffect does not observe an external interrupt.
+        Effect.onInterrupt(() => removePartial(destination, fs, path)),
+        Effect.matchCauseEffect({
+          onSuccess: () => Effect.succeed("copied" as const),
+          onFailure: (cause) =>
+            removePartial(destination, fs, path).pipe(
+              Effect.flatMap(() => {
+                if (Cause.hasInterrupts(cause)) return Effect.failCause(cause);
+                const outcome = isUsageFailure(cause) ? "usage" : "failed";
+                return Effect.succeed(outcome);
+              }),
+            ),
+        }),
+      );
+      if (copied === "copied") return;
+      if (copied === "failed") break;
+    }
   }
   yield* validateTree(source, destination, fs, path);
   return yield* copyTree(source, destination, fs, path);
 });
-
-const execFileText = promisify(execFile);
 
 const runExec = (
   command: string,
@@ -195,21 +216,56 @@ const runExec = (
   source: string,
   destination: string,
   operation: string,
-): Effect.Effect<string, DirectoryCopyError> =>
-  Effect.uninterruptible(
-    Effect.tryPromise({
-      try: () =>
-        execFileText(command, [...args], { encoding: "utf8" }).then((result) =>
-          typeof result === "string" ? result : result.stdout,
-        ),
-      catch: (cause) => errorFor(operation, source, destination, cause),
+  acceptStatus: (status: number) => boolean = () => false,
+): Effect.Effect<string, DirectoryCopyError, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* ChildProcess.make(command, [...args], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      }).pipe(Effect.mapError((cause) => errorFor(operation, source, destination, cause)));
+      const [text, stderr, exitCode] = yield* Effect.all(
+        [
+          child.stdout.pipe(Stream.decodeText, Stream.mkString),
+          child.stderr.pipe(Stream.decodeText, Stream.mkString),
+          child.exitCode,
+        ],
+        { concurrency: 3 },
+      ).pipe(Effect.mapError((cause) => errorFor(operation, source, destination, cause)));
+      const status = Number(exitCode);
+      if (status !== 0 && !acceptStatus(status)) {
+        return yield* errorFor(operation, source, destination, new Error(stderr));
+      }
+      return text;
     }),
   );
+
+const directoryTreeIsCopyable = (
+  source: string,
+  destination: string,
+  path: Path.Path,
+): Effect.Effect<boolean, DirectoryCopyError, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.gen(function* () {
+    const stats = yield* inspect(source, destination);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) return false;
+    return yield* (
+      process.platform === "win32"
+        ? scanUnsupported(source, destination, path)
+        : findUnsupportedEntry(source, destination)
+    ).pipe(
+      Effect.matchCauseEffect({
+        onSuccess: (found) => Effect.succeed(!found),
+        onFailure: (cause) =>
+          Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(false),
+      }),
+    );
+  });
 
 const findUnsupportedEntry = (
   source: string,
   destination: string,
-): Effect.Effect<boolean, DirectoryCopyError> =>
+): Effect.Effect<boolean, DirectoryCopyError, ChildProcessSpawner.ChildProcessSpawner> =>
   runExec(
     "find",
     [
@@ -238,8 +294,136 @@ const findUnsupportedEntry = (
     "validate",
   ).pipe(Effect.map((stdout) => stdout.trim().length > 0));
 
-const cloneDirectoryWithCp = (
+// Windows find is a content search, so the unsupported-entry scan stays in process.
+const scanUnsupported = (
   source: string,
   destination: string,
+  path: Path.Path,
+): Effect.Effect<boolean, DirectoryCopyError> =>
+  Effect.gen(function* () {
+    const pending = [source];
+    let current = pending.pop();
+    while (current !== undefined) {
+      const directory = current;
+      const entries = yield* Effect.tryPromise({
+        try: () => readdir(directory, { withFileTypes: true }),
+        catch: (cause) => errorFor("validate", source, destination, cause),
+      });
+      for (const entry of entries) {
+        if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) return true;
+        if (entry.isDirectory()) pending.push(path.join(directory, entry.name));
+      }
+      current = pending.pop();
+    }
+    return false;
+  });
+
+interface HostCopy {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly acceptStatus: (status: number) => boolean;
+}
+
+const rejectStatus = (_status: number) => false;
+
+// A preserved directory mode can omit user write, and unlink then fails with EACCES.
+const grantDirectoryWrite = (
+  directory: string,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
 ): Effect.Effect<void, DirectoryCopyError> =>
-  runExec("cp", ["-cRp", source, destination], source, destination, "clone").pipe(Effect.asVoid);
+  Effect.gen(function* () {
+    const info = yield* fs
+      .stat(directory)
+      .pipe(Effect.mapError((cause) => errorFor("chmod", directory, directory, cause)));
+    yield* fs
+      .chmod(directory, (Number(info.mode) | 0o700) & 0o7777)
+      .pipe(Effect.mapError((cause) => errorFor("chmod", directory, directory, cause)));
+    if (info.type !== "Directory") return;
+    const names = yield* fs
+      .readDirectory(directory)
+      .pipe(Effect.mapError((cause) => errorFor("readDirectory", directory, directory, cause)));
+    for (const name of names) {
+      const child = path.join(directory, name);
+      const childInfo = yield* fs
+        .stat(child)
+        .pipe(Effect.mapError((cause) => errorFor("chmod", directory, child, cause)));
+      if (childInfo.type === "Directory") yield* grantDirectoryWrite(child, fs, path);
+    }
+  });
+
+const removePartial = (
+  destination: string,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+): Effect.Effect<void, DirectoryCopyError> =>
+  Effect.gen(function* () {
+    if (
+      !(yield* fs
+        .exists(destination)
+        .pipe(Effect.mapError((cause) => errorFor("remove", destination, destination, cause))))
+    )
+      return;
+    yield* grantDirectoryWrite(destination, fs, path);
+    yield* fs
+      .remove(destination, { recursive: true, force: true })
+      .pipe(Effect.mapError((cause) => errorFor("remove", destination, destination, cause)));
+  });
+
+const isUsageError = (cause: unknown): boolean => {
+  if (typeof cause !== "object" || cause === null || !("message" in cause)) return false;
+  const message = cause.message;
+  return (
+    typeof message === "string" &&
+    /unrecognized option|invalid option|unknown option|illegal option/iu.test(message)
+  );
+};
+
+const isUsageFailure = (cause: Cause.Cause<DirectoryCopyError>): boolean =>
+  Option.match(Cause.findErrorOption(cause), {
+    onNone: () => false,
+    onSome: (error) => isUsageError(error.cause),
+  });
+
+// One process copies the tree. macOS clones, and Linux reflinks when the filesystem can.
+const hostCopies = (source: string, destination: string): ReadonlyArray<HostCopy> => {
+  switch (process.platform) {
+    case "darwin":
+      return [{ command: "cp", args: ["-cRp", source, destination], acceptStatus: rejectStatus }];
+    case "linux":
+      return [
+        {
+          command: "cp",
+          args: ["-R", "--preserve=mode", "--reflink=auto", "--", source, destination],
+          acceptStatus: rejectStatus,
+        },
+        // BusyBox cp has no reflink flag. -Rp still copies the tree in one process.
+        { command: "cp", args: ["-Rp", source, destination], acceptStatus: rejectStatus },
+      ];
+    case "win32":
+      // Robocopy's exit status is a bit field. Values below 8 mean the copy succeeded.
+      return [
+        {
+          command: "robocopy",
+          args: [
+            source,
+            destination,
+            "/E",
+            "/COPY:DAT",
+            "/DCOPY:DAT",
+            "/MT:8",
+            "/R:0",
+            "/W:0",
+            "/NFL",
+            "/NDL",
+            "/NJH",
+            "/NJS",
+            "/NP",
+          ],
+          acceptStatus: (status) => status < 8,
+        },
+      ];
+    default:
+      return [];
+  }
+};
