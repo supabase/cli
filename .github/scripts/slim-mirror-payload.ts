@@ -151,10 +151,22 @@ type OciLayer = {
   readonly title: string;
 };
 
+// Registry and blob contents are untrusted input; malformed JSON drops one target, not the run.
+const parseJsonRecord = (raw: string): Record<string, unknown> | undefined => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  return typeof parsed === "object" && parsed !== null
+    ? (parsed as Record<string, unknown>)
+    : undefined;
+};
+
 const layersOf = (rawManifest: string): ReadonlyArray<OciLayer> => {
-  const parsed: unknown = JSON.parse(rawManifest);
-  if (typeof parsed !== "object" || parsed === null) return [];
-  const record = parsed as Record<string, unknown>;
+  const record = parseJsonRecord(rawManifest);
+  if (record === undefined) return [];
   const raw = record["layers"] ?? record["blobs"];
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((entry) => {
@@ -212,9 +224,8 @@ export const manifestMatches = (
     readonly target: string;
   },
 ): boolean => {
-  const parsed: unknown = JSON.parse(manifestJson);
-  if (typeof parsed !== "object" || parsed === null) return false;
-  const record = parsed as Record<string, unknown>;
+  const record = parseJsonRecord(manifestJson);
+  if (record === undefined) return false;
   return (
     record["service"] === expected.service &&
     record["version"] === expected.version &&

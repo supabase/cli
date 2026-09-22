@@ -244,12 +244,19 @@ export const fetchNatives = async (options: {
   const log = options.log ?? console.log;
   const repository = `${SOURCE_REGISTRY}/${options.service}`;
   const fetched: FetchedNative[] = [];
+  const seen = new Set<string>();
   for (const { tag, digest } of options.natives) {
     const target = nativeTargetOf(tag, options.version);
     if (target === undefined) {
       log(`::warning::native tag ${tag} does not name a target`);
       continue;
     }
+    // Each target stages into one directory, so a second entry could overwrite verified files.
+    if (seen.has(target)) {
+      log(`::warning::native tag ${tag} repeats target ${target}; keeping the first entry`);
+      continue;
+    }
+    seen.add(target);
     // The digest is untrusted dispatch data: only publish what the tag currently points to.
     const source = `${repository}:${tag}`;
     const head = await options.run(["regctl", "manifest", "head", source]);
@@ -424,8 +431,11 @@ const defaultSpawnToFile: RunCommandToFile = async (argv, outputPath) => {
   return { ok: exit === 0, stdout: "", stderr };
 };
 
-const defaultSha256File = async (path: string): Promise<string> =>
-  new Bun.CryptoHasher("sha256").update(await Bun.file(path).arrayBuffer()).digest("hex");
+const defaultSha256File = async (path: string): Promise<string> => {
+  const hasher = new Bun.CryptoHasher("sha256");
+  for await (const chunk of Bun.file(path).stream()) hasher.update(chunk);
+  return hasher.digest("hex");
+};
 
 const defaultHttpStatus = async (url: string, method: "HEAD" | "GET"): Promise<number> =>
   (await fetch(url, { method, redirect: "manual" })).status;

@@ -415,6 +415,36 @@ describe("fetchNatives", () => {
     expect(deps.calls).toHaveLength(1);
   });
 
+  test("keeps the first entry for a repeated target and never refetches it", async () => {
+    const deps = io();
+    const fetched = await fetchNatives({
+      service: "postgrest",
+      version: "v16.2",
+      natives: [
+        { tag: "v16.2-native-linux-arm64", digest: DIGEST },
+        { tag: "v16.2-native-linux-arm64", digest: OTHER },
+      ],
+      outputDir: "/tmp/natives",
+      ...deps,
+    });
+    expect(fetched.map((item) => item.target)).toEqual(["linux-arm64"]);
+    expect(deps.calls.filter((argv) => argv[1] === "manifest" && argv[2] === "head")).toHaveLength(
+      1,
+    );
+  });
+
+  test("drops a target whose manifest is not JSON", async () => {
+    const fetched = await fetchNatives({
+      service: "postgrest",
+      version: "v16.2",
+      natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }],
+      outputDir: "/tmp/natives",
+      ...io({ manifest: "{not json" }),
+    });
+    expect(fetched).toEqual([]);
+    expect(nativeTripletDigests("<html>")).toBeUndefined();
+  });
+
   test("drops a target whose archive does not match its sums file", async () => {
     const fetched = await fetchNatives({
       service: "postgrest",
@@ -525,5 +555,58 @@ describe("main fetch-natives", () => {
     });
     expect(code).toBe(0);
     expect(fields).toEqual({ count: "0", targets: "" });
+  });
+
+  test("exits 1 when the payload names natives but none can be verified", async () => {
+    const fields: Record<string, string> = {};
+    const event = JSON.stringify({
+      client_payload: { natives: [{ tag: "v16.2-native-linux-arm64", digest: DIGEST }] },
+    });
+    const code = await main(["fetch-natives"], {
+      env: {
+        EVENT_NAME: "repository_dispatch",
+        GITHUB_EVENT_PATH: "/tmp/event.json",
+        SERVICE: "postgrest",
+        VERSION: "v16.2",
+        OUTPUT_DIR: "/tmp/natives",
+      },
+      run: async () => fail("manifest unknown"),
+      readText: async () => event,
+      log: () => undefined,
+      writeOutput: (next) => {
+        Object.assign(fields, next);
+      },
+    });
+    expect(code).toBe(1);
+    expect(fields).toEqual({ count: "0", targets: "" });
+  });
+});
+
+describe("main upload-natives-s3", () => {
+  test("uploads every target listed in TARGETS", async () => {
+    const uploaded: string[] = [];
+    const code = await main(["upload-natives-s3"], {
+      env: {
+        SERVICE: "postgrest",
+        VERSION: "v16.2",
+        INPUT_DIR: "/tmp/natives",
+        TARGETS: "linux-arm64, darwin-arm64",
+      },
+      run: async (argv) => {
+        uploaded.push(String(argv.at(-1)));
+        return ok();
+      },
+      httpStatus: async (url) => (url.endsWith("/") ? 403 : 200),
+      log: () => undefined,
+    });
+    expect(code).toBe(0);
+    expect(uploaded).toEqual([
+      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.tar.zst",
+      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.manifest.json",
+      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-linux-arm64.SHA256SUMS",
+      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-darwin-arm64.tar.zst",
+      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-darwin-arm64.manifest.json",
+      "s3://supabase-cli-artifacts/postgrest/v16.2/postgrest-v16.2-darwin-arm64.SHA256SUMS",
+    ]);
   });
 });
