@@ -146,7 +146,10 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
       restored = warmAttempt.success;
       if (!restored) yield* startReady(database);
     } else {
-      yield* output.raw("Warning: cached stack shadow baseline unusable; recreating.\n", "stderr");
+      yield* output.raw(
+        `Warning: cached stack shadow baseline unusable (${causeMessage(warmAttempt.failure)}); recreating.\n`,
+        "stderr",
+      );
       yield* database.destroy;
       database = yield* createDatabase();
       yield* startReady(database);
