@@ -11,6 +11,12 @@ name: Mirror Slim Image
 # `.github/scripts/mirror-slim-image.ts` rather than trusted from the payload, and the source
 # must resolve to the claimed digest before anything is copied.
 #
+# `upload-natives-s3` then copies the same native triplets (fetched from GHCR by digest and
+# re-verified) to the public-read S3 bucket in the cli-artifacts-prod account, for sandboxes that
+# allow `*.amazonaws.com` but block registry blob CDNs. It runs only after the image mirror and its
+# digest checks succeeded, is best-effort like the native ECR copy, and uses the PutObject-only
+# `slim-artifacts-publisher` role (infra/cli-artifacts/README.md).
+#
 # Replay locally: `bun .github/scripts/mirror-slim-image.ts --help`
 # Full contract: docs/design/ecr-mirror-dispatch.md in supabase/slim-services.
 
@@ -137,3 +143,82 @@ jobs:
         # Native tags are copied without --referrers. Failure must not fail the
         # image digest the sender polls; daily audit reports native drift.
         run: bun .github/scripts/mirror-slim-image.ts copy-natives
+
+  upload-natives-s3:
+    needs: mirror
+    # Natives only ride in repository_dispatch payloads. Nothing reaches the public bucket from a
+    # dispatch whose image digest check failed; a release whose mirror failed for other reasons is
+    # re-dispatched by the sender's backfill. The job is skipped until the cli-artifacts-prod
+    # account exists and its ID is set as a repository variable.
+    if: ${{ success() && github.event_name == 'repository_dispatch' && vars.CLI_ARTIFACTS_AWS_ACCOUNT_ID != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      - name: Validate payload
+        id: validate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SERVICE: ${{ github.event.client_payload.service }}
+          VERSION: ${{ github.event.client_payload.version }}
+          DIGEST: ${{ github.event.client_payload.digest }}
+          PAYLOAD_SOURCE: ${{ github.event.client_payload.source }}
+          PAYLOAD_DESTINATION: ${{ github.event.client_payload.destination }}
+        run: bun .github/scripts/mirror-slim-image.ts validate
+
+      - name: Install regctl
+        run: |
+          set -euo pipefail
+          install -d "${RUNNER_TEMP}/regctl-bin"
+          curl -fsSLo "${RUNNER_TEMP}/regctl-bin/regctl" \
+            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
+          echo "c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467  ${RUNNER_TEMP}/regctl-bin/regctl" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/regctl-bin/regctl"
+          echo "${RUNNER_TEMP}/regctl-bin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/regctl-bin/regctl" version
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch and verify native artifacts
+        id: fetch
+        env:
+          SERVICE: ${{ steps.validate.outputs.service }}
+          VERSION: ${{ steps.validate.outputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          OUTPUT_DIR: ${{ runner.temp }}/natives
+        run: bun .github/scripts/mirror-slim-image.ts fetch-natives
+
+      - name: Configure aws credentials
+        if: steps.fetch.outputs.count != '0'
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.CLI_ARTIFACTS_AWS_ACCOUNT_ID }}:role/slim-artifacts-publisher
+          # Ties every AssumeRole and PutObject entry in CloudTrail back to one workflow run.
+          role-session-name: mirror-slim-image-${{ github.run_id }}
+          aws-region: us-east-1
+
+      - name: Upload native artifacts to S3
+        if: steps.fetch.outputs.count != '0'
+        env:
+          SERVICE: ${{ steps.validate.outputs.service }}
+          VERSION: ${{ steps.validate.outputs.version }}
+          INPUT_DIR: ${{ runner.temp }}/natives
+          TARGETS: ${{ steps.fetch.outputs.targets }}
+        run: bun .github/scripts/mirror-slim-image.ts upload-natives-s3

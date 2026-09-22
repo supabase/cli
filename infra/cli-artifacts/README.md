@@ -12,8 +12,8 @@ agent sandboxes that allow `*.amazonaws.com`.
   same-version overwrite can be recovered.
 - `AWS::IAM::Role` `slim-artifacts-publisher`: trusts the account's GitHub OIDC provider for
   `repo:supabase/cli:ref:refs/heads/develop` only (exact match) and can do nothing but
-  `s3:PutObject` and `s3:AbortMultipartUpload` on the bucket's objects. The slim native mirror job in `.github/workflows/mirror-slim-image.yml`
-  assumes it per release once that upload step ships.
+  `s3:PutObject` and `s3:AbortMultipartUpload` on the bucket's objects. The `upload-natives-s3`
+  job in `.github/workflows/mirror-slim-image.yml` assumes it once per release.
 
 Objects are addressed as
 
