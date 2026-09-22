@@ -17,7 +17,7 @@ import type { ContainerRuntime } from "../runtime/Container.ts";
 import type { DatabaseRuntime } from "../services/Database.ts";
 
 const HELPER_IMAGE =
-  "docker.io/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
+  "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
 
 const Marker = Schema.Struct({
   backend: Schema.Literals(["docker", "host"]),
@@ -159,18 +159,28 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               const present = yield* options.fs
                 .exists(markerPath)
                 .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
-              if (present)
-                return yield* options.fs.readFileString(markerPath).pipe(
-                  Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Marker))),
-                  Effect.flatMap(validateMarker),
-                  Effect.mapError((cause) => errorFor("marker", cause)),
-                );
               yield* options.fs
                 .makeDirectory(options.cacheRoot, { recursive: true })
                 .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
               const cacheRoot = yield* options.fs
                 .realPath(options.cacheRoot)
                 .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
+              const cacheNamespace = `cache-${(yield* hash(cacheRoot)).slice(0, 32)}`;
+              if (present) {
+                const marker = yield* options.fs.readFileString(markerPath).pipe(
+                  Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Marker))),
+                  Effect.flatMap(validateMarker),
+                  Effect.mapError((cause) => errorFor("marker", cause)),
+                );
+                if (marker.cacheNamespace !== cacheNamespace) {
+                  const updated = { ...marker, cacheNamespace };
+                  yield* options.fs
+                    .writeFileString(markerPath, yield* encodeMarker(updated), { mode: 0o600 })
+                    .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
+                  return updated;
+                }
+                return marker;
+              }
               const hostData = options.path.join(options.instanceRoot, "data");
               const initialized =
                 (yield* options.fs
@@ -183,7 +193,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               const value: Marker = {
                 backend: "host",
                 namespace: dataNamespace,
-                cacheNamespace: `cache-${(yield* hash(cacheRoot)).slice(0, 32)}`,
+                cacheNamespace,
                 initialized,
               };
               const encoded = yield* encodeMarker(value);
@@ -236,7 +246,11 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                   );
                 if (validMarker.volume === undefined)
                   return yield* errorFor("data", "Recorded Docker storage volume is missing");
-                const volume = validMarker.volume;
+                if (validMarker.volume !== volume)
+                  return yield* errorFor(
+                    "data",
+                    "Recorded Docker database storage belongs to another state directory",
+                  );
                 yield* engineCommand(["volume", "inspect", volume]).pipe(
                   Effect.catchTag("DockerDatabaseStorageError", (cause) =>
                     !validMarker.initialized && /(?:no such volume|not found)/iu.test(cause.message)
@@ -252,9 +266,16 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                       : Effect.fail(cause),
                   ),
                 );
-                return validMarker;
               }
-              return validMarker;
+              const updated =
+                validMarker.cacheNamespace === `cache-${cacheDigest.slice(0, 32)}`
+                  ? validMarker
+                  : { ...validMarker, cacheNamespace: `cache-${cacheDigest.slice(0, 32)}` };
+              if (updated !== validMarker)
+                yield* options.fs
+                  .writeFileString(markerPath, yield* encodeMarker(updated), { mode: 0o600 })
+                  .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
+              return updated;
             }
             const hostData = options.path.join(options.instanceRoot, "data");
             if (
@@ -346,6 +367,27 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             }),
           ).pipe(Effect.mapError((cause) => errorFor("engine", cause))),
       );
+      const validateDockerMarkerIdentity = (marker: Marker) =>
+        Effect.gen(function* () {
+          const daemonId = yield* engineCommand(["info", "--format", "{{.ID}}"]).pipe(
+            Effect.map((value) => value.trim()),
+          );
+          if (marker.daemonId !== daemonId)
+            return yield* errorFor(
+              "destroy",
+              "Recorded Docker database storage belongs to another daemon; switch back to the original Docker context before destroying it",
+            );
+          const canonicalStateRoot = yield* options.fs
+            .realPath(stateRoot)
+            .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
+          const stateDigest = yield* hash(`${canonicalStateRoot}\0${daemonId}`);
+          const expectedVolume = `supabase-db-${stateDigest.slice(0, 32)}`;
+          if (marker.volume !== expectedVolume)
+            return yield* errorFor(
+              "destroy",
+              "Recorded Docker database storage belongs to another state directory",
+            );
+        });
 
       const helperId = yield* Ref.make<string | undefined>(undefined);
       const helperCleanupPending = yield* Ref.make(false);
@@ -652,14 +694,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             );
             yield* removeHelper();
           } else {
-            const daemonId = yield* engineCommand(["info", "--format", "{{.ID}}"]).pipe(
-              Effect.map((value) => value.trim()),
-            );
-            if (marker.daemonId !== daemonId)
-              return yield* errorFor(
-                "destroy",
-                "Recorded Docker database storage belongs to another daemon; switch back to the original Docker context before destroying it",
-              );
+            yield* validateDockerMarkerIdentity(marker);
             if (marker.volume === undefined)
               return yield* errorFor("destroy", "Recorded Docker storage volume is missing");
             const volumeExists = yield* engineCommand(["volume", "inspect", marker.volume]).pipe(
@@ -754,8 +789,12 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               profile: "supabase",
               keyDigest: digest,
             });
+            const cacheOwnership =
+              store.backend === "host"
+                ? `; owner=$(stat -c "%u:%g" /cache); mkdir -p /cache/stack-database-snapshots-helper; chown "$owner" /cache/stack-database-snapshots-helper; chown -R "$owner" ${root}`
+                : "";
             yield* runHelper(
-              `set -eu; mkdir -p ${root}; flock -x -w 120 ${shellQuote(`${root}/.lock`)} sh -eu -c ${shellQuote(`set -eu; mkdir -p ${root}/entries ${root}/stages; find ${root}/stages -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; find ${root}/entries -mindepth 1 -maxdepth 1 -name '*.retired' -exec rm -rf -- {} +; trap 'rm -rf ${stage}' EXIT; if [ -e ${source}/postmaster.pid ]; then echo 'Cannot save a running database snapshot' >&2; exit 1; fi; if [ ! -f ${source}/PG_VERSION ]; then echo 'Cannot save snapshot: PG_VERSION is missing' >&2; exit 1; fi; actual=$(cat ${source}/PG_VERSION); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Cannot save snapshot: PostgreSQL major does not match requested version' >&2; exit 1; fi; bad=$(find ${source} \\( ! -type f ! -type d \\) -print -quit); if [ -n "$bad" ]; then echo "Cannot save snapshot: unsupported filesystem entry $bad" >&2; exit 1; fi; rm -rf ${stage}; mkdir -p ${stage}; cp -a --reflink=auto ${source} ${stage}/data; printf '%s' ${shellQuote(descriptor)} > ${stage}/descriptor.json; if [ -e ${target} ]; then rm -rf ${target}.retired; mv ${target} ${target}.retired; if ! mv ${stage} ${target}; then mv ${target}.retired ${target}; exit 1; fi; else mv ${stage} ${target}; fi; rm -rf ${target}.retired; touch ${target}; find ${root}/entries -mindepth 1 -maxdepth 1 -type d ! -name ${digest} ! -name '*.retired' -printf '%T@ %p\\n' | sort -rn | tail -n +3 | cut -d' ' -f2- | xargs -r rm -rf`)}; rm -rf ${shellQuote(stage)}`,
+              `set -eu; mkdir -p ${root}; flock -x -w 120 ${shellQuote(`${root}/.lock`)} sh -eu -c ${shellQuote(`set -eu; mkdir -p ${root}/entries ${root}/stages; find ${root}/stages -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; find ${root}/entries -mindepth 1 -maxdepth 1 -name '*.retired' -exec rm -rf -- {} +; trap 'rm -rf ${stage}${cacheOwnership}' EXIT; if [ -e ${source}/postmaster.pid ]; then echo 'Cannot save a running database snapshot' >&2; exit 1; fi; if [ ! -f ${source}/PG_VERSION ]; then echo 'Cannot save snapshot: PG_VERSION is missing' >&2; exit 1; fi; actual=$(cat ${source}/PG_VERSION); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Cannot save snapshot: PostgreSQL major does not match requested version' >&2; exit 1; fi; bad=$(find ${source} \\( ! -type f ! -type d \\) -print -quit); if [ -n "$bad" ]; then echo "Cannot save snapshot: unsupported filesystem entry $bad" >&2; exit 1; fi; rm -rf ${stage}; mkdir -p ${stage}; cp -a --reflink=auto ${source} ${stage}/data; printf '%s' ${shellQuote(descriptor)} > ${stage}/descriptor.json; if [ -e ${target} ]; then rm -rf ${target}.retired; mv ${target} ${target}.retired; if ! mv ${stage} ${target}; then mv ${target}.retired ${target}; exit 1; fi; else mv ${stage} ${target}; fi; rm -rf ${target}.retired; touch ${target}; find ${root}/entries -mindepth 1 -maxdepth 1 -type d ! -name ${digest} ! -name '*.retired' -printf '%T@ %p\\n' | sort -rn | tail -n +3 | cut -d' ' -f2- | xargs -r rm -rf`)}; rm -rf ${shellQuote(stage)}`,
               paths.mounts,
             );
           }).pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
@@ -787,8 +826,12 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               keyDigest: digest,
             });
             const targetSetup = store.initialized ? `test -d ${data}` : `mkdir -p ${data}`;
+            const cacheOwnership =
+              store.backend === "host"
+                ? `; owner=$(stat -c "%u:%g" /cache); mkdir -p /cache/stack-database-snapshots-helper; chown "$owner" /cache/stack-database-snapshots-helper; chown -R "$owner" ${root}`
+                : "";
             const result = yield* runHelper(
-              `set -eu; mkdir -p ${root}; flock -x -w 120 ${shellQuote(`${root}/.lock`)} sh -eu -c ${shellQuote(`set -eu; mkdir -p ${root}/entries ${root}/stages; find ${root}/stages -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; find ${root}/entries -mindepth 1 -maxdepth 1 -name '*.retired' -exec rm -rf -- {} +; if ! ${targetSetup}; then echo 'Initialized restore target data directory is missing' >&2; exit 1; fi; trap 'rm -rf ${stage}' EXIT; bad=$(find ${data} -mindepth 1 -print -quit); if [ -n "$bad" ]; then echo NONEMPTY; exit 0; fi; if [ ! -d ${source} ]; then echo MISS; exit 0; fi; if [ ! -f ${source}/descriptor.json ]; then echo 'Snapshot descriptor is missing' >&2; exit 1; fi; actual=$(cat ${source}/descriptor.json); expected=${shellQuote(descriptor)}; if [ "$actual" != "$expected" ]; then echo 'Snapshot descriptor does not match requested identity' >&2; exit 1; fi; bad=$(find ${source}/data \\( ! -type f ! -type d \\) -print -quit); if [ -n "$bad" ]; then echo "Snapshot contains unsupported filesystem entry $bad" >&2; exit 1; fi; if [ -e ${source}/data/postmaster.pid ]; then echo 'Snapshot contains postmaster.pid' >&2; exit 1; fi; rm -rf ${stage}; cp -a --reflink=auto ${source}/data ${stage}; actual=$(cat ${stage}/PG_VERSION); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Snapshot PostgreSQL major does not match requested version' >&2; exit 1; fi; rmdir ${data}; mv ${stage} ${data}; touch ${source}; echo HIT`)}; rm -rf ${shellQuote(stage)}`,
+              `set -eu; mkdir -p ${root}; flock -x -w 120 ${shellQuote(`${root}/.lock`)} sh -eu -c ${shellQuote(`set -eu; mkdir -p ${root}/entries ${root}/stages; find ${root}/stages -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; find ${root}/entries -mindepth 1 -maxdepth 1 -name '*.retired' -exec rm -rf -- {} +; trap 'rm -rf ${stage}${cacheOwnership}' EXIT; if ! ${targetSetup}; then echo 'Initialized restore target data directory is missing' >&2; exit 1; fi; bad=$(find ${data} -mindepth 1 -print -quit); if [ -n "$bad" ]; then echo NONEMPTY; exit 0; fi; if [ ! -d ${source} ]; then echo MISS; exit 0; fi; if [ ! -f ${source}/descriptor.json ]; then echo 'Snapshot descriptor is missing' >&2; exit 1; fi; actual=$(cat ${source}/descriptor.json); expected=${shellQuote(descriptor)}; if [ "$actual" != "$expected" ]; then echo 'Snapshot descriptor does not match requested identity' >&2; exit 1; fi; bad=$(find ${source}/data \\( ! -type f ! -type d \\) -print -quit); if [ -n "$bad" ]; then echo "Snapshot contains unsupported filesystem entry $bad" >&2; exit 1; fi; if [ -e ${source}/data/postmaster.pid ]; then echo 'Snapshot contains postmaster.pid' >&2; exit 1; fi; rm -rf ${stage}; cp -a --reflink=auto ${source}/data ${stage}; actual=$(cat ${stage}/PG_VERSION); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Snapshot PostgreSQL major does not match requested version' >&2; exit 1; fi; ${store.backend === "host" ? `chown -R 100:101 ${stage};` : ""} rmdir ${data}; mv ${stage} ${data}; touch ${source}; echo HIT`)}; rm -rf ${shellQuote(stage)}`,
               paths.mounts,
             );
             if (result === "MISS") return false;

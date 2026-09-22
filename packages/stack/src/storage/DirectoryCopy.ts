@@ -138,7 +138,7 @@ const copyTree = (
     for (const entry of entries) {
       const childSource = path.join(source, entry);
       const childDestination = path.join(destination, entry);
-      const childStats = yield* inspect(childSource, destination);
+      const childStats = yield* inspect(childSource, childDestination);
       if (childStats.isSymbolicLink())
         return yield* errorFor("validate", childSource, childDestination, "symbolic link");
       if (childStats.isDirectory()) {

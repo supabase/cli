@@ -18,7 +18,7 @@ import { makeDatabaseSnapshots } from "../services/DatabaseSnapshot.ts";
 import { makeDockerDatabaseStorage } from "./DockerDatabaseStorage.ts";
 
 const helperImage =
-  "debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
+  "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
 const Marker = Schema.Struct({
   backend: Schema.Literals(["docker", "host"]),
   volume: Schema.optionalKey(Schema.String),
@@ -58,7 +58,9 @@ const docker = Effect.fn("DockerStorageTest.docker")((args: ReadonlyArray<string
         { concurrency: "unbounded" },
       );
       if (Number(code) !== 0)
-        return yield* new DockerTestError({ message: stderr.trim() || `docker exited ${code}` });
+        return yield* new DockerTestError({
+          message: `docker ${args.join(" ")} failed: ${stderr.trim() || `exit ${code}`}`,
+        });
       return stdout.trim();
     }),
   ),
@@ -84,20 +86,27 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
         const container = yield* makeContainerRuntime({ engine: "docker" });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const makeStorage = (instanceId: string, instanceRoot: string) =>
+        const makeStorageAt = (
+          instanceId: string,
+          instanceRoot: string,
+          storageRootValue: string,
+          cacheRootValue: string,
+        ) =>
           makeDockerDatabaseStorage({
             runtime: "docker",
             stackId: "storage-test",
             instanceId,
             instanceRoot,
-            root: storageRoot,
-            cacheRoot,
+            root: storageRootValue,
+            cacheRoot: cacheRootValue,
             fs,
             path,
             crypto,
             container,
             spawner,
           });
+        const makeStorage = (instanceId: string, instanceRoot: string) =>
+          makeStorageAt(instanceId, instanceRoot, storageRoot, cacheRoot);
         const source = yield* makeStorage("source", sourceRoot);
         const target = yield* makeStorage("target", targetRoot);
         const ownerScope = yield* Scope.Scope;
@@ -143,6 +152,38 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           '{"version":"17","runtime":"docker","profile":"supabase"}',
         );
         yield* source.saveSnapshot("17", "roundtrip");
+
+        const copiedRoot = path.join(root, "copied-state", "stack", "data", "source");
+        const copiedStorageRoot = path.join(root, "copied-state", "stack", "data");
+        const copiedCacheRoot = path.join(root, "copied-cache");
+        yield* fs.makeDirectory(copiedRoot, { recursive: true });
+        yield* fs.makeDirectory(copiedCacheRoot, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(copiedRoot, ".supabase-database-storage.json"),
+          yield* fs.readFileString(path.join(sourceRoot, ".supabase-database-storage.json")),
+        );
+        const copied = yield* makeStorageAt(
+          "source",
+          copiedRoot,
+          copiedStorageRoot,
+          copiedCacheRoot,
+        );
+        const mountError = yield* copied.mount("17").pipe(Effect.flip);
+        expect(mountError.message).toContain("another state directory");
+        const removeError = yield* copied.removeData("17").pipe(Effect.flip);
+        expect(removeError.message).toContain("another state directory");
+        const destroyError = yield* copied.destroyData("17").pipe(Effect.flip);
+        expect(destroyError.message).toContain("another state directory");
+        yield* docker([
+          "run",
+          "--rm",
+          "--mount",
+          `type=volume,src=${sourceMarker.volume},dst=/store`,
+          helperImage,
+          "/bin/sh",
+          "-c",
+          `test "$(cat /store/${sourceMarker.namespace}/data/fixture)" = source`,
+        ]);
 
         yield* target.prepare("17");
         expect(yield* target.restoreSnapshot("17", "roundtrip")).toBe(true);
@@ -412,12 +453,18 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           }),
         );
         if (volume === undefined) return yield* new DockerTestError({ message: "Missing volume" });
-        yield* docker(["volume", "rm", volume]);
+        const removedVolume = volume;
+        yield* docker(["volume", "rm", removedVolume]);
         yield* Effect.scoped(
           Effect.gen(function* () {
             const storage = yield* makeStorage();
             const prepare = yield* storage.prepare("17").pipe(Effect.exit);
             expect(prepare).toSatisfy((exit) => Exit.isFailure(exit));
+            const removeError = yield* storage.removeData("17").pipe(Effect.flip);
+            expect(removeError.message).toMatch(/no such volume/iu);
+            expect(yield* docker(["volume", "inspect", removedVolume]).pipe(Effect.exit)).toSatisfy(
+              (exit) => Exit.isFailure(exit),
+            );
             expect(yield* storage.destroyData("17").pipe(Effect.exit)).toSatisfy((exit) =>
               Exit.isSuccess(exit),
             );
@@ -472,12 +519,31 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           container,
           spawner,
         });
+        const ownerScope = yield* Scope.Scope;
+        yield* Scope.addFinalizer(
+          ownerScope,
+          storage.destroyData("17").pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.catchCause((cause) => Effect.die(cause)),
+          ),
+        );
         yield* storage.prepare("17");
         const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
           yield* fs.readFileString(path.join(instanceRoot, ".supabase-database-storage.json")),
         );
         expect(marker.backend).toBe("host");
         expect(marker.initialized).toBe(true);
+        const expectedOwnership = yield* docker([
+          "run",
+          "--rm",
+          "--mount",
+          `type=bind,src=${instanceRoot},dst=/instance`,
+          helperImage,
+          "/bin/sh",
+          "-c",
+          "stat -c '%u:%g' /instance/data/PG_VERSION",
+        ]);
+        if (process.platform === "linux") expect(expectedOwnership).toBe("100:101");
         yield* storage.saveSnapshot("17", "adopted");
         const nativeRoot = path.join(root, "native");
         yield* fs.makeDirectory(path.join(nativeRoot, "data"), { recursive: true });
@@ -499,23 +565,25 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         expect(yield* nativeSnapshots.restoreSnapshot("native")).toBe(true);
         yield* storage.removeData("17");
         expect(yield* storage.restoreSnapshot("17", "adopted")).toBe(true);
+        expect(
+          yield* docker([
+            "run",
+            "--rm",
+            "--mount",
+            `type=bind,src=${instanceRoot},dst=/instance`,
+            helperImage,
+            "/bin/sh",
+            "-c",
+            "stat -c '%u:%g' /instance/data/PG_VERSION",
+          ]),
+        ).toBe(expectedOwnership);
         yield* storage.removeData("17");
         yield* storage.destroyData("17");
         expect(yield* fs.exists(path.join(instanceRoot, ".supabase-database-storage.json"))).toBe(
           true,
         );
         expect(yield* fs.exists(dataRoot)).toBe(false);
-        yield* docker([
-          "run",
-          "--rm",
-          "--mount",
-          `type=bind,src=${cacheRoot},dst=/cache`,
-          helperImage,
-          "/bin/sh",
-          "-c",
-          "rm -rf /cache/*",
-        ]);
-        yield* fs.remove(cacheRoot, { recursive: true, force: true });
+        yield* fs.remove(cacheRoot, { recursive: true });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -537,21 +605,38 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
         const container = yield* makeContainerRuntime({ engine: "docker" });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const makeStorage = (instanceId: string, instanceRoot: string) =>
+        const makeStorageWithCache = (
+          instanceId: string,
+          instanceRoot: string,
+          cacheRootValue: string,
+        ) =>
           makeDockerDatabaseStorage({
             runtime: "docker",
             stackId: "storage-reopen-test",
             instanceId,
             instanceRoot,
             root: storageRoot,
-            cacheRoot,
+            cacheRoot: cacheRootValue,
             fs,
             path,
             crypto,
             container,
             spawner,
           });
+        const makeStorage = (instanceId: string, instanceRoot: string) =>
+          makeStorageWithCache(instanceId, instanceRoot, cacheRoot);
         let sourceVolume: string | undefined;
+        const ownerScope = yield* Scope.Scope;
+        yield* Scope.addFinalizer(
+          ownerScope,
+          Effect.gen(function* () {
+            if (sourceVolume !== undefined) yield* docker(["volume", "rm", sourceVolume]);
+            yield* fs.remove(cacheRoot, { recursive: true, force: true });
+          }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.catchCause((cause) => Effect.die(cause)),
+          ),
+        );
         yield* Effect.scoped(
           Effect.gen(function* () {
             const source = yield* makeStorage("source", sourceRoot);
@@ -585,9 +670,18 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         );
         yield* Effect.scoped(
           Effect.gen(function* () {
+            const changedCacheRoot = path.join(root, "changed-cache");
+            yield* fs.makeDirectory(changedCacheRoot, { recursive: true });
+            const changedCache = yield* makeStorageWithCache(
+              "source",
+              sourceRoot,
+              changedCacheRoot,
+            );
+            yield* changedCache.prepare("17");
+            yield* changedCache.removeData("17");
+            expect(yield* changedCache.restoreSnapshot("17", "reopened")).toBe(false);
             const source = yield* makeStorage("source", sourceRoot);
             yield* source.prepare("17");
-            yield* source.saveSnapshot("17", "reopened");
             yield* source.removeData("17");
             expect(yield* source.restoreSnapshot("17", "reopened")).toBe(true);
             yield* source.saveSnapshot("17", "reopened-again");
@@ -611,8 +705,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
             yield* target.destroyData("17");
           }),
         );
-        if (sourceVolume !== undefined) yield* docker(["volume", "rm", sourceVolume]);
-        yield* fs.remove(cacheRoot, { recursive: true, force: true });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

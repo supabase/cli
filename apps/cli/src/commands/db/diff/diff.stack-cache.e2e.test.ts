@@ -1,7 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Path, Redacted } from "effect";
+import { Data, Effect, Exit, FileSystem, Path, Predicate, Redacted, Schema, Stream } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { create as createStack } from "@supabase/stack/effect";
 import { tmpdir } from "node:os";
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
@@ -30,6 +31,38 @@ enabled = false
 enabled = false
 `;
 
+const storageMarker = Schema.Struct({
+  backend: Schema.Literals(["docker", "host"]),
+  volume: Schema.optionalKey(Schema.String),
+});
+
+class DockerCleanupError extends Data.TaggedError("DockerCleanupError")<{
+  readonly message: string;
+}> {}
+
+const removeDockerVolume = Effect.fn("DbDiffStackCacheE2e.removeDockerVolume")((volume: string) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make("docker", ["volume", "rm", volume], { stdin: "ignore" }),
+      );
+      const [stderr, code] = yield* Effect.all(
+        [
+          child.stdout.pipe(Stream.runDrain),
+          child.stderr.pipe(Stream.decodeText, Stream.mkString),
+          child.exitCode,
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.map(([, stderr, code]) => [stderr, code] as const));
+      if (Number(code) !== 0 && !/no such volume/iu.test(stderr))
+        return yield* new DockerCleanupError({
+          message: `docker volume rm ${volume} failed: ${stderr.trim() || `exit ${code}`}`,
+        });
+    }),
+  ),
+);
+
 const composeStack = Effect.fn("DbDiffStackCacheE2e.composeStack")(function* (
   root: string,
   home: string,
@@ -41,12 +74,40 @@ const composeStack = Effect.fn("DbDiffStackCacheE2e.composeStack")(function* (
     cacheRoot: `${home}/cache/stack`,
     runtime,
   });
+  let databaseId: string | undefined;
   yield* Effect.addFinalizer(() =>
-    stack.destroy.pipe(
-      Effect.catch((cause) => Effect.die(new Error(`stack cleanup failed: ${cause.message}`))),
-    ),
+    Effect.gen(function* () {
+      const marker = yield* Effect.gen(function* () {
+        if (runtime !== "docker" || databaseId === undefined) return undefined;
+        const fs = yield* FileSystem.FileSystem;
+        const markerText = yield* fs
+          .readFileString(
+            `${home}/stacks/${stack.id}/data/${databaseId}/.supabase-database-storage.json`,
+          )
+          .pipe(
+            Effect.catchIf(
+              (cause) => Predicate.isTagged(cause.reason, "NotFound"),
+              () => Effect.succeed(undefined),
+            ),
+          );
+        if (markerText === undefined) return undefined;
+        return yield* Schema.decodeEffect(Schema.fromJsonString(storageMarker))(markerText);
+      }).pipe(Effect.exit);
+      const destroyed = yield* stack.destroy.pipe(Effect.exit);
+      const volume =
+        Exit.isSuccess(marker) && marker.value !== undefined && marker.value.backend === "docker"
+          ? marker.value.volume
+          : undefined;
+      const removed =
+        volume === undefined
+          ? Exit.succeed(undefined)
+          : yield* removeDockerVolume(volume).pipe(Effect.exit);
+      if (Exit.isFailure(destroyed)) return yield* Effect.failCause(destroyed.cause);
+      if (Exit.isFailure(marker)) return yield* Effect.failCause(marker.cause);
+      if (Exit.isFailure(removed)) return yield* Effect.failCause(removed.cause);
+    }).pipe(Effect.catchCause((cause) => Effect.die(cause))),
   );
-  yield* stack.composition.supabase([
+  const [database] = yield* stack.composition.supabase([
     {
       service: "database",
       config: {
@@ -58,6 +119,8 @@ const composeStack = Effect.fn("DbDiffStackCacheE2e.composeStack")(function* (
       endpoints: { sql: { port: "auto" } },
     },
   ]);
+  if (database === undefined) return yield* Effect.die("database composition missing");
+  databaseId = database.id;
   yield* stack.composition.start;
   return stack;
 });
