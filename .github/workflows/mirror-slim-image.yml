@@ -13,8 +13,9 @@ name: Mirror Slim Image
 #
 # `upload-natives-s3` then copies the same native triplets (fetched from GHCR by digest and
 # re-verified) to the public-read S3 bucket in the cli-artifacts-prod account, for sandboxes that
-# allow `*.amazonaws.com` but block registry blob CDNs. It is best-effort like the native ECR copy
-# and runs as the PutObject-only `slim-artifacts-publisher` role (infra/cli-artifacts/README.md).
+# allow `*.amazonaws.com` but block registry blob CDNs. It runs only after the image mirror and its
+# digest checks succeeded, is best-effort like the native ECR copy, and uses the PutObject-only
+# `slim-artifacts-publisher` role (infra/cli-artifacts/README.md).
 #
 # Replay locally: `bun .github/scripts/mirror-slim-image.ts --help`
 # Full contract: docs/design/ecr-mirror-dispatch.md in supabase/slim-services.
@@ -145,9 +146,11 @@ jobs:
 
   upload-natives-s3:
     needs: mirror
-    # Natives only ride in repository_dispatch payloads. The job is skipped until the
-    # cli-artifacts-prod account exists and its ID is set as a repository variable.
-    if: ${{ !cancelled() && github.event_name == 'repository_dispatch' && vars.CLI_ARTIFACTS_AWS_ACCOUNT_ID != '' }}
+    # Natives only ride in repository_dispatch payloads. Nothing reaches the public bucket from a
+    # dispatch whose image digest check failed; a release whose mirror failed for other reasons is
+    # re-dispatched by the sender's backfill. The job is skipped until the cli-artifacts-prod
+    # account exists and its ID is set as a repository variable.
+    if: ${{ success() && github.event_name == 'repository_dispatch' && vars.CLI_ARTIFACTS_AWS_ACCOUNT_ID != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
