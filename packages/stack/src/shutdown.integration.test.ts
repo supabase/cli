@@ -86,10 +86,24 @@ const withHeldOwner = <A, E, R>(
       (owner) =>
         Effect.gen(function* () {
           yield* Stream.run(Stream.succeed(new Uint8Array([1])), owner.getInputFd(4));
-          yield* owner.exitCode;
+          const exitCode = yield* owner.exitCode;
+          expect(Number(exitCode)).toBe(0);
         }),
     );
   });
+
+it.live("Held owner cleanup releases a fixture when shutdown is never requested", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shutdown-held-cleanup-" });
+      const error = yield* withHeldOwner(root, () =>
+        Effect.fail(new FixtureError({ message: "shutdown request was skipped" })),
+      ).pipe(Effect.flip);
+      expect(error.message).toBe("shutdown request was skipped");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
 
 it.live("Effect stop reports shutdown-exit when the acknowledged owner remains alive", () =>
   Effect.scoped(

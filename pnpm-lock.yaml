@@ -234,6 +234,7 @@ overrides:
 packageExtensionsChecksum: sha256-+q1Reu9SIvF0cNyYHg1TxU5zvG0d67iLruu2/1HlPHo=
 
 patchedDependencies:
+  '@effect/vitest@4.0.0-rc.112': edefe3dcb66931c47223e590560b1d4d71893fcd1c55fc1d30088b56ff147512
   '@libpg-query/parser@17.6.10': ed67c0ca88b6ced3ec50fd6862f191d6192a246cf20d9c777d45efdb8373bed3
 
 importers:
@@ -315,7 +316,7 @@ importers:
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
+        version: 4.0.0-rc.112(patch_hash=edefe3dcb66931c47223e590560b1d4d71893fcd1c55fc1d30088b56ff147512)(effect@4.0.0-rc.112)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(supports-color@7.2.0)(zod@4.5.4)
@@ -639,7 +640,7 @@ importers:
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
+        version: 4.0.0-rc.112(patch_hash=edefe3dcb66931c47223e590560b1d4d71893fcd1c55fc1d30088b56ff147512)(effect@4.0.0-rc.112)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
@@ -7201,7 +7202,7 @@ snapshots:
       '@effect/tsgo-win32-arm64': 0.37.0
       '@effect/tsgo-win32-x64': 0.37.0
 
-  '@effect/vitest@4.0.0-rc.112(effect@4.0.0-rc.112)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)':
+  '@effect/vitest@4.0.0-rc.112(patch_hash=edefe3dcb66931c47223e590560b1d4d71893fcd1c55fc1d30088b56ff147512)(effect@4.0.0-rc.112)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)':
     dependencies:
       effect: 4.0.0-rc.112
       vite: 8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)

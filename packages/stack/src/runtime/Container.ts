@@ -213,7 +213,18 @@ export const makeContainerRuntime = (options: {
 
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
-          const creation = yield* restore(run(args)).pipe(Effect.exit);
+          // Keep creation and identity recovery atomic so cancellation cannot outrun the daemon.
+          const creation = yield* run(args, { timeout: undefined }).pipe(
+            Effect.mapError(
+              (error) =>
+                new ContainerError({
+                  operation: error.operation,
+                  message: `${error.message} (container name ${name})`,
+                  cause: error,
+                }),
+            ),
+            Effect.exit,
+          );
           const recorded = yield* fs.readFileString(cidPath).pipe(Effect.option);
           const fromFile =
             Option.isSome(recorded) && recorded.value.trim().length > 0

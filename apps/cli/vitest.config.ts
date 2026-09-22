@@ -59,6 +59,7 @@ export default defineConfig({
       {
         test: {
           name: "integration",
+          hookTimeout: 120_000,
           include: ["**/*.integration.test.ts"],
         },
       },
