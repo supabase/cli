@@ -223,7 +223,9 @@ function applySupabaseRetryPolicy(
           ),
         ),
         Effect.catchIf(isRetryableTransportError, (error) =>
-          retries < maxRetries ? attempt(retries + 1) : Effect.fail(error),
+          retries < maxRetries && isIdempotentMethod(request.method)
+            ? attempt(retries + 1)
+            : Effect.fail(error),
         ),
         Effect.flatMap((response) =>
           isRetryableResponse(response) && retries < maxRetries
