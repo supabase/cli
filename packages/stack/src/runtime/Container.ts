@@ -144,8 +144,11 @@ export const makeContainerRuntime = (options: {
     });
 
     const prepare = Effect.fn("Container.prepare")(function* (image: string) {
-      const present = yield* run(["image", "ls", "--quiet", "--no-trunc", image]);
-      if (present.length === 0) yield* run(["pull", image], { timeout: "5 minutes" });
+      const inspected = yield* run(["image", "inspect", "--format", "{{.Id}}", image]).pipe(
+        Effect.option,
+      );
+      if (Option.isNone(inspected) || inspected.value.length === 0)
+        yield* run(["pull", image], { timeout: "5 minutes" });
     });
 
     const launch = Effect.fn("Container.launch")(function* (

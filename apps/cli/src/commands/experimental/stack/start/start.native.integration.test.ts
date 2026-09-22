@@ -19,6 +19,7 @@ import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.
 import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
 import { stackStart } from "./start.handler.ts";
 import { stackPrepare } from "../prepare/prepare.handler.ts";
+import { destroyTestStacks } from "../../../../../tests/helpers/stack-cleanup.ts";
 
 const excluded = [
   "rest",
@@ -127,7 +128,6 @@ describe("experimental stack start native lifecycle", () => {
         );
         yield* fs.writeFileString(path.join(root, "supabase", "config.toml"), projectConfig);
         const fixture = makeLayers(root);
-        let stackId: string | undefined;
         yield* Effect.ensuring(
           Effect.gen(function* () {
             yield* Effect.scoped(stackPrepare(prepareFlags()));
@@ -152,7 +152,7 @@ describe("experimental stack start native lifecycle", () => {
               path.join(root, "supabase", "migrations", "20260919000000_native_start.sql"),
               "CREATE TABLE native_migration_probe(value text NOT NULL); INSERT INTO native_migration_probe(value) VALUES ('once');\n",
             );
-            stackId = yield* stackStart(flags(excluded));
+            const stackId = yield* stackStart(flags(excluded));
             const stack = yield* api.open({
               id: stackId,
               stateRoot: path.join(root, "stacks"),
@@ -211,18 +211,10 @@ describe("experimental stack start native lifecycle", () => {
             expect(rows).toEqual([{ value: "preserved" }]);
             expect(services.some((instance) => instance.service === "rest")).toBe(true);
           }),
-          Effect.exit(
-            Effect.gen(function* () {
-              const api = yield* StackApi;
-              if (stackId === undefined) return;
-              const stack = yield* api.open({
-                id: stackId,
-                stateRoot: path.join(root, "stacks"),
-                cacheRoot: path.join(root, "cache"),
-              });
-              yield* Effect.exit(stack.destroy).pipe(Effect.asVoid);
-            }),
-          ).pipe(Effect.asVoid),
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
+          }),
         ).pipe(Effect.provide(fixture.layer));
       }).pipe(Effect.provide(BunServices.layer)),
     { timeout: 180_000 },

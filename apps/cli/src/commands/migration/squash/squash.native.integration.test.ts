@@ -28,6 +28,7 @@ import { BundledPostgresClient } from "../../../command-internal/bundled-postgre
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { migrationSquash } from "./squash.handler.ts";
 import type { MigrationSquashFlags } from "./squash.command.ts";
+import { destroyTestStack } from "../../../../../../packages/stack/tests/stack-cleanup.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -138,13 +139,7 @@ describe("managed migration squash", { timeout: 180_000 }, () => {
                 cacheRoot: path.join(root, "cache"),
                 runtime,
               });
-              yield* Effect.addFinalizer(() =>
-                current.destroy.pipe(
-                  Effect.catch((cause) =>
-                    Effect.die(`failed to destroy test stack ${current.id}: ${cause.message}`),
-                  ),
-                ),
-              );
+              yield* Effect.addFinalizer(() => destroyTestStack(current));
               const before = yield* current.composition.describe;
               expect(before.members).toHaveLength(0);
 

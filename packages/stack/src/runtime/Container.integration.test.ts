@@ -26,6 +26,44 @@ class ContainerTestError extends Data.TaggedError("ContainerTestError")<{
 }> {}
 
 describe("container process adapter", () => {
+  it.live("recognizes a cached pinned image without pulling", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const runtime = yield* makeContainerRuntime({ engine: "docker" });
+      yield* runtime.prepare(image);
+      const repositoryDigest = yield* repoDigest(delegate, image);
+      const digest = repositoryDigest.slice(repositoryDigest.indexOf("@") + 1);
+      expect(digest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+      const pinnedImage = `${image}@${digest}`;
+      const pullAttempted = yield* Ref.make(false);
+      const spawner = makePullFailureSpawner(delegate, pullAttempted);
+      yield* makeContainerRuntime({ engine: "docker" }).pipe(
+        Effect.flatMap((runtime) => runtime.prepare(pinnedImage)),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      expect(yield* Ref.get(pullAttempted)).toBe(false);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps missing image pull failures observable", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const pullAttempted = yield* Ref.make(false);
+      const spawner = makePullFailureSpawner(delegate, pullAttempted);
+      const result = yield* makeContainerRuntime({ engine: "docker" }).pipe(
+        Effect.flatMap((runtime) =>
+          runtime.prepare(`supabase-prepare-regression:${token}`).pipe(Effect.exit),
+        ),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      expect(Exit.isFailure(result)).toBe(true);
+      expect(yield* Ref.get(pullAttempted)).toBe(true);
+      if (Exit.isFailure(result)) expect(Cause.pretty(result.cause)).toContain("pull rejected");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("prepares, launches, streams, waits, and removes one exact container", () =>
     Effect.gen(function* () {
       const id = yield* Effect.scoped(
@@ -437,6 +475,59 @@ describe("container process adapter", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
+
+const repoDigest = (spawner: ChildProcessSpawnerService["Service"], image: string) =>
+  Effect.gen(function* () {
+    const child = yield* spawner.spawn(
+      ChildProcess.make(
+        "docker",
+        ["image", "inspect", "--format", "{{range .RepoDigests}}{{println .}}{{end}}", image],
+        { stdin: "ignore" },
+      ),
+    );
+    const [stdout, stderr, code] = yield* Effect.all([
+      child.stdout.pipe(Stream.decodeText, Stream.mkString),
+      child.stderr.pipe(Stream.decodeText, Stream.mkString),
+      child.exitCode,
+    ]);
+    if (Number(code) !== 0)
+      return yield* new ContainerTestError({
+        message: `docker image inspect exited with ${String(code)}`,
+        cause: stderr.trim(),
+      });
+    const digest = stdout
+      .split("\n")
+      .map((value) => value.trim())
+      .find((value) => value.includes("@sha256:"));
+    if (digest === undefined)
+      return yield* new ContainerTestError({
+        message: `docker image inspect returned no repository digest for ${image}`,
+      });
+    return digest;
+  });
+
+const makePullFailureSpawner = (
+  delegate: ChildProcessSpawnerService["Service"],
+  pullAttempted: Ref.Ref<boolean>,
+) =>
+  ChildProcessSpawner.make((command) => {
+    if (
+      ChildProcess.isStandardCommand(command) &&
+      command.command === "docker" &&
+      command.args[0] === "pull"
+    )
+      return Effect.gen(function* () {
+        yield* Ref.set(pullAttempted, true);
+        return yield* delegate.spawn(
+          ChildProcess.make(
+            process.execPath,
+            ["-e", "console.error('pull rejected by cached-image regression'); process.exit(73)"],
+            { stdin: "ignore" },
+          ),
+        );
+      });
+    return delegate.spawn(command);
+  });
 
 const makeStopFailureSpawner = (
   delegate: ChildProcessSpawnerService["Service"],

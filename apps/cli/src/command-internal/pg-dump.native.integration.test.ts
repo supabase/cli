@@ -11,6 +11,7 @@ import { DockerRun } from "./docker-run.service.ts";
 import { BundledPostgresClient } from "./bundled-postgres-client.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
+import { destroyTestStack } from "../../../../packages/stack/tests/stack-cleanup.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -29,12 +30,7 @@ describe("managed pg_dump against a live stack", { timeout: 180_000 }, () => {
             cacheRoot: `${root}/cache`,
             runtime,
           });
-          yield* Effect.addFinalizer(() =>
-            stack.destroy.pipe(
-              Effect.tapError((error) => Effect.logError(`Failed to destroy test stack: ${error}`)),
-              Effect.ignore,
-            ),
-          );
+          yield* Effect.addFinalizer(() => destroyTestStack(stack));
           const creation: Extract<ServiceCreation, { service: "database" }> = {
             service: "database",
             config: {

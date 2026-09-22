@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Redacted } from "effect";
+import { Effect, FileSystem, Layer, Redacted } from "effect";
 import { tmpdir } from "node:os";
 import {
   create,
@@ -10,6 +10,7 @@ import {
   type DatabaseInstance,
   type ServiceInstance,
 } from "./effect.ts";
+import { destroyTestStack } from "../tests/stack-cleanup.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
@@ -219,12 +220,7 @@ const resetDataStory = (runtime: "native" | "docker") =>
           );
           expect(reopenedCleared.stdout.trim()).toBe("t");
         }),
-      (owned) =>
-        Effect.exit(owned.destroy).pipe(
-          Effect.map((exit) => {
-            expect(Exit.isSuccess(exit)).toBe(true);
-          }),
-        ),
+      destroyTestStack,
     );
   }).pipe(Effect.scoped, Effect.provide(layer));
 

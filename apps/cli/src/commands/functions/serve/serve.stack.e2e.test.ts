@@ -8,6 +8,7 @@ import { homedir, tmpdir } from "node:os";
 import { spawnSupabase } from "../../../../tests/helpers/cli.ts";
 import { bundleStackFunctionsServeMainTemplate } from "../../../command-internal/stack-functions-bundler.ts";
 import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { destroyTestStack } from "../../../../../../packages/stack/tests/stack-cleanup.ts";
 
 const jwtSecret = "functions-serve-stack-e2e-secret-at-least-32-characters";
 const nativeSupported =
@@ -64,13 +65,7 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
     cacheRoot: path.join(home, "cache", "stack"),
     runtime,
   });
-  yield* Effect.addFinalizer(() =>
-    stack.destroy.pipe(
-      Effect.catch((cause) =>
-        Effect.die(new FunctionsServeE2eError({ message: "stack cleanup failed", cause })),
-      ),
-    ),
-  );
+  yield* Effect.addFinalizer(() => destroyTestStack(stack));
   const bootstrap = yield* bundleStackFunctionsServeMainTemplate();
   yield* stack.composition.supabase([
     {

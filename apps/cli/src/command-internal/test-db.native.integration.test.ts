@@ -23,6 +23,7 @@ import { testDb } from "./test-db.handler.ts";
 import { runTestDbCommand } from "./test-db.command-handler.ts";
 import { DockerRun } from "./docker-run.service.ts";
 import { StackError } from "@supabase/stack/effect";
+import { destroyTestStack } from "../../../../packages/stack/tests/stack-cleanup.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -74,7 +75,7 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
               cacheRoot: `${root}/cache`,
               runtime,
             }),
-            (stack) => stack.destroy.pipe(Effect.catch((cause) => Effect.die(cause))),
+            destroyTestStack,
           );
           const [database] = yield* stack.composition.supabase([databaseCreation]);
           if (database === undefined) return yield* Effect.die("database was not composed");
