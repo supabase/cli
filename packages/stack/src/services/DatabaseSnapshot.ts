@@ -1,6 +1,6 @@
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Crypto, Data, Effect, FileSystem, Path, Schema, Stream } from "effect";
-import { imageMirror, postgresVersion, resolveArtifact } from "../Artifacts.ts";
+import { slimImageMirrors, postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import type { DatabaseRuntime } from "./Database.ts";
 import { makeContainerRuntime, type ContainerRuntime } from "../runtime/Container.ts";
 
@@ -61,7 +61,7 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
   const container: ContainerRuntime | undefined =
     options.runtime === "native"
       ? undefined
-      : yield* makeContainerRuntime({ engine: options.runtime, imageMirror });
+      : yield* makeContainerRuntime({ engine: options.runtime, imageMirrors: slimImageMirrors });
   const helperImage =
     options.runtime === "native"
       ? undefined

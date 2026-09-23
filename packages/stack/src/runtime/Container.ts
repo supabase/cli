@@ -93,11 +93,12 @@ const mountField = (key: string, value: string) => {
 
 /**
  * Captures the selected local engine; each launch owns one exact container. An image whose pull
- * fails is pulled from `imageMirror` instead, and launches of it then use the mirror reference.
+ * fails is pulled from the first of its `imageMirrors` that succeeds, and launches of it then use
+ * that mirror reference. When every mirror fails, the primary pull error is reported.
  */
 export const makeContainerRuntime = (options: {
   readonly engine: "docker" | "podman";
-  readonly imageMirror?: (image: string) => string | undefined;
+  readonly imageMirrors?: (image: string) => ReadonlyArray<string>;
 }): Effect.Effect<
   ContainerRuntime,
   never,
@@ -153,20 +154,27 @@ export const makeContainerRuntime = (options: {
       );
     const pull = (image: string) => run(["pull", image], { timeout: "5 minutes" });
 
+    const fromMirror = (
+      image: string,
+      mirrors: ReadonlyArray<string>,
+      primaryError: ContainerError,
+    ): Effect.Effect<void, ContainerError> => {
+      const [mirror, ...rest] = mirrors;
+      if (mirror === undefined) return Effect.fail(primaryError);
+      return Effect.gen(function* () {
+        if (!(yield* present(mirror))) yield* pull(mirror);
+        yield* Ref.update(mirrored, (map) => new Map(map).set(image, mirror));
+      }).pipe(
+        Effect.tapError((cause) => Effect.logDebug(`Image mirror ${mirror} failed`, cause)),
+        Effect.catch(() => fromMirror(image, rest, primaryError)),
+      );
+    };
+
     const prepare = Effect.fn("Container.prepare")(function* (image: string) {
       if (yield* present(image)) return;
-      const mirror = options.imageMirror?.(image);
-      if (mirror === undefined) return yield* pull(image);
+      const mirrors = options.imageMirrors?.(image) ?? [];
       yield* pull(image).pipe(
-        Effect.catch((primaryError) =>
-          Effect.gen(function* () {
-            if (!(yield* present(mirror))) yield* pull(mirror);
-            yield* Ref.update(mirrored, (map) => new Map(map).set(image, mirror));
-          }).pipe(
-            Effect.tapError((cause) => Effect.logDebug(`Image mirror ${mirror} failed`, cause)),
-            Effect.mapError(() => primaryError),
-          ),
-        ),
+        Effect.catch((primaryError) => fromMirror(image, mirrors, primaryError)),
       );
     });
 

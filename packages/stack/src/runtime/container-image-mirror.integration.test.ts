@@ -6,6 +6,7 @@ import { makeContainerRuntime } from "./Container.ts";
 
 const primary = "ghcr.io/supabase/cli/postgrest:v16.2";
 const mirror = "public.ecr.aws/supabase/cli/postgrest:v16.2";
+const secondMirror = "registry.test/supabase/cli/postgrest:v16.2";
 
 /** Docker stand-in: `image ls` reports `local`, `pull` succeeds for `pullable`, `create` refuses. */
 const fakeEngine = (options: { readonly pullable: ReadonlyArray<string> }) => {
@@ -55,7 +56,7 @@ describe("container image mirror", () => {
     return Effect.gen(function* () {
       const runtime = yield* makeContainerRuntime({
         engine: "docker",
-        imageMirror: (image) => (image === primary ? mirror : undefined),
+        imageMirrors: (image) => (image === primary ? [mirror] : []),
       });
       yield* runtime.prepare(primary);
       yield* launchImage(runtime);
@@ -67,12 +68,30 @@ describe("container image mirror", () => {
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
   });
 
+  it.live("tries each mirror in order until one pull succeeds", () => {
+    const engine = fakeEngine({ pullable: [secondMirror] });
+    return Effect.gen(function* () {
+      const runtime = yield* makeContainerRuntime({
+        engine: "docker",
+        imageMirrors: (image) => (image === primary ? [mirror, secondMirror] : []),
+      });
+      yield* runtime.prepare(primary);
+      yield* launchImage(runtime);
+      expect(engine.commands.filter((args) => args[0] === "pull")).toEqual([
+        ["pull", primary],
+        ["pull", mirror],
+        ["pull", secondMirror],
+      ]);
+      expect(engine.commands.find((args) => args[0] === "create")?.at(-1)).toBe(secondMirror);
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+  });
+
   it.live("reports the primary pull failure when the mirror also fails", () => {
     const engine = fakeEngine({ pullable: [] });
     return Effect.gen(function* () {
       const runtime = yield* makeContainerRuntime({
         engine: "docker",
-        imageMirror: (image) => (image === primary ? mirror : undefined),
+        imageMirrors: (image) => (image === primary ? [mirror] : []),
       });
       const failed = yield* runtime.prepare(primary).pipe(Effect.exit);
       const error = Exit.isFailure(failed)
@@ -89,7 +108,7 @@ describe("container image mirror", () => {
     return Effect.gen(function* () {
       const runtime = yield* makeContainerRuntime({
         engine: "docker",
-        imageMirror: (image) => (image === primary ? mirror : undefined),
+        imageMirrors: (image) => (image === primary ? [mirror] : []),
       });
       yield* runtime.prepare(primary);
       yield* launchImage(runtime);

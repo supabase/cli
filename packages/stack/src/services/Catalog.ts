@@ -29,7 +29,7 @@ import {
   type ProcessRecipeResult,
 } from "./Recipe.ts";
 import { makeProcessRecipe, type ProcessDependencies } from "./ProcessRecipe.ts";
-import { imageMirror, type ServiceKind } from "../Artifacts.ts";
+import { slimImageMirrors, type ServiceKind } from "../Artifacts.ts";
 import type { ServiceInstanceContext } from "../Service.ts";
 
 export type { CatalogLog } from "./Recipe.ts";
@@ -260,7 +260,10 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
       const container =
         options.runtime === "native"
           ? undefined
-          : yield* makeContainerRuntime({ engine: options.runtime, imageMirror });
+          : yield* makeContainerRuntime({
+              engine: options.runtime,
+              imageMirrors: slimImageMirrors,
+            });
       const deps: ProcessDependencies = { fs, path, crypto, client, spawner, container };
       switch (creation.service) {
         case "rest":

@@ -157,21 +157,23 @@ const platformText = (platform: { readonly os: string; readonly arch: string }):
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : typeof cause === "string" ? cause : String(cause);
 
+const SLIM_NATIVE_GITHUB_RELEASES = "https://github.com/supabase/slim-services/releases/download";
+
 /**
  * Public S3 copy of the release assets for hosts that block GitHub release downloads, such as
  * agent sandboxes that allow `*.amazonaws.com`.
  * @see ../../../infra/cli-artifacts/README.md
  */
-const SLIM_ARTIFACTS_BUCKET_URL = "https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com";
+const SLIM_NATIVE_SUPABASE_S3_MIRROR = "https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com";
 
-const SLIM_IMAGE_REGISTRY = "ghcr.io/supabase/cli/";
-const SLIM_IMAGE_MIRROR = "public.ecr.aws/supabase/cli/";
+const SLIM_IMAGE_GHCR_REGISTRY = "ghcr.io/supabase/cli/";
+const SLIM_IMAGE_SUPABASE_ECR_MIRROR = "public.ecr.aws/supabase/cli/";
 
-/** ECR Public copy of a catalog slim image under the same tag and digest, if it has one. */
-export const imageMirror = (image: string): string | undefined =>
-  image.startsWith(SLIM_IMAGE_REGISTRY)
-    ? `${SLIM_IMAGE_MIRROR}${image.slice(SLIM_IMAGE_REGISTRY.length)}`
-    : undefined;
+/** Mirrors carrying a catalog slim image under the same tag and digest, in fallback order. */
+export const slimImageMirrors = (image: string): ReadonlyArray<string> =>
+  image.startsWith(SLIM_IMAGE_GHCR_REGISTRY)
+    ? [`${SLIM_IMAGE_SUPABASE_ECR_MIRROR}${image.slice(SLIM_IMAGE_GHCR_REGISTRY.length)}`]
+    : [];
 
 const artifactFor = (
   service: ServiceKind,
@@ -181,8 +183,8 @@ const artifactFor = (
   const sourceService = definitions[service].sourceService;
   const releaseTag = `${sourceService}-${resolved.version}`;
   const assetName = `${releaseTag}-${target}`;
-  const release = `https://github.com/supabase/slim-services/releases/download/${releaseTag}`;
-  const bucket = `${SLIM_ARTIFACTS_BUCKET_URL}/${sourceService}/${resolved.version}`;
+  const githubRelease = `${SLIM_NATIVE_GITHUB_RELEASES}/${releaseTag}`;
+  const supabaseS3 = `${SLIM_NATIVE_SUPABASE_S3_MIRROR}/${sourceService}/${resolved.version}`;
   return {
     provider: "supabase/slim-services",
     service: sourceService,
@@ -193,14 +195,14 @@ const artifactFor = (
     assetName,
     mirrors: [
       {
-        downloadUrl: `${release}/${assetName}.tar.zst`,
-        manifestUrl: `${release}/${assetName}.manifest.json`,
-        checksumUrl: `${release}/SHA256SUMS`,
+        downloadUrl: `${githubRelease}/${assetName}.tar.zst`,
+        manifestUrl: `${githubRelease}/${assetName}.manifest.json`,
+        checksumUrl: `${githubRelease}/SHA256SUMS`,
       },
       {
-        downloadUrl: `${bucket}/${assetName}.tar.zst`,
-        manifestUrl: `${bucket}/${assetName}.manifest.json`,
-        checksumUrl: `${bucket}/${assetName}.SHA256SUMS`,
+        downloadUrl: `${supabaseS3}/${assetName}.tar.zst`,
+        manifestUrl: `${supabaseS3}/${assetName}.manifest.json`,
+        checksumUrl: `${supabaseS3}/${assetName}.SHA256SUMS`,
       },
     ],
     requiredRuntimePaths: resolved.requiredRuntimePaths,

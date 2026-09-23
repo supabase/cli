@@ -15,7 +15,7 @@ import { rmdir } from "node:fs/promises";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import {
-  imageMirror,
+  slimImageMirrors,
   prepareNativeArtifact,
   postgresVersion,
   resolveArtifact,
@@ -72,7 +72,7 @@ const makeToolRunner = (options: {
     const container =
       options.runtime === "native"
         ? undefined
-        : yield* makeContainerRuntime({ engine: options.runtime, imageMirror });
+        : yield* makeContainerRuntime({ engine: options.runtime, imageMirrors: slimImageMirrors });
     const jobsRoot = path.join(options.root, "jobs");
     yield* fs
       .makeDirectory(jobsRoot, { recursive: true, mode: 0o700 })

@@ -20,7 +20,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { HttpClient } from "effect/unstable/http";
 import {
-  imageMirror,
+  slimImageMirrors,
   prepareNativeArtifact,
   postgresVersion,
   resolveArtifact,
@@ -468,7 +468,7 @@ export const makeDatabase = (
     const container: ContainerRuntime | undefined =
       options.runtime === "native"
         ? undefined
-        : yield* makeContainerRuntime({ engine: options.runtime, imageMirror });
+        : yield* makeContainerRuntime({ engine: options.runtime, imageMirrors: slimImageMirrors });
 
     const dataCommand = Effect.fn("Database.containerFiles")(
       function* (version: string, args: ReadonlyArray<string>) {
