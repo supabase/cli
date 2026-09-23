@@ -440,36 +440,32 @@ describe("gen signing-key integration", () => {
 
   it.live("resolves env() config references from the injected SUPABASE_ENV's dotenv set", () => {
     const { layer, out } = setup();
-    return withEnvVar(
-      "SUPABASE_ENV",
-      undefined,
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const supabaseDir = path.join(tempRoot.current, "supabase");
-        yield* writeConfig('[auth]\nsigning_keys_path = "env(KEYS_PATH)"\n');
-        yield* fs.writeFileString(
-          path.join(supabaseDir, ".env.local"),
-          "KEYS_PATH=./from-env-local.json\n",
-        );
-        yield* fs.writeFileString(path.join(supabaseDir, ".env"), "KEYS_PATH=./from-env.json\n");
-        yield* fs.writeFileString(path.join(supabaseDir, "from-env-local.json"), "[]\n");
-        yield* fs.writeFileString(path.join(supabaseDir, "from-env.json"), "[]\n");
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const supabaseDir = path.join(tempRoot.current, "supabase");
+      yield* writeConfig('[auth]\nsigning_keys_path = "env(KEYS_PATH)"\n');
+      yield* fs.writeFileString(
+        path.join(supabaseDir, ".env.local"),
+        "KEYS_PATH=./from-env-local.json\n",
+      );
+      yield* fs.writeFileString(path.join(supabaseDir, ".env"), "KEYS_PATH=./from-env.json\n");
+      yield* fs.writeFileString(path.join(supabaseDir, "from-env-local.json"), "[]\n");
+      yield* fs.writeFileString(path.join(supabaseDir, "from-env.json"), "[]\n");
 
-        yield* genSigningKey({ algorithm: "ES256", append: false }).pipe(
-          Effect.provideService(
-            ConfigProvider.ConfigProvider,
-            ConfigProvider.fromEnvRecord({ SUPABASE_ENV: "test" }, { preserveEmptyStrings: true }),
-          ),
-        );
+      yield* genSigningKey({ algorithm: "ES256", append: false }).pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnvRecord({ SUPABASE_ENV: "test" }, { preserveEmptyStrings: true }),
+        ),
+      );
 
-        expect(out.stderrText).toContain(path.join("supabase", "from-env.json"));
-        expect(yield* readSigningKeysFile(path.join(supabaseDir, "from-env.json"))).toHaveLength(1);
-        expect(
-          yield* readSigningKeysFile(path.join(supabaseDir, "from-env-local.json")),
-        ).toHaveLength(0);
-      }).pipe(Effect.provide(layer)),
-    );
+      expect(out.stderrText).toContain(path.join("supabase", "from-env.json"));
+      expect(yield* readSigningKeysFile(path.join(supabaseDir, "from-env.json"))).toHaveLength(1);
+      expect(
+        yield* readSigningKeysFile(path.join(supabaseDir, "from-env-local.json")),
+      ).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("fails when signing_keys_path is configured but the file is missing", () => {
