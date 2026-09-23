@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { dockerfileServiceImageRaw } from "./dockerfile-images.ts";
 import {
   pinMatchesCurrentImage,
+  slimCatalogPin,
   slimImageForAlias,
   slimImageForCurrentPin,
   slimImagesEnabled,
@@ -68,6 +69,16 @@ describe("toSlimImage", () => {
     expect(toSlimImage("pgmeta", "supabase/postgres-meta:v0.98.0")).toBe(
       "ghcr.io/supabase/cli/pgmeta:v0.98.0",
     );
+  });
+
+  it("keeps OrioleDB tags on docker.io", () => {
+    expect(toSlimImage("pg", "supabase/postgres:16.0.0.1-orioledb")).toBe(
+      "supabase/postgres:16.0.0.1-orioledb",
+    );
+    expect(toSlimImage("pg", "supabase/postgres:orioledb-15.1.0.55")).toBe(
+      "supabase/postgres:orioledb-15.1.0.55",
+    );
+    expect(slimCatalogPin("pg", "supabase/postgres:16.0.0.1-orioledb")).toBeUndefined();
   });
 
   it("strips vector's docker.io -alpine variant suffix", () => {
