@@ -13,12 +13,15 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { makeContainerRuntime } from "../runtime/Container.ts";
 import { makeDatabaseSnapshots } from "../services/DatabaseSnapshot.ts";
 import { makeDockerDatabaseStorage } from "./DockerDatabaseStorage.ts";
 
-const helperImage =
-  "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
+const postgresImage = (version: string) =>
+  resolveArtifact({ service: "database", version: postgresVersion(version) }).pipe(
+    Effect.map(({ image }) => image),
+  );
 const Marker = Schema.Struct({
   backend: Schema.Literals(["docker", "host"]),
   volume: Schema.optionalKey(Schema.String),
@@ -75,6 +78,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
+        const helperImage = yield* postgresImage("17");
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-" });
         const stateRoot = path.join(root, "state");
         const storageRoot = path.join(stateRoot, "stack", "data");
@@ -144,7 +148,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           helperImage,
           "/bin/sh",
           "-c",
-          `set -eu; printf 17 > ${quote(`/store/${sourceMarker.namespace}/data/PG_VERSION`)}; printf source > ${quote(`/store/${sourceMarker.namespace}/data/fixture`)}`,
+          `set -eu; printf 17 > ${quote(`/store/${sourceMarker.namespace}/data/PG_VERSION`)}; printf source > ${quote(`/store/${sourceMarker.namespace}/data/fixture`)}; /usr/bin/busybox setfattr -n user.storage-smoke -v preserved ${quote(`/store/${sourceMarker.namespace}/data/fixture`)}`,
         ]);
         yield* source.markInitialized("17");
         yield* fs.writeFileString(
@@ -199,10 +203,10 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           helperImage,
           "/bin/sh",
           "-c",
-          `test "$(cat /store/fixture)" = source`,
+          `set -eu; test "$(cat /store/fixture)" = source; /usr/bin/busybox setfattr -x user.storage-smoke /store/fixture`,
         ]);
 
-        yield* target.removeData("17");
+        yield* target.removeData("unsupported");
         const resetMarker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
           yield* fs.readFileString(path.join(targetRoot, ".supabase-database-storage.json")),
         );
@@ -217,7 +221,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           helperImage,
           "/bin/sh",
           "-c",
-          'descriptor=$(find /store -name descriptor.json -print -quit); printf corrupt > "$descriptor"',
+          'descriptor=$(/usr/bin/busybox find /store -name descriptor.json -print -quit); printf corrupt > "$descriptor"',
         ]);
         const corrupt = yield* target.restoreSnapshot("17", "roundtrip").pipe(
           Effect.matchEffect({
@@ -243,6 +247,21 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         expect(missing).toSatisfy((exit) => Exit.isFailure(exit));
 
         yield* target.removeData("17");
+        yield* source.saveSnapshot("17", "retention-first");
+        yield* source.saveSnapshot("17", "retention-second");
+        yield* source.saveSnapshot("17", "retention-third");
+        yield* docker([
+          "run",
+          "--rm",
+          "--mount",
+          `type=volume,src=${sourceMarker.volume},dst=/store`,
+          helperImage,
+          "/bin/sh",
+          "-c",
+          `test "$(/usr/bin/busybox find ${quote(`/store/${sourceMarker.cacheNamespace}/entries`)} -mindepth 1 -maxdepth 1 -type d | /usr/bin/busybox wc -l)" -eq 3`,
+        ]);
+        expect(yield* target.restoreSnapshot("17", "roundtrip")).toBe(false);
+        yield* source.saveSnapshot("17", "roundtrip");
         yield* source.destroyData("17");
         expect(yield* target.restoreSnapshot("17", "roundtrip")).toBe(true);
         yield* target.destroyData("17");
@@ -288,6 +307,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
+        const helperImage = yield* postgresImage("17");
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-legacy-" });
         const storageRoot = path.join(root, "state", "stack", "data");
         const cacheRoot = path.join(root, "cache");
@@ -402,6 +422,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
+        const helperImage = yield* postgresImage("17");
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-missing-" });
         const storageRoot = path.join(root, "state", "stack", "data");
         const cacheRoot = path.join(root, "cache");
@@ -480,6 +501,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
+        const helperImage = yield* postgresImage("17");
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-host-" });
         const stateRoot = path.join(root, "state");
         const storageRoot = path.join(stateRoot, "stack", "data");
@@ -578,7 +600,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           ]),
         ).toBe(expectedOwnership);
         yield* storage.removeData("17");
-        yield* storage.destroyData("17");
+        yield* storage.destroyData("unsupported");
         expect(yield* fs.exists(path.join(instanceRoot, ".supabase-database-storage.json"))).toBe(
           true,
         );
@@ -594,6 +616,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
+        const helperImage = yield* postgresImage("17");
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-reopen-" });
         const stateRoot = path.join(root, "state");
         const storageRoot = path.join(stateRoot, "stack", "data");
