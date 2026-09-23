@@ -14,6 +14,7 @@ import {
 import { ChildProcess } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import type { ContainerRuntime } from "../runtime/Container.ts";
+import * as ContainerSentinel from "../ContainerSentinel.ts";
 import type { DatabaseRuntime } from "../services/Database.ts";
 
 const HELPER_IMAGE =
@@ -332,11 +333,30 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
 
       const engineCommand = Effect.fn("DockerDatabaseStorage.engineCommand")(
-        (args: ReadonlyArray<string>): Effect.Effect<string, DockerDatabaseStorageError> =>
+        (
+          args: ReadonlyArray<string>,
+          trackOwner = false,
+        ): Effect.Effect<string, DockerDatabaseStorageError> =>
           Effect.scoped(
             Effect.gen(function* () {
+              const owner = trackOwner ? options.container?.owner : undefined;
+              const command =
+                owner === undefined
+                  ? ChildProcess.make(options.runtime, args, { stdin: "ignore" })
+                  : ChildProcess.make(
+                      "/bin/sh",
+                      [
+                        "-c",
+                        ContainerSentinel.mutationLeaseScript,
+                        "supabase-db-engine-command",
+                        owner.mutationFifoPath,
+                        options.runtime,
+                        ...args,
+                      ],
+                      { stdin: "ignore", detached: true },
+                    );
               const child = yield* options.spawner
-                .spawn(ChildProcess.make(options.runtime, args, { stdin: "ignore" }))
+                .spawn(command)
                 .pipe(Effect.mapError((cause) => errorFor("engine", cause)));
               const [stdout, stderr, code] = yield* Effect.all(
                 [
@@ -416,7 +436,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             const current = yield* Ref.get(helperId);
             if (current !== undefined) {
               // Keep the owned identity until the remote container is gone.
-              yield* engineCommand(["rm", "-f", current]).pipe(
+              yield* engineCommand(["rm", "-f", current], true).pipe(
                 Effect.catchTag("DockerDatabaseStorageError", (cause) =>
                   /no such container/iu.test(cause.message) ? Effect.void : Effect.fail(cause),
                 ),
@@ -429,7 +449,10 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
       yield* Scope.addFinalizer(
         ownerScope,
-        removeHelper().pipe(Effect.catch((cause) => Effect.logError(cause))),
+        removeHelper().pipe(
+          Effect.tapError((cause) => Effect.logError(cause)),
+          Effect.ignore,
+        ),
       );
       const acquireHelper = Effect.fn("DockerDatabaseStorage.acquireHelper")(
         (mounts: ReadonlyArray<DatabaseStorageMount>) =>
@@ -457,23 +480,32 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             // Register the deterministic owned name before the remote create starts so an
             // interrupted docker run can still be removed by the same scope.
             yield* Ref.set(helperId, name);
-            const created = yield* engineCommand([
-              "run",
-              "-d",
-              "--name",
-              name,
-              "--label",
-              "com.supabase.stack-managed=true",
-              "--label",
-              `com.supabase.stack=${options.stackId}`,
-              "--label",
-              `com.supabase.instance=${options.instanceId}`,
-              ...mountArgs(mounts),
-              HELPER_IMAGE,
-              "/bin/sh",
-              "-c",
-              "trap : TERM INT; while :; do sleep 3600; done",
-            ]);
+            const created = yield* engineCommand(
+              [
+                "run",
+                "-d",
+                "--name",
+                name,
+                "--label",
+                "com.supabase.stack-managed=true",
+                "--label",
+                `com.supabase.stack=${options.stackId}`,
+                "--label",
+                `com.supabase.instance=${options.instanceId}`,
+                ...(options.container.owner === undefined
+                  ? []
+                  : [
+                      "--label",
+                      `com.supabase.host-generation=${options.container.owner.generation}`,
+                    ]),
+                ...mountArgs(mounts),
+                HELPER_IMAGE,
+                "/bin/sh",
+                "-c",
+                "trap : TERM INT; while :; do sleep 3600; done",
+              ],
+              true,
+            );
             if (!/^[a-f0-9]{12,64}$/u.test(created))
               return yield* errorFor("helper", "Docker returned an invalid helper identity");
             return name;

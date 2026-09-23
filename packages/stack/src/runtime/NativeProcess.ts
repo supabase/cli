@@ -1,4 +1,4 @@
-import { Data, Duration, Effect, Fiber, Option, Scope, Stream } from "effect";
+import { Data, Duration, Effect, Fiber, Option, Scope, Sink, Stream } from "effect";
 import { fileURLToPath } from "node:url";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { PlatformError } from "effect/PlatformError";
@@ -14,6 +14,7 @@ export interface NativeProcessSpec {
   readonly args?: ReadonlyArray<string>;
   readonly env?: Readonly<Record<string, string>>;
   readonly cwd?: string;
+  readonly stdin?: "ignore" | "pipe";
   /** Signal used for an explicit graceful stop before the forced kill fallback. */
   readonly gracefulStopSignal?: "SIGTERM" | "SIGINT";
   /** Graceful-stop budget for this workload. */
@@ -46,6 +47,7 @@ export class NativeProcessError extends Data.TaggedError("NativeProcessError")<{
 
 export interface NativeProcess {
   readonly pid: ProcessId;
+  readonly stdin: Sink.Sink<void, Uint8Array, never, NativeProcessError>;
   readonly stdout: Stream.Stream<Uint8Array, NativeProcessError>;
   readonly stderr: Stream.Stream<Uint8Array, NativeProcessError>;
   readonly exitCode: Effect.Effect<ExitCode, NativeProcessError>;
@@ -124,12 +126,13 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
     const handle: ChildProcessHandle = yield* ChildProcess.make(launcher.command, launcherArgs, {
       cwd: spec.cwd,
       detached: true,
-      stdin: "ignore",
+      stdin: spec.stdin ?? "ignore",
       stdout: "pipe",
       stderr: "pipe",
       additionalFds: {
         fd3: { type: "input" },
         fd4: { type: "input" },
+        fd5: { type: "output" },
       },
     }).pipe(Scope.provide(processScope));
     const mapError = <A>(
@@ -141,6 +144,7 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
     ): Stream.Stream<Uint8Array, NativeProcessError> =>
       stream.pipe(Stream.mapError((error) => mapProcessError(error, spec)));
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    let processGroupId = Number(handle.pid);
     // Darwin can report EPERM after a process group has become zombie-only or is exiting.
     const inspectProcessGroup = Effect.fn("NativeProcess.inspectProcessGroup")(function* () {
       return yield* Effect.scoped(
@@ -156,7 +160,7 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
             { concurrency: 2 },
           );
           if (Number(exitCode) !== 0 || output.trim().length === 0) return false;
-          const targetGroup = Number(handle.pid);
+          const targetGroup = processGroupId;
           for (const line of output.split("\n")) {
             if (line.trim() === "") continue;
             const match = /^(\d+)\s+(\S+)$/.exec(line.trim());
@@ -177,7 +181,7 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
         try: () => {
           if (globalThis.process.platform === "win32") return;
           try {
-            globalThis.process.kill(-Number(handle.pid), "SIGKILL");
+            globalThis.process.kill(-processGroupId, "SIGKILL");
           } catch (error) {
             if (
               typeof error === "object" &&
@@ -267,6 +271,19 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
       ),
     );
     yield* Stream.run(Stream.succeed(encodeSpec(spec)), handle.getInputFd(4));
+    const groupIdLine = yield* handle
+      .getOutputFd(5)
+      .pipe(Stream.decodeText, Stream.splitLines, Stream.runHead);
+    const parsedGroupId = Option.isSome(groupIdLine) ? Number(groupIdLine.value) : Number.NaN;
+    if (!Number.isSafeInteger(parsedGroupId) || parsedGroupId <= 0) {
+      yield* Stream.run(Stream.empty, handle.getInputFd(3)).pipe(Effect.ignore);
+      yield* handle.exitCode.pipe(Effect.ignore, Effect.timeout("5 seconds"), Effect.ignore);
+      return yield* new NativeProcessError({
+        message: "Native launcher did not report a valid workload process group",
+        executable: spec.executable,
+      });
+    }
+    processGroupId = parsedGroupId;
     const waitForExit = mapError(handle.exitCode).pipe(Effect.tap(() => cleanupProcessGroup()));
     const getWaiter = yield* Effect.cached(Effect.forkIn(waitForExit, processScope));
     const exitCode = Effect.uninterruptible(getWaiter).pipe(
@@ -274,6 +291,7 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
     );
     return {
       pid: handle.pid,
+      stdin: handle.stdin.pipe(Sink.mapError((error) => mapProcessError(error, spec))),
       stdout: mapStreamError(handle.stdout),
       stderr: mapStreamError(handle.stderr),
       exitCode,

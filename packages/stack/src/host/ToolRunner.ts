@@ -12,10 +12,11 @@ import {
 } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no non-recursive directory removal operation.
 import { rmdir } from "node:fs/promises";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import { prepareNativeArtifact, postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { makeContainerRuntime } from "../runtime/Container.ts";
+import { spawnNativeProcess } from "../runtime/NativeProcess.ts";
 import { PostgresTool, type PgProveOptions } from "../Tools.ts";
 
 class ToolError extends Data.TaggedError("ToolError")<{
@@ -110,16 +111,17 @@ const makeToolRunner = (options: {
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                 Effect.provideService(HttpClient.HttpClient, http),
               );
-              const child = yield* spawner.spawn(
-                ChildProcess.make(path.join(artifact.root, "bin", tool.command), input.args, {
+              const child = yield* spawnNativeProcess(
+                {
+                  executable: path.join(artifact.root, "bin", tool.command),
+                  args: input.args,
                   env: input.env,
                   cwd: input.pgProve?.cwd ?? directory,
-                  // pg_prove exits on SIGTERM before its psql child, leaving that descendant alive.
-                  killSignal: tool.command === "pg_prove" ? "SIGKILL" : undefined,
                   stdin: "pipe",
-                  forceKillAfter: "5 seconds",
-                }),
-              );
+                },
+                undefined,
+                { stackId: options.stackId, workloadId: jobId },
+              ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
               return {
                 stdin: child.stdin.pipe(Sink.mapError(failure)),
                 stdout: child.stdout.pipe(Stream.mapError(failure)),

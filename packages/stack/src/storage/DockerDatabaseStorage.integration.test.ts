@@ -13,6 +13,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as ContainerSentinel from "../ContainerSentinel.ts";
 import { makeContainerRuntime } from "../runtime/Container.ts";
 import { makeDatabaseSnapshots } from "../services/DatabaseSnapshot.ts";
 import { makeDockerDatabaseStorage } from "./DockerDatabaseStorage.ts";
@@ -350,10 +351,19 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const instanceRoot = path.join(storageRoot, "recovery");
         yield* fs.makeDirectory(instanceRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
-        const container = yield* makeContainerRuntime({ engine: "docker" });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const stackId = `storage-helper-recovery-${yield* crypto.randomUUIDv4}`;
         const instanceId = "recovery";
+        const sentinel = yield* ContainerSentinel.start({
+          directory: root,
+          stackId,
+          engine: "docker",
+        });
+        if (sentinel === undefined)
+          return yield* new DockerTestError({ message: "Unix sentinel was not started" });
+        const container = yield* makeContainerRuntime({ engine: "docker" }).pipe(
+          Effect.provideService(ContainerSentinel.Service, { owner: sentinel.owner }),
+        );
         const storage = yield* makeDockerDatabaseStorage({
           runtime: "docker",
           stackId,
@@ -380,6 +390,8 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           "label=com.supabase.stack=" + stackId,
           "--filter",
           "label=com.supabase.instance=" + instanceId,
+          "--filter",
+          "label=com.supabase.host-generation=" + sentinel.owner.generation,
           "--format",
           "{{.Names}}",
         ]);
@@ -392,6 +404,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* storage.prepare("17");
         yield* storage.destroyData("17");
         yield* docker(["volume", "rm", volume]);
+        yield* sentinel.close;
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

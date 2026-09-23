@@ -11,6 +11,7 @@ import {
   Option,
   Queue,
   Ref,
+  Schedule,
   Scope,
   Semaphore,
   Stream,
@@ -29,6 +30,8 @@ import { StackError, StackRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
 import { makeToolAttachments, type ToolAttachmentPayload } from "./host/ToolAttachments.ts";
 import * as ToolRunner from "./host/ToolRunner.ts";
+import * as ContainerSentinel from "./ContainerSentinel.ts";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import type { CatalogLog } from "./services/Catalog.ts";
 
 export interface StackHostOptions {
@@ -117,7 +120,7 @@ export interface StackHostRuntime {
   readonly shutdown: (
     destroy: boolean,
     response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
-  ) => Effect.Effect<void, StackError>;
+  ) => Effect.Effect<void, StackError, ChildProcessSpawner.ChildProcessSpawner>;
   readonly exit: Deferred.Deferred<void>;
 }
 
@@ -127,7 +130,13 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
     endpoint: HostEndpoint,
     server: HttpServer.HttpServer["Service"],
     closeConnections: Effect.Effect<void>,
-  ): Effect.Effect<StackHostRuntime, never, Scope.Scope | ToolRunner.Service> =>
+    sentinel?: ContainerSentinel.Handle,
+    containerEngine?: "docker" | "podman",
+  ): Effect.Effect<
+    StackHostRuntime,
+    never,
+    Scope.Scope | ToolRunner.Service | ChildProcessSpawner.ChildProcessSpawner
+  > =>
     Effect.gen(function* () {
       const scope = yield* Scope.Scope;
       const runner = yield* ToolRunner.Service;
@@ -144,6 +153,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
       const current = yield* Ref.make<
         { destroy: boolean; fiber: Fiber.Fiber<void, StackError> } | undefined
       >(undefined);
+      const sentinelFailed = yield* Ref.make(false);
       const watchResponse = (
         response: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
         closed: Deferred.Deferred<void>,
@@ -173,10 +183,31 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                     response === undefined ? undefined : yield* Deferred.make<void>();
                   if (response !== undefined && responseClosedSignal !== undefined)
                     yield* watchResponse(response, responseClosedSignal);
+                  let sentinelCloseStarted = false;
                   const cleanup = Effect.gen(function* () {
                     yield* attachments.stopAll;
                     if (destroy) yield* runner.cleanup;
                     yield* destroy ? owner.namespace.destroy : owner.namespace.stop;
+                    if (containerEngine !== undefined) {
+                      yield* ContainerSentinel.removeOwned({
+                        engine: containerEngine,
+                        stackId: endpoint.stackId,
+                        ...(sentinel === undefined
+                          ? {}
+                          : { generation: sentinel.owner.generation }),
+                      }).pipe(Effect.mapError((cause) => stackError("shutdown", cause)));
+                    }
+                    if (sentinel !== undefined) {
+                      const sentinelAlreadyFailed = yield* Ref.get(sentinelFailed);
+                      sentinelCloseStarted = true;
+                      yield* sentinel.close.pipe(
+                        Effect.mapError((cause) => stackError("shutdown", cause)),
+                        Effect.catchIf(
+                          () => sentinelAlreadyFailed,
+                          () => Effect.void,
+                        ),
+                      );
+                    }
                     if (response !== undefined) {
                       if (responseClosedSignal === undefined) return;
                       yield* Effect.forkIn(
@@ -193,10 +224,18 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                   }).pipe(
                     Effect.mapError((cause) => stackError("shutdown", cause)),
                     Effect.catchCause((cause) =>
-                      owner.setDraining(false).pipe(
-                        Effect.mapError((reset) => stackError("shutdown", reset)),
-                        Effect.andThen(gate.withPermits(1)(Ref.set(current, undefined))),
-                        Effect.andThen(Effect.failCause(cause)),
+                      Ref.get(sentinelFailed).pipe(
+                        Effect.flatMap((failed) =>
+                          (failed || sentinelCloseStarted
+                            ? Effect.void
+                            : owner
+                                .setDraining(false)
+                                .pipe(Effect.mapError((reset) => stackError("shutdown", reset)))
+                          ).pipe(
+                            Effect.andThen(gate.withPermits(1)(Ref.set(current, undefined))),
+                            Effect.andThen(Effect.failCause(cause)),
+                          ),
+                        ),
                       ),
                     ),
                   );
@@ -334,6 +373,26 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
         return HttpServerResponse.empty({ status: 404 });
       });
       const serve: Effect.Effect<void, never, Scope.Scope> = server.serve(application);
+
+      if (sentinel !== undefined)
+        yield* Effect.forkScoped(
+          sentinel.failure.pipe(
+            Effect.catch((cause) =>
+              Effect.logError("Container sentinel exited", cause).pipe(
+                Effect.andThen(Ref.set(sentinelFailed, true)),
+                Effect.andThen(owner.setDraining(true)),
+                Effect.andThen(
+                  Effect.suspend(() =>
+                    Ref.get(current).pipe(
+                      Effect.flatMap((active) => shutdown(active?.destroy ?? false)),
+                    ),
+                  ).pipe(Effect.retry({ schedule: Schedule.spaced("1 second") })),
+                ),
+                Effect.andThen(Deferred.succeed(exit, undefined)),
+              ),
+            ),
+          ),
+        );
       return { endpoint, serve, shutdown, closeConnections, exit };
     }),
 );
@@ -357,19 +416,36 @@ export const runStackHost = Effect.fn("StackHost.run")(
           const saved = yield* state.read(options.stackId);
           if (saved === undefined) return yield* hostError("startup", "Stack is not registered");
           const acquired = yield* acquireHost(state, options.stackId);
+          if (saved.runtime !== "native")
+            yield* ContainerSentinel.removeOwned({
+              engine: saved.runtime,
+              stackId: saved.id,
+            }).pipe(Effect.mapError((cause) => hostError("startup-cleanup", cause)));
+          const sentinel =
+            saved.runtime === "native"
+              ? undefined
+              : yield* ContainerSentinel.start({
+                  directory: path.join(options.stateRoot, saved.id),
+                  stackId: saved.id,
+                  engine: saved.runtime,
+                });
+          const sentinelLayer = Layer.succeed(ContainerSentinel.Service, {
+            owner: sentinel?.owner,
+          });
           const services = yield* Layer.build(
             Layer.merge(
               Owner.layer({
                 saved,
                 root: path.join(options.stateRoot, saved.id, "data"),
                 cacheRoot: options.cacheRoot,
+                containerOwner: sentinel?.owner,
               }),
               ToolRunner.layer({
                 stackId: saved.id,
                 root: path.join(options.stateRoot, saved.id, "data"),
                 cacheRoot: options.cacheRoot,
                 runtime: saved.runtime,
-              }),
+              }).pipe(Layer.provide(sentinelLayer)),
             ).pipe(Layer.provide(Layer.succeed(State.Service, state))),
           );
           const owner = Context.get(services, Owner.Service);
@@ -384,6 +460,8 @@ export const runStackHost = Effect.fn("StackHost.run")(
             endpoint,
             acquired.server,
             acquired.closeConnections,
+            sentinel,
+            saved.runtime === "native" ? undefined : saved.runtime,
           ).pipe(
             Effect.provideService(ToolRunner.Service, Context.get(services, ToolRunner.Service)),
           );

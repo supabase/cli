@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Sink, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Sink, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { NodeServices } from "@effect/platform-node";
 import { systemError } from "effect/PlatformError";
@@ -13,6 +13,7 @@ const targetPid = 87_035;
 interface FakeProcessOptions {
   readonly groupOutput?: string;
   readonly groupExitCode?: number;
+  readonly groupIdOutput?: string;
   readonly killCode?: "EPERM" | "ESRCH";
   readonly groupSpawnFailure?: boolean;
   readonly targetPid?: number;
@@ -104,7 +105,14 @@ const makeSpawner = (options: FakeProcessOptions) => {
         stderr: Stream.empty,
         all: Stream.empty,
         getInputFd: () => Sink.drain,
-        getOutputFd: () => Stream.empty,
+        getOutputFd: (fd) =>
+          fd === 5
+            ? Stream.succeed(
+                new TextEncoder().encode(
+                  options.groupIdOutput ?? `${options.targetPid ?? targetPid}\n`,
+                ),
+              )
+            : Stream.empty,
         unref: Effect.succeed(Effect.void),
       }),
     );
@@ -222,6 +230,126 @@ const descendantSpec = (): NativeProcessSpec => {
 };
 
 describe("native process group cleanup", () => {
+  it.live("fails startup when the launcher omits its workload process group", () =>
+    Effect.scoped(
+      spawnNativeProcess(spec, { command: "test-launcher", args: [] }).pipe(Effect.exit),
+    ).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeSpawner({ groupIdOutput: "invalid\n" }),
+      ),
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(result)).toBe(true);
+          if (Exit.isFailure(result)) {
+            const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+            expect(error).toMatchObject({
+              message: "Native launcher did not report a valid workload process group",
+            });
+          }
+        }),
+      ),
+    ),
+  );
+
+  it.live.skipIf(process.platform === "win32")(
+    "reaps descendants after the workload exits and preserves its input and exit code",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const native = yield* spawnNativeProcess({
+            executable: process.execPath,
+            stdin: "pipe",
+            args: [
+              "--input-type=module",
+              "-e",
+              [
+                "import { spawn } from 'node:child_process';",
+                "const chunks = [];",
+                "for await (const chunk of process.stdin) chunks.push(chunk);",
+                "await new Promise((resolve) => process.stdout.write(Buffer.concat(chunks), resolve));",
+                "spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] });",
+                "process.exit(17);",
+              ].join("\n"),
+            ],
+          });
+          yield* Stream.run(Stream.succeed(new TextEncoder().encode("tool input")), native.stdin);
+          const [output, exitCode] = yield* Effect.all(
+            [native.stdout.pipe(Stream.decodeText, Stream.mkString), native.exitCode],
+            { concurrency: 2 },
+          ).pipe(Effect.timeout("5 seconds"));
+          expect(output).toBe("tool input");
+          expect(Number(exitCode)).toBe(17);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.skipIf(process.platform === "win32")(
+    "cleans the workload group after the launcher dies",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const native = yield* spawnNativeProcess({
+            executable: process.execPath,
+            args: [
+              "--input-type=module",
+              "-e",
+              [
+                "import { spawn } from 'node:child_process';",
+                "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] });",
+                "process.stdout.write(`READY ${process.pid} ${descendant.pid}\\n`);",
+                "setInterval(() => {}, 1000);",
+              ].join("\n"),
+            ],
+          });
+          const output = yield* Effect.acquireRelease(
+            Effect.gen(function* () {
+              const text = yield* Ref.make("");
+              const ready = yield* Deferred.make<void>();
+              const closed = yield* Deferred.make<void>();
+              yield* native.stdout.pipe(
+                Stream.decodeText,
+                Stream.runForEach((chunk) =>
+                  Effect.gen(function* () {
+                    const value = yield* Ref.updateAndGet(text, (current) => current + chunk);
+                    if (value.includes("READY ")) yield* Deferred.succeed(ready, undefined);
+                  }),
+                ),
+                Effect.tap(() => Deferred.succeed(closed, undefined)),
+                Effect.forkChild,
+              );
+              return { text, ready, closed };
+            }),
+            () => native.kill.pipe(Effect.ignore),
+          );
+          yield* Deferred.await(output.ready);
+          process.kill(Number(native.pid), "SIGKILL");
+          yield* native.kill;
+          yield* Deferred.await(output.closed).pipe(Effect.timeout("5 seconds"));
+          const match = /READY \d+ (\d+)/.exec(yield* Ref.get(output.text));
+          expect(match).not.toBeNull();
+          if (match === null) return;
+          const [state, status] = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const descendant = yield* ChildProcess.make(
+                "/bin/ps",
+                ["-p", match[1] ?? "", "-o", "stat="],
+                { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+              );
+              return yield* Effect.all(
+                [descendant.stdout.pipe(Stream.decodeText, Stream.mkString), descendant.exitCode],
+                { concurrency: 2 },
+              );
+            }),
+          );
+          expect(
+            (Number(status) === 1 && state.trim() === "") ||
+              (Number(status) === 0 && state.trim().startsWith("Z")),
+          ).toBe(true);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live.skipIf(process.platform !== "darwin")(
     "accepts EPERM when a valid process-group listing contains only zombies",
     () =>
@@ -373,7 +501,7 @@ describe("native process group cleanup", () => {
   );
 
   it.live.skipIf(process.platform !== "darwin")(
-    "checks a real process-group listing through the cleanup fallback",
+    "checks real launcher and workload groups through the cleanup fallback",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -398,19 +526,21 @@ describe("native process group cleanup", () => {
           expect(workloadPid).not.toBe(Number(native.pid));
           expect(yield* native.isRunning).toBe(true);
 
-          const absentGroup = yield* runKill({
+          const liveWorkloadGroup = yield* runKill({
             targetPid: workloadPid,
             delegatePsTo: realSpawner,
           });
-          expect(Exit.isSuccess(absentGroup.result)).toBe(true);
+          expect(Exit.isFailure(liveWorkloadGroup.result)).toBe(true);
 
-          const liveGroup = yield* runKill({
+          const liveLauncherGroup = yield* runKill({
             targetPid: Number(native.pid),
             delegatePsTo: realSpawner,
           });
-          expect(Exit.isFailure(liveGroup.result)).toBe(true);
-          if (Exit.isFailure(liveGroup.result)) {
-            const error = Option.getOrUndefined(Cause.findErrorOption(liveGroup.result.cause));
+          expect(Exit.isFailure(liveLauncherGroup.result)).toBe(true);
+          if (Exit.isFailure(liveLauncherGroup.result)) {
+            const error = Option.getOrUndefined(
+              Cause.findErrorOption(liveLauncherGroup.result.cause),
+            );
             expect(error).toMatchObject({ cause: { code: "EPERM" } });
           }
         }),
@@ -452,15 +582,23 @@ describe("native process group cleanup", () => {
       ),
   );
 
-  it.live("reports a native launcher startup failure through exitCode", () =>
+  it.live("reports a native launcher startup failure when workload spawn fails", () =>
     Effect.scoped(
-      Effect.gen(function* () {
-        const native = yield* spawnNativeProcess({
-          executable: "/definitely/missing/native-workload",
-        });
-        expect(Number(yield* native.exitCode)).toBe(127);
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+      spawnNativeProcess({ executable: "/definitely/missing/native-workload" }).pipe(Effect.exit),
+    ).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(result)).toBe(true);
+          if (Exit.isFailure(result)) {
+            const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+            expect(error).toMatchObject({
+              message: "Native launcher did not report a valid workload process group",
+            });
+          }
+        }),
+      ),
+    ),
   );
 
   it.live.skipIf(process.platform === "win32")(
