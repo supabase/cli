@@ -239,20 +239,25 @@ interface RawToken {
 function splitRaw(sql: string): RawToken[] {
   let state: State = new ReadyState();
   const tokens: RawToken[] = [];
-  let acc = "";
-  for (const rune of Array.from(sql)) {
-    acc += rune;
-    const next = state.next(rune, acc);
+  // Slice each token from `sql` instead of growing it with `+=`: states read the token's tail every
+  // rune, which would rebuild the whole string each time and go quadratic on large tokens. `data`
+  // starts at the token, so offsets held by states are token-relative.
+  let start = 0;
+  let end = 0;
+  for (const rune of sql) {
+    end += rune.length;
+    const data = sql.slice(start, end);
+    const next = state.next(rune, data);
     if (next === null) {
-      tokens.push({ text: acc, terminated: true });
-      acc = "";
+      tokens.push({ text: data, terminated: true });
+      start = end;
       state = new ReadyState();
     } else {
       state = next;
     }
   }
   // Trailing non-terminated statement at EOF.
-  if (acc.length > 0) tokens.push({ text: acc, terminated: false });
+  if (end > start) tokens.push({ text: sql.slice(start), terminated: false });
   return tokens;
 }
 
