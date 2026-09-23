@@ -41,6 +41,7 @@ import {
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
 import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { SUGGEST_CONTAINER_MEMORY_LIMIT } from "../../../command-internal/docker-suggest.ts";
 import { DebugFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { FileWatcher, type FileWatchEvent } from "../../../shared/runtime/file-watcher.service.ts";
 import {
@@ -2166,10 +2167,14 @@ describe("functions serve integration", () => {
     }
 
     // Models `inspectContainerState`'s `docker container inspect --format {{json .State}}` reply.
-    function inspectStateBehavior(running: boolean, exitCode = 0): LogProcessBehavior {
+    function inspectStateBehavior(
+      running: boolean,
+      exitCode = 0,
+      oomKilled = false,
+    ): LogProcessBehavior {
       return {
         exitCode: 0,
-        stdout: `{"Status":"${running ? "running" : "exited"}","Running":${running},"ExitCode":${exitCode}}`,
+        stdout: `{"Status":"${running ? "running" : "exited"}","Running":${running},"ExitCode":${exitCode},"OOMKilled":${oomKilled}}`,
         stderr: "",
       };
     }
@@ -2384,6 +2389,104 @@ describe("functions serve integration", () => {
             expect(error.exitCode).toBe(139);
             expect(error[ErrorActionabilityId]).toEqual(actionability.runtimeCrash);
           }
+        });
+      },
+    );
+
+    it.live(
+      "fails as an out-of-memory kill, without retrying, when the container is OOM-killed (exit 137)",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0 },
+          inspectStateBehavior(false, 137, true),
+        ]);
+
+        return Effect.gen(function* () {
+          yield* writeHelloFunction;
+
+          const { layer } = setupServe({ childSpawner });
+          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toBeInstanceOf(EdgeRuntimeContainerCrashedError);
+          if (error instanceof EdgeRuntimeContainerCrashedError) {
+            expect(error.exitCode).toBe(137);
+            expect(error.oomKilled).toBe(true);
+            expect(error.suggestion).toBe(SUGGEST_CONTAINER_MEMORY_LIMIT);
+            expect(error[ErrorActionabilityId]).toEqual({
+              ...actionability.resourceLimit,
+              fingerprint_suffix: "out_of_memory",
+            });
+          }
+          // An out-of-memory kill never comes back, so it fails on the first inspect
+          // instead of paying the re-inspect delay a non-OOM kill needs.
+          expect(containerInspectCalls(childSpawner)).toHaveLength(1);
+        });
+      },
+    );
+
+    it.live(
+      "fails as unattributable, after one re-inspect, when the container is killed from outside the CLI and stays gone (exit 137)",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0 },
+          inspectStateBehavior(false, 137, false),
+        ]);
+
+        return Effect.gen(function* () {
+          yield* writeHelloFunction;
+
+          const { layer } = setupServe({ childSpawner });
+          const error = yield* serveWithTimers(baseFlags(), {
+            dockerLogRetryDelay: Duration.millis(1),
+          }).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toBeInstanceOf(EdgeRuntimeContainerCrashedError);
+          if (error instanceof EdgeRuntimeContainerCrashedError) {
+            expect(error.exitCode).toBe(137);
+            expect(error.oomKilled).toBe(false);
+            expect(error.suggestion).toBeUndefined();
+            const declaration = error[ErrorActionabilityId];
+            expect(declaration).toEqual({
+              ...actionability.unknown,
+              fingerprint_suffix: "container_killed",
+            });
+            expect(declaration.error_kind).not.toBe("internal_bug");
+          }
+          // A kill the CLI can't attribute gets one re-inspect before failing, to
+          // distinguish it from a `supabase stop` force-kill the prune hasn't caught up to.
+          expect(containerInspectCalls(childSpawner)).toHaveLength(2);
+        });
+      },
+    );
+
+    it.live(
+      "ends the session normally when a force-killed container is pruned before the re-inspect can run",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0 },
+          inspectStateBehavior(false, 137, false),
+          {
+            exitCode: 1,
+            stderr:
+              "Error response from daemon: No such container: supabase_edge_runtime_test-project",
+          },
+        ]);
+
+        return Effect.gen(function* () {
+          yield* writeHelloFunction;
+
+          const { layer, out } = setupServe({ childSpawner });
+          const exit = yield* serveWithTimers(baseFlags(), {
+            dockerLogRetryDelay: Duration.millis(1),
+          }).pipe(Effect.provide(layer), Effect.exit);
+
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stdoutText).toContain("Edge Runtime container is no longer available.");
+          expect(out.stdoutText).toContain("Stopped serving");
+          expect(containerInspectCalls(childSpawner)).toHaveLength(2);
         });
       },
     );

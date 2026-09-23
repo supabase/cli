@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  SUGGEST_CONTAINER_MEMORY_LIMIT,
   SUGGEST_DOCKER_INSTALL,
   SUGGEST_DOCKER_START,
 } from "../../command-internal/docker-suggest.ts";
@@ -18,6 +19,7 @@ describe("EdgeRuntimeContainerCrashedError actionability", () => {
       message: "error running container: exit 1",
       containerId: "abc123",
       exitCode: 1,
+      oomKilled: false,
     });
 
     const result = classifyCliErrorActionability(error);
@@ -30,6 +32,7 @@ describe("EdgeRuntimeContainerCrashedError actionability", () => {
       message: "error running container abc123: exit 143",
       containerId: "abc123",
       exitCode: 143,
+      oomKilled: false,
     });
 
     const result = classifyCliErrorActionability(error);
@@ -43,6 +46,7 @@ describe("EdgeRuntimeContainerCrashedError actionability", () => {
       message: "error running container abc123: exit 130",
       containerId: "abc123",
       exitCode: 130,
+      oomKilled: false,
     });
 
     const result = classifyCliErrorActionability(error);
@@ -55,11 +59,55 @@ describe("EdgeRuntimeContainerCrashedError actionability", () => {
       message: "error running container: exit 139",
       containerId: "abc123",
       exitCode: 139,
+      oomKilled: false,
     });
 
     const result = classifyCliErrorActionability(error);
     expect(result.error_kind).toBe(actionability.runtimeCrash.error_kind);
     expect(result.error_category).toBe(actionability.runtimeCrash.error_category);
+  });
+
+  it("classifies an out-of-memory kill (137, OOMKilled) as user-actionable, with a suggestion", () => {
+    const error = new EdgeRuntimeContainerCrashedError({
+      message: "error running container abc123: exit 137",
+      containerId: "abc123",
+      exitCode: 137,
+      oomKilled: true,
+    });
+
+    expect(error.suggestion).toBe(SUGGEST_CONTAINER_MEMORY_LIMIT);
+    const result = classifyCliErrorActionability(error);
+    expect(result.error_kind).toBe(actionability.resourceLimit.error_kind);
+    expect(result.error_category).toBe(actionability.resourceLimit.error_category);
+    expect(result.error_fingerprint).toBe("tag:EdgeRuntimeContainerCrashedError:out_of_memory");
+  });
+
+  it("classifies a non-OOM kill (137, not OOMKilled) as unknown, not our bug", () => {
+    const error = new EdgeRuntimeContainerCrashedError({
+      message: "error running container abc123: exit 137",
+      containerId: "abc123",
+      exitCode: 137,
+      oomKilled: false,
+    });
+
+    expect(error.suggestion).toBeUndefined();
+    const result = classifyCliErrorActionability(error);
+    expect(result.error_kind).toBe(actionability.unknown.error_kind);
+    expect(result.error_category).toBe(actionability.unknown.error_category);
+    expect(result.error_fingerprint).toBe("tag:EdgeRuntimeContainerCrashedError:container_killed");
+  });
+
+  it("classifies OOMKilled as out-of-memory even with a non-137 exit code", () => {
+    const error = new EdgeRuntimeContainerCrashedError({
+      message: "error running container abc123: exit 1",
+      containerId: "abc123",
+      exitCode: 1,
+      oomKilled: true,
+    });
+
+    const result = classifyCliErrorActionability(error);
+    expect(result.error_kind).toBe(actionability.resourceLimit.error_kind);
+    expect(result.error_category).toBe(actionability.resourceLimit.error_category);
   });
 });
 
