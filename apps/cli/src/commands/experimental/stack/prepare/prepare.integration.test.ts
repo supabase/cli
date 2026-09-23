@@ -88,7 +88,7 @@ const makeFixture = (root: string, failPreparation = false) => {
     followStatus: Stream.empty,
     logs: Stream.empty,
     credentials: () => Effect.succeed({}),
-    exportSnapshot: () => Effect.die("unused"),
+    saveSnapshot: () => Effect.die("unused"),
     restoreSnapshot: () => Effect.die("unused"),
     resetData: Effect.die("unused"),
   };

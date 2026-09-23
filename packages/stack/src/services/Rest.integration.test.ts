@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Redacted, Ref } from "effect";
+import { Context, Effect, FileSystem, Layer, Path, Redacted, Ref } from "effect";
 import { PgClient } from "@effect/sql-pg";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { SignJWT } from "jose";
@@ -10,7 +10,7 @@ import * as State from "../State.ts";
 import { makeService } from "../Service.ts";
 import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
-import { cleanupDockerRoot } from "../../tests/docker-cleanup.ts";
+import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(State.layer({ root })).pipe(
@@ -47,12 +47,11 @@ describe("service catalog", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
           const client = yield* HttpClient.HttpClient;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-rest-" });
-          yield* Effect.addFinalizer(() => cleanupDockerRoot(root));
+          const root = yield* makeDockerDatabaseRoot("catalog-rest-");
           const stackId = "catalog-network";
-          const state = yield* makeTestState(root + "/state");
+          const state = yield* makeTestState(path.dirname(path.dirname(path.dirname(root))));
           yield* state.save({
             id: stackId,
             identity: { projectRoot: root, branchContext: "test", stackName: "catalog" },

@@ -277,8 +277,9 @@ it.live(
             );
             expect(seed.exitCode).toBe(0);
             yield* Effect.tryPromise(() => database.stop());
-            const archive = path.join(root, "public-snapshot.tar");
-            yield* Effect.tryPromise(() => database.exportSnapshot(archive));
+            const snapshotKey = "public-roundtrip";
+            yield* Effect.tryPromise(() => database.saveSnapshot(snapshotKey));
+            yield* Effect.tryPromise(() => database.destroy());
             const restored = yield* Effect.tryPromise(() =>
               client.services.create({
                 service: "database",
@@ -291,7 +292,9 @@ it.live(
                 endpoints: { sql: { port: "auto" } },
               }),
             );
-            yield* Effect.tryPromise(() => restored.restoreSnapshot(archive));
+            expect(yield* Effect.tryPromise(() => restored.restoreSnapshot(snapshotKey))).toBe(
+              true,
+            );
             yield* Effect.tryPromise(() => restored.start());
             yield* Effect.tryPromise(() => restored.ready());
             const restoredCredentials = yield* Effect.tryPromise(() =>
@@ -318,7 +321,7 @@ it.live(
                 .trim(),
             ).toBe("roundtrip");
             expect((yield* stack.services.list).map((service) => service.id)).toContain(
-              database.id,
+              restored.id,
             );
             const selected = yield* Effect.tryPromise(() =>
               client.composition.supabase([
