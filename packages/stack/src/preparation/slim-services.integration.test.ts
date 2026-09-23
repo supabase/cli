@@ -333,6 +333,28 @@ describe("slim-services artifact source", () => {
     ),
   );
 
+  it.live("reports the primary host's failure when every mirror fails", () =>
+    Effect.gen(function* () {
+      const mirrored: SlimServicesArtifact = {
+        ...artifact,
+        mirrors: [
+          { ...artifact.mirrors[0], checksumUrl: "https://release.test/SHA256SUMS" },
+          { ...artifact.mirrors[0], checksumUrl: "https://bucket.test/demo.SHA256SUMS" },
+        ],
+      };
+      const requested: string[] = [];
+      const failed = yield* withFetch((input) => {
+        requested.push(requestUrl(input));
+        return Promise.resolve(new Response("", { status: 403 }));
+      }, slimServicesChecksum(mirrored, immediate).pipe(Effect.exit));
+      expect(errorOf(failed)?.message).toBe("Unable to download https://release.test/SHA256SUMS");
+      expect(requested).toEqual([
+        "https://release.test/SHA256SUMS",
+        "https://bucket.test/demo.SHA256SUMS",
+      ]);
+    }),
+  );
+
   it.live("accepts a fallback archive only when it matches the checksum", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -164,6 +164,15 @@ const errorMessage = (cause: unknown): string =>
  */
 const SLIM_ARTIFACTS_BUCKET_URL = "https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com";
 
+const SLIM_IMAGE_REGISTRY = "ghcr.io/supabase/cli/";
+const SLIM_IMAGE_MIRROR = "public.ecr.aws/supabase/cli/";
+
+/** ECR Public copy of a catalog slim image under the same tag and digest, if it has one. */
+export const imageMirror = (image: string): string | undefined =>
+  image.startsWith(SLIM_IMAGE_REGISTRY)
+    ? `${SLIM_IMAGE_MIRROR}${image.slice(SLIM_IMAGE_REGISTRY.length)}`
+    : undefined;
+
 const artifactFor = (
   service: ServiceKind,
   resolved: ArtifactResolution,

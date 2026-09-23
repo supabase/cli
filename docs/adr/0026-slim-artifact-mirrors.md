@@ -23,6 +23,7 @@ Client fail-through (ordered GHCR / ECR / GitHub candidates in the CLI and stack
 
 - Consume the mirrored image tags and `:version-native-<target>` artifacts from the CLI and local stack, with host-aware order and digest pins preserved ([ADR 0017](0017-simplified-managed-stack-architecture.md)).
 - Claude Trusted lists `public.ecr.aws` and `ghcr.io` but 403s blob CDNs (`*.cloudfront.net`, `pkg-containers.githubusercontent.com`) and GitHub release assets for unattached repos ([claude-code#71629](https://github.com/anthropics/claude-code/issues/71629)). Natives are therefore also copied to a public S3 bucket on `*.amazonaws.com` ([infra/cli-artifacts](../../infra/cli-artifacts/README.md)), independently of the ECR copy. The local stack tries the GitHub Release first and falls back to that bucket, accepting an archive from either host only when it matches the checksum.
+- The container runtime pulls a catalog image from GHCR first and falls back to the same reference on ECR Public. For images and natives alike, a failing fallback reports the primary's original error, so the mirrors only change behavior when they rescue a failed download.
 - Native ECR copy is best-effort; a daily mirror audit should report native drift. That audit is not defined in this repository yet.
 
 ## Rationale
@@ -32,7 +33,7 @@ ECR Public mirroring already exists for other CLI images and needs no new vendor
 ## Consequences
 
 - Same-version overwrite works on GHCR, GitHub Releases, and ECR Public.
-- Until the follow-up client PR, local stack and CLI still pull the GHCR catalog pin for images. Natives come from GitHub Releases with the S3 bucket as fallback.
+- Images come from the GHCR catalog pin with ECR Public as fallback, and natives from GitHub Releases with the S3 bucket as fallback.
 - A GitHub native can be live while the ECR native is stale.
 - Old CLI releases keep pulling the previous image digest.
 

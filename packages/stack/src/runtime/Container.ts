@@ -91,9 +91,13 @@ const mountField = (key: string, value: string) => {
   return /[,"\n\r]/u.test(field) ? `"${field.replaceAll('"', '""')}"` : field;
 };
 
-/** Captures the selected local engine; each launch owns one exact container. */
+/**
+ * Captures the selected local engine; each launch owns one exact container. An image whose pull
+ * fails is pulled from `imageMirror` instead, and launches of it then use the mirror reference.
+ */
 export const makeContainerRuntime = (options: {
   readonly engine: "docker" | "podman";
+  readonly imageMirror?: (image: string) => string | undefined;
 }): Effect.Effect<
   ContainerRuntime,
   never,
@@ -142,9 +146,28 @@ export const makeContainerRuntime = (options: {
       );
     });
 
+    const mirrored = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
+    const present = (image: string) =>
+      run(["image", "ls", "--quiet", "--no-trunc", image]).pipe(
+        Effect.map((ids) => ids.length > 0),
+      );
+    const pull = (image: string) => run(["pull", image], { timeout: "5 minutes" });
+
     const prepare = Effect.fn("Container.prepare")(function* (image: string) {
-      const present = yield* run(["image", "ls", "--quiet", "--no-trunc", image]);
-      if (present.length === 0) yield* run(["pull", image], { timeout: "5 minutes" });
+      if (yield* present(image)) return;
+      const mirror = options.imageMirror?.(image);
+      if (mirror === undefined) return yield* pull(image);
+      yield* pull(image).pipe(
+        Effect.catch((primaryError) =>
+          Effect.gen(function* () {
+            if (!(yield* present(mirror))) yield* pull(mirror);
+            yield* Ref.update(mirrored, (map) => new Map(map).set(image, mirror));
+          }).pipe(
+            Effect.tapError((cause) => Effect.logDebug(`Image mirror ${mirror} failed`, cause)),
+            Effect.mapError(() => primaryError),
+          ),
+        ),
+      );
     });
 
     const launch = Effect.fn("Container.launch")(function* (
@@ -152,6 +175,7 @@ export const makeContainerRuntime = (options: {
       interactive = false,
     ) {
       const owner = yield* Scope.Scope;
+      const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
       for (const [key, value] of Object.entries(spec.env)) {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || /[\0\r\n]/u.test(value)) {
           return yield* errorFor(
@@ -206,7 +230,7 @@ export const makeContainerRuntime = (options: {
         ...(spec.workingDir === undefined ? [] : ["--workdir", spec.workingDir]),
         ...(spec.ports ?? []).flatMap((port) => ["--publish", `127.0.0.1::${port}`]),
         ...(spec.entrypoint === undefined ? [] : ["--entrypoint", spec.entrypoint]),
-        spec.image,
+        image,
         ...(spec.args ?? []),
       ];
 

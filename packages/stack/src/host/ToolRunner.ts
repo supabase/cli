@@ -14,7 +14,12 @@ import {
 import { rmdir } from "node:fs/promises";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
-import { prepareNativeArtifact, postgresVersion, resolveArtifact } from "../Artifacts.ts";
+import {
+  imageMirror,
+  prepareNativeArtifact,
+  postgresVersion,
+  resolveArtifact,
+} from "../Artifacts.ts";
 import { makeContainerRuntime } from "../runtime/Container.ts";
 import { PostgresTool, type PgProveOptions } from "../Tools.ts";
 
@@ -67,7 +72,7 @@ const makeToolRunner = (options: {
     const container =
       options.runtime === "native"
         ? undefined
-        : yield* makeContainerRuntime({ engine: options.runtime });
+        : yield* makeContainerRuntime({ engine: options.runtime, imageMirror });
     const jobsRoot = path.join(options.root, "jobs");
     yield* fs
       .makeDirectory(jobsRoot, { recursive: true, mode: 0o700 })

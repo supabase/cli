@@ -207,26 +207,29 @@ const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* 
 });
 
 /**
- * Runs `attempt` against each mirror until one succeeds. Mixing hosts across the checksum and
+ * Runs `attempt` against each mirror until one succeeds. Fallback failures are not surfaced: when
+ * every mirror fails, the error is the primary host's. Mixing hosts across the checksum and
  * materialize phases is safe because an archive is only accepted when it hashes to the checksum.
  */
 const fromMirrors = <A, R>(
   artifact: SlimServicesArtifact,
   attempt: (mirror: SlimServicesMirror) => Effect.Effect<A, PreparationError, R>,
 ): Effect.Effect<A, PreparationError, R> => {
-  const [first, ...fallbacks] = artifact.mirrors;
-  return fallbacks.reduce(
-    (previous, mirror) =>
-      previous.pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning(
-            `Falling back to ${mirror.downloadUrl} for slim-services ${artifact.assetName}`,
-            cause,
-          ).pipe(Effect.andThen(attempt(mirror))),
-        ),
+  const [primary, ...fallbacks] = artifact.mirrors;
+  const fallback = (
+    primaryError: PreparationError,
+    remaining: ReadonlyArray<SlimServicesMirror>,
+  ): Effect.Effect<A, PreparationError, R> => {
+    const [mirror, ...rest] = remaining;
+    if (mirror === undefined) return Effect.fail(primaryError);
+    return attempt(mirror).pipe(
+      Effect.tapError((cause) =>
+        Effect.logDebug(`Slim-services mirror ${mirror.downloadUrl} failed`, cause),
       ),
-    attempt(first),
-  );
+      Effect.catch(() => fallback(primaryError, rest)),
+    );
+  };
+  return attempt(primary).pipe(Effect.catch((primaryError) => fallback(primaryError, fallbacks)));
 };
 
 const checksumFor = (contents: string, archiveName: string): string | undefined =>
