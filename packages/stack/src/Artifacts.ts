@@ -98,8 +98,8 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   ),
   imgproxy: definition(
     "imgproxy",
-    "v3.8.0",
-    "ghcr.io/supabase/cli/imgproxy:v3.8.0",
+    "v3.26.0",
+    "ghcr.io/supabase/cli/imgproxy:v3.26.0@sha256:5871582cf6c5140d3b50b21e0d1aa236fdf46ee6133e3bfec1baf63545e01cf0",
     "bin/imgproxy",
   ),
   functions: definition(
