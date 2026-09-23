@@ -6,7 +6,16 @@ import { systemError } from "effect/PlatformError";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
 import type { ExitCode } from "effect/unstable/process/ChildProcessSpawner";
-import { spawnNativeProcess, type NativeProcess, type NativeProcessSpec } from "./NativeProcess.ts";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The test closes inherited fd5 before sending the launch payload and scans exact marker-owned processes for cleanup.
+import { execFileSync, spawn as spawnProcess } from "node:child_process";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The test waits for actual inherited-fd and process events.
+import { once } from "node:events";
+import {
+  defaultNativeProcessLauncher,
+  spawnNativeProcess,
+  type NativeProcess,
+  type NativeProcessSpec,
+} from "./NativeProcess.ts";
 
 const targetPid = 87_035;
 
@@ -230,6 +239,195 @@ const descendantSpec = (): NativeProcessSpec => {
 };
 
 describe("native process group cleanup", () => {
+  it.live.skipIf(process.platform === "win32")(
+    "kills the workload group when reporting its PID fails",
+    () =>
+      Effect.acquireUseRelease(
+        // oxlint-disable effecttsgo/global-error-in-effect-catch,effecttsgo/global-error-in-effect-failure -- Preserve subprocess setup failures for the test assertion.
+        Effect.tryPromise({
+          // oxlint-disable-next-line effecttsgo/async-function -- This test coordinates Node subprocess events.
+          try: async () => {
+            const launcher = defaultNativeProcessLauncher();
+            const workloadMarker = `fd5-workload-${process.pid}`;
+            const child = spawnProcess(launcher.command, launcher.args, {
+              detached: true,
+              stdio: ["ignore", "pipe", "pipe", "pipe", "pipe", "pipe"],
+            });
+            const launcherPid = child.pid;
+            const stdout = child.stdout;
+            const stderr = child.stderr;
+            const owner = child.stdio[3];
+            const payload = child.stdio[4];
+            const report = child.stdio.slice(5)[0];
+            let workloadPid: number | undefined;
+            let descendantPid: number | undefined;
+            let observedWorkloadPid: number | undefined;
+            const workloadGroupIds = new Set<number>();
+            const scanWorkloadProcesses = () => {
+              const output = execFileSync("ps", ["-axo", "pid=,pgid=,stat=,command="], {
+                encoding: "utf8",
+              });
+              const rows = output.split(/\r?\n/).flatMap((line) => {
+                const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
+                if (
+                  match === null ||
+                  match[1] === undefined ||
+                  match[2] === undefined ||
+                  match[3] === undefined ||
+                  match[4] === undefined
+                )
+                  return [];
+                return [
+                  {
+                    pid: Number(match[1]),
+                    groupId: Number(match[2]),
+                    state: match[3],
+                    command: match[4],
+                  },
+                ];
+              });
+              for (const row of rows) {
+                if (row.command.includes(workloadMarker)) {
+                  workloadGroupIds.add(row.groupId);
+                  observedWorkloadPid = row.pid;
+                }
+              }
+              return rows;
+            };
+            const killGroup = (pid: number | undefined) => {
+              if (pid === undefined) return;
+              try {
+                process.kill(-pid, "SIGKILL");
+              } catch (cause) {
+                if (
+                  typeof cause !== "object" ||
+                  cause === null ||
+                  !("code" in cause) ||
+                  cause.code !== "ESRCH"
+                )
+                  throw cause;
+              }
+            };
+            const killOwnedGroups = () => {
+              owner?.destroy();
+              try {
+                scanWorkloadProcesses();
+              } catch {
+                // The READY PID remains an exact fallback if process inspection is unavailable.
+              }
+              for (const groupId of workloadGroupIds) killGroup(groupId);
+              killGroup(workloadPid);
+              killGroup(launcherPid);
+            };
+            if (
+              stdout === null ||
+              stderr === null ||
+              owner == null ||
+              payload == null ||
+              !("end" in payload) ||
+              report == null
+            ) {
+              killOwnedGroups();
+              // oxlint-disable-next-line effecttsgo/global-error-in-effect-failure -- Missing OS pipes invalidate this subprocess test.
+              throw new Error("Launcher test pipes were not created");
+            }
+            let output = "";
+            try {
+              stdout.setEncoding("utf8").on("data", (chunk: string) => {
+                output += chunk;
+                const match = /READY (\S+) (\d+) (\d+)/.exec(output);
+                if (match !== null && match[1] === workloadMarker) {
+                  workloadPid = Number(match[2]);
+                  descendantPid = Number(match[3]);
+                  workloadGroupIds.add(workloadPid);
+                }
+              });
+              stderr.resume();
+              const reportClosed = once(report, "close");
+              report.destroy();
+              await reportClosed;
+              // oxlint-disable-next-line effecttsgo/new-promise -- Observe the child exit event as a typed tuple.
+              const exited = new Promise<[number | null, NodeJS.Signals | null]>((resolve) => {
+                child.once("exit", (code, signal) => resolve([code, signal]));
+              });
+              const stdoutClosed = once(stdout, "end");
+              // oxlint-disable effecttsgo/prefer-schema-over-json -- The launcher protocol is JSON over fd4.
+              payload.end(
+                JSON.stringify({
+                  executable: process.execPath,
+                  args: [
+                    "--input-type=module",
+                    "-e",
+                    [
+                      "import { spawn } from 'node:child_process';",
+                      "process.title = process.argv[1];",
+                      "const descendant = spawn(process.execPath, ['-e', 'process.title = process.argv[1]; setInterval(() => {}, 1000)', process.argv[1]], { stdio: ['ignore', 'inherit', 'ignore'] });",
+                      "process.stdout.write(`READY ${process.title} ${process.pid} ${descendant.pid}\\n`);",
+                      "setInterval(() => {}, 1000);",
+                    ].join("\n"),
+                    workloadMarker,
+                  ],
+                }),
+              );
+              // oxlint-enable effecttsgo/prefer-schema-over-json
+              let timer: NodeJS.Timeout | undefined;
+              // oxlint-disable effecttsgo/new-promise -- Race process events against a timeout guard.
+              const completion = new Promise<[[number | null, NodeJS.Signals | null], unknown[]]>(
+                (resolve, reject) => {
+                  // oxlint-disable-next-line effecttsgo/global-timers -- Bound a potentially leaked subprocess.
+                  timer = setTimeout(() => {
+                    // oxlint-disable-next-line effecttsgo/global-error-in-effect-failure -- Timeout reports a leaked process group.
+                    reject(new Error("Launcher kept stdout open"));
+                  }, 5_000);
+                  Promise.all([exited, stdoutClosed]).then(resolve, reject);
+                },
+              );
+              // oxlint-enable effecttsgo/new-promise
+              let result: [[number | null, NodeJS.Signals | null], unknown[]];
+              try {
+                result = await completion;
+              } finally {
+                if (timer !== undefined) clearTimeout(timer);
+              }
+              const [exitResult] = result;
+              const [code, signal] = exitResult;
+              const hasLiveWorkloadProcesses = scanWorkloadProcesses().some(
+                ({ groupId, state }) =>
+                  workloadGroupIds.has(groupId) && !state.startsWith("Z") && !state.includes("E"),
+              );
+              return {
+                code,
+                signal,
+                workloadPid,
+                descendantPid,
+                hasLiveWorkloadProcesses,
+                cleanup: killOwnedGroups,
+              };
+            } catch (cause) {
+              killOwnedGroups();
+              const leakedWorkloadPid = workloadPid ?? observedWorkloadPid;
+              if (cause instanceof Error && leakedWorkloadPid !== undefined)
+                throw new Error(
+                  `${cause.message}; ${workloadPid === undefined ? "workload marker" : "READY workload"} remained at PID ${leakedWorkloadPid}`,
+                );
+              throw cause;
+            }
+          },
+          catch: (cause) => new Error(String(cause)),
+        }),
+        // oxlint-enable effecttsgo/global-error-in-effect-catch,effecttsgo/global-error-in-effect-failure
+        ({ code, signal, workloadPid, descendantPid, hasLiveWorkloadProcesses }) =>
+          Effect.gen(function* () {
+            expect(code).toBe(127);
+            expect(signal).toBeNull();
+            if (workloadPid !== undefined) expect(yield* assertExited(workloadPid)).toBe(true);
+            if (descendantPid !== undefined) expect(yield* assertExited(descendantPid)).toBe(true);
+            expect(hasLiveWorkloadProcesses).toBe(false);
+          }),
+        ({ cleanup }) => Effect.sync(cleanup),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("fails startup when the launcher omits its workload process group", () =>
     Effect.scoped(
       spawnNativeProcess(spec, { command: "test-launcher", args: [] }).pipe(Effect.exit),

@@ -204,7 +204,12 @@ export const runNativeLauncher = (): void => {
       detached: true,
       stdio: ["inherit", "inherit", "inherit"],
     });
-    writeSync(5, `${child.pid ?? 0}\n`);
+    try {
+      writeSync(5, `${child.pid ?? 0}\n`);
+    } catch {
+      terminateWorkloadGroup("SIGKILL");
+      process.exit(127);
+    }
     child.on("error", () => process.exit(127));
     child.on("exit", (code, signal) => {
       childExited = true;
