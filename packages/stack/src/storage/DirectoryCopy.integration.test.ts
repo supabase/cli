@@ -1,5 +1,3 @@
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, FileSystem, Path, Scope, Sink, Stream } from "effect";
@@ -161,7 +159,10 @@ describe("copyDirectory", () => {
         yield* fs.writeFileString(path.join(source, "file.txt"), "file\n");
 
         const fiber = yield* copyDirectory(source, destination).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, hangingCopy(started)),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            hangingCopy(started, fs, path),
+          ),
           Effect.forkChild,
         );
         yield* Deferred.await(started);
@@ -188,7 +189,11 @@ const processHandle = (exitCode: Effect.Effect<ChildProcessSpawner.ExitCode>) =>
     unref: Effect.succeed(Effect.void),
   });
 
-const hangingCopy = (started: Deferred.Deferred<void>) =>
+const hangingCopy = (
+  started: Deferred.Deferred<void>,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+) =>
   ChildProcessSpawner.make((command) => {
     if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
     if (command.command === "find") {
@@ -196,11 +201,14 @@ const hangingCopy = (started: Deferred.Deferred<void>) =>
     }
     const destination = command.args.at(-1);
     if (destination === undefined) return Effect.die("missing copy destination");
-    return Effect.sync(() => {
-      const nested = join(destination, "nested");
-      mkdirSync(nested, { recursive: true });
-      writeFileSync(join(nested, "child.txt"), "partial\n");
-      if (process.platform !== "win32") chmodSync(nested, 0o555);
+    return Effect.gen(function* () {
+      const nested = path.join(destination, "nested");
+      yield* fs.makeDirectory(nested, { recursive: true });
+      yield* fs.writeFileString(path.join(nested, "child.txt"), "partial\n");
+      if (process.platform !== "win32") yield* fs.chmod(nested, 0o555);
       return processHandle(Effect.never);
-    }).pipe(Effect.tap(() => Deferred.succeed(started, undefined)));
+    }).pipe(
+      Effect.orDie,
+      Effect.tap(() => Deferred.succeed(started, undefined)),
+    );
   });
