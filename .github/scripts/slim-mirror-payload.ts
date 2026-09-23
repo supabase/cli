@@ -4,8 +4,8 @@
  */
 
 const SERVICE_PATTERN = /^[a-z][a-z0-9-]*$/;
-const VERSION_PATTERN = /^[A-Za-z0-9._-]+$/;
-const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+export const VERSION_PATTERN = /^[A-Za-z0-9._-]+$/;
+export const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 export const SOURCE_REGISTRY = "ghcr.io/supabase/cli";
 export const DEST_REGISTRY = "public.ecr.aws/supabase/cli";
