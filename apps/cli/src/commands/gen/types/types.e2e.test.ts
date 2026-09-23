@@ -131,7 +131,7 @@ const runDocker = (args: ReadonlyArray<string>, options: { readonly timeoutMs?: 
     Effect.catchTag("DockerCommandError", (error): Effect.Effect<CommandResult> =>
       Effect.succeed({
         stdout: error.stdout,
-        stderr: error.stderr.length > 0 ? error.stderr : error.message,
+        stderr: error.message,
         exitCode: 1,
       }),
     ),
@@ -352,8 +352,7 @@ describe("gen types e2e", () => {
     },
   );
 
-  // An unset or empty variable reads as `Option.none()`, matching the previous
-  // `undefined`/empty-string checks below.
+  // An unset or empty variable reads as `Option.none()`.
   const remote = Effect.runSync(
     Effect.all({
       projectRef: Config.option(Config.string(REMOTE_PROJECT_REF_ENV)),
