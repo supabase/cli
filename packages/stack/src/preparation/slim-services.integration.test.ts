@@ -42,11 +42,11 @@ const artifact: SlimServicesArtifact = {
   target: "linux-amd64",
   archive: "tar.zst",
   assetName: "demo-v1.0.0-linux-amd64",
+  checksums: [{ kind: "sha256sums", url: "https://example.test/SHA256SUMS" }],
   mirrors: [
     {
       downloadUrl: "https://example.test/demo.tar.zst",
       manifestUrl: "https://example.test/demo.manifest.json",
-      checksumUrl: "https://example.test/SHA256SUMS",
     },
   ],
   requiredRuntimePaths: ["bin/demo"],
@@ -138,6 +138,44 @@ const withFetch = <A, E, R>(fetcher: FetchLike, effect: Effect.Effect<A, E, R>) 
     Effect.provideService(FetchHttpClient.Fetch, fetcher),
   );
 
+const registryChecksum = {
+  kind: "oci",
+  registry: "registry.test",
+  repository: "supabase/cli/demo",
+  tag: "v1.0.0-native-linux-amd64",
+} as const;
+
+/** Anonymous registry token and native manifest; the manifest requires the issued token. */
+const registryResponse = (
+  input: Parameters<typeof fetch>[0],
+  init: Parameters<typeof fetch>[1],
+  archiveSha256: string,
+  registry = "registry.test",
+  repository = "supabase/cli/demo",
+  tag = "v1.0.0-native-linux-amd64",
+): Response | undefined => {
+  const url = requestUrl(input);
+  if (url === `https://${registry}/token?scope=repository:${repository}:pull&service=${registry}`)
+    return new Response(JSON.stringify({ token: "anonymous" }));
+  if (url !== `https://${registry}/v2/${repository}/manifests/${tag}`) return undefined;
+  if (new Headers(init?.headers).get("authorization") !== "Bearer anonymous")
+    return new Response("", { status: 401 });
+  return new Response(
+    JSON.stringify({
+      layers: [
+        {
+          mediaType: "application/vnd.supabase.slim.archive.v1.tar+zstd",
+          digest: `sha256:${archiveSha256}`,
+        },
+        {
+          mediaType: "application/vnd.supabase.slim.checksum.v1",
+          digest: `sha256:${"f".repeat(64)}`,
+        },
+      ],
+    }),
+  );
+};
+
 describe("slim-services artifact source", () => {
   it.live("follows release redirects through the supplied Node HTTP client", () =>
     Effect.scoped(
@@ -171,9 +209,7 @@ describe("slim-services artifact source", () => {
           return yield* Effect.die("redirect server did not expose a port");
         const redirected: SlimServicesArtifact = {
           ...artifact,
-          mirrors: [
-            { ...artifact.mirrors[0], checksumUrl: `http://127.0.0.1:${address.port}/redirect` },
-          ],
+          checksums: [{ kind: "sha256sums", url: `http://127.0.0.1:${address.port}/redirect` }],
         };
         const checksum = yield* slimServicesChecksum(redirected);
         expect(checksum).toBe("a".repeat(64));
@@ -250,7 +286,7 @@ describe("slim-services artifact source", () => {
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-retry-" });
         const source = makeSlimServicesSource(() => artifact, { backoff: immediate });
         expect(yield* withFetch(flaky, source.checksum(request))).toBe(expected);
-        expect(attempts.get(artifact.mirrors[0].checksumUrl)).toBe(2);
+        expect(attempts.get("https://example.test/SHA256SUMS")).toBe(2);
         yield* withFetch(flaky, source.materialize(request, destination, expected));
         expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
         expect(attempts.get(artifact.mirrors[0].downloadUrl)).toBe(2);
@@ -286,28 +322,32 @@ describe("slim-services artifact source", () => {
         const expected = digestHex(yield* crypto.digest("SHA-256", archive));
         const mirrored: SlimServicesArtifact = {
           ...artifact,
+          checksums: [
+            { kind: "sha256sums", url: "https://release.test/SHA256SUMS" },
+            registryChecksum,
+          ],
           mirrors: [
             {
               downloadUrl: "https://release.test/demo-v1.0.0-linux-amd64.tar.zst",
               manifestUrl: "https://release.test/demo-v1.0.0-linux-amd64.manifest.json",
-              checksumUrl: "https://release.test/SHA256SUMS",
             },
             {
               downloadUrl: "https://bucket.test/demo-v1.0.0-linux-amd64.tar.zst",
               manifestUrl: "https://bucket.test/demo-v1.0.0-linux-amd64.manifest.json",
-              checksumUrl: "https://bucket.test/demo-v1.0.0-linux-amd64.SHA256SUMS",
             },
           ],
         };
         const blocked = new Set<string>();
-        const fetcher: FetchLike = (input) => {
+        const bucket: string[] = [];
+        const fetcher: FetchLike = (input, init) => {
           const url = requestUrl(input);
           if (url.startsWith("https://release.test/")) {
             blocked.add(url);
             return Promise.resolve(new Response("", { status: 403 }));
           }
-          if (url.endsWith("SHA256SUMS"))
-            return Promise.resolve(new Response(`${expected}  demo-v1.0.0-linux-amd64.tar.zst\n`));
+          const registry = registryResponse(input, init, expected);
+          if (registry !== undefined) return Promise.resolve(registry);
+          bucket.push(url);
           if (url.endsWith("manifest.json"))
             return Promise.resolve(
               new Response(
@@ -329,17 +369,21 @@ describe("slim-services artifact source", () => {
           "https://release.test/SHA256SUMS",
           "https://release.test/demo-v1.0.0-linux-amd64.manifest.json",
         ]);
+        expect(bucket).toEqual([
+          "https://bucket.test/demo-v1.0.0-linux-amd64.manifest.json",
+          "https://bucket.test/demo-v1.0.0-linux-amd64.tar.zst",
+        ]);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 
-  it.live("reports the primary host's failure when every mirror fails", () =>
+  it.live("reports the primary checksum failure when every checksum source fails", () =>
     Effect.gen(function* () {
       const mirrored: SlimServicesArtifact = {
         ...artifact,
-        mirrors: [
-          { ...artifact.mirrors[0], checksumUrl: "https://release.test/SHA256SUMS" },
-          { ...artifact.mirrors[0], checksumUrl: "https://bucket.test/demo.SHA256SUMS" },
+        checksums: [
+          { kind: "sha256sums", url: "https://release.test/SHA256SUMS" },
+          registryChecksum,
         ],
       };
       const requested: string[] = [];
@@ -350,7 +394,7 @@ describe("slim-services artifact source", () => {
       expect(errorOf(failed)?.message).toBe("Unable to download https://release.test/SHA256SUMS");
       expect(requested).toEqual([
         "https://release.test/SHA256SUMS",
-        "https://bucket.test/demo.SHA256SUMS",
+        "https://registry.test/token?scope=repository:supabase/cli/demo:pull&service=registry.test",
       ]);
     }),
   );
@@ -368,12 +412,10 @@ describe("slim-services artifact source", () => {
             {
               downloadUrl: "https://release.test/demo.tar.zst",
               manifestUrl: "https://release.test/demo.manifest.json",
-              checksumUrl: "https://release.test/SHA256SUMS",
             },
             {
               downloadUrl: `https://bucket.test/${fallback === archive ? "good" : "bad"}.tar.zst`,
               manifestUrl: "https://bucket.test/demo.manifest.json",
-              checksumUrl: "https://bucket.test/SHA256SUMS",
             },
           ],
         });
@@ -798,7 +840,7 @@ describe("slim-services artifact source", () => {
 });
 
 describe("native artifact catalog", () => {
-  it.live("downloads from the public S3 mirror when GitHub release assets are blocked", () =>
+  it.live("verifies an S3 download against GHCR when GitHub release assets are blocked", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const { version } = yield* resolveArtifact({ service: "rest" });
@@ -807,13 +849,20 @@ describe("native artifact catalog", () => {
         const crypto = yield* Crypto.Crypto;
         const expected = digestHex(yield* crypto.digest("SHA-256", archive));
         const served: string[] = [];
-        const fetcher: FetchLike = (input) => {
+        const fetcher: FetchLike = (input, init) => {
           const url = requestUrl(input);
           if (url.startsWith("https://github.com/"))
             return Promise.resolve(new Response("", { status: 403 }));
           served.push(url);
-          if (url.endsWith(".SHA256SUMS"))
-            return Promise.resolve(new Response(`${expected}  ${asset}.tar.zst\n`));
+          const registry = registryResponse(
+            input,
+            init,
+            expected,
+            "ghcr.io",
+            "supabase/cli/postgrest",
+            `${version}-native-linux-amd64`,
+          );
+          if (registry !== undefined) return Promise.resolve(registry);
           if (url.endsWith(".manifest.json"))
             return Promise.resolve(
               new Response(
@@ -831,7 +880,8 @@ describe("native artifact catalog", () => {
         expect(yield* fs.readFileString(prepared.executable)).toBe("postgrest");
         const bucket = `https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/postgrest/${version}`;
         expect(served).toEqual([
-          `${bucket}/${asset}.SHA256SUMS`,
+          "https://ghcr.io/token?scope=repository:supabase/cli/postgrest:pull&service=ghcr.io",
+          `https://ghcr.io/v2/supabase/cli/postgrest/manifests/${version}-native-linux-amd64`,
           `${bucket}/${asset}.manifest.json`,
           `${bucket}/${asset}.tar.zst`,
         ]);

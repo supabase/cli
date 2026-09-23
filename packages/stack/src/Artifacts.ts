@@ -166,6 +166,9 @@ const SLIM_NATIVE_GITHUB_RELEASES = "https://github.com/supabase/slim-services/r
  */
 const SLIM_NATIVE_SUPABASE_S3_MIRROR = "https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com";
 
+const SLIM_NATIVE_GHCR_REGISTRY = "ghcr.io";
+const SLIM_NATIVE_GHCR_REPOSITORY = "supabase/cli";
+
 const SLIM_IMAGE_GHCR_REGISTRY = "ghcr.io/supabase/cli/";
 const SLIM_IMAGE_SUPABASE_ECR_MIRROR = "public.ecr.aws/supabase/cli/";
 
@@ -193,16 +196,23 @@ const artifactFor = (
     target,
     archive: "tar.zst",
     assetName,
+    checksums: [
+      { kind: "sha256sums", url: `${githubRelease}/SHA256SUMS` },
+      {
+        kind: "oci",
+        registry: SLIM_NATIVE_GHCR_REGISTRY,
+        repository: `${SLIM_NATIVE_GHCR_REPOSITORY}/${sourceService}`,
+        tag: `${resolved.version}-native-${target}`,
+      },
+    ],
     mirrors: [
       {
         downloadUrl: `${githubRelease}/${assetName}.tar.zst`,
         manifestUrl: `${githubRelease}/${assetName}.manifest.json`,
-        checksumUrl: `${githubRelease}/SHA256SUMS`,
       },
       {
         downloadUrl: `${supabaseS3}/${assetName}.tar.zst`,
         manifestUrl: `${supabaseS3}/${assetName}.manifest.json`,
-        checksumUrl: `${supabaseS3}/${assetName}.SHA256SUMS`,
       },
     ],
     requiredRuntimePaths: resolved.requiredRuntimePaths,
