@@ -122,7 +122,9 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
       return yield* new ResetLocalDbNotRunningError({ message: "The local stack is not running." });
     const catalog = yield* Effect.serviceOption(StackCatalogSetup);
     if (Option.isNone(catalog)) return yield* resetFailed("stack catalog setup is unavailable");
-    yield* loadStackConfig(workdir).pipe(Effect.mapError((cause) => resetFailed(cause.message)));
+    const config = yield* loadStackConfig(workdir).pipe(
+      Effect.mapError((cause) => resetFailed(cause.message)),
+    );
     const toml = yield* readDbToml(fs, path, workdir);
     const databaseStatus = yield* opened.value.database.status.pipe(
       Effect.mapError((cause) => resetFailed(`failed to inspect stack: ${cause.message}`)),
@@ -143,11 +145,18 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
           ),
         ),
     );
-    const databaseServices = members.flatMap((member) =>
-      member.service === "auth" || member.service === "storage" || member.service === "realtime"
-        ? [member.service]
-        : [],
-    );
+    const creations = yield* config
+      .creations(opened.value.stack.id)
+      .pipe(Effect.mapError((cause) => resetFailed(cause.message)));
+    // The `db start` overlay composes only the database, so configured services need schemas too;
+    // composed members stay included in case config disabled them after start.
+    const databaseServices = [
+      ...new Set(
+        [...creations, ...members].flatMap(({ service }) =>
+          service === "auth" || service === "storage" || service === "realtime" ? [service] : [],
+        ),
+      ),
+    ];
     yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
     yield* opened.value.stack.composition.stop.pipe(
       Effect.mapError((cause) => resetFailed(`failed to stop local stack: ${cause.message}`)),

@@ -612,6 +612,8 @@ function mockResetStackApi(opts: {
     | "disabled";
   readonly storageError?: string;
   readonly apiEndpoint?: { readonly url: string; readonly port: number };
+  /** Models the `db start` overlay, whose composition holds only the database. */
+  readonly postgresOnly?: boolean;
 }) {
   let resetCalls = 0;
   let stopCalls = 0;
@@ -700,7 +702,7 @@ function mockResetStackApi(opts: {
     }),
     ready: Effect.void,
   });
-  const members: Array<StackService> = [
+  const composed: Array<StackService> = [
     db,
     stackService(
       "supabase_auth_test",
@@ -719,6 +721,7 @@ function mockResetStackApi(opts: {
       Effect.succeed(makeStackObservation("supabase_pooler_test", pooler)),
     ),
   ];
+  const members = opts.postgresOnly === true ? [db] : composed;
   const stack: Stack = {
     id: RESET_STACK_ID,
     services: {
@@ -852,6 +855,7 @@ function setup(
       | "disabled";
     stackStorageError?: string;
     stackApiEndpoint?: { readonly url: string; readonly port: number };
+    stackPostgresOnly?: boolean;
     httpClient?: Layer.Layer<HttpClient.HttpClient>;
   },
 ) {
@@ -887,6 +891,7 @@ function setup(
     storageState: opts.stackStorageState,
     storageError: opts.stackStorageError,
     apiEndpoint: opts.stackApiEndpoint,
+    postgresOnly: opts.stackPostgresOnly,
   });
   const catalog =
     opts.stackBackend === true
@@ -1167,7 +1172,7 @@ describe("db reset", () => {
         expect(stackApi.resetCalls).toBe(1);
         expect(stackApi.stopCalls).toBe(1);
         expect(stackApi.startCalls).toBe(2);
-        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "storage", "realtime"]);
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "realtime", "storage"]);
         expect(catalogApplied[0]?.target.jwtSecret).toBe(RESET_JWT);
         expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
           false,
@@ -1187,7 +1192,35 @@ describe("db reset", () => {
       });
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "storage", "realtime"]);
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "realtime", "storage"]);
+      });
+    });
+
+    it.live("provisions configured service schemas for a postgres-only stack", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackPostgresOnly: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "realtime", "storage"]);
+      });
+    });
+
+    it.live("skips schemas for services disabled in config on a postgres-only stack", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[storage]\nenabled = false\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackPostgresOnly: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "realtime"]);
       });
     });
 
