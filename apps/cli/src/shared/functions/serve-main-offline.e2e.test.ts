@@ -48,7 +48,7 @@ const AUTH_FUNCTIONS_CONFIG = JSON.stringify({
     verifyJWT: true,
   },
 });
-const KONG_FUNCTIONS_CONFIG = JSON.stringify({
+const KONG_FUNCTIONS_CONFIG = {
   test: {
     entrypointPath: "/app/functions/custom/index.ts",
     importMapPath: "",
@@ -78,7 +78,20 @@ const KONG_FUNCTIONS_CONFIG = JSON.stringify({
     staticFiles: [],
     verifyJWT: false,
   },
-});
+};
+
+function resolveDiagnosticFunctionNames(): string[] {
+  const raw = process.env["EDGE_RUNTIME_DIAGNOSTIC_WORKERS"];
+  if (raw === undefined) return [];
+
+  const count = Number(raw.trim());
+  if (raw.trim() === "" || !Number.isInteger(count) || count < 0 || count > 12) {
+    throw new Error(
+      `EDGE_RUNTIME_DIAGNOSTIC_WORKERS must be an integer from 0 through 12, got ${raw}`,
+    );
+  }
+  return Array.from({ length: count }, (_, index) => `custom-alias-${index + 1}`);
+}
 const CUSTOM_FUNCTION = `import { sharedValue } from "../_shared/value.ts";
 
 Deno.serve((req) => {
@@ -503,6 +516,13 @@ describe("functions serve runtime template (offline)", () => {
         ensureImage(edgeRuntimeDockerfileImage(), imageDeadline),
         ensureImage(dockerfileServiceImage("kong"), imageDeadline),
       ]);
+      const diagnosticFunctionNames = resolveDiagnosticFunctionNames();
+      const functionsConfig = {
+        ...KONG_FUNCTIONS_CONFIG,
+        ...Object.fromEntries(
+          diagnosticFunctionNames.map((name) => [name, KONG_FUNCTIONS_CONFIG["custom-alias"]]),
+        ),
+      };
       console.log(
         `[DEBUG-edge-runtime] resolved images before container creation:\n${imageDebugMetadata([runtimeImage, kongImage])}`,
       );
@@ -556,7 +576,7 @@ describe("functions serve runtime template (offline)", () => {
             "-e",
             `SUPABASE_URL=http://${kongContainer}:8000`,
             "-e",
-            `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${KONG_FUNCTIONS_CONFIG}`,
+            `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${JSON.stringify(functionsConfig)}`,
             "-e",
             "SUPABASE_INTERNAL_DEBUG=true",
             "-e",
@@ -646,13 +666,17 @@ describe("functions serve runtime template (offline)", () => {
           );
         }
 
-        const [customResponse, aliasResponse, nestedResponse] = await Promise.all([
-          fetchColdFunction(`${functionsUrl}/custom`, diagnosticContainers, {
-            headers: { Origin: "http://localhost:3000" },
-          }),
-          fetchColdFunction(`${functionsUrl}/custom-alias`, diagnosticContainers),
-          fetchColdFunction(`${functionsUrl}/nested-worker-path`, diagnosticContainers),
-        ]);
+        const [customResponse, aliasResponse, nestedResponse, ...diagnosticResponses] =
+          await Promise.all([
+            fetchColdFunction(`${functionsUrl}/custom`, diagnosticContainers, {
+              headers: { Origin: "http://localhost:3000" },
+            }),
+            fetchColdFunction(`${functionsUrl}/custom-alias`, diagnosticContainers),
+            fetchColdFunction(`${functionsUrl}/nested-worker-path`, diagnosticContainers),
+            ...diagnosticFunctionNames.map((name) =>
+              fetchColdFunction(`${functionsUrl}/${name}`, diagnosticContainers),
+            ),
+          ]);
         expect(customResponse.status).toBe(200);
         expect(customResponse.headers.get("x-custom-id")).toBe("abc123");
         expect(customResponse.headers.get("x-function-slug")).toBe("custom");
@@ -668,6 +692,12 @@ describe("functions serve runtime template (offline)", () => {
         expect(aliasResponse.headers.get("x-shared-import")).toBe("shared-import-ok");
         expect(nestedResponse.status).toBe(200);
         expect(nestedResponse.headers.get("x-function-slug")).toBe("nested-worker-path");
+        for (const [index, response] of diagnosticResponses.entries()) {
+          const name = diagnosticFunctionNames[index];
+          expect(response.status).toBe(200);
+          expect(response.headers.get("x-function-slug")).toBe(name);
+          await response.text();
+        }
         const earlyResponse = await fetchFunctionWithDiagnostics(
           `${functionsUrl}/custom`,
           diagnosticContainers,

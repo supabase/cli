@@ -301,6 +301,7 @@ jobs:
             echo "[DEBUG-edge-runtime] kernel.core_pattern configuration failed exit=${status}" | tee -a "${pattern_log}"
           fi
           echo "EDGE_RUNTIME_CRASH_DIR=${crash_dir}" >>"${GITHUB_ENV}"
+          echo "EDGE_RUNTIME_DIAGNOSTIC_WORKERS=12" >>"${GITHUB_ENV}"
 
       - name: Repeat Kong offline E2E
         working-directory: apps/cli
