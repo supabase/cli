@@ -1,5 +1,3 @@
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -173,7 +171,7 @@ describe("copyDirectory", () => {
         yield* copyDirectory(source, destination).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
-            failedHostCopy(destination),
+            failedHostCopy(fs, path, destination),
           ),
         );
 
@@ -198,7 +196,7 @@ describe("copyDirectory", () => {
         const fiber = yield* copyDirectory(source, destination).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
-            hangingCopy(started, destination),
+            hangingCopy(fs, path, started, destination),
           ),
           Effect.forkChild,
         );
@@ -238,7 +236,7 @@ describe("copyDirectory", () => {
           Effect.provideService(FileSystem.FileSystem, pausing),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
-            failedHostCopy(destination),
+            failedHostCopy(fs, path, destination),
           ),
           Effect.forkChild,
         );
@@ -272,12 +270,13 @@ const processHandle = (exitCode: Effect.Effect<ChildProcessSpawner.ExitCode>) =>
     unref: Effect.succeed(Effect.void),
   });
 
-const writePartial = (destination: string) => {
-  const nested = join(destination, "nested");
-  mkdirSync(nested, { recursive: true });
-  writeFileSync(join(nested, "child.txt"), "partial\n");
-  if (process.platform !== "win32") chmodSync(nested, 0o555);
-};
+const writePartial = (fs: FileSystem.FileSystem, path: Path.Path, destination: string) =>
+  Effect.gen(function* () {
+    const nested = path.join(destination, "nested");
+    yield* fs.makeDirectory(nested, { recursive: true });
+    yield* fs.writeFileString(path.join(nested, "child.txt"), "partial\n");
+    if (process.platform !== "win32") yield* fs.chmod(nested, 0o555);
+  });
 
 const hostCommand = (command: ChildProcess.Command) => {
   if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
@@ -287,23 +286,27 @@ const hostCommand = (command: ChildProcess.Command) => {
   return undefined;
 };
 
-const hangingCopy = (started: Deferred.Deferred<void>, destination: string) =>
+const hangingCopy = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  started: Deferred.Deferred<void>,
+  destination: string,
+) =>
   ChildProcessSpawner.make((command) => {
     const find = hostCommand(command);
     if (find !== undefined) return find;
-    return Effect.sync(() => {
-      writePartial(destination);
-      return processHandle(Effect.never);
-    }).pipe(Effect.tap(() => Deferred.succeed(started, undefined)));
+    return writePartial(fs, path, destination).pipe(
+      Effect.as(processHandle(Effect.never)),
+      Effect.tap(() => Deferred.succeed(started, undefined)),
+    );
   });
 
 // Exit 8 is a real robocopy failure and a non-zero cp status, not a usage error.
-const failedHostCopy = (destination: string) =>
+const failedHostCopy = (fs: FileSystem.FileSystem, path: Path.Path, destination: string) =>
   ChildProcessSpawner.make((command) => {
     const find = hostCommand(command);
     if (find !== undefined) return find;
-    return Effect.sync(() => {
-      writePartial(destination);
-      return processHandle(Effect.succeed(ChildProcessSpawner.ExitCode(8)));
-    });
+    return writePartial(fs, path, destination).pipe(
+      Effect.as(processHandle(Effect.succeed(ChildProcessSpawner.ExitCode(8)))),
+    );
   });
