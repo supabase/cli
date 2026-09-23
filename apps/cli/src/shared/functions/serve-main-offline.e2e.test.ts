@@ -217,6 +217,35 @@ function imageDebugMetadata(images: readonly string[]): string {
     .join("\n");
 }
 
+async function captureRuntimeArtifacts(container: string, crashDir: string): Promise<void> {
+  const state = await containerState(container);
+  const captureLog = join(crashDir, `${container}.capture.log`);
+  if (!isTerminalContainerState(state)) {
+    await writeFile(
+      captureLog,
+      `[DEBUG-edge-runtime] skipped binary capture for ${container}: state=${state}\n`,
+    );
+    return;
+  }
+  const binary = join(crashDir, "edge-runtime");
+  const debug = join(crashDir, "edge-runtime.debug");
+  const results = [
+    ["/usr/local/bin/edge-runtime", binary],
+    ["/usr/local/bin/edge-runtime.debug", debug],
+  ] as const;
+  const lines = [`[DEBUG-edge-runtime] stopped runtime state=${state}`];
+  for (const [source, destination] of results) {
+    const result = spawnSync("docker", ["cp", `${container}:${source}`, destination], {
+      encoding: "utf8",
+      timeout: DOCKER_COMMAND_TIMEOUT_MS,
+    });
+    lines.push(
+      `[DEBUG-edge-runtime] docker cp source=${source} status=${String(result.status)} stdout=${result.stdout ?? ""} stderr=${result.stderr ?? ""}${result.error ? ` error=${result.error.message}` : ""}`,
+    );
+  }
+  await writeFile(captureLog, `${lines.join("\n")}\n`);
+}
+
 function isTerminalContainerState(state: string): boolean {
   return /^(exited|dead)\b/u.test(state);
 }
@@ -482,6 +511,12 @@ describe("functions serve runtime template (offline)", () => {
       const runtimeContainer = `${network}-runtime`;
       const kongContainer = `${network}-kong`;
       const diagnosticContainers = [kongContainer, runtimeContainer] as const;
+      const crashDir = process.env["EDGE_RUNTIME_CRASH_DIR"];
+      const crashMount =
+        crashDir === undefined
+          ? []
+          : ["-v", `${crashDir}:/edge-runtime-crashes`, "--ulimit", "core=1073741824"];
+      let completed = false;
       try {
         await writeFile(join(dir, "index.ts"), await bundleServeMainTemplate());
         await mkdir(join(dir, "functions", "custom"), { recursive: true });
@@ -534,6 +569,7 @@ describe("functions serve runtime template (offline)", () => {
             "SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=400",
             "-e",
             'SUPABASE_JWKS={"keys":[]}',
+            ...crashMount,
             "-v",
             `${dir}:/app:ro`,
             "--entrypoint",
@@ -665,7 +701,15 @@ describe("functions serve runtime template (offline)", () => {
         const reusedCustomResponse = await fetch(`${functionsUrl}/custom`);
         expect(reusedCustomResponse.status).toBe(200);
         expect(reusedCustomResponse.headers.get("x-function-slug")).toBe("custom");
+        completed = true;
       } finally {
+        if (crashDir !== undefined && !completed) {
+          try {
+            await captureRuntimeArtifacts(runtimeContainer, crashDir);
+          } catch (error) {
+            console.log(`[DEBUG-edge-runtime] binary capture failed: ${String(error)}`);
+          }
+        }
         console.log(
           `[DEBUG-edge-runtime] diagnostics before cleanup:\n${await containerDiagnostics(diagnosticContainers)}\n${imageDebugMetadata([runtimeImage, kongImage])}`,
         );
