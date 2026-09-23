@@ -33,18 +33,23 @@ and the command handler does not run. See the [Compute command guide](../../../.
 
 ## API Routes
 
-| Method | Path                                         | Auth                                        | Request body                                        | Response (used fields)                                 |
-| ------ | -------------------------------------------- | ------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------ |
-| `POST` | `/v2/projects/{ref}/compute/{name}/uploads`  | Bearer token                                | none                                                | `data.id`, `data.attributes.url/method`                |
-| `PUT`  | presigned upload URL (control-plane storage) | URL signature — **no** Supabase credentials | `.tar.gz` build context                             | status only                                            |
-| `POST` | `/v2/projects/{ref}/compute/{name}/deploy`   | Bearer token                                | `{data:{type,attributes:{spec,context_upload_id}}}` | `data.attributes.build_state`                          |
-| `GET`  | `/v2/projects/{ref}/compute/{name}`          | Bearer token                                | none                                                | `build_state`, `state_reason`, `image_version`, `spec` |
-| `GET`  | `/v1/projects/{ref}`                         | Bearer token                                | none                                                | linked-project cache miss only — name, org, region     |
+| Method | Path                                         | Auth                                        | Request body                                        | Response (used fields)                                              |
+| ------ | -------------------------------------------- | ------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------- |
+| `POST` | `/v2/projects/{ref}/compute/{name}/uploads`  | Bearer token                                | none                                                | `data.id`, `data.attributes.url/method`                             |
+| `PUT`  | presigned upload URL (control-plane storage) | URL signature — **no** Supabase credentials | `.tar.gz` build context                             | status only                                                         |
+| `POST` | `/v2/projects/{ref}/compute/{name}/deploy`   | Bearer token                                | `{data:{type,attributes:{spec,context_upload_id}}}` | `data.attributes.build_state`                                       |
+| `GET`  | `/v2/projects/{ref}/compute/{name}`          | Bearer token                                | none                                                | `build_state`, `state_reason`, `image_version`, `spec`, `instances` |
+| `GET`  | `/v1/projects/{ref}`                         | Bearer token                                | none                                                | linked-project cache miss only — name, org, region                  |
 
-`GET /v2/projects/{ref}/compute/{name}` is polled until `build_state` leaves
-`building`. It is skipped entirely in two cases: under `--no-wait`, and when
-the deploy response already carried a terminal `build_state`. Either way the
-run reports the accepted spec the deploy response returned.
+`GET /v2/projects/{ref}/compute/{name}` is polled until the deploy's code is
+serving: `build_state` has left `building` and the instance tally reports every
+declared instance ready, current and not stale. The poll starts at 2s and backs
+off geometrically to 15s, bounded at 22 minutes.
+
+It is skipped in two cases: under `--no-wait`, and when the deploy response
+already carried `build_state: failed`. An `active` deploy response is **not**
+one of them — that is the bare-image case, where nothing was built and the
+instances keep serving the previous code until the control plane recycles them.
 
 ## Exit Codes
 
@@ -59,6 +64,7 @@ run reports the accepted spec the deploy response returned.
 | `1`  | a compute's source links to a path outside itself                                                     |
 | `1`  | build context upload failed                                                                           |
 | `1`  | the build reached `failed`, or never left `building`                                                  |
+| `1`  | the build landed but the instances never all reached serving inside the poll budget                   |
 | `1`  | with `--no-wait`: the deploy was answered with `build_state: failed`                                  |
 | `1`  | API error, or project not enrolled in the alpha                                                       |
 
@@ -124,6 +130,14 @@ Under `--no-wait` the `Image` row and the payload's `image_version` are omitted
 while `build_state` is `building`. The deploy response may carry an
 `image_version` — a re-push of a compute that is already serving echoes the image
 it is serving now — and that is the previous build's, not this one's.
+
+The deploy report carries an `Instances` row (the live tally, `2/2 serving`,
+falling back to the declared count when the API reports none) and a `Waited`
+row (`3m21s (1m04s building)`). Machine payloads carry the same as
+`instances_ready`, `instances_stale`, `waited_ms` and `waited_build_ms`. The
+build split is measured from this run's own polls, so it is "when the CLI first
+observed the image had landed" — it includes the control plane's detection lag
+rather than isolating build time, which the API publishes no stamp for.
 
 The presigned `PUT` above is the one request whose URL is itself a credential.
 `--debug` logs every request URL, so `httpClientLayer` redacts query
