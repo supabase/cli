@@ -1,7 +1,7 @@
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
 import { bundleStackFunctionsServeMainTemplate } from "../src/command-internal/stack-functions-bundler.ts";
 import { Effect } from "effect";
-import { OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "./bundle-externals.ts";
+import { oxfmtStubPlugin } from "./bundle-externals.ts";
 import { compileOptions } from "./compile-options.ts";
 
 /**
@@ -23,7 +23,7 @@ const result = await Bun.build({
   entrypoints: [entrypoint],
   compile: { outfile },
   ...compileOptions,
-  external: [...OXFMT_OPTIONAL_PLUGIN_EXTERNALS],
+  plugins: [oxfmtStubPlugin],
   define: {
     SUPABASE_CLI_VERSION: JSON.stringify(packageJson.version),
     SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleServeMainTemplate()),

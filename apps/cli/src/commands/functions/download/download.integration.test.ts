@@ -1,15 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
 import {
+  Config,
   ConfigProvider,
   Deferred,
   Effect,
   Exit,
+  FileSystem,
   Layer,
   Option,
+  Path,
   PlatformError,
   Sink,
   Stdio,
@@ -29,6 +29,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
@@ -89,14 +90,12 @@ function mockDockerRunSpawnFailure() {
       spawned.push({ command: cmd, args });
 
       if (args[0] === "run") {
-        return yield* Effect.fail(
-          PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-            description: `${cmd} not found`,
-          }),
-        );
+        return yield* PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: `${cmd} not found`,
+        });
       }
 
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
@@ -238,15 +237,14 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* functionsDownload(baseFlags);
 
       expect(proxy.calls).toEqual([]);
       expect(
-        yield* Effect.tryPromise(() =>
-          readFile(
-            join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
-            "utf8",
-          ),
+        yield* fs.readFileString(
+          path.join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
         ),
       ).toBe("console.log('legacy native')");
       expect(out.stderrText).toContain(
@@ -289,6 +287,8 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         expect(proxy.calls).toEqual([]);
@@ -309,7 +309,9 @@ describe("functions download", () => {
         expect(out.stderrText).not.toContain("Downloaded Function");
         // No `--debug` — the temp eszip file is removed after the run.
         expect(
-          existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+          yield* fs.exists(
+            path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+          ),
         ).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -346,17 +348,16 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         // `useDocker: true` reflects the flag's own default, unaffected by
         // the explicit `--use-api`.
         yield* functionsDownload({ ...baseFlags, useApi: true, useDocker: true });
 
         expect(proxy.calls).toEqual([]);
         expect(
-          yield* Effect.tryPromise(() =>
-            readFile(
-              join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
-              "utf8",
-            ),
+          yield* fs.readFileString(
+            path.join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
           ),
         ).toBe("console.log('legacy native')");
       }).pipe(Effect.provide(layer));
@@ -552,6 +553,7 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       // Bind order and network reuse the same primitives as `deploy.ts`'s
@@ -574,13 +576,13 @@ describe("functions download", () => {
       });
 
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-      const hostEszipPath = resolve(
+      const hostEszipPath = path.resolve(
         tempRoot.current,
         "supabase",
         ".temp",
         "output_hello-world.eszip",
       );
-      const functionsDir = resolve(tempRoot.current, "supabase", "functions");
+      const functionsDir = path.resolve(tempRoot.current, "supabase", "functions");
       expect(runCommand?.args).toContain(
         `supabase_edge_runtime_${PROJECT_ID}:/root/.cache/deno:rw`,
       );
@@ -633,13 +635,14 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
       expect(runCommand?.args).not.toContain(
         `supabase_edge_runtime_${PROJECT_ID}:/root/.cache/deno:rw`,
       );
-      const hostEszipPath = resolve(
+      const hostEszipPath = path.resolve(
         tempRoot.current,
         "supabase",
         ".temp",
@@ -866,7 +869,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
-      const nestedWorkdir = join(tempRoot.current, "nested");
+      const nestedWorkdir = `${tempRoot.current}/nested`;
       const layer = Layer.mergeAll(
         buildTestRuntime({
           out,
@@ -888,15 +891,13 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => mkdir(nestedWorkdir, { recursive: true }));
-        yield* Effect.tryPromise(() =>
-          mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-        );
-        yield* Effect.tryPromise(() =>
-          writeFile(
-            join(tempRoot.current, "supabase", "config.toml"),
-            ['project_id = "ancestor-project"', ""].join("\n"),
-          ),
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(nestedWorkdir, { recursive: true });
+        yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(tempRoot.current, "supabase", "config.toml"),
+          ['project_id = "ancestor-project"', ""].join("\n"),
         );
 
         yield* functionsDownload({ ...baseFlags, useDocker: true });
@@ -940,20 +941,16 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tempRoot.current, "supabase", "config.toml"),
+        ['project_id = "toml-project"', ""].join("\n"),
       );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(tempRoot.current, "supabase", "config.toml"),
-          ['project_id = "toml-project"', ""].join("\n"),
-        ),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(tempRoot.current, "supabase", "config.json"),
-          JSON.stringify({ project_id: "json-project" }),
-        ),
+      yield* fs.writeFileString(
+        path.join(tempRoot.current, "supabase", "config.json"),
+        '{"project_id":"json-project"}',
       );
 
       yield* functionsDownload({ ...baseFlags, useDocker: true });
@@ -1032,11 +1029,14 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        mkdir(join(tempRoot.current, "supabase", ".temp"), { recursive: true }),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", ".temp", "edge-runtime-version"), "v9.9.9\n"),
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tempRoot.current, "supabase", ".temp"), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(
+        path.join(tempRoot.current, "supabase", ".temp", "edge-runtime-version"),
+        "v9.9.9\n",
       );
 
       yield* functionsDownload({ ...baseFlags, useDocker: true });
@@ -1073,10 +1073,14 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       expect(
-        existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+        yield* fs.exists(
+          path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+        ),
       ).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -1110,10 +1114,14 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         expect(
-          existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+          yield* fs.exists(
+            path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+          ),
         ).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -1148,14 +1156,12 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-        );
-        yield* Effect.tryPromise(() =>
-          writeFile(
-            join(tempRoot.current, "supabase", "config.toml"),
-            ["[edge_runtime]", "deno_version = 3", ""].join("\n"),
-          ),
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(tempRoot.current, "supabase", "config.toml"),
+          ["[edge_runtime]", "deno_version = 3", ""].join("\n"),
         );
 
         const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
@@ -1239,14 +1245,12 @@ describe("functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(
-              join(tempRoot.current, "supabase", "config.toml"),
-              ["[edge_runtime]", "deno_version = 1", ""].join("\n"),
-            ),
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(tempRoot.current, "supabase", "config.toml"),
+            ["[edge_runtime]", "deno_version = 1", ""].join("\n"),
           );
 
           const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(
@@ -1291,14 +1295,12 @@ describe("functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(
-              join(tempRoot.current, "supabase", "config.toml"),
-              ["[edge_runtime]", "deno_version = 1", ""].join("\n"),
-            ),
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(tempRoot.current, "supabase", "config.toml"),
+            ["[edge_runtime]", "deno_version = 1", ""].join("\n"),
           );
 
           const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(
@@ -1348,6 +1350,8 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
@@ -1360,7 +1364,9 @@ describe("functions download", () => {
       // temp eszip is cleaned up even though the failure happened before
       // Docker ever ran.
       expect(
-        existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+        yield* fs.exists(
+          path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+        ),
       ).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -1393,6 +1399,8 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
         // Distinct from the self-describing `ensureDockerNetwork`/
@@ -1407,7 +1415,9 @@ describe("functions download", () => {
         );
         expect(child.spawned.some((spawned) => spawned.args[0] === "run")).toBe(true);
         expect(
-          existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+          yield* fs.exists(
+            path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+          ),
         ).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -1592,6 +1602,8 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         // `useDocker: false` forces the native server-side path, not the
         // Docker-unbundle one.
         const error = yield* functionsDownload({
@@ -1602,14 +1614,11 @@ describe("functions download", () => {
         expect(error).toBeInstanceOf(FunctionsApiStatusError);
         expect((error as FunctionsApiStatusError).status).toBe(500);
         expect((error as unknown as { writtenSoFar?: ReadonlyArray<string> }).writtenSoFar).toEqual(
-          [resolve(tempRoot.current, "supabase", "functions", "hello-world")],
+          [path.resolve(tempRoot.current, "supabase", "functions", "hello-world")],
         );
         expect(
-          yield* Effect.tryPromise(() =>
-            readFile(
-              join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
-              "utf8",
-            ),
+          yield* fs.readFileString(
+            path.join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
           ),
         ).toBe("console.log('legacy native')");
       }).pipe(Effect.provide(layer));
@@ -1801,11 +1810,12 @@ describe("functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(join(tempRoot.current, "supabase", "config.toml"), 'project_id = ""\n'),
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(tempRoot.current, "supabase", "config.toml"),
+            'project_id = ""\n',
           );
 
           const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(
@@ -1847,14 +1857,12 @@ describe("functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(
-              join(tempRoot.current, "supabase", "config.toml"),
-              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
-            ),
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(tempRoot.current, "supabase", "config.toml"),
+            ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
           );
 
           const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(
@@ -1898,9 +1906,6 @@ describe("functions download", () => {
           }),
         );
 
-        const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-        process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
-
         return Effect.gen(function* () {
           yield* functionsDownload({ ...baseFlags, useDocker: true });
 
@@ -1908,19 +1913,9 @@ describe("functions download", () => {
           expect(runCommand?.args.slice(-6)[0]).toBe(
             "public.ecr.aws/supabase/edge-runtime:v1.68.4",
           );
-        })
-          .pipe(Effect.provide(layer))
-          .pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (previous === undefined) {
-                  delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-                } else {
-                  process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
-                }
-              }),
-            ),
-          );
+        }).pipe(Effect.provide(layer), (body) =>
+          withEnvVar("SUPABASE_EDGE_RUNTIME_DENO_VERSION", "1", body),
+        );
       },
     );
 
@@ -1951,9 +1946,6 @@ describe("functions download", () => {
           }),
         );
 
-        const previous = process.env["SUPABASE_NETWORK_ID"];
-        process.env["SUPABASE_NETWORK_ID"] = "env-network";
-
         return Effect.gen(function* () {
           yield* functionsDownload({ ...baseFlags, useDocker: true });
 
@@ -1963,19 +1955,9 @@ describe("functions download", () => {
           });
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args).toContain("env-network");
-        })
-          .pipe(Effect.provide(layer))
-          .pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (previous === undefined) {
-                  delete process.env["SUPABASE_NETWORK_ID"];
-                } else {
-                  process.env["SUPABASE_NETWORK_ID"] = previous;
-                }
-              }),
-            ),
-          );
+        }).pipe(Effect.provide(layer), (body) =>
+          withEnvVar("SUPABASE_NETWORK_ID", "env-network", body),
+        );
       },
     );
 
@@ -2006,9 +1988,6 @@ describe("functions download", () => {
         }),
       );
 
-      const previous = process.env["SUPABASE_NETWORK_ID"];
-      process.env["SUPABASE_NETWORK_ID"] = "env-network";
-
       return Effect.gen(function* () {
         yield* functionsDownload({ ...baseFlags, useDocker: true });
 
@@ -2019,19 +1998,9 @@ describe("functions download", () => {
         const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
         expect(runCommand?.args).toContain("flag-network");
         expect(runCommand?.args).not.toContain("env-network");
-      })
-        .pipe(Effect.provide(layer))
-        .pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) {
-                delete process.env["SUPABASE_NETWORK_ID"];
-              } else {
-                process.env["SUPABASE_NETWORK_ID"] = previous;
-              }
-            }),
-          ),
-        );
+      }).pipe(Effect.provide(layer), (body) =>
+        withEnvVar("SUPABASE_NETWORK_ID", "env-network", body),
+      );
     });
 
     it.live(
@@ -2062,14 +2031,12 @@ describe("functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(
-              join(tempRoot.current, "supabase", ".env"),
-              "SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io\n",
-            ),
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(tempRoot.current, "supabase", ".env"),
+            "SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io\n",
           );
 
           yield* functionsDownload({ ...baseFlags, useDocker: true });
@@ -2083,7 +2050,15 @@ describe("functions download", () => {
               (spawned) => spawned.args[0] === "image" && spawned.args[1] === "inspect",
             ),
           ).toHaveLength(1);
-          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
+          const ambient = yield* Config.option(
+            Config.string("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
+          ).pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
+            ),
+          );
+          expect(Option.isNone(ambient)).toBe(true);
         }).pipe(Effect.provide(layer));
       },
     );

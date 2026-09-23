@@ -2384,6 +2384,14 @@
                   "type": "string",
                   "description": "Directory holding the compute's code, relative to the project root, when it\ndoes not live at `supabase/compute/<name>/`.",
                   "examples": ["packages/api"]
+                },
+                "exclude": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Patterns for paths to leave out of the uploaded build context, read the way\n`.gitignore` reads them: a pattern without `/` matches that name at any depth,\none with `/` is anchored at the compute's source directory, a trailing `/`\nmatches directories only, and `**` spans directories. Excluding a directory\nexcludes everything under it; re-inclusion (`!`) is not supported. Only the\npatterns recorded here are excluded, so a compute with no list uploads its source\ndirectory whole.",
+                  "examples": [["node_modules", ".env"]]
                 }
               },
               "additionalProperties": false
@@ -4891,6 +4899,14 @@
                                 "type": "string",
                                 "description": "Directory holding the compute's code, relative to the project root, when it\ndoes not live at `supabase/compute/<name>/`.",
                                 "examples": ["packages/api"]
+                              },
+                              "exclude": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "Patterns for paths to leave out of the uploaded build context, read the way\n`.gitignore` reads them: a pattern without `/` matches that name at any depth,\none with `/` is anchored at the compute's source directory, a trailing `/`\nmatches directories only, and `**` spans directories. Excluding a directory\nexcludes everything under it; re-inclusion (`!`) is not supported. Only the\npatterns recorded here are excluded, so a compute with no list uploads its source\ndirectory whole.",
+                                "examples": [["node_modules", ".env"]]
                               }
                             },
                             "additionalProperties": false
