@@ -15,6 +15,7 @@ describe("compute schema", () => {
         exposure: "private",
         instances: 3,
         source: "packages/api",
+        exclude: ["node_modules", ".env"],
       },
     };
     expect(decode(every)).toEqual(every);
@@ -40,6 +41,25 @@ describe("compute schema", () => {
 
   test("decodes a compute table with no dials set", () => {
     expect(decode({ api: {} })).toEqual({ api: {} });
+  });
+
+  test("decodes exclude patterns in the order they were written", () => {
+    expect(decode({ api: { exclude: ["dist/", "**/*.log"] } })).toEqual({
+      api: { exclude: ["dist/", "**/*.log"] },
+    });
+  });
+
+  test("accepts an empty exclude list as excluding nothing", () => {
+    expect(decode({ api: { exclude: [] } })).toEqual({ api: { exclude: [] } });
+  });
+
+  // Patterns reach the CLI verbatim so `push` can name the one it cannot read; the schema's
+  // job is only to establish that the key holds a list of strings at all.
+  test.each([
+    ["a bare string", "node_modules"],
+    ["a non-string entry", [1]],
+  ])("rejects %s as an exclude list", (_label, exclude) => {
+    expect(() => decode({ api: { exclude } })).toThrow();
   });
 
   test("rejects a non-numeric instance count", () => {
@@ -71,6 +91,16 @@ describe("compute schema", () => {
     expect(computeSchema?.properties?.exposure).toBeDefined();
     expect(computeSchema?.properties?.instances).toBeDefined();
     expect(computeSchema?.properties?.source).toBeDefined();
+    expect(computeSchema?.properties?.exclude).toBeDefined();
+  });
+
+  test("types exclude as an array of strings in the generated JSON schema", () => {
+    const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(compute).schema));
+    const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");
+    const computeSchema = objectSchema?.patternProperties?.[computeNamePattern];
+
+    expect(computeSchema?.properties?.exclude?.type).toBe("array");
+    expect(computeSchema?.properties?.exclude?.items?.type).toBe("string");
   });
 
   test("bounds instances as a non-negative integer in the generated JSON schema", () => {
