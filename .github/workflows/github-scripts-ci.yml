@@ -9,7 +9,6 @@ on:
   pull_request:
     paths:
       - ".github/scripts/**"
-      - "packages/stack/src/Artifacts.ts"
       - ".github/workflows/ai-review.yml"
       - ".github/workflows/github-scripts-ci.yml"
       - ".github/workflows/mirror-slim-image.yml"
