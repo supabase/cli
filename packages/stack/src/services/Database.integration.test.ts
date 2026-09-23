@@ -3,6 +3,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Deferred, Effect, FileSystem, Layer, Path, Redacted, Ref, Stream } from "effect";
 import { tmpdir } from "node:os";
+import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeService } from "../Service.ts";
 import { makeDatabase, type BackendEndpoint, type DatabaseConfig } from "./Database.ts";
 
@@ -50,6 +51,7 @@ describe("database component", { timeout: 180_000 }, () => {
         Effect.scoped(
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
             const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-default-key-" });
             const recipe = yield* makeDatabase({
               stackId: "default-key-test",
@@ -71,6 +73,9 @@ describe("database component", { timeout: 180_000 }, () => {
             });
             yield* service.start;
             yield* service.ready;
+            expect(yield* fs.readFileString(path.join(root, "database", "pgsodium_root.key"))).toBe(
+              DEFAULT_POSTGRES_ROOT_KEY,
+            );
             const endpoint = yield* recipe.endpoint;
             yield* query(
               endpoint,
@@ -115,7 +120,7 @@ describe("database component", { timeout: 180_000 }, () => {
               });
               const secondService = yield* makeService(second.definition, {
                 id: "database-second",
-                config: defaults,
+                config: { ...defaults, rootKey: Redacted.make("b".repeat(64)) },
               });
               yield* secondService.start;
               yield* secondService.ready;

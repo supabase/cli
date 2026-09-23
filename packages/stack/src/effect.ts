@@ -1,4 +1,16 @@
-import { Crypto, Deferred, Effect, Fiber, Layer, Match, Ref, Scope, Schema, Stream } from "effect";
+import {
+  Crypto,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Match,
+  Redacted,
+  Ref,
+  Scope,
+  Schema,
+  Stream,
+} from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
@@ -15,19 +27,47 @@ import {
   type Definition,
   type Observation,
 } from "./Rpc.ts";
-import { ServiceCreation } from "./services/Catalog.ts";
+import {
+  ServiceCreation as ServiceCreationSchema,
+  type ServiceCreation,
+} from "./services/Catalog.ts";
 import type { DatabaseSnapshot } from "./services/DatabaseSnapshot.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { PgProveOptions, PostgresTool } from "./Tools.ts";
+import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.ts";
+
+export { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.ts";
 
 export { postgres } from "./Tools.ts";
 export { StackError } from "./Rpc.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
+type DatabaseCreation = Extract<ServiceCreation, { service: "database" }>;
+/** Service configuration accepted before database defaults are applied. */
+export type ServiceCreationInput =
+  | Exclude<ServiceCreation, DatabaseCreation>
+  | (Omit<DatabaseCreation, "config"> & {
+      readonly config: Omit<DatabaseCreation["config"], "jwtSecret" | "rootKey"> & {
+        readonly jwtSecret?: DatabaseCreation["config"]["jwtSecret"];
+        readonly rootKey?: DatabaseCreation["config"]["rootKey"];
+      };
+    });
 export type { CompositionConfig } from "./Orchestrator.ts";
 export type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
 export type { Observation } from "./Rpc.ts";
 export type { DatabaseSnapshot } from "./services/DatabaseSnapshot.ts";
 export type { PgProveOptions } from "./Tools.ts";
+
+const normalizeCreation = (creation: ServiceCreationInput): ServiceCreation =>
+  creation.service === "database"
+    ? {
+        ...creation,
+        config: {
+          ...creation.config,
+          jwtSecret: creation.config.jwtSecret ?? Redacted.make(DEFAULT_LOCAL_JWT_SECRET),
+          rootKey: creation.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
+        },
+      }
+    : creation;
 
 const stateFor = (root: string) => State.Service.pipe(Effect.provide(State.layer({ root })));
 
@@ -60,6 +100,31 @@ const failure = (operation: string, cause: unknown): StackError =>
       });
 
 type Kind = ServiceCreation["service"];
+type ServiceCreationRestartInput<K extends Kind> = Pick<
+  K extends "database"
+    ? Extract<ServiceCreationInput, { service: "database" }>
+    : Extract<ServiceCreation, { service: K }>,
+  "config"
+>;
+const normalizeRestart = (service: Kind, config: unknown): unknown => {
+  if (service !== "database" || typeof config !== "object" || config === null) {
+    return { service, config };
+  }
+  return {
+    service,
+    config: {
+      ...config,
+      jwtSecret:
+        "jwtSecret" in config && config.jwtSecret !== undefined
+          ? config.jwtSecret
+          : Redacted.make(DEFAULT_LOCAL_JWT_SECRET),
+      rootKey:
+        "rootKey" in config && config.rootKey !== undefined
+          ? config.rootKey
+          : Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
+    },
+  };
+};
 /** An individually identified service controlled through the owner. */
 export interface ServiceInstance<K extends Kind = Kind> {
   readonly id: string;
@@ -67,9 +132,7 @@ export interface ServiceInstance<K extends Kind = Kind> {
   readonly start: Effect.Effect<void, StackError>;
   readonly ready: Effect.Effect<void, StackError>;
   readonly stop: Effect.Effect<void, StackError>;
-  readonly restart: (
-    input?: Pick<Extract<ServiceCreation, { service: K }>, "config">,
-  ) => Effect.Effect<void, StackError>;
+  readonly restart: (input?: ServiceCreationRestartInput<K>) => Effect.Effect<void, StackError>;
   readonly destroy: Effect.Effect<void, StackError>;
   readonly prepare: Effect.Effect<void, StackError>;
   readonly status: Effect.Effect<Observation, StackError>;
@@ -107,7 +170,7 @@ export interface ToolOptions<E, R> {
 export interface Stack {
   readonly id: string;
   readonly services: {
-    readonly create: <Input extends ServiceCreation>(
+    readonly create: <Input extends ServiceCreationInput>(
       creation: Input,
     ) => Effect.Effect<ServiceInstances[Input["service"]], StackError>;
     readonly get: (id: string) => Effect.Effect<AnyInstance, StackError>;
@@ -115,7 +178,7 @@ export interface Stack {
   };
   readonly composition: {
     readonly supabase: (
-      services: ReadonlyArray<ServiceCreation>,
+      services: ReadonlyArray<ServiceCreationInput>,
       options?: SupabaseCompositionOptions,
     ) => Effect.Effect<ReadonlyArray<AnyInstance>, StackError>;
     readonly configure: (config: Orchestrator.CompositionConfig) => Effect.Effect<void, StackError>;
@@ -204,7 +267,9 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     restart: (input) =>
       input === undefined
         ? call("restart", (rpc) => rpc.restartService({ id }))
-        : Schema.decodeUnknownEffect(ServiceCreation)({ service, config: input.config }).pipe(
+        : Schema.decodeUnknownEffect(ServiceCreationSchema)(
+            normalizeRestart(service, input.config),
+          ).pipe(
             Effect.mapError((cause) => failure("restart", cause)),
             Effect.flatMap((creation) =>
               call("restart", (rpc) => rpc.restartService({ id, config: creation })),
@@ -260,11 +325,13 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         return common(id, "pooler");
     }
   }
-  function create<Input extends ServiceCreation>(
+  function create<Input extends ServiceCreationInput>(
     creation: Input,
   ): Effect.Effect<ServiceInstances[Input["service"]], StackError>;
-  function create(creation: ServiceCreation): Effect.Effect<AnyInstance, StackError> {
-    return call("createService", (rpc) => rpc.createService(creation)).pipe(Effect.map(instance));
+  function create(creation: ServiceCreationInput): Effect.Effect<AnyInstance, StackError> {
+    return call("createService", (rpc) => rpc.createService(normalizeCreation(creation))).pipe(
+      Effect.map(instance),
+    );
   }
   const run = Effect.fn("Stack.runTool")(function* <E, R>(
     tool: PostgresTool,
@@ -349,7 +416,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   const definitions = savedDefinition.pipe(
     Effect.flatMap((current) =>
       Effect.forEach(current.instances, (entry) =>
-        Schema.decodeUnknownEffect(Schema.toCodecJson(ServiceCreation))(entry.creation).pipe(
+        Schema.decodeUnknownEffect(Schema.toCodecJson(ServiceCreationSchema))(entry.creation).pipe(
           Effect.map((creation) => ({ id: entry.id, creation })),
           Effect.mapError((cause) => failure("definition", cause)),
         ),
@@ -372,10 +439,13 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       list: definitions.pipe(Effect.map((entries) => entries.map(instance))),
     },
     composition: {
-      supabase: (services: ReadonlyArray<ServiceCreation>, options?: SupabaseCompositionOptions) =>
+      supabase: (
+        services: ReadonlyArray<ServiceCreationInput>,
+        options?: SupabaseCompositionOptions,
+      ) =>
         call("supabaseComposition", (rpc) =>
           rpc.supabaseComposition({
-            services,
+            services: services.map(normalizeCreation),
             ...(options?.reuseIds === undefined ? {} : { reuseIds: options.reuseIds }),
           }),
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
