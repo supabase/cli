@@ -14,12 +14,15 @@ const SQL = `-- Indexes whose sort order may no longer match the current collati
 --          Each named collation carries its own recorded version
 --          (pg_collation.collversion), compared against the live ICU library.
 --
--- A column's attcollation points at exactly one pg_collation row, so an index
--- appears in at most one branch. When nothing has drifted both branches are
+-- Each index key column has exactly one effective collation
+-- (pg_index.indcollation), so an index appears in at most one branch. When nothing has drifted both branches are
 -- empty and the report renders its healthy state.
 --
--- Only btree indexes are considered: sort order is what a btree encodes, so
--- hash/GIN/GiST/BRIN indexes are unaffected by a collation change.
+-- Only btree indexes are considered — a scope choice, not a claim of
+-- immunity: btree is the direct-ordering case, by far the most common, and
+-- the only access method amcheck can verify. Other AMs can be affected in
+-- narrower cases (BRIN minmax bounds, GIN entry trees over text[], hash under
+-- nondeterministic ICU collations) and are out of scope; see the docs.
 WITH db_row AS MATERIALIZED (
   -- MATERIALIZED pins evaluation order: pg_database_collation_actual_version()
   -- is only called for a database that actually records a version (a C/POSIX
@@ -58,12 +61,12 @@ libc_affected AS (
   JOIN pg_namespace n ON n.oid = t.relnamespace
   JOIN pg_am am ON am.oid = i.relam
   -- indkey holds 0 for expression columns, which have no pg_attribute row.
-  JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord)
+  JOIN LATERAL unnest(ix.indkey, ix.indcollation) WITH ORDINALITY AS k(attnum, colloid, ord)
     ON k.attnum <> 0
   JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
   CROSS JOIN db_drift d
   WHERE am.amname = 'btree'
-    AND a.attcollation = (SELECT oid FROM default_collation)
+    AND k.colloid = (SELECT oid FROM default_collation)
     AND d.stored_version IS DISTINCT FROM d.current_version
     AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
     AND t.relkind IN ('r', 'p', 'm')
@@ -89,10 +92,10 @@ icu_affected AS (
   JOIN pg_class t ON t.oid = ix.indrelid
   JOIN pg_namespace n ON n.oid = t.relnamespace
   JOIN pg_am am ON am.oid = i.relam
-  JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord)
+  JOIN LATERAL unnest(ix.indkey, ix.indcollation) WITH ORDINALITY AS k(attnum, colloid, ord)
     ON k.attnum <> 0
   JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
-  JOIN pg_collation c ON c.oid = a.attcollation
+  JOIN pg_collation c ON c.oid = k.colloid
   JOIN pg_namespace cn ON cn.oid = c.collnamespace
   WHERE am.amname = 'btree'
     AND c.collprovider = 'i'
