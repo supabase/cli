@@ -9,7 +9,7 @@ import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { cleanupDockerRoot } from "../../tests/docker-cleanup.ts";
 
 const options = (root: string) => ({
-  stackId: "catalog-test",
+  stackId: "catalog-pooler",
   instanceId: "instance",
   root,
   cacheRoot: `${root}/cache`,

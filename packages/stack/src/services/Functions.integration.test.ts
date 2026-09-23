@@ -7,7 +7,7 @@ import { bundleServeMainTemplate } from "../../tests/serve-main-bundler.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 
 const options = (root: string) => ({
-  stackId: "catalog-test",
+  stackId: "catalog-functions",
   instanceId: "instance",
   root,
   cacheRoot: `${root}/cache`,

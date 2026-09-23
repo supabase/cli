@@ -8,7 +8,7 @@ import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-rela
 import { cleanupDockerRoot } from "../../tests/docker-cleanup.ts";
 
 const options = (root: string) => ({
-  stackId: "catalog-test",
+  stackId: "catalog-realtime",
   instanceId: "instance",
   root,
   cacheRoot: `${root}/cache`,
