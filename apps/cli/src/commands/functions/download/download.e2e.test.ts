@@ -1,5 +1,6 @@
-import { describe, expect, test } from "vitest";
-import { makeTempHome, runSupabase } from "../../../../tests/helpers/cli.ts";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect } from "effect";
+import { runSupabaseEffect, withTempHome } from "../../../../tests/helpers/cli.ts";
 
 // Argument-validation negatives for `functions download`, mirroring
 // `deploy.e2e.test.ts`. These fail before any network call, so no auth or
@@ -18,18 +19,24 @@ describe("supabase functions download — argument validation", () => {
   ] as const;
 
   for (const { name, flags } of conflicts) {
-    test(`rejects ${name} as mutually exclusive`, { timeout: E2E_TIMEOUT_MS }, async () => {
-      using home = makeTempHome();
-      const { exitCode, stderr } = await runSupabase(
-        ["functions", "download", SLUG, "--project-ref", FAKE_REF, ...flags],
-        {
-          home: home.dir,
-          env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
-        },
-      );
-      expect(exitCode).not.toBe(0);
-      expect(stderr).toMatch(/none of the others can be|mutually exclusive/i);
-    });
+    it.live(
+      `rejects ${name} as mutually exclusive`,
+      () =>
+        withTempHome((home) =>
+          Effect.gen(function* () {
+            const { exitCode, stderr } = yield* runSupabaseEffect(
+              ["functions", "download", SLUG, "--project-ref", FAKE_REF, ...flags],
+              {
+                home: home.dir,
+                env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
+              },
+            );
+            expect(exitCode).not.toBe(0);
+            expect(stderr).toMatch(/none of the others can be|mutually exclusive/i);
+          }),
+        ),
+      E2E_TIMEOUT_MS,
+    );
   }
 
   // `--use-api` alone (without --use-docker) is covered in
