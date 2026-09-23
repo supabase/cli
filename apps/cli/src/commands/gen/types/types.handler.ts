@@ -356,7 +356,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
       if (lang === "typescript") {
         yield* output.raw(
-          "Generated TypeScript is unformatted. Format the saved file with:\n  npx oxfmt database.types.ts\n",
+          "Generated TypeScript is unformatted. Format it with:\n  npx oxfmt <generated-file.ts>\n",
           "stderr",
         );
       }

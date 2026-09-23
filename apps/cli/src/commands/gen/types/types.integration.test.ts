@@ -2174,7 +2174,7 @@ describe("gen types", () => {
 
           expect(out.stderrText).toContain("Connecting to 127.0.0.1 54321");
           expect(out.stderrText).toContain(
-            "Generated TypeScript is unformatted. Format the saved file with:\n  npx oxfmt database.types.ts",
+            "Generated TypeScript is unformatted. Format it with:\n  npx oxfmt <generated-file.ts>",
           );
           expect(out.stdoutText).toContain("generated");
           expect(child.calls).toHaveLength(1);

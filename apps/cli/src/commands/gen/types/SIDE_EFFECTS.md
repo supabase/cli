@@ -112,7 +112,7 @@ Not applicable.
 
 ## Notes
 
-- TypeScript generated in-process is unformatted. stderr suggests `npx oxfmt database.types.ts`.
+- TypeScript generated in-process is unformatted. stderr suggests `npx oxfmt <generated-file.ts>`.
   `--linked` and `--project-id` TypeScript for a project still come from the Management API.
 - Exactly one of `--local`, `--linked`, `--project-id`, or `--db-url` must be specified.
   All four mutually exclusive flag groups are enforced with the exact error text and
