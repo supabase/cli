@@ -1464,6 +1464,7 @@ const streamContainerLogs = Effect.fnUntraced(function* (
         exitCode: attempt.exitCode,
         stderr: trimmedStderr,
         daemonDown: inspected.failure.daemonDown === true,
+        oomKilled: false,
       });
     }
     if (inspected.success.running) {
@@ -1477,6 +1478,7 @@ const streamContainerLogs = Effect.fnUntraced(function* (
       exitCode: attempt.exitCode,
       stderr: trimmedStderr,
       daemonDown: false,
+      oomKilled: inspected.success.oomKilled,
     });
   }
 });

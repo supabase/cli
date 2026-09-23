@@ -2662,6 +2662,35 @@ describe("functions serve integration", () => {
       },
     );
 
+    it.live(
+      "reports an out-of-memory kill when the log stream errors instead of ending cleanly",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 1, stderr: "docker logs connection reset" },
+          inspectStateBehavior(false, 137, true),
+        ]);
+
+        return Effect.gen(function* () {
+          yield* writeHelloFunction;
+
+          const { layer } = setupServe({ childSpawner });
+          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toBeInstanceOf(DockerLogsStreamError);
+          if (error instanceof DockerLogsStreamError) {
+            expect(error.oomKilled).toBe(true);
+            expect(error.daemonDown).toBe(false);
+            expect(error.suggestion).toBe(SUGGEST_CONTAINER_MEMORY_LIMIT);
+            expect(error[ErrorActionabilityId]).toEqual({
+              ...actionability.resourceLimit,
+              fingerprint_suffix: "out_of_memory",
+            });
+          }
+        });
+      },
+    );
+
     it.live("still fails when the edge runtime container never comes up", () => {
       deployMockState.runHandler = (command, args) => {
         if (command !== "docker") {

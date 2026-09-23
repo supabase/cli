@@ -119,6 +119,7 @@ describe("DockerLogsStreamError suggestion", () => {
       exitCode: 1,
       stderr: "Cannot connect to the Docker daemon",
       daemonDown: true,
+      oomKilled: false,
     });
     expect(error.suggestion).toBe(SUGGEST_DOCKER_START);
 
@@ -134,11 +135,29 @@ describe("DockerLogsStreamError suggestion", () => {
       exitCode: 1,
       stderr: "unexpected error",
       daemonDown: false,
+      oomKilled: false,
     });
     expect(error.suggestion).toBeUndefined();
 
     const result = classifyCliErrorActionability(error);
     expect(result.error_category).toBe("unknown");
+  });
+
+  it("surfaces the memory-limit remediation when the container was killed for exceeding its memory", () => {
+    const error = new DockerLogsStreamError({
+      message: "docker logs -f exited",
+      containerId: "abc123",
+      exitCode: 1,
+      stderr: "unexpected error",
+      daemonDown: false,
+      oomKilled: true,
+    });
+    expect(error.suggestion).toBe(SUGGEST_CONTAINER_MEMORY_LIMIT);
+
+    const result = classifyCliErrorActionability(error);
+    expect(result.error_kind).toBe(actionability.resourceLimit.error_kind);
+    expect(result.error_category).toBe(actionability.resourceLimit.error_category);
+    expect(result.error_fingerprint).toBe("tag:DockerLogsStreamError:out_of_memory");
   });
 });
 

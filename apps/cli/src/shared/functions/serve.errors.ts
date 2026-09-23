@@ -55,16 +55,25 @@ export class DockerLogsStreamError extends Data.TaggedError("DockerLogsStreamErr
    * follow-up inspect's own failure so consumers never inspect `stderr`/`message` text.
    */
   readonly daemonDown: boolean;
+  /**
+   * Whether the follow-up inspect found the container killed for exceeding its memory limit.
+   * False when that inspect failed and there is no container state to read.
+   */
+  readonly oomKilled: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.oomKilled) {
+      return { ...actionability.resourceLimit, fingerprint_suffix: "out_of_memory" };
+    }
     if (this.daemonDown) {
       return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
     }
     return actionability.unknown;
   }
 
-  /** Keeps the user-visible remediation in sync with the `dockerNotRunning` actionability above. */
+  /** Keeps the user-visible remediation in sync with the actionability above. */
   get suggestion(): string | undefined {
+    if (this.oomKilled) return SUGGEST_CONTAINER_MEMORY_LIMIT;
     return this.daemonDown ? SUGGEST_DOCKER_START : undefined;
   }
 }
