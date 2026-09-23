@@ -117,7 +117,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   pgmeta: definition(
     "pgmeta",
     "v0.99.0",
-    "ghcr.io/supabase/cli/pgmeta:v0.99.0@sha256:90de2dcf03ac548ae2d1d3e71b3cd10bde4c627572720a42e4c3946b7090292e",
+    "ghcr.io/supabase/cli/pgmeta:v0.99.0@sha256:4a49f779f78b66af42a20425d66b0cc3083ffe09fb42da05e62c9d771bc309b0",
     "bin/pgmeta",
   ),
   mail: definition("mailpit", "v1.30.2", "ghcr.io/supabase/cli/mailpit:v1.30.2", "bin/mailpit"),
