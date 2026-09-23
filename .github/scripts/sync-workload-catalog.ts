@@ -11,6 +11,10 @@
  * Run: `bun .github/scripts/sync-workload-catalog.ts` with SLIM_SERVICE,
  * SLIM_VERSION, SLIM_DIGEST. Exit 1 on an invalid payload; an unmodelled
  * service or release line is a successful no-op.
+ *
+ * `bun .github/scripts/sync-workload-catalog.ts carry <merge-base> <branch>`
+ * reapplies the pins the shared sync branch holds over its merge base, so one
+ * PR accumulates every pending release.
  */
 
 import {
@@ -45,6 +49,7 @@ export type CatalogUpdatePlan =
       readonly kind: "updated";
       readonly source: string;
       readonly previousVersion: string;
+      readonly previousImage: string;
       /** `default` bumped the entry's defaultVersion; `additional` bumped one of its extra lines. */
       readonly target: "default" | "additional";
     }
@@ -111,6 +116,7 @@ export function planCatalogUpdate(input: CatalogUpdateInput): CatalogUpdatePlan 
           `${prefix}${version}${mid}${desiredImage}${suffix}`,
       ),
       previousVersion: currentDefaultVersion,
+      previousImage: currentDefaultImage,
       target: "default",
     };
   }
@@ -134,8 +140,72 @@ export function planCatalogUpdate(input: CatalogUpdateInput): CatalogUpdatePlan 
       (_full, _key: string, separator: string) => `"${version}"${separator}"${desiredImage}"`,
     ),
     previousVersion: sameLine.version,
+    previousImage: sameLine.image,
     target: "additional",
   };
+}
+
+export interface CatalogPin {
+  readonly service: string;
+  readonly version: string;
+  readonly digest: string;
+}
+
+const PIN_PATTERN = new RegExp(
+  `"${escapeRegExp(SLIM_IMAGE_PREFIX)}([a-z][a-z0-9-]*):([A-Za-z0-9._-]+)@(sha256:[0-9a-f]{64})"`,
+  "g",
+);
+
+function pinsIn(source: string): ReadonlyArray<CatalogPin> {
+  return [...source.matchAll(PIN_PATTERN)].map((match) => ({
+    service: match[1] ?? "",
+    version: match[2] ?? "",
+    digest: match[3] ?? "",
+  }));
+}
+
+export interface CarryInput {
+  readonly source: string;
+  readonly mergeBase: string;
+  readonly branch: string;
+}
+
+export interface CarryResult {
+  readonly source: string;
+  readonly carried: ReadonlyArray<CatalogPin>;
+  /** Pins whose entry `source` moved since the merge base; `source` wins. */
+  readonly superseded: ReadonlyArray<CatalogPin>;
+}
+
+/** Applies the pins `branch` added over `mergeBase` onto `source`. */
+export function carryPins(input: CarryInput): CarryResult {
+  const baseRefs = new Set(pinsIn(input.mergeBase).map(slimRefOf));
+  const pending = pinsIn(input.branch).filter((pin) => !baseRefs.has(slimRefOf(pin)));
+
+  let source = input.source;
+  const carried: CatalogPin[] = [];
+  const superseded: CatalogPin[] = [];
+  for (const pin of pending) {
+    const onBase = planCatalogUpdate({ source: input.mergeBase, ...pin });
+    const onSource = planCatalogUpdate({ source, ...pin });
+    if (onSource.kind === "unchanged") continue;
+    if (
+      onBase.kind === "updated" &&
+      onSource.kind === "updated" &&
+      onSource.previousVersion === onBase.previousVersion &&
+      onSource.previousImage === onBase.previousImage
+    ) {
+      source = onSource.source;
+      carried.push(pin);
+    } else {
+      superseded.push(pin);
+    }
+  }
+  return { source, carried, superseded };
+}
+
+function slimRefOf(pin: CatalogPin): string {
+  return slimImageRef(pin.service, pin.version, pin.digest);
 }
 
 function requireEnv(name: string): string {
@@ -146,7 +216,32 @@ function requireEnv(name: string): string {
   return value.trim();
 }
 
-async function main(): Promise<void> {
+async function carry(mergeBasePath: string, branchPath: string): Promise<void> {
+  const result = carryPins({
+    source: await Bun.file(CATALOG_PATH).text(),
+    mergeBase: await Bun.file(mergeBasePath).text(),
+    branch: await Bun.file(branchPath).text(),
+  });
+  await Bun.write(CATALOG_PATH, result.source);
+  for (const pin of result.carried) {
+    console.log(`Carried pending ${pin.service} ${pin.version} (${pin.digest}).`);
+  }
+  for (const pin of result.superseded) {
+    console.log(
+      `::warning ::Dropped pending ${pin.service} ${pin.version}: develop changed that entry since the sync branch was cut.`,
+    );
+  }
+}
+
+async function main(argv: ReadonlyArray<string>): Promise<void> {
+  if (argv[0] === "carry") {
+    const [, mergeBasePath, branchPath] = argv;
+    if (mergeBasePath === undefined || branchPath === undefined) {
+      throw new Error("usage: sync-workload-catalog.ts carry <merge-base-file> <branch-file>");
+    }
+    return carry(mergeBasePath, branchPath);
+  }
+
   const service = requireEnv("SLIM_SERVICE");
   const version = requireEnv("SLIM_VERSION");
   const digest = requireEnv("SLIM_DIGEST");
@@ -176,7 +271,7 @@ async function main(): Promise<void> {
 }
 
 if (import.meta.main) {
-  main().catch((error: unknown) => {
+  main(process.argv.slice(2)).catch((error: unknown) => {
     console.log(`::error ::${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   });

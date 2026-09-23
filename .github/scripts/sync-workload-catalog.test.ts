@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   CATALOG_PATH,
   InvalidPayloadError,
+  carryPins,
   planCatalogUpdate,
   releaseLine,
   validatePayload,
@@ -247,6 +248,57 @@ describe("planCatalogUpdate", () => {
         digest: "sha256:not-a-digest",
       }),
     ).toThrow(InvalidPayloadError);
+  });
+});
+
+function pin(source: string, service: string, version: string, digest: string = DIGEST_A): string {
+  const plan = planCatalogUpdate({ source, service, version, digest });
+  if (plan.kind !== "updated")
+    throw new Error(`fixture pin ${service} ${version} was ${plan.kind}`);
+  return plan.source;
+}
+
+describe("carryPins", () => {
+  test("reapplies every pin the sync branch added onto a newer develop", () => {
+    const branch = pin(pin(fixture, "auth", "v2.197.0"), "postgrest", "v16.3");
+    const develop = pin(fixture, "studio", "2026.09.21-sha-512201d", DIGEST_B);
+
+    const result = carryPins({ source: develop, mergeBase: fixture, branch });
+
+    expect(result.carried.map((carried) => carried.service)).toEqual(["postgrest", "auth"]);
+    expect(result.superseded).toEqual([]);
+    expect(result.source).toContain(`"ghcr.io/supabase/cli/auth:v2.197.0@${DIGEST_A}"`);
+    expect(result.source).toContain(`"ghcr.io/supabase/cli/postgrest:v16.3@${DIGEST_A}"`);
+    expect(result.source).toContain(
+      `"ghcr.io/supabase/cli/studio:2026.09.21-sha-512201d@${DIGEST_B}"`,
+    );
+  });
+
+  test("carries a postgres pin onto the release line the branch moved", () => {
+    const branch = pin(fixture, "postgres", "15.14.1.175");
+
+    const result = carryPins({ source: fixture, mergeBase: fixture, branch });
+
+    expect(result.source).toContain(`"15.14.1.175"`);
+    expect(result.source).toContain(`"17.6.1.168"`);
+  });
+
+  test("keeps develop's entry when develop moved it after the branch was cut", () => {
+    const branch = pin(fixture, "auth", "v2.197.0");
+    const develop = pin(fixture, "auth", "v2.198.0", DIGEST_B);
+
+    const result = carryPins({ source: develop, mergeBase: fixture, branch });
+
+    expect(result.source).toBe(develop);
+    expect(result.superseded.map((dropped) => dropped.version)).toEqual(["v2.197.0"]);
+  });
+
+  test("a pin develop already merged is neither carried nor reported", () => {
+    const branch = pin(fixture, "auth", "v2.197.0");
+
+    const result = carryPins({ source: branch, mergeBase: fixture, branch });
+
+    expect(result).toEqual({ source: branch, carried: [], superseded: [] });
   });
 });
 

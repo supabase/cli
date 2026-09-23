@@ -8,8 +8,12 @@ name: Sync Stack Workload Catalog
 # Separate from `mirror-slim-image.yml` on purpose — that mirror runs against
 # the sender's 15-minute verification poll and must not be delayed or reddened
 # by a catalog PR. Opens a PR rather than pushing: `develop` is protected and a
-# version pin is reviewable. Re-dispatches are no-ops, so retries do not open
-# duplicate PRs.
+# version pin is reviewable.
+#
+# Every release lands on one shared branch and PR. Each run rebuilds the branch
+# as `develop` + the pins already pending on it + its own pin, and pushes with a
+# lease on the head it read, recomposing when a concurrent run for another
+# service moved it first. Re-dispatches are no-ops.
 
 on:
   repository_dispatch:
@@ -34,10 +38,20 @@ permissions:
   contents: read
 
 concurrency:
-  # Per service, so two releases of one service cannot race onto the shared
-  # branch. Not cancel-in-progress: a superseded run may already have opened it.
+  # Per service, so a newer release of one service supersedes its queued run.
+  # Runs for different services race on the shared branch; the push lease
+  # serializes them. Not cancel-in-progress: a run may be mid-push.
   group: sync-stack-workload-catalog-${{ github.event.client_payload.service || inputs.service }}
   cancel-in-progress: false
+
+env:
+  SYNC_BRANCH: sync/stack-workload-catalog
+  # Payload is untrusted; the script revalidates it. Passed via env, never
+  # interpolated into the shell. Extra payload fields such as natives[] are
+  # ignored here; this workflow pins the image digest only.
+  SLIM_SERVICE: ${{ github.event.client_payload.service || inputs.service }}
+  SLIM_VERSION: ${{ github.event.client_payload.version || inputs.version }}
+  SLIM_DIGEST: ${{ github.event.client_payload.digest || inputs.digest }}
 
 jobs:
   sync:
@@ -48,37 +62,41 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The merge base with the sync branch decides which of its pins are pending.
+          fetch-depth: 0
+          filter: blob:none
 
       - name: Setup
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      # Payload is untrusted; the script revalidates it. Passed via env, never
-      # interpolated into the shell. Extra payload fields such as natives[] are
-      # ignored here; this workflow pins the image digest only.
-      - name: Sync workload catalog
-        env:
-          SLIM_SERVICE: ${{ github.event.client_payload.service || inputs.service }}
-          SLIM_VERSION: ${{ github.event.client_payload.version || inputs.version }}
-          SLIM_DIGEST: ${{ github.event.client_payload.digest || inputs.digest }}
-        run: bun .github/scripts/sync-workload-catalog.ts
-
-      - name: Format catalog
-        run: pnpm run fmt:fix
+      - name: Compose workload catalog
+        id: compose
+        run: |
+          set -euo pipefail
+          base_sha=$(git rev-parse HEAD)
+          lease=$(BASE_SHA="$base_sha" bash .github/scripts/compose-workload-catalog.sh)
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "lease=$lease" >> "$GITHUB_OUTPUT"
 
       - name: Check for catalog changes
         id: check
+        env:
+          LEASE: ${{ steps.compose.outputs.lease }}
         run: |
           if git diff --exit-code --quiet packages/stack/src/Artifacts.ts; then
             echo "Workload catalog is already in sync."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$LEASE" ] && git diff --quiet "$LEASE" -- packages/stack/src/Artifacts.ts; then
+            echo "${SYNC_BRANCH} already carries this catalog."
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
             echo "Workload catalog updated."
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Prove the rewritten pin compiles and the affected catalog surfaces pass.
+      # Prove the rewritten pins compile and the affected catalog surfaces pass.
       - name: Type-check stack
         if: steps.check.outputs.has_changes == 'true'
         run: pnpm types:check
@@ -106,20 +124,71 @@ jobs:
           permission-pull-requests: write
           permission-contents: write
 
-      - name: Create Pull Request
+      # A retry recomposes onto the branch head another run pushed; those pins
+      # were validated by their own runs and the PR's CI covers the combination.
+      - name: Push sync branch
         if: steps.check.outputs.has_changes == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-          commit-message: "chore(stack): pin ${{ github.event.client_payload.service || inputs.service }} to ${{ github.event.client_payload.version || inputs.version }}"
-          title: "chore(stack): pin ${{ github.event.client_payload.service || inputs.service }} to ${{ github.event.client_payload.version || inputs.version }}"
-          body: |
-            Pins `packages/stack/src/Artifacts.ts` to the
-            `${{ github.event.client_payload.service || inputs.service }}` `${{ github.event.client_payload.version || inputs.version }}`
-            slim-services release and its image digest.
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          BASE_SHA: ${{ steps.compose.outputs.base_sha }}
+          LEASE: ${{ steps.compose.outputs.lease }}
+        run: |
+          set -euo pipefail
+          catalog=packages/stack/src/Artifacts.ts
+          bot="${APP_SLUG}[bot]"
+          bot_id=$(gh api "/users/${bot}" --jq .id)
+          git config user.name "$bot"
+          git config user.email "${bot_id}+${bot}@users.noreply.github.com"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
-            Opened from the `mirror-slim-image` dispatch. `artifactFor` derives the
-            native release tag, asset names, and URLs from service + version, so this
-            pin is the whole change.
-          branch: sync/stack-workload-catalog-${{ github.event.client_payload.service || inputs.service }}
-          base: develop
+          lease="$LEASE"
+          for attempt in 1 2 3 4 5; do
+            if [ "$attempt" -gt 1 ]; then
+              git reset --quiet "$BASE_SHA"
+              lease=$(bash .github/scripts/compose-workload-catalog.sh)
+            fi
+            if [ -n "$lease" ] && git diff --quiet "$lease" -- "$catalog"; then
+              echo "${SYNC_BRANCH} already carries this catalog."
+              exit 0
+            fi
+            pins=$(git diff "$BASE_SHA" -- "$catalog" \
+              | grep -oE '^\+.*"ghcr\.io/supabase/cli/[a-z0-9-]+:[A-Za-z0-9._-]+@' \
+              | sed -E 's|.*ghcr\.io/supabase/cli/([a-z0-9-]+):([^@]+)@|- \1 \2|' || true)
+            git commit --quiet -m "chore(stack): pin slim-services workloads" -m "$pins" -- "$catalog"
+            if git push --force-with-lease="refs/heads/${SYNC_BRANCH}:${lease}" "$remote" "HEAD:refs/heads/${SYNC_BRANCH}"; then
+              exit 0
+            fi
+            echo "::notice ::${SYNC_BRANCH} moved under attempt ${attempt}; recomposing."
+          done
+          echo "::error ::Could not push ${SYNC_BRANCH} after 5 attempts."
+          exit 1
+
+      - name: Open or update pull request
+        if: steps.check.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          existing() {
+            gh pr list --repo "$GITHUB_REPOSITORY" --head "$SYNC_BRANCH" --base develop \
+              --state open --json number --jq '.[0].number // empty'
+          }
+          if [ -n "$(existing)" ]; then
+            echo "PR #$(existing) already tracks ${SYNC_BRANCH}."
+            exit 0
+          fi
+          body=$(cat <<'EOF'
+          Pins `packages/stack/src/Artifacts.ts` to the latest slim-services releases
+          and their image digests. The commit message lists every pin in this PR.
+
+          Opened from the `mirror-slim-image` dispatch. Each new release rebuilds this
+          branch onto `develop` with all pending pins, so this PR stays the only one.
+          `artifactFor` derives the native release tag, asset names, and URLs from
+          service + version, so these pins are the whole change.
+          EOF
+          )
+          # A concurrent run may open the PR between the check and the create.
+          gh pr create --repo "$GITHUB_REPOSITORY" --base develop --head "$SYNC_BRANCH" \
+            --title "chore(stack): pin slim-services workloads" --body "$body" \
+            || [ -n "$(existing)" ]
