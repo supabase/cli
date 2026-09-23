@@ -145,18 +145,18 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
           ),
         ),
     );
-    const creations = yield* config
-      .creations(opened.value.stack.id)
-      .pipe(Effect.mapError((cause) => resetFailed(cause.message)));
-    // The `db start` overlay composes only the database, so configured services need schemas too;
-    // composed members stay included in case config disabled them after start.
-    const databaseServices = [
-      ...new Set(
-        [...creations, ...members].flatMap(({ service }) =>
-          service === "auth" || service === "storage" || service === "realtime" ? [service] : [],
-        ),
-      ),
-    ];
+    const composed = members.flatMap((member) =>
+      member.service === "auth" || member.service === "storage" || member.service === "realtime"
+        ? [member.service]
+        : [],
+    );
+    // A database-only composition is the `db start` overlay, which provisions schemas from config;
+    // a full stack keeps its saved members so `stack start --exclude` choices hold.
+    const databaseServices = members.every((member) => member.service === "database")
+      ? (["auth", "realtime", "storage"] as const).filter(
+          (service) => config.source[service].enabled,
+        )
+      : composed;
     yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
     yield* opened.value.stack.composition.stop.pipe(
       Effect.mapError((cause) => resetFailed(`failed to stop local stack: ${cause.message}`)),

@@ -1172,7 +1172,7 @@ describe("db reset", () => {
         expect(stackApi.resetCalls).toBe(1);
         expect(stackApi.stopCalls).toBe(1);
         expect(stackApi.startCalls).toBe(2);
-        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "realtime", "storage"]);
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "storage", "realtime"]);
         expect(catalogApplied[0]?.target.jwtSecret).toBe(RESET_JWT);
         expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
           false,
@@ -1192,7 +1192,21 @@ describe("db reset", () => {
       });
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "realtime", "storage"]);
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "storage", "realtime"]);
+      });
+    });
+
+    it.live("keeps a service excluded from the saved stack out of schema provisioning", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackStorageState: "disabled",
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "realtime"]);
       });
     });
 
