@@ -10,6 +10,7 @@ import {
   Fiber,
   FileSystem,
   Option,
+  Path,
   Ref,
   Sink,
   Stream,
@@ -137,38 +138,44 @@ describe("container process adapter", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("labels managed containers with the active host generation", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const crypto = yield* Crypto.Crypto;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "container-generation-" });
-        const stackId = `container-generation-${yield* crypto.randomUUIDv4}`;
-        const sentinel = yield* ContainerSentinel.start({
-          directory: root,
-          stackId,
-          engine: "docker",
-        });
-        if (sentinel === undefined)
-          return yield* new ContainerTestError({ message: "Unix sentinel was not started" });
-        const runtime = yield* makeContainerRuntime({ engine: "docker" }).pipe(
-          Effect.provideService(ContainerSentinel.Service, { owner: sentinel.owner }),
-        );
-        yield* runtime.prepare(image);
-        const process = yield* runtime.launch({
-          image,
-          stackId,
-          instanceId: "generation-label",
-          env: {},
-          args: ["-e", "setInterval(() => {}, 1000)"],
-        });
-        const label = yield* inspectLabel(process.id, "com.supabase.host-generation");
-        expect(label).toBe(sentinel.owner.generation);
-        yield* process.stop;
-        yield* process.remove;
-        yield* sentinel.close;
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+  it.live.skipIf(process.platform === "win32")(
+    "labels managed containers with the active host generation",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const crypto = yield* Crypto.Crypto;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "container-generation-" });
+          const stackRoot = path.join(root, "stack");
+          yield* fs.makeDirectory(stackRoot);
+          const stackId = `container-generation-${yield* crypto.randomUUIDv4}`;
+          const sentinel = yield* ContainerSentinel.start({
+            directory: stackRoot,
+            stackId,
+            engine: "docker",
+          });
+          if (sentinel === undefined)
+            return yield* new ContainerTestError({ message: "Unix sentinel was not started" });
+          const runtime = yield* makeContainerRuntime({ engine: "docker" }).pipe(
+            Effect.provideService(ContainerSentinel.Service, { owner: sentinel.owner }),
+          );
+          yield* runtime.prepare(image);
+          const process = yield* runtime.launch({
+            image,
+            stackId,
+            instanceId: "generation-label",
+            env: {},
+            args: ["-e", "setInterval(() => {}, 1000)"],
+          });
+          const label = yield* inspectLabel(process.id, "com.supabase.host-generation");
+          expect(label).toBe(sentinel.owner.generation);
+          yield* process.stop;
+          yield* process.remove;
+          expect(yield* exists(process.id)).toBe(false);
+          yield* sentinel.close;
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live(
