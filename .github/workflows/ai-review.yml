@@ -308,7 +308,7 @@ jobs:
           output-schema-file: /tmp/ai-review/findings.schema.json
           output-file: /tmp/ai-review/codex-findings.json
           # 0.156.1 is the first stable CLI whose model catalog carries gpt-6-sol.
-          codex-version: "0.156.1"
+          codex-version: &codex-cli-version "0.156.1"
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
@@ -449,8 +449,8 @@ jobs:
       # `working-directory` is the workspace root so Codex's cwd holds no untrusted AGENTS.md/
       # config; it reads the PR from `pr/` and executes nothing from it.
       - name: Run Codex adjudication
-        # Same v1.11 pin as codex-review's step above (see its comment for the full rationale);
-        # YAML-aliased so the SHA only needs to change in one place.
+        # Same v1.11 action pin and Codex CLI version as codex-review's step above (see its
+        # comments for the rationale); both are YAML-aliased so each changes in one place only.
         uses: *codex-action-pin
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -459,7 +459,7 @@ jobs:
           effort: high
           output-schema-file: /tmp/ai-review/merged-review.schema.json
           output-file: /tmp/ai-review/merged-review.json
-          codex-version: "0.156.1"
+          codex-version: *codex-cli-version
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
