@@ -1,7 +1,11 @@
-import { Effect, type FileSystem, type Path } from "effect";
+import { Effect, type FileSystem, Match, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
-import { expandEnv, loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
+import {
+  configEnvOption,
+  envRefName,
+  loadProjectEnv,
+} from "../../../command-internal/db-config.toml-read.ts";
 import type { InspectRule } from "./report.rules.ts";
 
 type RawDoc = { readonly [key: string]: unknown };
@@ -42,28 +46,28 @@ export const readInspectRules = Effect.fnUntraced(function* (
   const content = yield* fs.readFileString(configPath).pipe(
     Effect.map((text): string | undefined => text),
     Effect.catchTag("PlatformError", (error) =>
-      error.reason._tag === "NotFound"
-        ? Effect.succeed(undefined)
-        : Effect.fail(
+      Match.value(error.reason).pipe(
+        Match.tag("NotFound", () => Effect.void),
+        Match.orElse(() =>
+          Effect.fail(
             new DbConfigLoadError({
               message: `failed to read file config: ${error.message}`,
             }),
           ),
+        ),
+      ),
     ),
   );
 
   if (content === undefined) return [] as ReadonlyArray<InspectRule>;
 
-  let doc: RawDoc | undefined;
-  try {
-    doc = asRecord(SmolToml.parse(content));
-  } catch (cause) {
-    return yield* Effect.fail(
+  const doc = yield* Effect.try({
+    try: () => asRecord(SmolToml.parse(content)),
+    catch: (cause) =>
       new DbConfigLoadError({
         message: `failed to load config: ${cause instanceof Error ? cause.message : String(cause)}`,
       }),
-    );
-  }
+  });
 
   const inspect = asRecord(asRecord(doc?.["experimental"])?.["inspect"]);
   const rawRules = inspect?.["rules"];
@@ -87,41 +91,41 @@ export const readInspectRules = Effect.fnUntraced(function* (
   const RULE_FIELDS = ["query", "name", "pass", "fail"] as const;
 
   const projectEnv = yield* loadProjectEnv(fs, path, workdir);
-  const lookup = (name: string): string | undefined => process.env[name] ?? projectEnv[name];
+  const expandEnv = Effect.fnUntraced(function* (value: string) {
+    const name = envRefName(value);
+    if (name === undefined) return value;
+    const fromEnv = yield* configEnvOption(name);
+    const resolved = Option.getOrElse(fromEnv, () => projectEnv[name]);
+    return resolved !== undefined && resolved.length > 0 ? resolved : value;
+  });
 
   const rules: Array<InspectRule> = [];
   for (let index = 0; index < entries.length; index++) {
     const record = asRecord(entries[index]);
     // Rejects a non-table entry (e.g. `rules = ["foo"]`) instead of silently skipping it.
     if (record === undefined) {
-      return yield* Effect.fail(
-        new DbConfigLoadError({
-          message: `failed to load config: experimental.inspect.rules[${index}] expected a map or struct`,
-        }),
-      );
+      return yield* new DbConfigLoadError({
+        message: `failed to load config: experimental.inspect.rules[${index}] expected a map or struct`,
+      });
     }
     // An unknown or misspelled key aborts the whole load instead of being ignored.
     const unknownKeys = Object.keys(record).filter(
       (key) => !(RULE_FIELDS as ReadonlyArray<string>).includes(key),
     );
     if (unknownKeys.length > 0) {
-      return yield* Effect.fail(
-        new DbConfigLoadError({
-          message: `failed to load config: experimental.inspect.rules[${index}] has invalid keys: ${unknownKeys.join(", ")}`,
-        }),
-      );
+      return yield* new DbConfigLoadError({
+        message: `failed to load config: experimental.inspect.rules[${index}] has invalid keys: ${unknownKeys.join(", ")}`,
+      });
     }
     const fields: Record<string, string> = {};
     for (const field of RULE_FIELDS) {
       const coerced = coerceRuleField(record[field]);
       if (coerced === undefined) {
-        return yield* Effect.fail(
-          new DbConfigLoadError({
-            message: `failed to load config: experimental.inspect.rules[${index}].${field} expected a string`,
-          }),
-        );
+        return yield* new DbConfigLoadError({
+          message: `failed to load config: experimental.inspect.rules[${index}].${field} expected a string`,
+        });
       }
-      fields[field] = expandEnv(coerced, lookup);
+      fields[field] = yield* expandEnv(coerced);
     }
     rules.push({
       query: fields["query"]!,

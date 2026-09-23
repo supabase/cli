@@ -298,6 +298,7 @@ ImagePrepullError
 InitConfigExistsError
 InitExperimentalRequiredError
 InitParseSettingsError
+InspectCsvqError
 InspectMutuallyExclusiveFlagsError
 InspectReportMkdirError
 InspectReportWriteError
