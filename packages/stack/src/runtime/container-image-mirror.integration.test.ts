@@ -8,8 +8,9 @@ const primary = "ghcr.io/supabase/cli/postgrest:v16.2";
 const mirror = "public.ecr.aws/supabase/cli/postgrest:v16.2";
 const secondMirror = "registry.test/supabase/cli/postgrest:v16.2";
 
-/** Docker stand-in: `image ls` reports `local`, `pull` succeeds for `pullable`, `create` refuses. */
+/** Docker stand-in: `image inspect` reports `local`, `pull` succeeds for `pullable`, `create` refuses. */
 const fakeEngine = (options: { readonly pullable: ReadonlyArray<string> }) => {
+  const pullable = new Set(options.pullable);
   const local = new Set<string>();
   const commands: string[][] = [];
   const handle = (exitCode: number, stdout = "", stderr = "") =>
@@ -33,7 +34,7 @@ const fakeEngine = (options: { readonly pullable: ReadonlyArray<string> }) => {
     const ref = args.at(-1) ?? "";
     if (args[0] === "image") return Effect.succeed(handle(0, local.has(ref) ? "sha256:1" : ""));
     if (args[0] === "pull") {
-      if (!options.pullable.includes(ref)) return Effect.succeed(handle(1, "", `denied: ${ref}`));
+      if (!pullable.has(ref)) return Effect.succeed(handle(1, "", `denied: ${ref}`));
       local.add(ref);
       return Effect.succeed(handle(0));
     }
@@ -41,6 +42,8 @@ const fakeEngine = (options: { readonly pullable: ReadonlyArray<string> }) => {
   });
   return {
     commands,
+    pullable,
+    local,
     layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
   };
 };
@@ -83,6 +86,38 @@ describe("container image mirror", () => {
         ["pull", secondMirror],
       ]);
       expect(engine.commands.find((args) => args[0] === "create")?.at(-1)).toBe(secondMirror);
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+  });
+
+  it.live("launches the primary again once it pulls after an earlier mirror rescue", () => {
+    const engine = fakeEngine({ pullable: [mirror] });
+    return Effect.gen(function* () {
+      const runtime = yield* makeContainerRuntime({
+        engine: "docker",
+        imageMirrors: (image) => (image === primary ? [mirror] : []),
+      });
+      yield* runtime.prepare(primary);
+      engine.local.delete(mirror);
+      engine.pullable.add(primary);
+      yield* runtime.prepare(primary);
+      yield* launchImage(runtime);
+      expect(engine.commands.find((args) => args[0] === "create")?.at(-1)).toBe(primary);
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+  });
+
+  it.live("launches the primary again once it is present after an earlier mirror rescue", () => {
+    const engine = fakeEngine({ pullable: [mirror] });
+    return Effect.gen(function* () {
+      const runtime = yield* makeContainerRuntime({
+        engine: "docker",
+        imageMirrors: (image) => (image === primary ? [mirror] : []),
+      });
+      yield* runtime.prepare(primary);
+      engine.local.delete(mirror);
+      engine.local.add(primary);
+      yield* runtime.prepare(primary);
+      yield* launchImage(runtime);
+      expect(engine.commands.find((args) => args[0] === "create")?.at(-1)).toBe(primary);
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
   });
 

@@ -179,9 +179,17 @@ export const makeContainerRuntime = (options: {
     };
 
     const prepare = Effect.fn("Container.prepare")(function* (image: string) {
-      if (yield* present(image)) return;
+      // A mirror chosen earlier may have been pruned since; launches follow the primary again.
+      const usePrimary = Ref.update(mirrored, (map) => {
+        if (!map.has(image)) return map;
+        const next = new Map(map);
+        next.delete(image);
+        return next;
+      });
+      if (yield* present(image)) return yield* usePrimary;
       const mirrors = options.imageMirrors?.(image) ?? [];
       yield* pull(image).pipe(
+        Effect.andThen(usePrimary),
         Effect.catch((primaryError) => fromMirror(image, mirrors, primaryError)),
       );
     });

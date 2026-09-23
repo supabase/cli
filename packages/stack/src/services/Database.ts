@@ -156,7 +156,8 @@ const stderrTailReady = (drained: Fiber.Fiber<void>) =>
     Effect.ignore,
   );
 
-const processExit = <E extends { readonly message: string }>(
+/** Settles a native PostgreSQL exit, waiting briefly after it for the stderr tail to drain. */
+export const processExit = <E extends { readonly message: string }>(
   exitCode: Effect.Effect<number, E>,
   stderr?: {
     readonly tail: Ref.Ref<string>;
@@ -165,9 +166,7 @@ const processExit = <E extends { readonly message: string }>(
 ): Effect.Effect<Exit.Exit<void, ServiceError>> =>
   (stderr === undefined
     ? exitCode
-    : Effect.all([exitCode, stderrTailReady(stderr.drained)], { concurrency: "unbounded" }).pipe(
-        Effect.map(([code]) => code),
-      )
+    : exitCode.pipe(Effect.tap(() => stderrTailReady(stderr.drained)))
   ).pipe(
     Effect.flatMap((code) =>
       Number(code) === 0
