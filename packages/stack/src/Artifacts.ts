@@ -123,8 +123,8 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   mail: definition("mailpit", "v1.30.2", "ghcr.io/supabase/cli/mailpit:v1.30.2", "bin/mailpit"),
   analytics: definition(
     "analytics",
-    "v1.50.9",
-    "ghcr.io/supabase/cli/analytics:v1.50.9@sha256:7db85cc6cb0cdeb4b71f2fadb49c0f9197bea0492daf7896f6ae69edad76d28e",
+    "v1.50.15",
+    "ghcr.io/supabase/cli/analytics:v1.50.15@sha256:3511b9ea06b7b65fa4c31d33fce626cc65ef4e3c33116aae864a5882fa5f7599",
     "bin/logflare",
     ["bin/logflare", "bin/prepare"],
   ),
