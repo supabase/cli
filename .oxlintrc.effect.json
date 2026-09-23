@@ -16,6 +16,7 @@
     "!apps/cli/src/commands/experimental/**",
     "!apps/cli/src/commands/feedback/**",
     "!apps/cli/src/commands/functions/**",
+    "!apps/cli/src/commands/gen/bearer-jwt/**",
     "!apps/cli/src/commands/init/**",
     "!apps/cli/src/commands/issue/**",
     "!apps/cli/src/commands/link/**",
