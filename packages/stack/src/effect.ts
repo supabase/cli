@@ -39,6 +39,7 @@ import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.
 export { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.ts";
 
 export { postgres } from "./Tools.ts";
+export { nativePostgresRootError } from "./services/Database.ts";
 export { StackError } from "./Rpc.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
 type DatabaseCreation = Extract<ServiceCreation, { service: "database" }>;

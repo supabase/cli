@@ -165,7 +165,8 @@ export const makeContainerRuntime = (options: {
         if (!(yield* present(mirror))) yield* pull(mirror);
         yield* Ref.update(mirrored, (map) => new Map(map).set(image, mirror));
       }).pipe(
-        Effect.tapError((cause) => Effect.logDebug(`Image mirror ${mirror} failed`, cause)),
+        Effect.tap(() => Effect.logInfo(`Pulled image from mirror ${mirror}`)),
+        Effect.tapError((cause) => Effect.logWarning(`Image mirror ${mirror} failed`, cause)),
         Effect.catch(() => fromMirror(image, rest, primaryError)),
       );
     };

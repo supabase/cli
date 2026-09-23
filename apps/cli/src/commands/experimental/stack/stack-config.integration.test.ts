@@ -172,6 +172,33 @@ major_version = 14
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("ignores unresolved experimental S3 env placeholders", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-s3-placeholder"
+[experimental]
+s3_host = "env(S3_HOST)"
+s3_region = "env(S3_REGION)"
+s3_access_key = "env(S3_ACCESS_KEY)"
+s3_secret_key = "env(S3_SECRET_KEY)"
+`);
+      const config = yield* load(root);
+      const services = yield* config.creations("stack-s3-placeholder");
+      expect(services.some((service) => service.service === "database")).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("still rejects an unresolved auth service role key", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-auth-key"
+[auth]
+service_role_key = "env(SUPABASE_AUTH_SERVICE_ROLE_KEY)"
+`);
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.service_role_key");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("rejects unsupported OrioleDB and experimental S3 settings", () =>
     Effect.gen(function* () {
       const orioledb = yield* project(`project_id = "stack-config-orioledb"

@@ -15,9 +15,12 @@ Publish each slim **image** to GHCR and AWS ECR Public (`public.ecr.aws/supabase
 
 `force=true` always requests the ECR copy, including when the image digest is unchanged (natives may have moved). The **image** destination digest gates `publish-release` once the dispatch token exists. Native ECR copy is best-effort (`continue-on-error`) and must not fail that release. Catalog sync consumes the image `service` / `version` / `digest` only; native tags ride in a separate `natives[]` payload field. Do not prune untagged GHCR or ECR manifests: already-shipped CLIs still pin old image digests until a catalog PR ships. Natives follow the moved tag immediately.
 
-ECR Public tags are always mutable; `ecr-public create-repository` has no immutability flag. Reuse the existing `PROD_AWS_ROLE` in `supabase/cli`. Do not add a public S3 bucket or a second cloud vendor for this cut.
+ECR Public tags are always mutable; `ecr-public create-repository` has no immutability flag. Reuse the existing `PROD_AWS_ROLE` in `supabase/cli`.
 
-Client fail-through (ordered GHCR / ECR / GitHub candidates in the CLI and stack) is out of scope here and lands in a follow-up PR.
+The two decisions below are superseded by the Follow-up, which is the behavior this repository now ships:
+
+- A public S3 bucket on `*.amazonaws.com` holds native archives for hosts that cannot reach GitHub Releases. It is not a checksum authority.
+- The stack falls through to that bucket for natives and to ECR Public for images. A fallback that also fails still reports the primary's original error.
 
 ## Follow-up
 
@@ -40,7 +43,7 @@ ECR Public mirroring already exists for other CLI images and needs no new vendor
 ## Alternatives considered
 
 1. **Google Artifact Registry / GCS** — blob host `storage.googleapis.com` is on at least one major sandbox Trusted list. Rejected for this cut: new company-wide vendor.
-2. **Public S3 bucket** — HTTPS GET on `*.amazonaws.com` can work without CloudFront. Rejected for this cut: new public bucket, IAM, and security review on `PROD_AWS_ROLE`.
+2. **Public S3 bucket** — HTTPS GET on `*.amazonaws.com` can work without CloudFront. Superseded by the Follow-up for native archives only. The bucket is not a checksum authority, and image pulls stay on GHCR and ECR Public.
 3. **npm packages** — allowlisted widely, but a published version cannot be replaced.
 4. **Docker Hub `supabase/cli-*`** — deferred; blob CDN is also off some default allowlists, and names collide with upstream `supabase/<service>`.
 5. **Unpin slim images** — would make old CLIs see a moved tag. Rejected: conflicts with ADR 0017.

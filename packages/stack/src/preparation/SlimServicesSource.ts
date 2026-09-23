@@ -224,10 +224,17 @@ const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* 
     });
 });
 
+const fallbackDetail = (error: PreparationError): string => {
+  const nested = error.cause instanceof PreparationError ? error.cause.message : undefined;
+  return nested === undefined || nested.length === 0
+    ? error.message
+    : `${error.message} (${nested})`;
+};
+
 /**
- * Runs `attempt` against each candidate until one succeeds. Fallback failures are not surfaced:
- * when every candidate fails, the error is the primary's. Mixing hosts across the checksum and
- * materialize phases is safe because an archive is only accepted when it hashes to the checksum.
+ * Runs `attempt` against each candidate until one succeeds. When every candidate fails, the
+ * returned error is still the primary's. A fallback failure, including a checksum mismatch, is
+ * logged as a warning, and a fallback that succeeds names the host it used.
  */
 const firstSuccess = <T, A, R>(
   candidates: readonly [T, ...ReadonlyArray<T>],
@@ -242,8 +249,11 @@ const firstSuccess = <T, A, R>(
     const [candidate, ...rest] = remaining;
     if (candidate === undefined) return Effect.fail(primaryError);
     return attempt(candidate).pipe(
+      Effect.tap(() => Effect.logInfo(`Slim-services used ${describe(candidate)}`)),
       Effect.tapError((cause) =>
-        Effect.logDebug(`Slim-services fallback ${describe(candidate)} failed`, cause),
+        Effect.logWarning(
+          `Slim-services fallback ${describe(candidate)} failed: ${fallbackDetail(cause)}`,
+        ),
       ),
       Effect.catch(() => fallback(primaryError, rest)),
     );

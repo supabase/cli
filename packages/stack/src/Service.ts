@@ -56,6 +56,7 @@ class ServiceNotStopped extends Data.TaggedError("ServiceNotStopped")<{
 export class ServiceStaleLaunch extends Data.TaggedError("ServiceStaleLaunch")<{
   readonly id: string;
   readonly launchId: number;
+  readonly message: string;
 }> {}
 
 /** The exact runtime resources owned by one service launch. */
@@ -551,6 +552,14 @@ export const makeService = <Config>(
       );
     });
 
+    const staleLaunch = (launchId: number, message: string) =>
+      new ServiceStaleLaunch({ id: options.id, launchId, message });
+    const diedBeforeReady = (launchId: number) =>
+      Effect.gen(function* () {
+        const error = (yield* SubscriptionRef.get(observations)).error;
+        if (error !== undefined) return yield* error;
+        return yield* staleLaunch(launchId, `Service ${options.id} stopped before it was ready`);
+      });
     const ready = Effect.fn("Service.ready")(function* () {
       const initial = yield* SubscriptionRef.get(observations);
       if (!initial.registered) return yield* new ServiceDestroyed({ id: options.id });
@@ -563,26 +572,26 @@ export const makeService = <Config>(
       }
       if (record === undefined) {
         if ((yield* Ref.get(revision)) !== expectedRevision)
-          return yield* new ServiceStaleLaunch({
-            id: options.id,
-            launchId: yield* Ref.get(launchCounter),
-          });
+          return yield* staleLaunch(
+            yield* Ref.get(launchCounter),
+            `Service ${options.id} changed before it was ready`,
+          );
         return yield* new ServiceNotRunning({ id: options.id });
       }
       const launchId = record.launchId;
       if ((yield* Ref.get(revision)) !== expectedRevision)
-        return yield* new ServiceStaleLaunch({ id: options.id, launchId });
+        return yield* staleLaunch(launchId, `Service ${options.id} changed before it was ready`);
       if (expectedLaunchId !== undefined && record.launchId !== expectedLaunchId)
-        return yield* new ServiceStaleLaunch({ id: options.id, launchId });
+        return yield* staleLaunch(launchId, `Service ${options.id} changed before it was ready`);
       if ((yield* SubscriptionRef.get(observations)).lifecycle === "stopping") {
-        return yield* new ServiceStaleLaunch({ id: options.id, launchId });
+        return yield* diedBeforeReady(launchId);
       }
       const healthResult = yield* Deferred.await(record.health);
       if (
         (yield* Ref.get(current)) !== record ||
         (yield* SubscriptionRef.get(observations)).lifecycle !== "running"
       ) {
-        return yield* new ServiceStaleLaunch({ id: options.id, launchId });
+        return yield* diedBeforeReady(launchId);
       }
       yield* healthResult;
     });
