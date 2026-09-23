@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest";
 import { ComputeSourceEscapingLinkError } from "./compute.errors.ts";
 import { compileComputeExclude } from "./compute-exclude.ts";
 import { formatBytes, packageComputeDirectory } from "./compute-package.ts";
+import { COMPUTE_RUNTIME_EXCLUSIONS } from "./compute-runtimes.ts";
 import { TarFieldOutOfRangeError, TarPathTooLongError } from "./tar.ts";
 
 /**
@@ -262,13 +263,13 @@ describe("packageComputeDirectory", () => {
 
     // The link is excluded before it is vetted, so excluding it is a real answer to the
     // hoisted-dependency failure rather than something that failure pre-empts.
-    it.live("excludes a symlink that would otherwise escape the build context", () =>
+    it.live("excludes a symlinked node_modules with the node runtime's defaults", () =>
       withTemp("supabase-compute-package-", (dir, fs, path) =>
         Effect.gen(function* () {
           yield* fs.writeFileString(path.join(dir, "index.js"), "x");
           yield* fs.symlink("../../elsewhere", path.join(dir, "node_modules"));
 
-          const result = yield* packExcluding(dir, ["node_modules"]);
+          const result = yield* packExcluding(dir, COMPUTE_RUNTIME_EXCLUSIONS.node);
 
           expect(readEntries(result.archive).map((entry) => entry.path)).toEqual(["index.js"]);
           expect(result.excludedCount).toBe(1);
