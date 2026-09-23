@@ -283,7 +283,9 @@ GenSigningKeyDecodeError
 GenSigningKeyGenerateError
 GenSigningKeyReadError
 GenSigningKeyWriteError
+GenTypesFlagUsageError
 GenTypesGenerationError
+GenTypesLocalDbNotRunningError
 GenTypesMissingProjectConfigError
 GenTypesNetworkError
 GenTypesNetworkIdUnsupportedError

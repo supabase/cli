@@ -12,15 +12,18 @@ import {
   pflagArgvScan,
 } from "../../../shared/cli/cobra-flag-groups.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import {
   ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/project-ref.service.ts";
 import { spawnContainerCli } from "../../../command-internal/container-cli.ts";
 import { isIPv6ConnectivityErrorCause } from "../../../command-internal/connect-errors.ts";
+import { isDockerDaemonUnreachable } from "../../../command-internal/docker-suggest.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import {
+  type DbConfigError,
+  DbConfigResolver,
+} from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
 import { poolerConfigFromConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
@@ -42,6 +45,8 @@ import {
 } from "../../../command-internal/pooler-fallback.ts";
 import type { GenTypesFlags } from "./types.command.ts";
 import {
+  GenTypesFlagUsageError,
+  GenTypesLocalDbNotRunningError,
   GenTypesMissingProjectConfigError,
   GenTypesNetworkError,
   GenTypesNetworkIdUnsupportedError,
@@ -139,7 +144,7 @@ const GEN_TYPES_SCAN_SPEC = {
   valueFlagShorthands: new Map([["s", "schema"], ...PERSISTENT_VALUE_FLAG_SHORTHANDS]),
 } as const;
 
-function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
+function collectByteStream<E>(stream: Stream.Stream<Uint8Array, E>) {
   const decoder = new TextDecoder();
   return Stream.runFold(
     stream,
@@ -257,17 +262,14 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       // before falling back to `config.toml`, so hardcoding `.toml` here would mislabel it.
       // Caught before `requireProjectConfigWhenExplicit`, since a parse failure is distinct
       // from the "no project here" case that guard handles.
-      Effect.catchTag(
-        "CliConfigParseError",
-        (cause) =>
+      Effect.catchTags({
+        CliConfigParseError: (cause) =>
           new GenTypesParseConfigError({
             message: `failed to parse ${toRelativeConfigPath(cause.path)}: ${String(cause.cause)}`,
           }),
-      ),
-      Effect.catchTag(
-        "DuplicateRemoteProjectIdError",
-        (cause) => new GenTypesParseConfigError({ message: cause.message }),
-      ),
+        DuplicateRemoteProjectIdError: (cause) =>
+          new GenTypesParseConfigError({ message: cause.message }),
+      }),
       Effect.flatMap(requireProjectConfigWhenExplicit),
     );
 
@@ -321,7 +323,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     readonly poolerFallback?: {
       readonly directHost: string;
       readonly eligible: boolean;
-      readonly resolve: Effect.Effect<Option.Option<PgConnInput>, unknown>;
+      readonly resolve: Effect.Effect<Option.Option<PgConnInput>, DbConfigError>;
     };
   }) =>
     Effect.gen(function* () {
@@ -430,7 +432,10 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         .pipe(Effect.catch(mapBranchDatabaseConfigError));
 
       if (branch.db_user === undefined || branch.db_pass === undefined) {
-        return yield* Effect.fail(new Error("Preview branch database credentials are unavailable"));
+        return yield* new GenTypesNetworkError({
+          message: "Preview branch database credentials are unavailable",
+          decode: true,
+        });
       }
       const branchUser = branch.db_user;
       const branchPassword = branch.db_pass;
@@ -496,15 +501,17 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         if (exitCode !== 0) {
           const message = stderr.trim();
           if (message.toLowerCase().includes("no such container")) {
-            return yield* Effect.fail(new Error("supabase start is not running."));
+            return yield* new GenTypesLocalDbNotRunningError({
+              message: "supabase start is not running.",
+            });
           }
-          return yield* Effect.fail(
-            new Error(
+          return yield* new GenTypesLocalDbNotRunningError({
+            message:
               message.length > 0
                 ? `failed to inspect service: ${message}`
                 : "failed to inspect service",
-            ),
-          );
+            daemonDown: isDockerDaemonUnreachable(message),
+          });
         }
       }),
     );
@@ -520,13 +527,11 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     // container. It is a persistent flag, so a pre-command occurrence (`supabase --network-id
     // net gen types ...`) lands in `prePathOccurrences`, not `occurrences` — check both.
     if (occurrences.has("network-id") || scan.prePathOccurrences.has("network-id")) {
-      return yield* Effect.fail(
-        new GenTypesNetworkIdUnsupportedError({
-          message:
-            "gen types now generates types in-process and cannot join a Docker network via " +
-            "--network-id; use a host-reachable --db-url instead.",
-        }),
-      );
+      return yield* new GenTypesNetworkIdUnsupportedError({
+        message:
+          "gen types now generates types in-process and cannot join a Docker network via " +
+          "--network-id; use a host-reachable --db-url instead.",
+      });
     }
 
     // This guard runs before flag-group validation, so its error wins when both apply. Both
@@ -535,9 +540,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     if (flags.postgrestV9Compat && Option.isNone(flags.dbUrl)) {
       // Established error text, including the "must used" typo — do not
       // "fix" the grammar.
-      return yield* Effect.fail(
-        new Error("--postgrest-v9-compat must used together with --db-url"),
-      );
+      return yield* new GenTypesFlagUsageError({
+        message: "--postgrest-v9-compat must used together with --db-url",
+      });
     }
     const positionalLang = findPositionalLanguage(rawArgs);
     if (
@@ -545,7 +550,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       positionalLang.value !== "typescript" &&
       !occurrences.has("lang")
     ) {
-      return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
+      return yield* new GenTypesFlagUsageError({
+        message: "use --lang flag to specify the typegen language",
+      });
     }
 
     // A flag counts as set once passed explicitly, regardless of value (`--linked=false`
@@ -563,7 +570,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     for (const group of GEN_TYPES_MUTEX_GROUPS) {
       const set = group.filter((flagName) => changedMutexFlags[flagName]);
       if (set.length > 1) {
-        return yield* Effect.fail(new Error(cobraMutuallyExclusiveErrorMessage(group, set)));
+        return yield* new GenTypesFlagUsageError({
+          message: cobraMutuallyExclusiveErrorMessage(group, set),
+        });
       }
     }
 
@@ -675,17 +684,15 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     }
 
     const resolvedRef = yield* projectRef.resolve(Option.none()).pipe(
-      Effect.catch((cause) => {
-        if (
-          cause instanceof ProjectRefNotLinkedError &&
+      Effect.catchTag("ProjectRefNotLinkedError", (cause) =>
+        Effect.fail(
           cause.message === PROJECT_NOT_LINKED_MESSAGE
-        ) {
-          return Effect.fail(
-            new Error("Must specify one of --local, --linked, --project-id, or --db-url"),
-          );
-        }
-        return Effect.fail(cause);
-      }),
+            ? new GenTypesFlagUsageError({
+                message: "Must specify one of --local, --linked, --project-id, or --db-url",
+              })
+            : cause,
+        ),
+      ),
     );
     const loaded = schemas.length > 0 ? null : yield* loadConfig(resolvedRef);
     yield* runProjectTypes(

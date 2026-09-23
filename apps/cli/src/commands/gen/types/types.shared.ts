@@ -1,4 +1,4 @@
-import { Config, Effect, Option } from "effect";
+import { Config, Effect, Option, Schema } from "effect";
 import { InvalidGenTypesDurationError } from "./types.errors.ts";
 import caProd2021 from "./templates/prod-ca-2021.ts";
 import caProd2025 from "./templates/prod-ca-2025.ts";
@@ -24,6 +24,8 @@ const DURATION_PART_PATTERN = new RegExp(
   "g",
 );
 
+const quoteDuration = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+
 export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
   return [...new Set(["public", ...extraSchemas])];
 }
@@ -34,11 +36,9 @@ export function parseQueryTimeoutMillis(
   return Effect.gen(function* () {
     const input = raw.trim();
     if (input.length === 0) {
-      return yield* Effect.fail(
-        new InvalidGenTypesDurationError({
-          message: `invalid duration ${JSON.stringify(raw)}`,
-        }),
-      );
+      return yield* new InvalidGenTypesDurationError({
+        message: `invalid duration ${quoteDuration(raw)}`,
+      });
     }
 
     let totalMillis = 0;
@@ -55,11 +55,9 @@ export function parseQueryTimeoutMillis(
         continue;
       }
       if (match.index !== consumed) {
-        return yield* Effect.fail(
-          new InvalidGenTypesDurationError({
-            message: `invalid duration ${JSON.stringify(raw)}`,
-          }),
-        );
+        return yield* new InvalidGenTypesDurationError({
+          message: `invalid duration ${quoteDuration(raw)}`,
+        });
       }
       const amount = Number.parseFloat(rawNumber);
       const unitMillis = DURATION_UNITS_TO_MILLIS[rawUnit as keyof typeof DURATION_UNITS_TO_MILLIS];
@@ -68,11 +66,9 @@ export function parseQueryTimeoutMillis(
     }
 
     if (!Number.isFinite(totalMillis) || consumed !== input.length || totalMillis < 0) {
-      return yield* Effect.fail(
-        new InvalidGenTypesDurationError({
-          message: `invalid duration ${JSON.stringify(raw)}`,
-        }),
-      );
+      return yield* new InvalidGenTypesDurationError({
+        message: `invalid duration ${quoteDuration(raw)}`,
+      });
     }
 
     return totalMillis;

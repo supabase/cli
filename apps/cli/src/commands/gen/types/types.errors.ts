@@ -91,3 +91,25 @@ export class GenTypesNetworkIdUnsupportedError extends Data.TaggedError(
     return actionability.provideFlags;
   }
 }
+
+export class GenTypesFlagUsageError extends Data.TaggedError("GenTypesFlagUsageError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+export class GenTypesLocalDbNotRunningError extends Data.TaggedError(
+  "GenTypesLocalDbNotRunningError",
+)<{
+  readonly message: string;
+  readonly daemonDown?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.daemonDown === true) {
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    }
+    return actionability.startStack;
+  }
+}
