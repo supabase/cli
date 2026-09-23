@@ -21,6 +21,7 @@ type LoadOptions = {
   readonly creationError?: unknown;
   readonly onCreate?: () => void;
   readonly creation?: Promise<{ fetch(request: Request): Promise<Response> }>;
+  readonly createWorker?: () => { fetch(request: Request): Promise<Response> };
   readonly lstatError?: unknown;
   readonly metricError?: unknown;
 };
@@ -35,6 +36,7 @@ const load = async (
     creationError,
     onCreate = () => undefined,
     creation,
+    createWorker,
     lstatError,
     metricError,
   }: LoadOptions = {},
@@ -67,6 +69,7 @@ const load = async (
           state.createOptions = value;
           onCreate();
           if (creation !== undefined) return creation;
+          if (createWorker !== undefined) return Promise.resolve(createWorker());
           return creationError === undefined
             ? Promise.resolve(worker as { fetch(request: Request): Promise<Response> })
             : Promise.reject(creationError);
@@ -263,20 +266,29 @@ describe("CLI functions bootstrap bundle", () => {
         verifyJWT: false,
       },
     });
+    // Every create() hands out a distinct worker: worker n always rejects with failures[n - 1] when
+    // one is given, otherwise it answers with its own number so the response names the worker.
     const serve = async (failures: ReadonlyArray<Error>) => {
-      const queue = [...failures];
       let creates = 0;
       const loaded = await load(
         await bundleServeMainTemplate(),
         baseEnv(config),
+        {},
         {
-          fetch: async (request: Request) => {
-            const failure = queue.shift();
-            if (failure !== undefined) throw failure;
-            return new Response(`fn-ok ${request.method} ${await request.text()}`);
+          errors: { WorkerAlreadyRetired, InvalidWorkerResponse },
+          createWorker: () => {
+            const worker = ++creates;
+            const failure = failures[worker - 1];
+            return {
+              fetch: async (request: Request) => {
+                if (failure !== undefined) throw failure;
+                return new Response(
+                  `fn-ok worker-${worker} ${request.method} ${await request.text()}`,
+                );
+              },
+            };
           },
         },
-        { errors: { WorkerAlreadyRetired, InvalidWorkerResponse }, onCreate: () => void creates++ },
       );
       return { loaded, creates: () => creates };
     };
@@ -285,7 +297,7 @@ describe("CLI functions bootstrap bundle", () => {
       const { loaded, creates } = await serve([new WorkerAlreadyRetired()]);
       const response = await loaded.options.handler(new Request("http://localhost/hello"));
       expect(response.status).toBe(200);
-      expect(await response.text()).toBe("fn-ok GET ");
+      expect(await response.text()).toBe("fn-ok worker-2 GET ");
       expect(creates()).toBe(2);
     });
 
