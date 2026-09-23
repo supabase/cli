@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, FileSystem, Path, Predicate, Schema } from "effect";
+import * as SmolToml from "smol-toml";
 import { makeComputeProject, setupCompute } from "../../../../../tests/helpers/compute.ts";
 import {
   ComputeAlreadyConfiguredError,
@@ -13,6 +14,10 @@ import {
   ComputeDirectoryExistsError,
   ComputeJsonConfigUnsupportedError,
 } from "../../../../shared/compute/compute.errors.ts";
+import {
+  COMPUTE_RUNTIME_EXCLUSIONS,
+  type ComputeRuntime,
+} from "../../../../shared/compute/compute-runtimes.ts";
 import { computeNew } from "./new.handler.ts";
 import { ComputeNewWorkdirError } from "./new.errors.ts";
 import type { ComputeNewFlags } from "./new.command.ts";
@@ -23,6 +28,18 @@ project_id = "demo"
 [functions.hello]
 verify_jwt = false
 `;
+
+/**
+ * The `exclude = [...]` line `new` writes for a runtime, derived from the runtime's own list
+ * rather than restated: which patterns a runtime chooses is asserted where the patterns are
+ * matched, and the claim here is only that the list reaches `config.toml` as a TOML array.
+ */
+function excludeLine(runtime: ComputeRuntime): string {
+  const patterns = COMPUTE_RUNTIME_EXCLUSIONS[runtime];
+  return patterns.length === 0
+    ? ""
+    : `exclude = [${patterns.map((pattern) => `"${pattern}"`).join(", ")}]\n`;
+}
 
 function flags(overrides: Partial<ComputeNewFlags> = {}): ComputeNewFlags {
   return {
@@ -63,7 +80,9 @@ describe("compute new", () => {
         const computeDir = path.join(repo.dir, "supabase", "compute", "api");
         expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(true);
         expect(yield* repo.config).toBe(
-          `${CONFIG_WITH_COMMENTS}\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
+          `${CONFIG_WITH_COMMENTS}\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n${excludeLine(
+            "node",
+          )}`,
         );
 
         // Declarative line first, then the detail rows, then the next step —
@@ -308,6 +327,58 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  // Written into config.toml rather than applied invisibly at push time, so the list is
+  // visible and editable and `push` needs no built-in defaults of its own.
+  describe("the chosen runtime's default exclude patterns", () => {
+    it.live.each(["node", "deno", "dockerfile"] as const)(
+      "records the %s runtime's own list",
+      (runtime) =>
+        Effect.gen(function* () {
+          const repo = yield* project();
+          const { layer } = setupCompute({ workdir: repo.dir });
+
+          return yield* Effect.gen(function* () {
+            yield* computeNew(flags({ runtime: Option.some(runtime) }));
+
+            expect(yield* repo.config).toContain(excludeLine(runtime).trimEnd());
+          }).pipe(Effect.provide(layer));
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // The written entry has to be loadable, or the scaffold leaves behind a project whose
+    // config nothing can read — the patterns are quoted strings in a TOML array, which is
+    // exactly the shape a hand-rolled renderer gets wrong.
+    it.live("writes them as a list the config loader reads back", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const { layer } = setupCompute({ workdir: repo.dir });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(flags({ runtime: Option.some("node") }));
+
+          const parsed = SmolToml.parse(yield* repo.config) as {
+            compute?: { api?: { exclude?: unknown } };
+          };
+          expect(parsed.compute?.api?.exclude).toEqual([...COMPUTE_RUNTIME_EXCLUSIONS.node]);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.live("reports them alongside the compute's other dials", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const { layer, out } = setupCompute({ workdir: repo.dir });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(flags({ runtime: Option.some("node") }));
+
+          expect(out.stdoutText).toContain("Excluded");
+          expect(out.stdoutText).toContain(".env");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+  });
+
   // The runtime and size prompts do have defaults to fall back on, so a piped
   // stdin must leave them unasked rather than consuming the pipe.
   it.live("takes the defaults without prompting when stdin is piped", () =>
@@ -517,7 +588,7 @@ describe("compute new", () => {
         const computeDir = path.join(created.dir, "supabase", "compute", "api");
         expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(true);
         expect(yield* fs.readFileString(path.join(created.dir, "supabase", "config.toml"))).toBe(
-          `[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
+          `[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n${excludeLine("node")}`,
         );
         // An EXPLICIT --workdir has no cwd-relative reading, so the success
         // message names the absolute path rather than a project-root-relative one.
@@ -783,7 +854,7 @@ describe("compute new", () => {
 
         // The workdir got both the entry and the scaffold it points at.
         expect(yield* fs.readFileString(path.join(workdir, "supabase", "config.toml"))).toBe(
-          '[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n',
+          `[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n${excludeLine("node")}`,
         );
         expect(
           yield* fs.exists(path.join(workdir, "supabase", "compute", "api", "index.mjs")),
