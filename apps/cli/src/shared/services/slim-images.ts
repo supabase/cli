@@ -67,9 +67,8 @@ export interface SlimCatalogPin {
 
 /** OrioleDB tags are docker.io-only; slim-services does not publish them. */
 export function isOrioleImage(image: string): boolean {
-  const tagSeparator = image.lastIndexOf(":");
-  const tag = tagSeparator === -1 ? image : image.slice(tagSeparator + 1);
-  return tag.toLowerCase().includes("orioledb");
+  const tag = imageTag(image);
+  return tag !== undefined && tag.toLowerCase().includes("orioledb");
 }
 
 /**
@@ -85,12 +84,11 @@ export function slimCatalogPin(alias: string, image: string): SlimCatalogPin | u
     return undefined;
   }
 
-  const tagSeparator = image.lastIndexOf(":");
-  if (tagSeparator === -1) {
+  const rawTag = imageTag(image);
+  if (rawTag === undefined) {
     return undefined;
   }
 
-  const rawTag = image.slice(tagSeparator + 1);
   const tag = alias === "vector" ? rawTag.replace(/-alpine$/, "") : rawTag;
   return { service, version: slimTagForService(service, tag) };
 }

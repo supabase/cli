@@ -4,7 +4,7 @@
  * from service + version. An entry that already carries a digest keeps one:
  * the published `ghcr.io/supabase/cli/<service>:<version>` manifest digest.
  *
- * Run: `bun .github/scripts/sync-artifacts-catalog.ts <dockerfile> <catalog>`
+ * Run: `bun .github/scripts/sync-artifacts-catalog.ts <dockerfile> <catalog> [base-dockerfile]`
  */
 
 import { parseDockerfileServiceImages } from "../../apps/cli/src/shared/services/parse-dockerfile-service-images.ts";
@@ -19,14 +19,34 @@ import {
 
 export const CATALOG_PATH = "packages/stack/src/Artifacts.ts";
 const DOCKERFILE_PATH = "apps/cli/src/shared/services/Dockerfile";
+const NATIVE_RELEASES = "https://api.github.com/repos/supabase/slim-services/releases/tags";
 
 const SLIM_IMAGE_PREFIX = `${SOURCE_REGISTRY}/`;
 
 /** Leading numeric component, `v` stripped. Only postgres carries more than one line. */
-export function releaseLine(version: string): string {
+function releaseLine(version: string): string {
   const withoutPrefix = version.replace(/^[vV]/, "");
   const separator = withoutPrefix.indexOf(".");
   return separator === -1 ? withoutPrefix : withoutPrefix.slice(0, separator);
+}
+
+/** True when every numeric prefix of `next` is older than `current`. Equal prefixes are not older. */
+function isOlderRelease(next: string, current: string): boolean {
+  const nextParts = next.replace(/^[vV]/, "").split(".");
+  const currentParts = current.replace(/^[vV]/, "").split(".");
+  const count = Math.max(nextParts.length, currentParts.length);
+  for (let index = 0; index < count; index++) {
+    const nextValue = leadingInteger(nextParts[index] ?? "0");
+    const currentValue = leadingInteger(currentParts[index] ?? "0");
+    if (nextValue === undefined || currentValue === undefined) return false;
+    if (nextValue !== currentValue) return nextValue < currentValue;
+  }
+  return false;
+}
+
+function leadingInteger(part: string): number | undefined {
+  const match = /^(\d+)/.exec(part);
+  return match === null ? undefined : Number(match[1]);
 }
 
 export interface CatalogPinUpdate {
@@ -39,6 +59,8 @@ export interface CatalogPinUpdate {
 export interface SkippedCatalogPin {
   readonly alias: string;
   readonly reason: string;
+  /** OrioleDB has no slim image and must not fail the other pins. */
+  readonly blocking: boolean;
 }
 
 export interface CatalogPlan {
@@ -46,6 +68,10 @@ export interface CatalogPlan {
   readonly updates: ReadonlyArray<CatalogPinUpdate>;
   readonly skipped: ReadonlyArray<SkippedCatalogPin>;
 }
+
+export type ReleasePublication =
+  | { readonly status: "published"; readonly digest?: string }
+  | { readonly status: "missing" | "lookup-failed" };
 
 /** `definition("<service>", "<version>", "<image>"`. */
 function defaultEntryPattern(service: string): RegExp {
@@ -124,20 +150,13 @@ function skipReason(alias: string, version: string, entry: SelectedEntry): strin
   return undefined;
 }
 
-/** Slim tags whose catalog entry stores a digest, so the rewrite can resolve them first. */
-export function catalogDigestPins(
-  dockerfile: string,
-  catalog: string,
-): ReadonlyArray<{ readonly service: string; readonly version: string }> {
-  const pins: Array<{ service: string; version: string }> = [];
+function slimVersions(dockerfile: string): ReadonlyMap<string, string> {
+  const versions = new Map<string, string>();
   for (const from of parseDockerfileServiceImages(dockerfile)) {
     const pin = slimCatalogPin(from.alias, from.image);
-    if (pin === undefined || !VERSION_PATTERN.test(pin.version)) continue;
-    const entry = selectEntry(catalog, pin.service, pin.version);
-    if (entry.kind !== "default" && entry.kind !== "additional") continue;
-    if (imageHasDigest(entry.image)) pins.push({ service: pin.service, version: pin.version });
+    if (pin !== undefined) versions.set(from.alias, pin.version);
   }
-  return pins;
+  return versions;
 }
 
 type PinResult =
@@ -190,29 +209,36 @@ function pinService(
 }
 
 /**
- * Rewrites `catalog` from the service-image Dockerfile. OrioleDB tags and other
- * images with no slim build are left unchanged. A pin that cannot be applied
- * is reported in `skipped` and does not stop the remaining pins.
+ * Rewrites `catalog` from Dockerfile tags that differ from `baseDockerfile`.
+ * With no base, every slim tag is in scope. A pin that cannot be applied is
+ * reported in `skipped`. OrioleDB is the only non-blocking skip.
  */
-export function planArtifactCatalogUpdate(input: {
+export async function planArtifactCatalogUpdate(input: {
   readonly dockerfile: string;
+  readonly baseDockerfile?: string;
   readonly catalog: string;
-  readonly digestFor: (service: string, version: string) => string | undefined;
-}): CatalogPlan {
+  readonly publication: (service: string, version: string) => Promise<ReleasePublication>;
+}): Promise<CatalogPlan> {
   let source = input.catalog;
   const updates: CatalogPinUpdate[] = [];
   const skipped: SkippedCatalogPin[] = [];
+  const baseVersions =
+    input.baseDockerfile === undefined ? undefined : slimVersions(input.baseDockerfile);
+  const changed = (alias: string, version: string | undefined): boolean =>
+    baseVersions === undefined || baseVersions.get(alias) !== version;
 
   for (const from of parseDockerfileServiceImages(input.dockerfile)) {
     if (isOrioleImage(from.image)) {
+      if (!changed(from.alias, undefined)) continue;
       skipped.push({
         alias: from.alias,
         reason: `${from.alias} ${from.image} has no slim image.`,
+        blocking: false,
       });
       continue;
     }
     const pin = slimCatalogPin(from.alias, from.image);
-    if (pin === undefined) continue;
+    if (pin === undefined || !changed(from.alias, pin.version)) continue;
     if (!VERSION_PATTERN.test(pin.version)) {
       throw new InvalidPayloadError(`invalid version for ${from.alias}: '${pin.version}'`);
     }
@@ -220,17 +246,38 @@ export function planArtifactCatalogUpdate(input: {
     const entry = selectEntry(source, pin.service, pin.version);
     const reason = skipReason(from.alias, pin.version, entry);
     if (reason !== undefined) {
-      skipped.push({ alias: from.alias, reason });
+      skipped.push({ alias: from.alias, reason, blocking: true });
       continue;
     }
     if (entry.kind !== "default" && entry.kind !== "additional") continue;
-    const digest = imageHasDigest(entry.image)
-      ? input.digestFor(pin.service, pin.version)
-      : undefined;
-    if (imageHasDigest(entry.image) && digest === undefined) {
+    if (isOlderRelease(pin.version, entry.version)) {
+      skipped.push({
+        alias: from.alias,
+        reason: `${pin.service} ${pin.version} is older than the catalog pin ${entry.version}.`,
+        blocking: true,
+      });
+      continue;
+    }
+    if (entry.version === pin.version && !imageHasDigest(entry.image)) continue;
+
+    const release = await input.publication(pin.service, pin.version);
+    if (release.status !== "published") {
+      skipped.push({
+        alias: from.alias,
+        reason:
+          release.status === "missing"
+            ? `${pin.service}:${pin.version} has no published slim image and native release.`
+            : `${pin.service}:${pin.version} publication check failed.`,
+        blocking: true,
+      });
+      continue;
+    }
+    const digest = imageHasDigest(entry.image) ? release.digest : undefined;
+    if (imageHasDigest(entry.image) && (digest === undefined || !DIGEST_PATTERN.test(digest))) {
       skipped.push({
         alias: from.alias,
         reason: `${pin.service}:${pin.version} has no published slim manifest.`,
+        blocking: true,
       });
       continue;
     }
@@ -248,8 +295,9 @@ export function planArtifactCatalogUpdate(input: {
   return { source, updates, skipped };
 }
 
-async function publishedDigest(service: string, version: string): Promise<string | undefined> {
-  const reference = `${SLIM_IMAGE_PREFIX}${service}:${version}`;
+type Probe = "published" | "missing" | "lookup-failed";
+
+async function probeManifest(reference: string): Promise<{ probe: Probe; digest?: string }> {
   const proc = Bun.spawn(["regctl", "manifest", "head", reference], {
     stdout: "pipe",
     stderr: "pipe",
@@ -259,39 +307,78 @@ async function publishedDigest(service: string, version: string): Promise<string
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  const live = stdout.trim();
-  if (exit !== 0 || !DIGEST_PATTERN.test(live)) {
-    const detail = stderr.trim();
-    console.log(
-      `::warning ::${reference} has no slim manifest digest${detail === "" ? "" : `: ${detail}`}`,
-    );
-    return undefined;
+  const digest = stdout.trim();
+  if (exit === 0 && DIGEST_PATTERN.test(digest)) return { probe: "published", digest };
+  const detail = stderr.toLowerCase();
+  if (
+    detail.includes("manifest unknown") ||
+    detail.includes("name unknown") ||
+    detail.includes("not found") ||
+    detail.includes("404")
+  ) {
+    return { probe: "missing" };
   }
-  return live;
+  const message = stderr.trim();
+  console.log(
+    `::warning ::${reference} publication check failed${message === "" ? "" : `: ${message}`}`,
+  );
+  return { probe: "lookup-failed" };
+}
+
+async function probeNativeRelease(service: string, version: string): Promise<Probe> {
+  const tag = `${service}-${version}`;
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "supabase-cli-catalog-sync",
+  };
+  const token = process.env.GITHUB_TOKEN;
+  if (token !== undefined && token !== "") headers.Authorization = `Bearer ${token}`;
+  try {
+    const response = await fetch(`${NATIVE_RELEASES}/${encodeURIComponent(tag)}`, { headers });
+    if (response.status === 200) return "published";
+    if (response.status === 404) return "missing";
+    console.log(`::warning ::${tag} native release check returned HTTP ${response.status}.`);
+    return "lookup-failed";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(`::warning ::${tag} native release check failed: ${message}`);
+    return "lookup-failed";
+  }
+}
+
+async function lookupPublication(service: string, version: string): Promise<ReleasePublication> {
+  const reference = `${SLIM_IMAGE_PREFIX}${service}:${version}`;
+  const [manifest, native] = await Promise.all([
+    probeManifest(reference),
+    probeNativeRelease(service, version),
+  ]);
+  if (manifest.probe === "lookup-failed" || native === "lookup-failed") {
+    return { status: "lookup-failed" };
+  }
+  if (manifest.probe === "missing" || native === "missing") return { status: "missing" };
+  return { status: "published", digest: manifest.digest };
 }
 
 async function main(argv: ReadonlyArray<string>): Promise<void> {
-  const [dockerfilePath = DOCKERFILE_PATH, catalogPath = CATALOG_PATH] = argv;
+  const [dockerfilePath = DOCKERFILE_PATH, catalogPath = CATALOG_PATH, baseDockerfilePath] = argv;
   const dockerfile = await Bun.file(dockerfilePath).text();
   const catalog = await Bun.file(catalogPath).text();
-  const digests = new Map<string, string>();
-  for (const pin of catalogDigestPins(dockerfile, catalog)) {
-    const key = `${pin.service}:${pin.version}`;
-    if (!digests.has(key)) {
-      const digest = await publishedDigest(pin.service, pin.version);
-      if (digest !== undefined) digests.set(key, digest);
-    }
-  }
-
-  const plan = planArtifactCatalogUpdate({
+  const baseDockerfile =
+    baseDockerfilePath === undefined ? undefined : await Bun.file(baseDockerfilePath).text();
+  const plan = await planArtifactCatalogUpdate({
     dockerfile,
+    baseDockerfile,
     catalog,
-    digestFor: (service, version) => digests.get(`${service}:${version}`),
+    publication: lookupPublication,
   });
-  await Bun.write(catalogPath, plan.source);
   for (const skip of plan.skipped) {
     console.log(`::warning ::Left ${skip.alias} unchanged: ${skip.reason}`);
   }
+  if (plan.skipped.some((skip) => skip.blocking)) {
+    console.log("::error ::Refusing to commit a partial catalog update.");
+    process.exit(1);
+  }
+  await Bun.write(catalogPath, plan.source);
   if (plan.updates.length === 0) {
     console.log("Workload catalog already matches the Dockerfile.");
     return;

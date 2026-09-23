@@ -1,17 +1,10 @@
 name: Sync Artifacts catalog
 
-# Dependabot bumps apps/cli/src/shared/services/Dockerfile, the service-image
-# manifest. This commits the matching slim pins into packages/stack/src/Artifacts.ts
-# on that same branch. OrioleDB tags and any pin with no published slim image
-# stay unchanged and do not block the other pins. Native URLs are derived from
-# service + version; a digest already stored on the entry is replaced with the
-# published slim manifest digest.
-#
-# The rewrite runs from the base revision. The pull request only supplies the
-# Dockerfile and catalog text, and the job runs for Dependabot so a pull
-# request cannot edit this workflow and then execute it with a write token.
-# Dependabot's GITHUB_TOKEN is read-only unless this job raises contents.
-
+# The script is the base revision. The pull request only supplies the Dockerfile
+# and catalog text, and the job runs for Dependabot so that pull request cannot
+# edit this workflow and then execute it with a write token. The catalog commit
+# is pushed with the app token so the new head triggers CI. Dependabot's
+# GITHUB_TOKEN would not.
 on:
   pull_request:
     paths:
@@ -31,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,8 +32,8 @@ jobs:
           persist-credentials: true
           fetch-depth: 1
 
-      # Bun only. The script imports no workspace packages, and Dependabot
-      # runs cannot read Actions secrets the full setup action would use.
+      # Bun only. The script imports no workspace packages. The firewall token
+      # is empty on a Dependabot run; setup is not required to format one file.
       - name: Install toolchains
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -57,11 +50,20 @@ jobs:
           echo "${RUNNER_TEMP}/regctl-bin" >> "$GITHUB_PATH"
           "${RUNNER_TEMP}/regctl-bin/regctl" version
 
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+
       - name: Pin the catalog to the Dockerfile
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           git fetch --no-tags origin "pull/${PR_NUMBER}/head"
@@ -76,15 +78,21 @@ jobs:
           git show "$HEAD_SHA:apps/cli/src/shared/services/Dockerfile" > "$dockerfile"
           git show "$HEAD_SHA:packages/stack/src/Artifacts.ts" > "$catalog"
           cp "$catalog" "$original"
-          bun .github/scripts/sync-artifacts-catalog.ts "$dockerfile" "$catalog"
+          bun .github/scripts/sync-artifacts-catalog.ts "$dockerfile" "$catalog" apps/cli/src/shared/services/Dockerfile
           if cmp -s "$original" "$catalog"; then
             echo "Workload catalog already matches the Dockerfile."
             exit 0
           fi
           git checkout --detach "$HEAD_SHA"
           cp "$catalog" packages/stack/src/Artifacts.ts
+          bun x oxfmt@0.65.0 --config .oxfmtrc.json packages/stack/src/Artifacts.ts
           git add -- packages/stack/src/Artifacts.ts
+          if git diff --cached --quiet -- packages/stack/src/Artifacts.ts; then
+            echo "Workload catalog already matches the Dockerfile."
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore(stack): pin the workload catalog to the Dockerfile image tags"
+          git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin "HEAD:refs/heads/${HEAD_REF}"
