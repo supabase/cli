@@ -1,6 +1,11 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Redacted, Stream } from "effect";
+import {
+  DEFAULT_LOCAL_DATABASE_PASSWORD,
+  DEFAULT_LOCAL_JWT_SECRET,
+  DEFAULT_POSTGRES_ROOT_KEY,
+} from "@supabase/stack/defaults";
 import type {
   ServiceCreation,
   ServiceCreationInput,
@@ -131,16 +136,14 @@ const instance = (
 
 const requireConcreteCreation = (creation: ServiceCreationInput): ServiceCreation => {
   if (creation.service !== "database") return creation;
-  if (creation.config.jwtSecret === undefined)
-    throw new Error("Database creation is missing jwtSecret");
-  if (creation.config.rootKey === undefined)
-    throw new Error("Database creation is missing rootKey");
   return {
     ...creation,
     config: {
       ...creation.config,
-      jwtSecret: creation.config.jwtSecret,
-      rootKey: creation.config.rootKey,
+      databasePassword:
+        creation.config.databasePassword ?? Redacted.make(DEFAULT_LOCAL_DATABASE_PASSWORD),
+      jwtSecret: creation.config.jwtSecret ?? Redacted.make(DEFAULT_LOCAL_JWT_SECRET),
+      rootKey: creation.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
     },
   };
 };
@@ -160,6 +163,13 @@ const fakeStack = () => {
       get list() {
         return Effect.succeed(members);
       },
+    },
+    credentials: {
+      get: Effect.succeed({
+        jwtSecret: DEFAULT_LOCAL_JWT_SECRET,
+        postgresRootKey: DEFAULT_POSTGRES_ROOT_KEY,
+        databasePassword: DEFAULT_LOCAL_DATABASE_PASSWORD,
+      }),
     },
     composition: {
       describe: Effect.sync(() => ({
@@ -368,30 +378,42 @@ describe("experimental stack start", () => {
       const functionsId = functions.id;
       const status = yield* functions.status;
       expect(status.config.service).toBe("functions");
-      if (status.config.service === "functions")
-        expect(status.config.config.env).toEqual({ CUSTOM_VALUE: "hello" });
+      if (status.config.service !== "functions")
+        return yield* Effect.die("Functions configuration missing");
+      expect(status.config.config.env).toEqual({ CUSTOM_VALUE: "hello" });
+      yield* functions.restart({
+        config: { ...status.config.config, bootstrap: "new-generated-bootstrap-template" },
+      });
+      const composedBeforeRepeat = fixture.composed;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(composedBeforeRepeat);
+
+      const afterGeneratedBootstrap = yield* functions.status;
+      if (afterGeneratedBootstrap.config.service !== "functions")
+        return yield* Effect.die("Functions configuration missing");
+      expect(afterGeneratedBootstrap.config.config.bootstrap).toBe(
+        "new-generated-bootstrap-template",
+      );
 
       yield* fs.writeFileString(
         `${root}/supabase/functions/.env`,
         "CUSTOM_VALUE=changed\nSUPABASE_SERVICE_ROLE_KEY=ignored-again\n",
       );
-      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const changedEnv = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(changedEnv).toBeInstanceOf(StackCommandStartError);
+      if (!(changedEnv instanceof StackCommandStartError))
+        return yield* Effect.die("Expected a stack configuration error");
+      expect(changedEnv.reason).toBe("invalid-config");
       expect(fixture.members.find(({ service }) => service === "database")?.id).toBe(databaseId);
       const refreshed = fixture.members.find(({ service }) => service === "functions");
       if (refreshed?.service !== "functions") return yield* Effect.die("Functions missing");
       expect(refreshed.id).toBe(functionsId);
       const refreshedStatus = yield* refreshed.status;
       if (refreshedStatus.config.service === "functions")
-        expect(refreshedStatus.config.config.env).toEqual({ CUSTOM_VALUE: "changed" });
-
-      if (refreshedStatus.config.service !== "functions")
-        return yield* Effect.die("Functions configuration missing");
-      yield* refreshed.restart({
-        config: { ...refreshedStatus.config.config, verifyJwt: false },
-      });
-      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-      const restored = yield* refreshed.status;
-      expect(restored.config).toMatchObject({ service: "functions", config: { verifyJwt: true } });
+        expect(refreshedStatus.config.config.env).toEqual({ CUSTOM_VALUE: "hello" });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -410,6 +432,36 @@ describe("experimental stack start", () => {
       expect(result).toMatchObject({ reason: "flags" });
       expect(fixture.stopped).toBe(0);
       expect(fixture.composed).toBe(0);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects changed credentials and database versions before stopping the stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      for (const [name, changed] of [
+        ["jwt", '[auth]\njwt_secret = "a-new-jwt-secret-with-at-least-32-characters"\n'],
+        ["root key", '[db]\nroot_key = "a-different-postgres-root-key"\n'],
+        ["version", "[db]\nmajor_version = 15\n"],
+      ] as const) {
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-start-${name}-` });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, `project_id = "${name}"\n`);
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        expect(fixture.composed).toBe(1);
+
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          `project_id = "${name}"\n${changed}`,
+        );
+        const error = yield* stackStart(flags(["studio"])).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+        expect(error).toMatchObject({ reason: "invalid-config" });
+        expect(fixture.stopped).toBe(0);
+        expect(fixture.composed).toBe(1);
+      }
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });

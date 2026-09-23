@@ -27,6 +27,13 @@ export const SavedInstance = Schema.Struct({
 });
 export interface SavedInstance extends Schema.Schema.Type<typeof SavedInstance> {}
 
+export const StackCredentials = Schema.Struct({
+  jwtSecret: Schema.String,
+  postgresRootKey: Schema.String,
+  databasePassword: Schema.String,
+});
+export interface StackCredentials extends Schema.Schema.Type<typeof StackCredentials> {}
+
 export const SavedStack = Schema.Struct({
   id: SafeId,
   identity: Schema.Struct({
@@ -37,6 +44,7 @@ export const SavedStack = Schema.Struct({
   runtime: Schema.Literals(["native", "docker", "podman"]),
   instances: Schema.Array(SavedInstance),
   composition: Schema.Unknown,
+  credentials: Schema.optionalKey(StackCredentials),
   ports: Schema.Array(
     Schema.Struct({
       key: Schema.String,

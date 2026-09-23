@@ -208,9 +208,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   if (databaseStatus.config.service !== "database")
     return yield* invalidConfig("Invalid saved database configuration.");
   const config = yield* loadStackConfig(settings.workdir);
-  const creations = yield* config.creations(stack.id, {
-    jwtSecret: databaseStatus.config.config.jwtSecret,
-  });
+  const creations = yield* config.creations(stack.id);
   const source = creations.find(
     (creation): creation is FunctionsCreation => creation.service === "functions",
   );

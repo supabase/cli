@@ -1,8 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "@supabase/stack";
-import { Effect, Exit, Layer, Redacted, Schema } from "effect";
-import { ServiceCreation } from "../../../../../../packages/stack/src/services/Catalog.ts";
+import { Effect, Exit, Layer, Schema } from "effect";
+import { ServiceCreationInput } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
@@ -19,7 +18,7 @@ const project = (contents: string) =>
     Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
   );
 
-const byService = (services: ReadonlyArray<Schema.Schema.Type<typeof ServiceCreation>>) =>
+const byService = (services: ReadonlyArray<Schema.Schema.Type<typeof ServiceCreationInput>>) =>
   new Map(services.map((service) => [service.service, service]));
 
 describe("loadStackConfig", () => {
@@ -31,15 +30,19 @@ enabled = true
 `);
       const config = yield* load(root);
       const services = yield* config.creations("stack-defaults");
-      expect(Redacted.value(config.jwtSecret)).toBe(DEFAULT_LOCAL_JWT_SECRET);
-      for (const service of services) yield* Schema.decodeEffect(ServiceCreation)(service);
+      for (const service of services) yield* Schema.decodeEffect(ServiceCreationInput)(service);
 
       const recipes = byService(services);
       const database = recipes.get("database");
-      const rootKey = database?.service === "database" ? database.config.rootKey : undefined;
-      expect(rootKey === undefined ? undefined : Redacted.value(rootKey)).toBe(
-        DEFAULT_POSTGRES_ROOT_KEY,
-      );
+      expect(
+        database?.service === "database" ? database.config.rootKey : undefined,
+      ).toBeUndefined();
+      expect(
+        database?.service === "database" ? database.config.jwtSecret : undefined,
+      ).toBeUndefined();
+      expect(
+        database?.service === "database" ? database.config.databasePassword : undefined,
+      ).toBeUndefined();
       expect(recipes.get("database")?.endpoints).toEqual({ sql: { port: "auto" } });
       expect(recipes.get("rest")?.endpoints).toEqual({ http: { port: "auto" } });
       expect(recipes.get("analytics")?.endpoints).toEqual({ http: { port: "auto" } });
@@ -145,6 +148,27 @@ project_id = "firebase-project"
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("rejects signing-key files only when Auth is enabled", () =>
+    Effect.gen(function* () {
+      const enabled = yield* project(`project_id = "stack-config-signing-keys"
+[auth]
+signing_keys_path = "./keys.json"
+`);
+      const enabledExit = yield* load(enabled).pipe(Effect.exit);
+      expect(Exit.isFailure(enabledExit)).toBe(true);
+      if (Exit.isFailure(enabledExit))
+        expect(String(enabledExit.cause)).toContain("auth.signing_keys_path");
+
+      const disabled = yield* project(`project_id = "stack-config-disabled-signing-keys"
+[auth]
+enabled = false
+signing_keys_path = "./keys.json"
+`);
+      const disabledExit = yield* load(disabled).pipe(Effect.exit);
+      expect(Exit.isSuccess(disabledExit)).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("rejects an analytics backend the stack cannot represent", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-analytics"
@@ -172,7 +196,7 @@ major_version = 14
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects unsupported OrioleDB and experimental S3 settings", () =>
+  it.live("rejects OrioleDB and ignores its inactive S3 settings", () =>
     Effect.gen(function* () {
       const orioledb = yield* project(`project_id = "stack-config-orioledb"
 [experimental]
@@ -187,9 +211,8 @@ orioledb_version = "15.1.1.14"
 [experimental]
 s3_host = "s3.example.test"
 `);
-      const s3Exit = yield* load(s3).pipe(Effect.exit);
-      expect(Exit.isFailure(s3Exit)).toBe(true);
-      if (Exit.isFailure(s3Exit)) expect(String(s3Exit.cause)).toContain("experimental.s3_host");
+      const s3Config = yield* load(s3);
+      expect(s3Config.source.experimental.s3_host).toBe("s3.example.test");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });

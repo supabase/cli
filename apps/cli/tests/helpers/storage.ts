@@ -233,6 +233,7 @@ export function buildStorageStackApi(
         id === database.id ? Effect.succeed(database) : Effect.succeed(storage),
       list: Effect.succeed(storageEnabled ? [database, storage] : [database]),
     },
+    credentials: { get: Effect.die("unused") },
     composition: {
       supabase: () => Effect.die("unused"),
       configure: () => Effect.die("unused"),

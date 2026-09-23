@@ -1,5 +1,5 @@
 import { Data, Effect, FileSystem, Option, Path, Redacted } from "effect";
-import type { DatabaseInstance, ServiceCreation, Stack } from "@supabase/stack/effect";
+import type { DatabaseInstance, ServiceCreationInput, Stack } from "@supabase/stack/effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -243,8 +243,34 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
             cacheRoot: cacheRoot(settings, path),
           })
           .pipe(Effect.mapError(startFailed));
+  const creations = yield* config.creations(stack.id).pipe(Effect.mapError(startFailed));
+  const databaseCreation = creations.find(
+    (creation): creation is Extract<ServiceCreationInput, { service: "database" }> =>
+      creation.service === "database",
+  );
+  if (databaseCreation === undefined)
+    return yield* startFailed({ message: "database is disabled in the local configuration" });
   const currentDatabase = yield* databaseFromStack(stack).pipe(Effect.mapError(startFailed));
   if (currentDatabase !== undefined) {
+    const status = yield* currentDatabase.status.pipe(Effect.mapError(startFailed));
+    if (
+      status.config.service === "database" &&
+      status.config.config.version.split(".")[0] !== databaseCreation.config.version.split(".")[0]
+    )
+      return yield* startFailed({
+        message: "The requested database version does not match the saved stack binding",
+      });
+    const savedCredentials = yield* stack.credentials.get.pipe(Effect.mapError(startFailed));
+    if (
+      savedCredentials !== undefined &&
+      ((databaseCreation.config.jwtSecret !== undefined &&
+        Redacted.value(databaseCreation.config.jwtSecret) !== savedCredentials.jwtSecret) ||
+        (databaseCreation.config.rootKey !== undefined &&
+          Redacted.value(databaseCreation.config.rootKey) !== savedCredentials.postgresRootKey))
+    )
+      return yield* startFailed({
+        message: "The configured credentials conflict with the saved stack credentials",
+      });
     if (Option.isSome(yield* databaseReady(stack).pipe(Effect.mapError(startFailed)))) {
       yield* applyStackWebhooksOnly(currentDatabase, toml.webhooksEnabled).pipe(
         Effect.mapError(startFailed),
@@ -264,13 +290,6 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
       message:
         "A standalone database exists outside the saved stack composition. Destroy the standalone database before starting this stack.",
     });
-  const creations = yield* config.creations(stack.id).pipe(Effect.mapError(startFailed));
-  const databaseCreation = creations.find(
-    (creation): creation is Extract<ServiceCreation, { service: "database" }> =>
-      creation.service === "database",
-  );
-  if (databaseCreation === undefined)
-    return yield* startFailed({ message: "database is disabled in the local configuration" });
   const [database] = yield* stack.composition
     .supabase([databaseCreation])
     .pipe(Effect.mapError(startFailed));
@@ -287,9 +306,12 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
         ? [creation.service]
         : [],
     );
+    const credentials = yield* stack.credentials.get.pipe(Effect.mapError(startFailed));
+    if (credentials === undefined)
+      return yield* startFailed({ message: "stack credentials were not saved" });
     yield* catalog
       .apply({
-        target: { stack, database, databaseServices, jwtSecret: Redacted.value(config.jwtSecret) },
+        target: { stack, database, databaseServices, jwtSecret: credentials.jwtSecret },
         overlay: {
           webhooks: "config",
           webhooksEnabled: toml.webhooksEnabled,

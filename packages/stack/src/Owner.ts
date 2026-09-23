@@ -45,13 +45,19 @@ import {
 import {
   makeServiceRecipe,
   ServiceCreation,
+  ServiceCreationInput,
   type CatalogLog,
   type CatalogRecipe,
   serviceSchemas,
 } from "./services/Catalog.ts";
 import { makeDatabaseSnapshots, type DatabaseSnapshot } from "./services/DatabaseSnapshot.ts";
 import * as State from "./State.ts";
-import type { SavedInstance, SavedStack } from "./State.ts";
+import type { SavedInstance, SavedStack, StackCredentials } from "./State.ts";
+import {
+  DEFAULT_LOCAL_DATABASE_PASSWORD,
+  DEFAULT_LOCAL_JWT_SECRET,
+  DEFAULT_POSTGRES_ROOT_KEY,
+} from "./Defaults.ts";
 
 export class OwnerError extends Data.TaggedError("OwnerError")<{
   readonly operation: string;
@@ -99,7 +105,7 @@ export interface Interface {
   };
   readonly composition: {
     readonly supabase: (
-      creations: ReadonlyArray<ServiceCreation>,
+      creations: ReadonlyArray<ServiceCreationInput>,
       options?: SupabaseCompositionOptions,
     ) => Effect.Effect<ReadonlyArray<{ id: string; creation: ServiceCreation }>, OwnerError>;
     readonly configure: (configuration: CompositionConfig) => Effect.Effect<void, OwnerError>;
@@ -148,6 +154,42 @@ const supabaseError = (cause: unknown) =>
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const consumesCredentials = (creation: unknown): boolean => {
+  if (!isRecord(creation) || typeof creation.service !== "string") return true;
+  if (creation.service === "database") return true;
+  if (["auth", "realtime", "storage", "functions", "studio", "pooler"].includes(creation.service))
+    return true;
+  if (creation.service !== "rest") return false;
+  const config = isRecord(creation.config) ? creation.config : {};
+  return config.jwks === undefined || config.jwtSecret !== undefined;
+};
+
+const credentialOverridesFor = (creation: ServiceCreationInput): Record<string, string> => {
+  const overrides: Record<string, string> = {};
+  if (creation.service === "database") {
+    if (creation.config.jwtSecret !== undefined)
+      overrides.jwtSecret = Redacted.value(creation.config.jwtSecret);
+    if (creation.config.rootKey !== undefined)
+      overrides.postgresRootKey = Redacted.value(creation.config.rootKey);
+    if (creation.config.databasePassword !== undefined)
+      overrides.databasePassword = Redacted.value(creation.config.databasePassword);
+  } else if ("jwtSecret" in creation.config && creation.config.jwtSecret !== undefined) {
+    overrides.jwtSecret = creation.config.jwtSecret;
+  }
+  return overrides;
+};
+
+const clearUnusedCredentials = (current: SavedStack): SavedStack => {
+  if (
+    current.credentials === undefined ||
+    current.instances.some(({ creation }) => consumesCredentials(creation))
+  )
+    return current;
+  const withoutCredentials = { ...current };
+  delete withoutCredentials.credentials;
+  return withoutCredentials;
+};
 
 const creationJson = Schema.toCodecJson(ServiceCreation);
 const encodeCreation = (creation: ServiceCreation) => Schema.encodeEffect(creationJson)(creation);
@@ -234,18 +276,108 @@ const makeOwnerWithDependencies = (
       );
     });
 
+    const resolveStackCredentials = Effect.fn("Owner.resolveStackCredentials")(function* (
+      overrides: Record<string, string>,
+    ) {
+      const defaults: StackCredentials = {
+        jwtSecret: DEFAULT_LOCAL_JWT_SECRET,
+        postgresRootKey: DEFAULT_POSTGRES_ROOT_KEY,
+        databasePassword: DEFAULT_LOCAL_DATABASE_PASSWORD,
+      };
+      const credentials = yield* options.state
+        .withLock(
+          Effect.gen(function* () {
+            const current = yield* options.state
+              .read(options.saved.id)
+              .pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
+            if (current === undefined)
+              return yield* errorFor("credentials", "Saved stack is missing");
+            const saved = current.credentials;
+            if (saved === undefined) {
+              const hasCredentialConsumer = current.instances.some(({ creation: value }) =>
+                consumesCredentials(value),
+              );
+              if (hasCredentialConsumer)
+                return yield* errorFor(
+                  "credentials",
+                  "Saved instances have no stack credential record; refusing to infer credentials",
+                );
+              const initial = { ...defaults, ...overrides };
+              yield* options.state
+                .save({ ...current, credentials: initial })
+                .pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
+              return initial;
+            }
+            const conflict =
+              (overrides.jwtSecret !== undefined &&
+                overrides.jwtSecret !== saved.jwtSecret &&
+                "jwtSecret") ||
+              (overrides.postgresRootKey !== undefined &&
+                overrides.postgresRootKey !== saved.postgresRootKey &&
+                "rootKey") ||
+              (overrides.databasePassword !== undefined &&
+                overrides.databasePassword !== saved.databasePassword &&
+                "databasePassword");
+            if (conflict !== false && conflict !== undefined)
+              return yield* errorFor(
+                "credentials",
+                `Credential override ${conflict} conflicts with the saved stack value`,
+              );
+            return saved;
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            cause instanceof OwnerError ? cause : errorFor("credentials", cause),
+          ),
+        );
+      return credentials;
+    });
+
+    const resolveCredentials = Effect.fn("Owner.resolveCredentials")(function* (input: unknown) {
+      const creation = yield* Schema.decodeUnknownEffect(ServiceCreationInput)(input).pipe(
+        Effect.mapError((cause) => errorFor("config", cause)),
+      );
+      if (!consumesCredentials(creation))
+        return yield* Schema.decodeUnknownEffect(ServiceCreation)(creation).pipe(
+          Effect.mapError((cause) => errorFor("config", cause)),
+        );
+      const overrides = credentialOverridesFor(creation);
+      const credentials = yield* resolveStackCredentials(overrides);
+
+      const config = { ...creation.config };
+      if (creation.service === "database") {
+        Object.assign(config, {
+          databasePassword: Redacted.make(credentials.databasePassword),
+          jwtSecret: Redacted.make(credentials.jwtSecret),
+          rootKey: Redacted.make(credentials.postgresRootKey),
+        });
+      } else if (consumesCredentials(creation)) {
+        Object.assign(config, { jwtSecret: credentials.jwtSecret });
+      }
+      return yield* Schema.decodeUnknownEffect(ServiceCreation)({ ...creation, config }).pipe(
+        Effect.mapError((cause) => errorFor("credentials", cause)),
+      );
+    });
+
     const removeCreation = (id: string) =>
       updateState((current) =>
-        Effect.succeed({
-          ...current,
-          instances: current.instances.filter((instance) => instance.id !== id),
-        }),
+        Effect.succeed(
+          clearUnusedCredentials({
+            ...current,
+            instances: current.instances.filter((instance) => instance.id !== id),
+          }),
+        ),
       ).pipe(Effect.asVoid);
 
     const persistComposition = (value: CompositionConfig) =>
       updateState((current) => Effect.succeed({ ...current, composition: value })).pipe(
         Effect.asVoid,
       );
+    const clearCredentialsIfUnused = () =>
+      updateState((current) => {
+        return Effect.succeed(clearUnusedCredentials(current));
+      }).pipe(Effect.asVoid);
     const removeInstance = (id: string) => {
       const prune = (current: CompositionConfig): CompositionConfig => ({
         members: current.members.filter((member) => member.id !== id),
@@ -256,11 +388,13 @@ const makeOwnerWithDependencies = (
       return updateState((current) =>
         Schema.decodeUnknownEffect(Orchestrator.CompositionConfig)(current.composition).pipe(
           Effect.mapError((cause) => errorFor("state", cause)),
-          Effect.map((savedComposition) => ({
-            ...current,
-            instances: current.instances.filter((instance) => instance.id !== id),
-            composition: prune(savedComposition),
-          })),
+          Effect.map((savedComposition) =>
+            clearUnusedCredentials({
+              ...current,
+              instances: current.instances.filter((instance) => instance.id !== id),
+              composition: prune(savedComposition),
+            }),
+          ),
         ),
       ).pipe(
         Effect.tap(() => Ref.update(composition, prune)),
@@ -697,9 +831,7 @@ const makeOwnerWithDependencies = (
           isDraining ? Effect.fail(errorFor("create", "Owner is draining")) : Effect.void,
         ),
       );
-      const creation = yield* Schema.decodeUnknownEffect(ServiceCreation)(input).pipe(
-        Effect.mapError((cause) => errorFor("create", cause)),
-      );
+      const creation = yield* resolveCredentials(input);
       const id = yield* crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) => errorFor("identity", cause)),
       );
@@ -748,53 +880,73 @@ const makeOwnerWithDependencies = (
     });
 
     const supabaseComposition = Effect.fn("Owner.supabaseComposition")(
-      (inputs: ReadonlyArray<ServiceCreation>, options?: SupabaseCompositionOptions) =>
-        makeSupabaseComposition(
-          {
-            currentComposition: Ref.get(composition),
-            get: (id) => get(id).pipe(Effect.mapError(supabaseError)),
-            status: (id) =>
-              observation(id).pipe(
-                Effect.map(({ lifecycle, wakeEnabled }) => ({ lifecycle, wakeEnabled })),
-                Effect.mapError(supabaseError),
-              ),
-            create: (creation) => createService(creation).pipe(Effect.mapError(supabaseError)),
-            destroy: (id) => destroy(id).pipe(Effect.mapError(supabaseError)),
-            bind: (id) =>
-              orchestrator.get(id).pipe(
-                Effect.flatMap((registered) => registered.bind),
-                Effect.mapError(supabaseError),
-              ),
-            address: (id, endpoint, from) =>
-              Ref.get(namespaces).pipe(
-                Effect.flatMap((values) => {
-                  const namespace = values.get(id);
-                  return namespace === undefined
-                    ? Effect.fail(supabaseError("Service namespace is missing"))
-                    : namespace.address(endpoint, from).pipe(
-                        Effect.map(({ host, port }) => publicUrl(host, port)),
-                        Effect.mapError(supabaseError),
-                      );
-                }),
-              ),
-            output: (id, name) =>
-              orchestrator.get(id).pipe(
-                Effect.flatMap((registered) => {
-                  const output = registered.outputs[name];
-                  return output === undefined
-                    ? Effect.fail(supabaseError(`Missing output ${name}`))
-                    : output.pipe(Effect.mapError(supabaseError));
-                }),
-                Effect.mapError(supabaseError),
-              ),
-            updateCreation: (id, values) =>
-              updateCreation(id, values).pipe(Effect.mapError(supabaseError)),
-            configure: (configuration) =>
-              configureComposition(configuration).pipe(Effect.mapError(supabaseError)),
-          },
-          inputs,
-          options,
-        ).pipe(
+      (inputs: ReadonlyArray<ServiceCreationInput>, options?: SupabaseCompositionOptions) =>
+        Effect.gen(function* () {
+          const overrides: Record<string, string> = {};
+          for (const input of inputs) {
+            for (const [key, value] of Object.entries(credentialOverridesFor(input))) {
+              if (overrides[key] !== undefined && overrides[key] !== value)
+                return yield* errorFor(
+                  "credentials",
+                  `Credential override ${key} conflicts within the stack composition`,
+                );
+              overrides[key] = value;
+            }
+          }
+          if (inputs.some(consumesCredentials)) yield* resolveStackCredentials(overrides);
+          return yield* Effect.forEach(inputs, resolveCredentials);
+        }).pipe(
+          Effect.flatMap((creations) =>
+            makeSupabaseComposition(
+              {
+                currentComposition: Ref.get(composition),
+                get: (id) => get(id).pipe(Effect.mapError(supabaseError)),
+                status: (id) =>
+                  observation(id).pipe(
+                    Effect.map(({ lifecycle, wakeEnabled }) => ({ lifecycle, wakeEnabled })),
+                    Effect.mapError(supabaseError),
+                  ),
+                create: (creation) => createService(creation).pipe(Effect.mapError(supabaseError)),
+                destroy: (id) => destroy(id).pipe(Effect.mapError(supabaseError)),
+                bind: (id) =>
+                  orchestrator.get(id).pipe(
+                    Effect.flatMap((registered) => registered.bind),
+                    Effect.mapError(supabaseError),
+                  ),
+                address: (id, endpoint, from) =>
+                  Ref.get(namespaces).pipe(
+                    Effect.flatMap((values) => {
+                      const namespace = values.get(id);
+                      return namespace === undefined
+                        ? Effect.fail(supabaseError("Service namespace is missing"))
+                        : namespace.address(endpoint, from).pipe(
+                            Effect.map(({ host, port }) => publicUrl(host, port)),
+                            Effect.mapError(supabaseError),
+                          );
+                    }),
+                  ),
+                output: (id, name) =>
+                  orchestrator.get(id).pipe(
+                    Effect.flatMap((registered) => {
+                      const output = registered.outputs[name];
+                      return output === undefined
+                        ? Effect.fail(supabaseError(`Missing output ${name}`))
+                        : output.pipe(Effect.mapError(supabaseError));
+                    }),
+                    Effect.mapError(supabaseError),
+                  ),
+                updateCreation: (id, values) =>
+                  updateCreation(id, values).pipe(Effect.mapError(supabaseError)),
+                configure: (configuration) =>
+                  configureComposition(configuration).pipe(Effect.mapError(supabaseError)),
+              },
+              creations,
+              options,
+            ),
+          ),
+          Effect.catch((cause) =>
+            clearCredentialsIfUnused().pipe(Effect.andThen(Effect.fail(cause))),
+          ),
           Effect.mapError((cause) => {
             if (cause instanceof OwnerError) return cause;
             if (cause instanceof SupabaseCompositionError && cause.cause instanceof OwnerError)
@@ -817,12 +969,19 @@ const makeOwnerWithDependencies = (
       operation("ready", orchestrator.get(id).pipe(Effect.flatMap((value) => value.core.ready))),
     );
     const stop = Effect.fn("Owner.stop")((id: string) => operation("stop", orchestrator.stop(id)));
-    const restart = Effect.fn("Owner.restart")((id: string, input?: unknown) =>
-      operation(
-        "restart",
-        input === undefined ? orchestrator.restart(id) : orchestrator.restart(id, input),
-      ),
-    );
+    const restart = Effect.fn("Owner.restart")(function* (id: string, input?: unknown) {
+      const effect =
+        input === undefined
+          ? orchestrator.restart(id)
+          : Effect.gen(function* () {
+              const previous = yield* getCreation(id);
+              const next = yield* resolveCredentials(input);
+              if (next.service !== previous.service)
+                return yield* errorFor("restart", "Service kind cannot change");
+              return yield* orchestrator.restart(id, next);
+            });
+      return yield* operation("restart", effect);
+    });
     const destroy = Effect.fn("Owner.destroy")((id: string) =>
       operation("destroy", orchestrator.destroy(id)),
     );
@@ -871,7 +1030,7 @@ const makeOwnerWithDependencies = (
       ),
     );
     const compose = Effect.fn("Owner.compose")(
-      (creations: ReadonlyArray<ServiceCreation>, options?: SupabaseCompositionOptions) =>
+      (creations: ReadonlyArray<ServiceCreationInput>, options?: SupabaseCompositionOptions) =>
         compositionGate.withPermits(1)(supabaseComposition(creations, options)),
     );
     const configure = Effect.fn("Owner.configure")((input: CompositionConfig) =>

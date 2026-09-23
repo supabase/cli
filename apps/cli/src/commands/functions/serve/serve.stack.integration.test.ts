@@ -191,6 +191,7 @@ const fixture = (
         get: (id: string) => Effect.succeed(id === "database" ? database : functions),
         create: () => Effect.die("unused"),
       },
+      credentials: { get: Effect.die("unused") },
       composition: {
         describe: Effect.succeed({
           members: [

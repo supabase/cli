@@ -157,7 +157,7 @@ it.live(
           config: {
             version: "17",
             databasePassword: Redacted.make("owner-password"),
-            jwtSecret: Redacted.make("owner-jwt"),
+            jwtSecret: Redacted.make("owner-integration-jwt-secret-long-enough"),
             jwtExpiry: 3600,
           },
           endpoints: { sql: { port: "auto" } },
@@ -171,8 +171,8 @@ it.live(
           service: "database",
           config: {
             version: "17",
-            databasePassword: Redacted.make("shadow-password"),
-            jwtSecret: Redacted.make("shadow-jwt"),
+            databasePassword: Redacted.make("owner-password"),
+            jwtSecret: Redacted.make("owner-integration-jwt-secret-long-enough"),
             jwtExpiry: 3600,
           },
           endpoints: { sql: { port: "auto" } },
@@ -301,7 +301,7 @@ it.live(
             config: {
               version: "17",
               databasePassword: Redacted.make("owner-factory-password"),
-              jwtSecret: Redacted.make("owner-factory-jwt"),
+              jwtSecret: Redacted.make("owner-factory-jwt-secret-long-enough"),
               jwtExpiry: 3600,
             },
             endpoints: { sql: { port: "auto" } },

@@ -76,8 +76,8 @@ const resetDataStory = (runtime: "native" | "docker") =>
             service: "database",
             config: {
               version: "17",
-              databasePassword: Redacted.make("reset-target-password"),
-              jwtSecret: Redacted.make("reset-target-jwt-secret"),
+              databasePassword: Redacted.make("reset-shared-password"),
+              jwtSecret: Redacted.make("reset-shared-jwt-secret-long-enough-32chars"),
               jwtExpiry: 3600,
             },
             endpoints: { sql: { port: "auto" } },
@@ -86,8 +86,8 @@ const resetDataStory = (runtime: "native" | "docker") =>
             service: "database",
             config: {
               version: "17",
-              databasePassword: Redacted.make("reset-sibling-password"),
-              jwtSecret: Redacted.make("reset-sibling-jwt-secret"),
+              databasePassword: Redacted.make("reset-shared-password"),
+              jwtSecret: Redacted.make("reset-shared-jwt-secret-long-enough-32chars"),
               jwtExpiry: 3600,
             },
             endpoints: { sql: { port: "auto" } },

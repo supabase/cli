@@ -1,6 +1,12 @@
-export const defaultPublishableKey = "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH";
-export const defaultSecretKey = "sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz";
-export const defaultJwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long";
+import {
+  DEFAULT_LOCAL_JWT_SECRET,
+  DEFAULT_LOCAL_PUBLISHABLE_KEY,
+  DEFAULT_LOCAL_SECRET_KEY,
+} from "@supabase/stack/defaults";
+
+export const defaultPublishableKey = DEFAULT_LOCAL_PUBLISHABLE_KEY;
+export const defaultSecretKey = DEFAULT_LOCAL_SECRET_KEY;
+export const defaultJwtSecret = DEFAULT_LOCAL_JWT_SECRET;
 
 const desiredNofile = 65536;
 

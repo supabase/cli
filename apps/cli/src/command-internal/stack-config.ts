@@ -1,11 +1,7 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
-import {
-  DEFAULT_LOCAL_JWT_SECRET,
-  DEFAULT_POSTGRES_ROOT_KEY,
-  type ServiceCreation as ServiceCreationType,
-} from "@supabase/stack/effect";
+import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
 import { Crypto, Effect, Data, FileSystem, Path, Redacted, SchemaIssue } from "effect";
 
 import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
@@ -63,10 +59,8 @@ export class StackConfigError extends Data.TaggedError("StackConfigError")<{
 }
 
 interface StackStartConfig {
-  readonly jwtSecret: Redacted.Redacted<string>;
   readonly creations: (
     stackId: string,
-    options?: { readonly jwtSecret?: Redacted.Redacted<string> },
   ) => Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError>;
   readonly source: CliConfig;
   readonly projectEnvValues: Readonly<Record<string, string>>;
@@ -699,22 +693,21 @@ const resolveEffectiveCliConfig = (
 };
 
 const unsupportedConfigPaths = [
-  "auth.third_party",
-  "auth.publishable_key",
-  "auth.secret_key",
-  "auth.anon_key",
-  "auth.service_role_key",
-  "api.tls",
-  "analytics.gcp_project_id",
-  "analytics.gcp_project_number",
-  "analytics.gcp_jwt_path",
-  "edge_runtime.deno_version",
-  "storage.analytics",
-  "experimental.orioledb_version",
-  "experimental.s3_host",
-  "experimental.s3_region",
-  "experimental.s3_access_key",
-  "experimental.s3_secret_key",
+  { path: "auth.third_party", active: (config: CliConfig) => config.auth.enabled },
+  { path: "auth.publishable_key", active: (config: CliConfig) => config.auth.enabled },
+  { path: "auth.secret_key", active: (config: CliConfig) => config.auth.enabled },
+  { path: "auth.anon_key", active: (config: CliConfig) => config.auth.enabled },
+  { path: "auth.service_role_key", active: (config: CliConfig) => config.auth.enabled },
+  { path: "api.tls", active: (config: CliConfig) => config.api.enabled },
+  { path: "analytics.gcp_project_id", active: (config: CliConfig) => config.analytics.enabled },
+  {
+    path: "analytics.gcp_project_number",
+    active: (config: CliConfig) => config.analytics.enabled,
+  },
+  { path: "analytics.gcp_jwt_path", active: (config: CliConfig) => config.analytics.enabled },
+  { path: "edge_runtime.deno_version", active: (config: CliConfig) => config.edge_runtime.enabled },
+  { path: "storage.analytics", active: (config: CliConfig) => config.storage.enabled },
+  { path: "experimental.orioledb_version", active: (_config: CliConfig) => true },
 ] as const;
 
 const pathValue = (value: unknown, path: string): unknown => {
@@ -774,10 +767,10 @@ const configValidationError = (config: CliConfig): string | undefined => {
       if (notification.enabled && notification.content_path !== "")
         return `auth.email.notification.${name}.content_path requires template serving, which is not supported by the experimental stack`;
   }
-  if (config.auth.signing_keys_path !== undefined)
+  if (config.auth.enabled && config.auth.signing_keys_path !== undefined)
     return "auth.signing_keys_path is unsupported by the experimental stack";
-  for (const path of unsupportedConfigPaths) {
-    if (path.startsWith("auth.") && !config.auth.enabled) continue;
+  for (const { path, active } of unsupportedConfigPaths) {
+    if (!active(config)) continue;
     const value = pathValue(config, path);
     const baseline = pathValue(defaults, path);
     const difference = firstDifference(value, baseline, path);
@@ -785,7 +778,11 @@ const configValidationError = (config: CliConfig): string | undefined => {
   }
   if (config.analytics.enabled && config.analytics.backend !== "postgres")
     return "analytics.backend must be postgres for the experimental stack";
-  if (Object.keys(config.storage.vector.buckets).length > 0)
+  if (
+    config.storage.enabled &&
+    config.storage.vector.enabled &&
+    Object.keys(config.storage.vector.buckets).length > 0
+  )
     return "storage.vector settings are unsupported by the experimental stack";
   if (config.db.major_version !== 15 && config.db.major_version !== 17)
     return "db.major_version must be 15 or 17 for the experimental stack";
@@ -926,7 +923,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             : resolveJwtSecret(validatedConfig.auth.jwt_secret),
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });
-      const jwtSecret = Redacted.make(configuredJwtSecret ?? DEFAULT_LOCAL_JWT_SECRET);
+      const jwtSecret =
+        configuredJwtSecret === undefined ? undefined : Redacted.make(configuredJwtSecret);
       const document = context.loaded?.document;
       const rootKey = yield* Effect.try({
         try: () => {
@@ -937,7 +935,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             envOverride("SUPABASE_DB_ROOT_KEY", raw, context.projectEnvValues),
             context.projectEnvValues,
           );
-          return value === undefined || value === "" ? DEFAULT_POSTGRES_ROOT_KEY : value;
+          return value === undefined || value === "" ? undefined : value;
         },
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });
@@ -1011,18 +1009,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const storagePath = `${projectRoot}/supabase/.temp/stack-uploads`;
       const createCreations = (
         stackId: string,
-        options?: { readonly jwtSecret?: Redacted.Redacted<string> },
       ): Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError> =>
         Effect.gen(function* () {
-          const effectiveJwtSecret = options?.jwtSecret ?? jwtSecret;
-          if (
-            options?.jwtSecret !== undefined &&
-            configuredJwtSecret !== undefined &&
-            Redacted.value(options.jwtSecret) !== configuredJwtSecret
-          )
-            return yield* new StackConfigError({
-              message: "The configured auth.jwt_secret does not match the existing stack",
-            });
           const bootstrap = validatedConfig.edge_runtime.enabled
             ? yield* typeof SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
                 ? Effect.succeed(SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE)
@@ -1047,12 +1035,11 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               service: "database",
               config: {
                 version: String(validatedConfig.db.major_version),
-                databasePassword: Redacted.make("postgres"),
-                jwtSecret: effectiveJwtSecret,
+                ...(jwtSecret === undefined ? {} : { jwtSecret }),
                 jwtExpiry: validatedConfig.auth.jwt_expiry,
                 settings: validatedConfig.db.settings,
                 healthTimeoutMs,
-                rootKey: Redacted.make(rootKey),
+                ...(rootKey === undefined ? {} : { rootKey: Redacted.make(rootKey) }),
               },
               endpoints: { sql: endpoint(dbPort) },
             },
@@ -1075,7 +1062,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     service: "pooler" as const,
                     config: {
                       databaseUrl: "postgresql://placeholder",
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       poolMode,
                       tenant: "pooler-dev",
                       defaultPoolSize: validatedConfig.db.pooler.default_pool_size,
@@ -1106,7 +1093,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       ...(validatedConfig.api.external_url === undefined
                         ? {}
                         : { externalApiUrl: validatedConfig.api.external_url }),
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                     },
                     endpoints: { http: endpoint(apiPort) },
                   } satisfies ServiceCreationType,
@@ -1118,7 +1105,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     service: "auth" as const,
                     config: {
                       ...authConfig,
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                     },
                     endpoints: { http: endpoint(apiPort) },
                   } satisfies ServiceCreationType,
@@ -1130,8 +1117,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     service: "realtime" as const,
                     config: {
                       databaseUrl: "postgresql://placeholder",
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
-                      secretKeyBase: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       ipVersion:
                         validatedConfig.realtime.ip_version === "IPv6"
                           ? ("IPv6" as const)
@@ -1151,7 +1137,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     service: "storage" as const,
                     config: {
                       databaseUrl: "postgresql://placeholder",
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       filePath: `${storagePath}/${stackId}`,
                       fileSizeLimit: storageFileSizeLimit,
                       s3ProtocolEnabled: validatedConfig.storage.s3_protocol.enabled,
@@ -1204,7 +1190,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       bootstrap,
                       policy: validatedConfig.edge_runtime.policy,
                       verifyJwt: true,
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                     },
                     endpoints: {
                       http: endpoint(apiPort),
@@ -1227,7 +1213,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   {
                     service: "studio" as const,
                     config: {
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       ...(validatedConfig.studio.openai_api_key === undefined
                         ? {}
                         : { openaiApiKey: validatedConfig.studio.openai_api_key }),
@@ -1255,7 +1241,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           ];
         });
       return {
-        jwtSecret,
         creations: createCreations,
         source: validatedConfig,
         projectEnvValues: context.projectEnvValues,

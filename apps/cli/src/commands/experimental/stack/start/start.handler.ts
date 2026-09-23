@@ -2,7 +2,7 @@ import { endpointReports } from "../stack-endpoints.format.ts";
 import { readStackFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
-import type { ServiceCreation, Stack } from "@supabase/stack/effect";
+import type { ServiceCreationInput, Stack } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
   OutputFlag,
@@ -107,23 +107,13 @@ const sameBinding = (
     comparableConfig(requested.service, requested.config),
   );
 
-const reconciledConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
-  database: new Set(["databasePassword", "jwtSecret"]),
+const compositionManagedConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
+  database: new Set(["databasePassword", "jwtSecret", "rootKey"]),
   rest: new Set(["databaseUrl", "jwtSecret"]),
   auth: new Set(["databaseUrl", "jwtSecret", "externalApiUrl", "smtpUrl"]),
   realtime: new Set(["databaseUrl", "jwtSecret"]),
   storage: new Set(["databaseUrl", "filePath", "jwtSecret", "imgproxyUrl", "vectorDatabaseUrl"]),
-  functions: new Set([
-    "functionsRoot",
-    "filesRoot",
-    "functions",
-    "bootstrap",
-    "apiUrl",
-    "databaseUrl",
-    "jwtSecret",
-    "env",
-    "verifyJwt",
-  ]),
+  functions: new Set(["apiUrl", "bootstrap", "databaseUrl", "jwtSecret"]),
   studio: new Set([
     "functionsRoot",
     "pgmetaUrl",
@@ -142,12 +132,12 @@ const reconciledConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
 
 const comparableConfig = (service: string, value: unknown): unknown => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
-  const ignored = reconciledConfigKeys[service] ?? new Set<string>();
+  const ignored = compositionManagedConfigKeys[service] ?? new Set<string>();
   return Object.fromEntries(Object.entries(value).filter(([key]) => !ignored.has(key)));
 };
 
 const selectedCreations = (
-  creations: ReadonlyArray<ServiceCreation>,
+  creations: ReadonlyArray<ServiceCreationInput>,
   exclusions: ReadonlyArray<string>,
 ) =>
   creations.filter((creation) => {
@@ -157,7 +147,7 @@ const selectedCreations = (
 
 const compose = (
   stack: Stack,
-  creations: ReadonlyArray<ServiceCreation>,
+  creations: ReadonlyArray<ServiceCreationInput>,
   reuseIds: ReadonlyArray<string>,
 ) => stack.composition.supabase(creations, reuseIds.length === 0 ? undefined : { reuseIds });
 
@@ -239,45 +229,20 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "A standalone database exists outside the saved stack composition",
         suggestion: "Destroy the standalone database before starting this stack.",
       });
-    const persistedJwt =
-      primaryDatabase === undefined
-        ? undefined
-        : yield* primaryDatabase.status.pipe(
-            Effect.catchTag("StackError", () =>
-              primaryDatabase
-                .credentials({ from: "host" })
-                .pipe(Effect.andThen(primaryDatabase.status)),
-            ),
-            Effect.map((status) =>
-              status.config.service === "database"
-                ? Redacted.isRedacted(status.config.config.jwtSecret)
-                  ? status.config.config.jwtSecret
-                  : Redacted.make(status.config.config.jwtSecret)
-                : undefined,
-            ),
-            Effect.mapError(stackError),
-          );
-    if (primaryDatabase !== undefined && persistedJwt === undefined)
-      return yield* new StackCommandStartError({
-        reason: "invalid-config",
-        message: "The existing database has no persisted JWT secret",
-      });
-    const creations = yield* config
-      .creations(stack.id, persistedJwt === undefined ? undefined : { jwtSecret: persistedJwt })
-      .pipe(
-        Effect.mapError(
-          (error) =>
-            new StackCommandStartError({
-              reason: "invalid-config",
-              message: error.message,
-              cause: error,
-            }),
-        ),
-      );
+    const creations = yield* config.creations(stack.id).pipe(
+      Effect.mapError(
+        (error) =>
+          new StackCommandStartError({
+            reason: "invalid-config",
+            message: error.message,
+            cause: error,
+          }),
+      ),
+    );
     const requested = yield* Effect.forEach(selectedCreations(creations, exclusions), (creation) =>
       creation.service === "functions"
         ? readStackFunctionsEnv(`${creation.config.functionsRoot}/.env`, true).pipe(
-            Effect.map((env): ServiceCreation => ({
+            Effect.map((env): ServiceCreationInput => ({
               ...creation,
               config: { ...creation.config, env: { ...env, ...creation.config.env } },
             })),
@@ -301,6 +266,20 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "Studio cannot be started without the REST API capability",
         suggestion: "Remove --exclude rest or also exclude studio.",
       });
+    const requestedDatabase = requested.find((creation) => creation.service === "database");
+    const savedCredentials = yield* stack.credentials.get.pipe(Effect.mapError(stackError));
+    if (requestedDatabase?.service === "database" && savedCredentials !== undefined) {
+      const jwtSecret = requestedDatabase.config.jwtSecret;
+      const rootKey = requestedDatabase.config.rootKey;
+      if (
+        (jwtSecret !== undefined && Redacted.value(jwtSecret) !== savedCredentials.jwtSecret) ||
+        (rootKey !== undefined && Redacted.value(rootKey) !== savedCredentials.postgresRootKey)
+      )
+        return yield* new StackCommandStartError({
+          reason: "invalid-config",
+          message: "The configured credentials conflict with the saved stack credentials",
+        });
+    }
     if (requested.some(({ service }) => service === "storage"))
       yield* fs
         .makeDirectory(
@@ -338,12 +317,21 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       const creation = requested.find(({ service }) => service === instance.service);
       if (creation === undefined) continue;
       const status = yield* instance.status.pipe(Effect.mapError(stackError));
+      if (
+        creation.service === "database" &&
+        status.config.service === "database" &&
+        creation.config.version !== status.config.config.version
+      )
+        return yield* new StackCommandStartError({
+          reason: "invalid-config",
+          message: "The requested database version does not match the saved stack binding",
+          suggestion: "Keep the saved database version, or destroy the stack.",
+        });
       if (!sameBinding(status.config, creation))
         return yield* new StackCommandStartError({
           reason: "invalid-config",
           message: `The requested ${creation.service} configuration does not match the saved stack binding`,
-          suggestion:
-            "Keep the saved endpoint and version settings, or destroy the stack before changing them.",
+          suggestion: "Keep the saved endpoint and version settings, or destroy the stack.",
         });
     }
     const reuseIds: Array<string> = compositionChanged
@@ -440,25 +428,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         ),
       );
     }
-    const functions = members.find((member) => member.service === "functions");
-    const requestedFunctions = requested.find((creation) => creation.service === "functions");
-    if (functions?.service === "functions" && requestedFunctions?.service === "functions") {
-      const before = yield* functions.status.pipe(Effect.mapError(stackError));
-      if (before.config.service === "functions") {
-        const next = {
-          ...before.config.config,
-          env: requestedFunctions.config.env,
-          functions: requestedFunctions.config.functions,
-          filesRoot: requestedFunctions.config.filesRoot,
-          verifyJwt: requestedFunctions.config.verifyJwt,
-        };
-        if (!Equal.equals(before.config.config, next)) {
-          yield* functions.restart({ config: next }).pipe(Effect.mapError(stackError));
-          if (before.lifecycle === "stopped")
-            yield* functions.stop.pipe(Effect.mapError(stackError));
-        }
-      }
-    }
     const configured = yield* stack.composition.describe.pipe(Effect.mapError(stackError));
     const desiredMembers = configured.members.map(({ id }) => {
       const member = members.find((entry) => entry.id === id);
@@ -512,6 +481,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       Effect.tapError((error) => starting.fail(error.message)),
       Effect.mapError(stackError),
     );
+    const stackCredentials = yield* stack.credentials.get.pipe(Effect.mapError(stackError));
+    if (stackCredentials === undefined)
+      return yield* new StackCommandStartError({
+        reason: "invalid-config",
+        message: "The stack has no saved credentials",
+      });
     const databaseServices = requested
       .filter(
         (creation) =>
@@ -528,7 +503,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             stack,
             database,
             databaseServices,
-            jwtSecret: Redacted.value(persistedJwt ?? config.jwtSecret),
+            jwtSecret: stackCredentials.jwtSecret,
           },
           overlay: {
             webhooks: "config",
@@ -554,7 +529,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             stack,
             database,
             databaseServices,
-            jwtSecret: Redacted.value(persistedJwt ?? config.jwtSecret),
+            jwtSecret: stackCredentials.jwtSecret,
           },
           overlay: {
             webhooks: "config",
@@ -596,7 +571,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           );
           const credentials = yield* stackStorageCredentialsFor(
             storage,
-            Redacted.value(persistedJwt ?? config.jwtSecret),
+            stackCredentials.jwtSecret,
           ).pipe(Effect.mapError(stackError));
           yield* seedBucketsRun({
             projectRef: "",

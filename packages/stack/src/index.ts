@@ -3,18 +3,30 @@ import { Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
 import * as StackEffect from "./effect.ts";
 import { StackError } from "./Rpc.ts";
 import {
-  ServiceCreation as CreationSchema,
+  ServiceCreationInput as CreationSchema,
   type ServiceCreation as EffectCreation,
 } from "./services/Catalog.ts";
 import type { PostgresTool } from "./Tools.ts";
-import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.ts";
 
-export { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.ts";
+export {
+  DEFAULT_LOCAL_DATABASE_PASSWORD,
+  DEFAULT_LOCAL_JWT_SECRET,
+  DEFAULT_LOCAL_PUBLISHABLE_KEY,
+  DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
+  DEFAULT_LOCAL_S3_REGION,
+  DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
+  DEFAULT_LOCAL_SECRET_KEY,
+  DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
+  DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
+  DEFAULT_POSTGRES_ROOT_KEY,
+  DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
+} from "./Defaults.ts";
+export type { StackCredentials } from "./State.ts";
 
 export { postgres } from "./Tools.ts";
 export { StackError } from "./Rpc.ts";
 type DatabaseCreation = Extract<EffectCreation, { service: "database" }>;
-/** Plain configuration accepted by non-Effect callers. */
+/** Plain service configuration accepted by non-Effect callers. */
 export type ServiceCreation =
   | Exclude<EffectCreation, DatabaseCreation>
   | (Omit<DatabaseCreation, "config"> & {
@@ -22,37 +34,15 @@ export type ServiceCreation =
         DatabaseCreation["config"],
         "databasePassword" | "jwtSecret" | "rootKey"
       > & {
-        readonly databasePassword: string;
+        readonly databasePassword?: string;
         readonly jwtSecret?: string;
         readonly rootKey?: string;
       };
     });
+export type ServiceCreationInput = ServiceCreation;
 const creationJson = Schema.toCodecJson(CreationSchema);
 const decodeCreation = (creation: unknown) =>
-  Schema.decodeUnknownEffect(creationJson)(
-    typeof creation === "object" &&
-      creation !== null &&
-      "service" in creation &&
-      creation.service === "database" &&
-      "config" in creation &&
-      typeof creation.config === "object" &&
-      creation.config !== null
-      ? {
-          ...creation,
-          config: {
-            ...creation.config,
-            jwtSecret:
-              "jwtSecret" in creation.config && creation.config.jwtSecret !== undefined
-                ? creation.config.jwtSecret
-                : DEFAULT_LOCAL_JWT_SECRET,
-            rootKey:
-              "rootKey" in creation.config && creation.config.rootKey !== undefined
-                ? creation.config.rootKey
-                : DEFAULT_POSTGRES_ROOT_KEY,
-          },
-        }
-      : creation,
-  ).pipe(
+  Schema.decodeUnknownEffect(creationJson)(creation).pipe(
     Effect.mapError((cause) => new StackError({ operation: "config", message: cause.message })),
   );
 export type { CompositionConfig } from "./Orchestrator.ts";
@@ -203,12 +193,11 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
               ),
               Effect.flatMap((decoded) => {
                 const matchesKind = (
-                  candidate: EffectCreation,
-                ): candidate is EffectCreation &
-                  Pick<Extract<EffectCreation, { service: K }>, "config"> =>
+                  candidate: StackEffect.ServiceCreationInput,
+                ): candidate is Extract<StackEffect.ServiceCreationInput, { service: K }> =>
                   candidate.service === service.service;
                 return matchesKind(decoded)
-                  ? service.restart({ config: decoded.config })
+                  ? service.restart(decoded)
                   : Effect.fail(
                       new StackError({
                         operation: "restart",
@@ -286,6 +275,9 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
         run(handle.services.get(id).pipe(Effect.map(instance)), options),
       list: (options?: CallOptions) =>
         run(handle.services.list.pipe(Effect.map((services) => services.map(instance))), options),
+    },
+    credentials: {
+      get: (options?: CallOptions) => run(handle.credentials.get, options),
     },
     composition: {
       supabase: (services: ReadonlyArray<ServiceCreation>, options?: CompositionSupabaseOptions) =>

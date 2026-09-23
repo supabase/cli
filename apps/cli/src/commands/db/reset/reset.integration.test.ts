@@ -729,6 +729,7 @@ function mockResetStackApi(opts: {
       },
       list: Effect.succeed(members),
     },
+    credentials: { get: Effect.die("unused") },
     composition: {
       describe: Effect.succeed({
         members: members.map(({ id }, index) => ({

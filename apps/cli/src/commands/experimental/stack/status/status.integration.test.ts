@@ -106,6 +106,7 @@ const makeStack = (
     get: (_id) => Effect.die("unused"),
     list: Effect.succeed([...services]),
   },
+  credentials: { get: Effect.die("unused") },
   composition: {
     supabase: (_services, _options) => Effect.die("unused"),
     configure: (_config) => Effect.die("unused"),
