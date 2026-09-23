@@ -177,6 +177,46 @@ async function containerState(container: string): Promise<string> {
   }
 }
 
+async function containerDebugMetadata(container: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(
+      "docker",
+      [
+        "inspect",
+        "--format",
+        "{{json .State}}\t{{json .Id}}\t{{json .Name}}\t{{json .Config.Image}}",
+        container,
+      ],
+      { encoding: "utf8", timeout: DOCKER_COMMAND_TIMEOUT_MS },
+    );
+    return stdout.trim();
+  } catch (error) {
+    const stderr = error instanceof Error && "stderr" in error ? String(error.stderr) : "";
+    return `not inspectable (${stderr.trim() || String(error)})`;
+  }
+}
+
+function imageDebugMetadata(images: readonly string[]): string {
+  return images
+    .map((image) => {
+      const result = spawnSync(
+        "docker",
+        [
+          "image",
+          "inspect",
+          "--format",
+          "{{json .Id}}\t{{json .RepoDigests}}\t{{.Os}}/{{.Architecture}}",
+          image,
+        ],
+        { encoding: "utf8", timeout: DOCKER_COMMAND_TIMEOUT_MS },
+      );
+      const output = `${result.stdout ?? ""}`.trim();
+      const error = result.error ? ` error=${result.error.message}` : "";
+      return `[DEBUG-edge-runtime] image=${image} inspect=${output || result.stderr || "unavailable"}${error}`;
+    })
+    .join("\n");
+}
+
 function isTerminalContainerState(state: string): boolean {
   return /^(exited|dead)\b/u.test(state);
 }
@@ -185,7 +225,7 @@ async function containerDiagnostics(containers: readonly string[]): Promise<stri
   const blocks = await Promise.all(
     containers.map(
       async (container) =>
-        `${container} (${await containerState(container)}) logs:\n${containerLogs(container)}`,
+        `[DEBUG-edge-runtime] container=${container} state=${await containerState(container)} metadata=${await containerDebugMetadata(container)} logs:\n${containerLogs(container)}`,
     ),
   );
   return blocks.join("\n");
@@ -434,10 +474,14 @@ describe("functions serve runtime template (offline)", () => {
         ensureImage(edgeRuntimeDockerfileImage(), imageDeadline),
         ensureImage(dockerfileServiceImage("kong"), imageDeadline),
       ]);
+      console.log(
+        `[DEBUG-edge-runtime] resolved images before container creation:\n${imageDebugMetadata([runtimeImage, kongImage])}`,
+      );
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-kong-e2e-"));
       const network = `supabase-serve-kong-e2e-${process.pid.toString()}`;
       const runtimeContainer = `${network}-runtime`;
       const kongContainer = `${network}-kong`;
+      const diagnosticContainers = [kongContainer, runtimeContainer] as const;
       try {
         await writeFile(join(dir, "index.ts"), await bundleServeMainTemplate());
         await mkdir(join(dir, "functions", "custom"), { recursive: true });
@@ -480,6 +524,8 @@ describe("functions serve runtime template (offline)", () => {
             `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${KONG_FUNCTIONS_CONFIG}`,
             "-e",
             "SUPABASE_INTERNAL_DEBUG=true",
+            "-e",
+            "RUST_BACKTRACE=full",
             "-e",
             "SHARED=shared",
             "-e",
@@ -539,7 +585,6 @@ describe("functions serve runtime template (offline)", () => {
         const functionsUrl = `http://127.0.0.1:${port}/functions/v1`;
         const authUrl = `${functionsUrl}/test`;
 
-        const diagnosticContainers = [kongContainer, runtimeContainer] as const;
         const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
         let ready = false;
         let lastError: unknown;
@@ -621,6 +666,9 @@ describe("functions serve runtime template (offline)", () => {
         expect(reusedCustomResponse.status).toBe(200);
         expect(reusedCustomResponse.headers.get("x-function-slug")).toBe("custom");
       } finally {
+        console.log(
+          `[DEBUG-edge-runtime] diagnostics before cleanup:\n${await containerDiagnostics(diagnosticContainers)}\n${imageDebugMetadata([runtimeImage, kongImage])}`,
+        );
         spawnSync("docker", ["rm", "-f", kongContainer, runtimeContainer], {
           stdio: "ignore",
         });
