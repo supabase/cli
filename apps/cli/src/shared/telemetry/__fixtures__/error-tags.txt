@@ -285,6 +285,7 @@ GenSigningKeyReadError
 GenSigningKeyWriteError
 GenTypesFlagUsageError
 GenTypesGenerationError
+GenTypesLocalDbInspectError
 GenTypesLocalDbNotRunningError
 GenTypesMissingProjectConfigError
 GenTypesNetworkError

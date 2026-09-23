@@ -104,12 +104,20 @@ export class GenTypesLocalDbNotRunningError extends Data.TaggedError(
   "GenTypesLocalDbNotRunningError",
 )<{
   readonly message: string;
-  readonly daemonDown?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    if (this.daemonDown === true) {
+    return actionability.startStack;
+  }
+}
+
+export class GenTypesLocalDbInspectError extends Data.TaggedError("GenTypesLocalDbInspectError")<{
+  readonly message: string;
+  readonly daemonDown: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.daemonDown) {
       return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
     }
-    return actionability.startStack;
+    return actionability.unknown;
   }
 }

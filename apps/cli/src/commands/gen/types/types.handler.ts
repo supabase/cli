@@ -46,6 +46,7 @@ import {
 import type { GenTypesFlags } from "./types.command.ts";
 import {
   GenTypesFlagUsageError,
+  GenTypesLocalDbInspectError,
   GenTypesLocalDbNotRunningError,
   GenTypesMissingProjectConfigError,
   GenTypesNetworkError,
@@ -505,7 +506,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
               message: "supabase start is not running.",
             });
           }
-          return yield* new GenTypesLocalDbNotRunningError({
+          return yield* new GenTypesLocalDbInspectError({
             message:
               message.length > 0
                 ? `failed to inspect service: ${message}`

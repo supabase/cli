@@ -14,6 +14,7 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import {
+  Cause,
   ConfigProvider,
   Deferred,
   Effect,
@@ -21,6 +22,7 @@ import {
   Layer,
   Option,
   PlatformError,
+  Predicate,
   Sink,
   Stdio,
   Stream,
@@ -45,6 +47,7 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import type { GenTypesFlags } from "./types.command.ts";
+import { GenTypesLocalDbInspectError } from "./types.errors.ts";
 import { genTypes } from "./types.handler.ts";
 import { localDbContainerId, parseQueryTimeoutMillis, rootCaBundle } from "./types.shared.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
@@ -2424,6 +2427,12 @@ describe("gen types", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain("supabase start is not running.");
+          expect(
+            Option.exists(
+              Cause.findErrorOption(exit.cause),
+              Predicate.isTagged("GenTypesLocalDbNotRunningError"),
+            ),
+          ).toBe(true);
         }
       });
     });
@@ -2499,6 +2508,12 @@ describe("gen types", () => {
             expect(String(exit.cause)).toContain(
               "failed to inspect service: Cannot connect to the Docker daemon",
             );
+            expect(
+              Option.exists(
+                Cause.findErrorOption(exit.cause),
+                (error) => error instanceof GenTypesLocalDbInspectError && error.daemonDown,
+              ),
+            ).toBe(true);
           }
         });
       },
@@ -2596,6 +2611,12 @@ describe("gen types", () => {
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain("failed to inspect service");
           expect(String(exit.cause)).not.toContain("failed to inspect service:");
+          expect(
+            Option.exists(
+              Cause.findErrorOption(exit.cause),
+              (error) => error instanceof GenTypesLocalDbInspectError && !error.daemonDown,
+            ),
+          ).toBe(true);
         }
       });
     });
