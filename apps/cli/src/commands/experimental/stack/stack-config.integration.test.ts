@@ -172,11 +172,14 @@ major_version = 14
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("ignores unresolved experimental S3 env placeholders", () =>
-    Effect.gen(function* () {
+  it.live("ignores unresolved experimental S3 env placeholders", () => {
+    const names = ["s3_host", "S3_REGION", "S3_ACCESS_KEY", "S3_SECRET_KEY"] as const;
+    const saved = names.map((name) => [name, process.env[name]] as const);
+    for (const name of names) process.env[name] = "";
+    return Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-s3-placeholder"
 [experimental]
-s3_host = "env(S3_HOST)"
+s3_host = "env(s3_host)"
 s3_region = "env(S3_REGION)"
 s3_access_key = "env(S3_ACCESS_KEY)"
 s3_secret_key = "env(S3_SECRET_KEY)"
@@ -184,8 +187,18 @@ s3_secret_key = "env(S3_SECRET_KEY)"
       const config = yield* load(root);
       const services = yield* config.creations("stack-s3-placeholder");
       expect(services.some((service) => service.service === "database")).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          for (const [name, value] of saved) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+          }
+        }),
+      ),
+      Effect.provide(BunServices.layer),
+    );
+  });
 
   it.live("still rejects an unresolved auth service role key", () =>
     Effect.gen(function* () {

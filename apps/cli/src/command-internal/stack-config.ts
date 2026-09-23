@@ -1,5 +1,5 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
-import { resolveCliConfigSubtree } from "@supabase/config/internal";
+import { ENV_CAPTURE_REGEX, resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
 import {
   DEFAULT_LOCAL_JWT_SECRET,
@@ -719,10 +719,10 @@ const unsupportedConfigPaths = [
 
 /** An unset `env(NAME)` stays as that literal, which is not a configured value. */
 const unresolvedEnvLiteral = (value: unknown): boolean => {
-  if (typeof value === "string") return /^env\(([A-Z_][A-Z0-9_]*)\)$/.test(value);
+  if (typeof value === "string") return ENV_CAPTURE_REGEX.test(value);
   if (!Redacted.isRedacted(value)) return false;
   const inner = Redacted.value(value);
-  return typeof inner === "string" && /^env\(([A-Z_][A-Z0-9_]*)\)$/.test(inner);
+  return typeof inner === "string" && ENV_CAPTURE_REGEX.test(inner);
 };
 
 const pathValue = (value: unknown, path: string): unknown => {

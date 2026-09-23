@@ -148,6 +148,14 @@ const databaseError = (operation: string, cause: unknown): DatabaseError =>
     cause,
   });
 
+/** A descendant outside the process group can keep stderr open after the launcher exits. */
+const stderrTailReady = (drained: Fiber.Fiber<void>) =>
+  Fiber.await(drained).pipe(
+    Effect.asVoid,
+    Effect.raceFirst(Effect.sleep("1 second")),
+    Effect.ignore,
+  );
+
 const processExit = <E extends { readonly message: string }>(
   exitCode: Effect.Effect<number, E>,
   stderr?: {
@@ -155,11 +163,13 @@ const processExit = <E extends { readonly message: string }>(
     readonly drained: Fiber.Fiber<void>;
   },
 ): Effect.Effect<Exit.Exit<void, ServiceError>> =>
-  Effect.all(
-    [stderr === undefined ? Effect.void : Fiber.join(stderr.drained).pipe(Effect.ignore), exitCode],
-    { concurrency: "unbounded" },
+  (stderr === undefined
+    ? exitCode
+    : Effect.all([exitCode, stderrTailReady(stderr.drained)], { concurrency: "unbounded" }).pipe(
+        Effect.map(([code]) => code),
+      )
   ).pipe(
-    Effect.flatMap(([, code]) =>
+    Effect.flatMap((code) =>
       Number(code) === 0
         ? Effect.void
         : (stderr === undefined ? Effect.succeed("") : Ref.get(stderr.tail)).pipe(
@@ -345,19 +355,27 @@ const publishLogs = Effect.fn("Database.publishLogs")((
   scope: Scope.Closeable,
   stderrTail?: Ref.Ref<string>,
 ) => {
-  const drain = (stream: Stream.Stream<Uint8Array, unknown>, name: DatabaseLog["stream"]) =>
-    stream.pipe(
+  const drain = (stream: Stream.Stream<Uint8Array, unknown>, name: DatabaseLog["stream"]) => {
+    const decoder = name === "stderr" && stderrTail !== undefined ? new TextDecoder() : undefined;
+    const appendTail = (text: string) =>
+      text.length === 0 || stderrTail === undefined
+        ? Effect.void
+        : Ref.update(stderrTail, (current) => (current + text).slice(-4096));
+    return stream.pipe(
       Stream.runForEach((bytes) =>
         Effect.gen(function* () {
-          if (name === "stderr" && stderrTail !== undefined) {
-            const text = new TextDecoder().decode(bytes);
-            yield* Ref.update(stderrTail, (current) => (current + text).slice(-4096));
-          }
+          if (decoder !== undefined) yield* appendTail(decoder.decode(bytes, { stream: true }));
           yield* PubSub.publish(logs, { stream: name, bytes });
         }),
       ),
+      Effect.andThen(
+        decoder === undefined
+          ? Effect.void
+          : Effect.sync(() => decoder.decode()).pipe(Effect.flatMap(appendTail)),
+      ),
       Effect.catch((cause) => Effect.logError(cause)),
     );
+  };
   return Effect.gen(function* () {
     yield* Effect.forkIn(drain(process.stdout, "stdout"), scope);
     return yield* Effect.forkIn(drain(process.stderr, "stderr"), scope);

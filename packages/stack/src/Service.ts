@@ -182,6 +182,10 @@ export const makeService = <Config>(
     const revision = yield* Ref.make(0);
     const launchCounter = yield* Ref.make(0);
     const current = yield* Ref.make<SessionRecord | undefined>(undefined);
+    // stopNow clears observation.launchId while keeping the error, so readiness must not read that field.
+    const launchError = yield* Ref.make<
+      { readonly launchId: number; readonly error: ServiceError } | undefined
+    >(undefined);
     const config = yield* Ref.make(options.config);
     const observations = yield* SubscriptionRef.make<ServiceObservation<Config>>({
       id: options.id,
@@ -297,15 +301,19 @@ export const makeService = <Config>(
           "start",
           guard.pipe(
             Effect.andThen(
-              update({
-                lifecycle: "starting",
-                health: "starting",
-                error: undefined,
-                cleanupError: undefined,
-                exit: undefined,
-                wakeEnabled: observation.wakeEnabled,
-                launchId,
-              }),
+              Ref.set(launchError, undefined).pipe(
+                Effect.andThen(
+                  update({
+                    lifecycle: "starting",
+                    health: "starting",
+                    error: undefined,
+                    cleanupError: undefined,
+                    exit: undefined,
+                    wakeEnabled: observation.wakeEnabled,
+                    launchId,
+                  }),
+                ),
+              ),
             ),
           ),
         );
@@ -320,11 +328,13 @@ export const makeService = <Config>(
         );
         if (Exit.isFailure(launchExit)) {
           yield* Scope.close(runtimeScope, launchExit);
+          const error = exitError("launch", launchExit);
+          if (error !== undefined) yield* Ref.set(launchError, { launchId, error });
           yield* update({
             lifecycle: "stopped",
             health: undefined,
             wakeEnabled: observation.wakeEnabled,
-            error: exitError("launch", launchExit),
+            error,
             launchId: undefined,
           });
           return yield* Effect.failCause(launchExit.cause);
@@ -341,6 +351,8 @@ export const makeService = <Config>(
           removed: yield* Ref.make(false),
         };
         yield* Ref.set(current, record);
+        if (launchFailure !== undefined)
+          yield* Ref.set(launchError, { launchId, error: launchFailure });
         yield* update({
           lifecycle: launchFailure === undefined ? "running" : "stopping",
           health: launchFailure === undefined ? "starting" : undefined,
@@ -352,12 +364,19 @@ export const makeService = <Config>(
         const observeHealth = runtime.health.pipe(
           Effect.onExit((exit) =>
             Effect.gen(function* () {
+              const error = exitError("health", exit);
+              const currentObservation = yield* SubscriptionRef.get(observations);
+              if (
+                error !== undefined &&
+                currentObservation.launchId === launchId &&
+                currentObservation.lifecycle === "running"
+              )
+                yield* Ref.set(launchError, { launchId, error });
               yield* SubscriptionRef.update(
                 observations,
                 (observation): ServiceObservation<Config> => {
                   if (observation.launchId !== launchId || observation.lifecycle !== "running")
                     return observation;
-                  const error = exitError("health", exit);
                   return {
                     ...observation,
                     health: Exit.isSuccess(exit) ? "healthy" : "unhealthy",
@@ -382,6 +401,8 @@ export const makeService = <Config>(
                       operation: "exit",
                       message: "Runtime exited unexpectedly",
                     }));
+              if (error !== undefined)
+                yield* Ref.set(launchError, { launchId: record.launchId, error });
               yield* update({
                 lifecycle: "stopping",
                 health: undefined,
@@ -556,8 +577,8 @@ export const makeService = <Config>(
       new ServiceStaleLaunch({ id: options.id, launchId, message });
     const diedBeforeReady = (launchId: number) =>
       Effect.gen(function* () {
-        const error = (yield* SubscriptionRef.get(observations)).error;
-        if (error !== undefined) return yield* error;
+        const owned = yield* Ref.get(launchError);
+        if (owned !== undefined && owned.launchId === launchId) return yield* owned.error;
         return yield* staleLaunch(launchId, `Service ${options.id} stopped before it was ready`);
       });
     const ready = Effect.fn("Service.ready")(function* () {
