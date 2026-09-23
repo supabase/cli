@@ -1,6 +1,6 @@
 import { Effect, Ref, Scope, Semaphore } from "effect";
 
-export interface DockerHelperHandle {
+interface DockerHelperHandle {
   readonly id: string;
   /** False when this process found a helper another process already created. */
   readonly created: boolean;
