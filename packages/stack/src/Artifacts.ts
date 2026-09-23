@@ -128,10 +128,13 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
     "bin/logflare",
     ["bin/logflare", "bin/prepare"],
   ),
-  vector: definition("vector", "0.53.0", "ghcr.io/supabase/cli/vector:0.53.0", "bin/vector", [
+  vector: definition(
+    "vector",
+    "0.58.0",
+    "ghcr.io/supabase/cli/vector:0.58.0@sha256:5dcf67db0ee378caa87f3395cb9484ebe3e97bb0334d119f2ac33116e00c5773",
     "bin/vector",
-    "share/doc/vector/config/vector.yaml",
-  ]),
+    ["bin/vector", "share/doc/vector/config/vector.yaml"],
+  ),
   pooler: definition(
     "pooler",
     "v2.9.12",
