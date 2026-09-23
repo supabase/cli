@@ -124,7 +124,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   analytics: definition(
     "analytics",
     "v1.50.9",
-    "ghcr.io/supabase/cli/analytics:v1.50.9@sha256:7db85cc6cb0cdeb4b71f2fadb49c0f9197bea0492daf7896f6ae69edad76d28e",
+    "ghcr.io/supabase/cli/analytics:v1.50.9@sha256:48f90295f7239c579c13a32eaeda95581aba09d9d2bc69857fd78cde9a596cf7",
     "bin/logflare",
     ["bin/logflare", "bin/prepare"],
   ),
