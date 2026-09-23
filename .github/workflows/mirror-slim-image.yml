@@ -1,10 +1,11 @@
 name: Mirror Slim Image
 
 # Mirrors slim service images published by supabase/slim-services from ghcr.io/supabase/cli to
-# public.ecr.aws/supabase/cli. The sender polls the ECR Public destination and fails its release
-# unless it resolves to the exact index digest published, so the copy must be digest-preserving
-# via `regctl image copy` (byte-for-byte); do not switch to `docker buildx imagetools create`,
-# which can rewrite the index and change its digest.
+# public.ecr.aws/supabase-registry/cli, whose repositories and push role are enrolled in
+# pulumi/registry/public/cli/cli.yaml in supabase/platform. The sender polls the ECR Public
+# destination and fails its release unless it resolves to the exact index digest published, so
+# the copy must be digest-preserving via `regctl image copy` (byte-for-byte); do not switch to
+# `docker buildx imagetools create`, which can rewrite the index and change its digest.
 #
 # The payload arrives with whatever authority holds the dispatch token, so it is treated as
 # untrusted: names are pattern-checked, source/destination are derived in
@@ -104,7 +105,8 @@ jobs:
       - name: Configure aws credentials
         uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
-          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
+          role-to-assume: arn:aws:iam::945488516053:role/ecr-push-public-cli
+          role-session-name: mirror-slim-image-${{ github.run_id }}
           aws-region: us-east-1
 
       - name: Log in to ECR Public
@@ -112,10 +114,10 @@ jobs:
         with:
           registry: public.ecr.aws
 
-      - name: Ensure ECR Public repository exists
+      - name: Check ECR Public repository exists
         env:
           SERVICE: ${{ steps.validate.outputs.service }}
-        run: bun .github/scripts/mirror-slim-image.ts ensure-repo
+        run: bun .github/scripts/mirror-slim-image.ts check-repo
 
       - name: Mirror image
         env:

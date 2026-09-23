@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   copyImage,
   copyNatives,
-  ensureEcrPublicRepo,
+  checkEcrPublicRepo,
   fetchNatives,
   main,
   nativesFromEvent,
@@ -46,7 +46,7 @@ describe("validateMirrorDispatch", () => {
       version: "v16.2",
       digest: DIGEST,
       source: "ghcr.io/supabase/cli/postgrest:v16.2",
-      destination: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+      destination: "public.ecr.aws/supabase-registry/cli/postgrest:v16.2",
     });
   });
 
@@ -58,7 +58,7 @@ describe("validateMirrorDispatch", () => {
         version: "v16.2",
         digest: DIGEST,
         payloadSource: "ghcr.io/evil/cli/postgrest:v16.2",
-        payloadDestination: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+        payloadDestination: "public.ecr.aws/supabase-registry/cli/postgrest:v16.2",
       }),
     ).toThrow(InvalidPayloadError);
   });
@@ -122,11 +122,11 @@ describe("verifyDigest", () => {
   });
 });
 
-describe("ensureEcrPublicRepo", () => {
-  test("no-ops when the repository exists", async () => {
+describe("checkEcrPublicRepo", () => {
+  test("passes when the repository exists", async () => {
     const run: RunCommand = async () => ok();
     const logs: string[] = [];
-    await ensureEcrPublicRepo({
+    await checkEcrPublicRepo({
       service: "postgrest",
       run,
       log: (message) => logs.push(message),
@@ -134,34 +134,11 @@ describe("ensureEcrPublicRepo", () => {
     expect(logs).toEqual(["ECR Public repository cli/postgrest exists"]);
   });
 
-  test("creates a missing repository", async () => {
-    const run: RunCommand = async (argv) =>
-      argv.includes("describe-repositories") ? fail("not found") : ok();
-    const logs: string[] = [];
-    await ensureEcrPublicRepo({
-      service: "postgrest",
-      run,
-      log: (message) => logs.push(message),
-    });
-    expect(logs).toEqual(["created ECR Public repository cli/postgrest"]);
-  });
-
-  test("treats a create race as success", async () => {
-    const run: RunCommand = async () => fail("RepositoryAlreadyExistsException");
-    const logs: string[] = [];
-    await ensureEcrPublicRepo({
-      service: "auth",
-      run,
-      log: (message) => logs.push(message),
-    });
-    expect(logs).toEqual(["ECR Public repository cli/auth was created concurrently"]);
-  });
-
-  test("fails when create is denied", async () => {
-    const run: RunCommand = async () => fail("AccessDenied");
+  test("fails with the enrollment to add when the repository is missing", async () => {
+    const run: RunCommand = async () => fail("RepositoryNotFoundException");
     await expect(
-      ensureEcrPublicRepo({ service: "postgrest", run, log: () => undefined }),
-    ).rejects.toThrow(/CreateRepository/);
+      checkEcrPublicRepo({ service: "postgrest", run, log: () => undefined }),
+    ).rejects.toThrow(/pulumi\/registry\/public\/cli\/cli\.yaml/);
   });
 });
 
@@ -174,7 +151,7 @@ describe("copyImage", () => {
     };
     await copyImage({
       source: "ghcr.io/supabase/cli/postgrest:v16.2",
-      destination: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+      destination: "public.ecr.aws/supabase-registry/cli/postgrest:v16.2",
       digest: DIGEST,
       run,
     });
@@ -186,7 +163,7 @@ describe("copyImage", () => {
         "--referrers",
         "--digest-tags",
         digestReference("ghcr.io/supabase/cli/postgrest:v16.2", DIGEST),
-        "public.ecr.aws/supabase/cli/postgrest:v16.2",
+        "public.ecr.aws/supabase-registry/cli/postgrest:v16.2",
       ],
     ]);
   });
@@ -221,7 +198,7 @@ describe("copyNatives", () => {
         "image",
         "copy",
         `ghcr.io/supabase/cli/postgrest@${DIGEST}`,
-        "public.ecr.aws/supabase/cli/postgrest:v16.2-native-linux-arm64",
+        "public.ecr.aws/supabase-registry/cli/postgrest:v16.2-native-linux-arm64",
       ],
       ["regctl", "manifest", "head", "ghcr.io/supabase/cli/postgrest:v16.2-native-linux-amd64"],
     ]);
@@ -263,7 +240,7 @@ describe("main", () => {
       },
     });
     expect(code).toBe(0);
-    expect(fields["destination"]).toBe("public.ecr.aws/supabase/cli/postgrest:v16.2");
+    expect(fields["destination"]).toBe("public.ecr.aws/supabase-registry/cli/postgrest:v16.2");
   });
 
   test("copy-natives no-ops without a dispatch payload", async () => {

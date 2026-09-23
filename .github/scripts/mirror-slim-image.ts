@@ -5,7 +5,7 @@
  *
  *   bun .github/scripts/mirror-slim-image.ts validate
  *   bun .github/scripts/mirror-slim-image.ts verify-digest
- *   bun .github/scripts/mirror-slim-image.ts ensure-repo
+ *   bun .github/scripts/mirror-slim-image.ts check-repo
  *   bun .github/scripts/mirror-slim-image.ts copy-image
  *   bun .github/scripts/mirror-slim-image.ts copy-natives
  *   bun .github/scripts/mirror-slim-image.ts fetch-natives
@@ -64,7 +64,7 @@ export type MirrorIo = {
 const usage = `Usage:
   bun .github/scripts/mirror-slim-image.ts validate
   bun .github/scripts/mirror-slim-image.ts verify-digest
-  bun .github/scripts/mirror-slim-image.ts ensure-repo
+  bun .github/scripts/mirror-slim-image.ts check-repo
   bun .github/scripts/mirror-slim-image.ts copy-image
   bun .github/scripts/mirror-slim-image.ts copy-natives
   bun .github/scripts/mirror-slim-image.ts fetch-natives
@@ -114,7 +114,7 @@ export const verifyDigest = async (options: {
   log(`${options.reference} resolves to ${options.digest}`);
 };
 
-export const ensureEcrPublicRepo = async (options: {
+export const checkEcrPublicRepo = async (options: {
   readonly service: string;
   readonly run: RunCommand;
   readonly log?: (message: string) => void;
@@ -134,27 +134,10 @@ export const ensureEcrPublicRepo = async (options: {
     log(`ECR Public repository ${repoName} exists`);
     return;
   }
-  const created = await options.run([
-    "aws",
-    "ecr-public",
-    "create-repository",
-    "--repository-name",
-    repoName,
-    "--region",
-    "us-east-1",
-  ]);
-  if (created.ok) {
-    log(`created ECR Public repository ${repoName}`);
-    return;
-  }
-  const detail = `${created.stdout}\n${created.stderr}`;
-  if (detail.includes("RepositoryAlreadyExistsException")) {
-    log(`ECR Public repository ${repoName} was created concurrently`);
-    return;
-  }
-  if (detail.trim() !== "") log(detail.trim());
+  const detail = `${described.stdout}\n${described.stderr}`.trim();
+  if (detail !== "") log(detail);
   throw new InvalidPayloadError(
-    `ECR Public repository '${repoName}' does not exist and this role cannot create it (missing ecr-public:CreateRepository). Create it once manually — aws ecr-public create-repository --repository-name '${repoName}' --region us-east-1 — then re-run this workflow.`,
+    `ECR Public repository '${repoName}' is not available to this role. Add '${options.service}' to pulumi/registry/public/cli/cli.yaml in supabase/platform, then re-run this workflow once it deploys.`,
   );
 };
 
@@ -483,8 +466,8 @@ export const main = async (argv: ReadonlyArray<string>, io: MirrorIo): Promise<n
     });
     return 0;
   }
-  if (command === "ensure-repo") {
-    await ensureEcrPublicRepo({
+  if (command === "check-repo") {
+    await checkEcrPublicRepo({
       service: requireEnv(io.env, "SERVICE"),
       run: io.run,
       log,

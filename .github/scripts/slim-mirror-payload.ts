@@ -8,7 +8,7 @@ const VERSION_PATTERN = /^[A-Za-z0-9._-]+$/;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 export const SOURCE_REGISTRY = "ghcr.io/supabase/cli";
-export const DEST_REGISTRY = "public.ecr.aws/supabase/cli";
+export const DEST_REGISTRY = "public.ecr.aws/supabase-registry/cli";
 const NATIVE_TARGETS = ["linux-arm64", "linux-amd64", "darwin-arm64"] as const;
 
 export class InvalidPayloadError extends Error {}

@@ -11,11 +11,11 @@ Some consumers cannot reach GitHub release assets or a single registry blob CDN.
 
 ## Decision
 
-Publish each slim **image** to GHCR and AWS ECR Public (`public.ecr.aws/supabase/cli/<service>`), digest-preserving, via `mirror-slim-image.yml` and `.github/scripts/mirror-slim-image.ts`. Publish each slim **native** archive as an OCI artifact on the same two repositories under `:version-native-<target>` (not `:version-linux-*`, which are image platform tags). GitHub Releases remain the human HTTPS copy and `--clobber` on force.
+Publish each slim **image** to GHCR and AWS ECR Public (`public.ecr.aws/supabase-registry/cli/<service>`), digest-preserving, via `mirror-slim-image.yml` and `.github/scripts/mirror-slim-image.ts`. Publish each slim **native** archive as an OCI artifact on the same two repositories under `:version-native-<target>` (not `:version-linux-*`, which are image platform tags). GitHub Releases remain the human HTTPS copy and `--clobber` on force.
 
 `force=true` always requests the ECR copy, including when the image digest is unchanged (natives may have moved). The **image** destination digest gates `publish-release` once the dispatch token exists. Native ECR copy is best-effort (`continue-on-error`) and must not fail that release. Catalog sync consumes the image `service` / `version` / `digest` only; native tags ride in a separate `natives[]` payload field. Do not prune untagged GHCR or ECR manifests: already-shipped CLIs still pin old image digests until a catalog PR ships. Natives follow the moved tag immediately.
 
-ECR Public tags are always mutable; `ecr-public create-repository` has no immutability flag. Reuse the existing `PROD_AWS_ROLE` in `supabase/cli`. Do not add a public S3 bucket or a second cloud vendor for this cut.
+ECR Public tags are always mutable; `ecr-public create-repository` has no immutability flag. The repositories and the `ecr-push-public-cli` push role live in the central registry account, enrolled in `pulumi/registry/public/cli/cli.yaml` in `supabase/platform`; adding a service means adding it there first. Do not add a public S3 bucket or a second cloud vendor for this cut.
 
 Client fail-through (ordered GHCR / ECR / GitHub candidates in the CLI and stack) is out of scope here and lands in a follow-up PR.
 
@@ -27,7 +27,7 @@ Client fail-through (ordered GHCR / ECR / GitHub candidates in the CLI and stack
 
 ## Rationale
 
-ECR Public mirroring already exists for other CLI images and needs no new vendor. Native OCI on those same repos reuses `regctl` and that role. Extracting the workflow into bun scripts lets the copy, digest check, and native payload validation run in CI and locally.
+ECR Public mirroring already exists for other CLI images and needs no new vendor. Native OCI on those same repos reuses `regctl` and the same push role. Extracting the workflow into bun scripts lets the copy, digest check, and native payload validation run in CI and locally.
 
 ## Consequences
 
