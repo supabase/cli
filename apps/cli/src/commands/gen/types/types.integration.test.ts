@@ -7,7 +7,7 @@ import type {
   V1GetPoolerConfigOutput,
   V1GetProjectOutput,
 } from "@supabase/api/effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -15,7 +15,6 @@ import {
   Cause,
   ConfigProvider,
   Data,
-  Deferred,
   Effect,
   Exit,
   FileSystem,
@@ -288,7 +287,7 @@ function mockInspectSpawner(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
-        const isStandard = command._tag === "StandardCommand";
+        const isStandard = ChildProcess.isStandardCommand(command);
         const cmd = isStandard ? command.command : "";
         const args = isStandard ? command.args : [];
         const options = isStandard ? command.options : undefined;
@@ -303,13 +302,6 @@ function mockInspectSpawner(
           });
         }
 
-        const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-        yield* Effect.forkDetach(
-          Effect.gen(function* () {
-            yield* Effect.sleep("5 millis");
-            yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(opts.exitCode ?? 0));
-          }),
-        );
         const stderrBytes = (opts.stderr ?? []).map((line) => encoder.encode(`${line}\n`));
 
         return ChildProcessSpawner.makeHandle({
@@ -317,7 +309,7 @@ function mockInspectSpawner(
           stdout: Stream.empty,
           stderr: Stream.fromIterable(stderrBytes),
           all: Stream.empty,
-          exitCode: Deferred.await(exitDeferred),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(opts.exitCode ?? 0)),
           isRunning: Effect.succeed(false),
           stdin: Sink.drain,
           kill: () => Effect.void,
