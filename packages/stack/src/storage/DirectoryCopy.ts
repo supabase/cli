@@ -352,23 +352,27 @@ const grantDirectoryWrite = (
     }
   });
 
+// Deletion has to finish after a cancel. Stopping during chmod leaves the partial tree,
+// including directories whose mode then rejects removal.
 const removePartial = (
   destination: string,
   fs: FileSystem.FileSystem,
   path: Path.Path,
 ): Effect.Effect<void, DirectoryCopyError> =>
-  Effect.gen(function* () {
-    if (
-      !(yield* fs
-        .exists(destination)
-        .pipe(Effect.mapError((cause) => errorFor("remove", destination, destination, cause))))
-    )
-      return;
-    yield* grantDirectoryWrite(destination, fs, path);
-    yield* fs
-      .remove(destination, { recursive: true, force: true })
-      .pipe(Effect.mapError((cause) => errorFor("remove", destination, destination, cause)));
-  });
+  Effect.uninterruptible(
+    Effect.gen(function* () {
+      if (
+        !(yield* fs
+          .exists(destination)
+          .pipe(Effect.mapError((cause) => errorFor("remove", destination, destination, cause))))
+      )
+        return;
+      yield* grantDirectoryWrite(destination, fs, path);
+      yield* fs
+        .remove(destination, { recursive: true, force: true })
+        .pipe(Effect.mapError((cause) => errorFor("remove", destination, destination, cause)));
+    }),
+  );
 
 const isUsageError = (cause: unknown): boolean => {
   if (typeof cause !== "object" || cause === null || !("message" in cause)) return false;
