@@ -47,7 +47,7 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import type { GenTypesFlags } from "./types.command.ts";
-import { GenTypesLocalDbInspectError } from "./types.errors.ts";
+import { GenTypesLocalDbInspectError, GenTypesNetworkError } from "./types.errors.ts";
 import { genTypes } from "./types.handler.ts";
 import { localDbContainerId, parseQueryTimeoutMillis, rootCaBundle } from "./types.shared.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
@@ -750,6 +750,12 @@ describe("gen types", () => {
         expect(String(exit.cause)).toContain(
           "Must specify one of --local, --linked, --project-id, or --db-url",
         );
+        expect(
+          Option.exists(
+            Cause.findErrorOption(exit.cause),
+            Predicate.isTagged("GenTypesFlagUsageError"),
+          ),
+        ).toBe(true);
       }
     });
   });
@@ -902,6 +908,12 @@ describe("gen types", () => {
           expect(String(exit.cause)).toContain(
             "if any flags in the group [local linked project-id db-url] are set none of the others can be; [linked local] were all set",
           );
+          expect(
+            Option.exists(
+              Cause.findErrorOption(exit.cause),
+              Predicate.isTagged("GenTypesFlagUsageError"),
+            ),
+          ).toBe(true);
         }
         expect(telemetry.flushed).toBe(true);
       });
@@ -996,6 +1008,12 @@ describe("gen types", () => {
           expect(String(exit.cause)).toContain(
             "--postgrest-v9-compat must used together with --db-url",
           );
+          expect(
+            Option.exists(
+              Cause.findErrorOption(exit.cause),
+              Predicate.isTagged("GenTypesFlagUsageError"),
+            ),
+          ).toBe(true);
         }
       });
     });
@@ -1133,6 +1151,12 @@ describe("gen types", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
+          expect(
+            Option.exists(
+              Cause.findErrorOption(exit.cause),
+              Predicate.isTagged("GenTypesFlagUsageError"),
+            ),
+          ).toBe(true);
         }
       });
     });
@@ -1645,6 +1669,12 @@ describe("gen types", () => {
           expect(String(exit.cause)).toContain(
             "Preview branch database credentials are unavailable",
           );
+          expect(
+            Option.exists(
+              Cause.findErrorOption(exit.cause),
+              (error) => error instanceof GenTypesNetworkError && error.decode === true,
+            ),
+          ).toBe(true);
         }
       });
     });
