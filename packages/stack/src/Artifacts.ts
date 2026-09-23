@@ -105,7 +105,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   functions: definition(
     "edge-runtime",
     "v1.76.2",
-    "ghcr.io/supabase/cli/edge-runtime:v1.76.2",
+    "ghcr.io/supabase/cli/edge-runtime:v1.76.2@sha256:89403b6888fa1a08146c24c0a7afe5b11c2d97d6750fe766a7451b7ccff12da9",
     "bin/edge-runtime",
   ),
   studio: definition(
