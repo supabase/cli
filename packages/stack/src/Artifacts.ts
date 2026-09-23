@@ -135,7 +135,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   pooler: definition(
     "pooler",
     "v2.9.12",
-    "ghcr.io/supabase/cli/pooler:v2.9.12@sha256:12bb9dcb7ddace79bee173ccb7327c6646af2236679f3bd932a86b3a06479aac",
+    "ghcr.io/supabase/cli/pooler:v2.9.12@sha256:a0278f60f7bc73b8fabc28d8d144eeb326afea566ea81012826c9a869d62664a",
     "bin/server",
     ["bin/server", "bin/prepare", "bin/provision-tenant"],
   ),
