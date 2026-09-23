@@ -76,8 +76,8 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
     "bin/supabase-postgres-start",
     ["bin/supabase-postgres-start", "bin/pg_dump", "bin/pg_dumpall", "bin/pg_prove", "bin/psql"],
     {
-      "15.14.1.173":
-        "ghcr.io/supabase/cli/postgres:15.14.1.173@sha256:b7d210fa3bca26568fa20448e3bec092bd4f8da6a5af5029597639d38e7d896e",
+      "15.14.1.175":
+        "ghcr.io/supabase/cli/postgres:15.14.1.175@sha256:9ec19a5869dca59a14fbf32d8acf38211c428b043e5252a27cbd274d6c8aedbb",
     },
   ),
   rest: definition("postgrest", "v16.2", "ghcr.io/supabase/cli/postgrest:v16.2", "bin/postgrest"),
