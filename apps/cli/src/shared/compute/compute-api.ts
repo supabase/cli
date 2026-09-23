@@ -6,7 +6,7 @@ import {
   V2ListAllComputeInstancesOutput,
   type ApiClient,
 } from "@supabase/api/effect";
-import { Effect, Option, Schedule } from "effect";
+import { Duration, Effect, Option, Schedule } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import {
@@ -22,6 +22,7 @@ import {
 import {
   ComputeBuildTimeoutError,
   ComputeProjectNotFoundError,
+  ComputeRolloutTimeoutError,
   ComputeRouteNotFoundError,
   ComputeUnavailableError,
   ComputeUploadFailedError,
@@ -318,12 +319,55 @@ export const deleteCompute = Effect.fnUntraced(function* (
 });
 
 /**
- * The build runs asynchronously — deploy answers 202 and the compute reaches `active` or `failed`
- * later — so `push` polls `get` until `build_state` leaves `building`. Overridable so tests can
- * drive the loop without waiting on wall-clock delays.
+ * Whether every declared instance is up, current, and accepting connections.
+ *
+ * `stale` is the term that carries a redeploy: a bare-image deploy produces no new image version,
+ * so the rotation cutoff is the only thing distinguishing instances still on the old code. `live`
+ * carries a scale-down, where surplus instances keep serving until the control plane trims them.
+ *
+ * An absent tally is never convergence. The field is omitted entirely until the first image lands
+ * — precisely when the wait matters most — and it is replaced by `instances_error` when the
+ * read-through fails, which is a reason to keep waiting rather than to believe anything.
  */
-const COMPUTE_BUILD_POLL_SCHEDULE = Schedule.spaced("2 seconds").pipe(
-  Schedule.upTo({ duration: "10 minutes" }),
+export function isComputeServing(compute: ComputeRecord): boolean {
+  const { instances } = compute;
+  if (instances === undefined) {
+    return false;
+  }
+  return (
+    instances.ready === instances.declared &&
+    instances.live === instances.declared &&
+    instances.stale === 0
+  );
+}
+
+/**
+ * How long `push` polls before giving up.
+ *
+ * Tracks what the control plane's own end-to-end suite allows a healthy deploy — 15 minutes for
+ * a build to reach `active`, and 6 more for it to serve. The previous bound here was 10 minutes
+ * for the build alone, under that, so a slow-but-healthy build surfaced as a CLI timeout rather
+ * than as the wait it was.
+ */
+const COMPUTE_WAIT_BUDGET = "22 minutes";
+
+/** Ceiling on the poll interval, before which the backoff below grows geometrically. */
+const COMPUTE_POLL_MAX_INTERVAL = Duration.seconds(15);
+
+/**
+ * The build runs asynchronously — deploy answers 202 and the compute reaches `active` or `failed`
+ * later — so `push` polls `get` until the rollout that follows the build has converged.
+ *
+ * The cadence starts tight so a quick deploy still feels immediate, then backs off. A flat 2s was
+ * affordable when the wait ended at the build; it is not across a rollout, which runs minutes
+ * longer and whose instance counts the control plane reads through to its backend rather than
+ * serving from cache. Overridable so tests can drive the loop without wall-clock delays.
+ */
+const COMPUTE_POLL_SCHEDULE = Schedule.exponential("2 seconds", 1.5).pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, COMPUTE_POLL_MAX_INTERVAL)),
+  ),
+  Schedule.upTo({ duration: COMPUTE_WAIT_BUDGET }),
 );
 
 /**
@@ -344,7 +388,29 @@ const isPermanentReadFailure = (error: unknown) =>
   error instanceof ComputeUnavailableError ||
   error instanceof ComputeProjectNotFoundError;
 
-export const awaitComputeBuild = Effect.fnUntraced(function* (
+/**
+ * The record a poll may stop on, or undefined to keep waiting.
+ *
+ * A failed build settles too: the caller raises it, and no rollout follows a build that produced
+ * nothing to roll out.
+ */
+function settled(compute: ComputeRecord): ComputeRecord | undefined {
+  if (compute.buildState === "building") {
+    return undefined;
+  }
+  if (compute.buildState === "failed") {
+    return compute;
+  }
+  return isComputeServing(compute) ? compute : undefined;
+}
+
+/**
+ * Polls `get` until the compute's declared instances are all serving the deploy's code, and
+ * fails with the timeout that names what it was still waiting on — a build that never landed
+ * and a rollout that never converged have different remedies, and reporting the second as the
+ * first sends people to their Dockerfile.
+ */
+export const awaitComputeServing = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
   name: string,
@@ -361,6 +427,10 @@ export const awaitComputeBuild = Effect.fnUntraced(function* (
     readonly refSuffix?: string;
   } = {},
 ) {
+  // The last thing a poll actually saw, so an exhausted budget can say which stage it gave up
+  // in rather than assuming the build.
+  let last: ComputeRecord | undefined;
+
   const poll = Effect.gen(function* () {
     // A build runs for minutes; one blip on one read must not abandon a deploy that is fine.
     const compute = yield* getCompute(api, projectRef, name).pipe(
@@ -373,25 +443,34 @@ export const awaitComputeBuild = Effect.fnUntraced(function* (
       // The deploy was accepted, so a 404 here is the read racing the write, not an absence.
       return undefined;
     }
+    last = compute.value;
     if (options.onPoll !== undefined) {
       yield* options.onPoll(compute.value);
     }
-    return compute.value.buildState === "building" ? undefined : compute.value;
+    return settled(compute.value);
   });
 
-  const settled = yield* poll.pipe(
+  const result = yield* poll.pipe(
     Effect.repeat({
-      schedule: options.schedule ?? COMPUTE_BUILD_POLL_SCHEDULE,
-      until: (result) => result !== undefined,
+      schedule: options.schedule ?? COMPUTE_POLL_SCHEDULE,
+      until: (value) => value !== undefined,
     }),
   );
 
-  if (settled === undefined) {
+  if (result === undefined) {
+    const refSuffix = options.refSuffix ?? "";
+    const check = `Check on it with \`supabase compute status ${name}${refSuffix}\`.`;
+    if (last?.buildState === "active") {
+      return yield* new ComputeRolloutTimeoutError({
+        detail: `"${name}" built, but its instances were not all serving when this command stopped waiting.`,
+        suggestion: `${check} \`supabase compute logs ${name}${refSuffix}\` shows an instance that is failing to start.`,
+      });
+    }
     return yield* new ComputeBuildTimeoutError({
       detail: `"${name}" was still building when this command stopped waiting.`,
-      suggestion: `Check on it with \`supabase compute status ${name}${options.refSuffix ?? ""}\`.`,
+      suggestion: check,
     });
   }
 
-  return settled;
+  return result;
 });

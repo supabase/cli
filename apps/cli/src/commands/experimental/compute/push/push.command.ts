@@ -35,12 +35,12 @@ const config = {
     Flag.optional,
   ),
   noWait: Flag.boolean("no-wait").pipe(
-    // The deploy POST returns once the platform accepts the spec and context; the
-    // server-side build that follows can run for minutes. Waiting stays the
-    // default so a plain push reports the build's verdict; `--no-wait` opts out
-    // for callers that only need the deploy accepted.
+    // The deploy POST returns once the platform accepts the spec and context; the build and the
+    // rollout that follows it can run for minutes between them. Waiting stays the default so a
+    // plain push reports what is actually serving; `--no-wait` opts out for callers that only
+    // need the deploy accepted.
     Flag.withDescription(
-      "Return once the deploy is accepted, without waiting for the server-side build to finish.",
+      "Return once the deploy is accepted, without waiting for the new code to roll out.",
     ),
     Flag.withDefault(false),
   ),

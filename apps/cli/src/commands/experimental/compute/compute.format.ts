@@ -22,3 +22,23 @@ export function renderComputeDetails(rows: ReadonlyArray<readonly [string, strin
   const width = Math.max(...present.map(([label]) => label.length));
   return `${present.map(([label, value]) => `  ${label.padEnd(width)}  ${value}`).join("\n")}\n`;
 }
+
+/**
+ * A wait, for the deploy summary: `48s`, `3m21s`, `1h04m`.
+ *
+ * Whole seconds throughout — these measure a server-side build and rollout, where sub-second
+ * precision would imply the CLI polled far more tightly than it does.
+ */
+export function formatWaited(millis: number): string {
+  const total = Math.max(0, Math.round(millis / 1000));
+  const seconds = total % 60;
+  const minutes = Math.floor(total / 60) % 60;
+  const hours = Math.floor(total / 3600);
+  if (hours > 0) {
+    return `${hours}h${String(minutes).padStart(2, "0")}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m${String(seconds).padStart(2, "0")}s`;
+  }
+  return `${seconds}s`;
+}

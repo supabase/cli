@@ -19,6 +19,7 @@ import {
   ComputeBuildFailedError,
   ComputeBuildTimeoutError,
   ComputeProjectNotFoundError,
+  ComputeRolloutTimeoutError,
   ComputeRouteNotFoundError,
   ComputeUnavailableError,
   ComputeSourceEscapingLinkError,
@@ -79,6 +80,20 @@ function project(files: Readonly<Record<string, string>> = {}) {
   });
 }
 
+/**
+ * A compute that has finished rolling out, for the `GET` a poll reads.
+ *
+ * `push` waits for the instance tally to converge, so a fake standing in for a healthy deploy
+ * has to carry one: an absent tally is deliberately not convergence, since the field is omitted
+ * until the first image lands.
+ */
+function rolledOut(options: Parameters<typeof computeResource>[0]) {
+  return computeResource({
+    instanceCounts: { declared: 1, live: 1, ready: 1, stale: 0 },
+    ...options,
+  });
+}
+
 function routes(overrides: ComputeHttpRoutes = {}): ComputeHttpRoutes {
   return {
     [`POST ${computeRoute("/api/uploads")}`]: { status: 201, body: uploadSlot },
@@ -90,7 +105,7 @@ function routes(overrides: ComputeHttpRoutes = {}): ComputeHttpRoutes {
     [`GET ${computeRoute("/api")}`]: {
       status: 200,
       body: {
-        data: computeResource({
+        data: rolledOut({
           name: "api",
           runtime: "node",
           buildState: "active",
@@ -186,12 +201,132 @@ describe("compute push", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // `V2DeployAWorkerOutput` permits a terminal state on the deploy response
-  // itself, and that verdict is this deploy's. A poll on top of it can only
-  // contradict it — `awaitComputeBuild` reads a post-deploy 404 as "still
-  // building", so an already-settled deploy would burn the poll budget and
-  // surface as a timeout instead of the answer the platform already gave.
-  describe("honours a terminal deploy response instead of polling", () => {
+  describe("waiting for the rollout", () => {
+    const tally = (counts: { declared: number; live: number; ready: number; stale: number }) => ({
+      status: 200,
+      body: {
+        data: computeResource({
+          name: "api",
+          runtime: "node",
+          buildState: "active" as const,
+          imageVersion: "v1",
+          instanceCounts: counts,
+        }),
+      },
+    });
+
+    it.live("keeps polling until every declared instance is serving the new code", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const { layer, out } = setupCompute({
+          workdir: repo.dir,
+          routes: routes({
+            [`GET ${computeRoute("/api")}`]: [
+              tally({ declared: 2, live: 0, ready: 0, stale: 0 }),
+              tally({ declared: 2, live: 2, ready: 1, stale: 0 }),
+              tally({ declared: 2, live: 2, ready: 2, stale: 0 }),
+            ],
+          }),
+        });
+
+        return yield* Effect.gen(function* () {
+          yield* push({ instances: Option.some(2) });
+
+          expect(out.stdoutText).toContain("Deployed Compute api");
+          // The live tally, not the declared count: the whole point of waiting.
+          expect(out.stdoutText).toContain("2/2 serving");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // A redeploy that produces no new image version leaves the rotation cutoff as the only
+    // thing marking instances still on the old code, so `stale` is what keeps the wait open.
+    it.live("keeps waiting while an instance is still on the previous code", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const { layer, out } = setupCompute({
+          workdir: repo.dir,
+          routes: routes({
+            [`GET ${computeRoute("/api")}`]: [
+              tally({ declared: 1, live: 1, ready: 1, stale: 1 }),
+              tally({ declared: 1, live: 1, ready: 1, stale: 0 }),
+            ],
+          }),
+        });
+
+        return yield* Effect.gen(function* () {
+          yield* push();
+
+          expect(out.stdoutText).toContain("1/1 serving");
+          expect(out.stdoutText).not.toContain("stale");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // `instances_error` replaces the tally when the control plane's read-through fails. It says
+    // nothing about how many instances are up, so it must not be read as convergence.
+    it.live("keeps waiting when the instance read-through fails", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const { layer, out } = setupCompute({
+          workdir: repo.dir,
+          routes: routes({
+            [`GET ${computeRoute("/api")}`]: [
+              {
+                status: 200,
+                body: {
+                  data: computeResource({
+                    name: "api",
+                    runtime: "node",
+                    buildState: "active",
+                    imageVersion: "v1",
+                    instancesError: "instances are temporarily unavailable",
+                  }),
+                },
+              },
+              tally({ declared: 1, live: 1, ready: 1, stale: 0 }),
+            ],
+          }),
+        });
+
+        return yield* Effect.gen(function* () {
+          yield* push();
+          expect(out.stdoutText).toContain("1/1 serving");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // A build that lands and a rollout that never converges have different remedies, so the
+    // exhausted budget must not report the second as the first.
+    it.live("fails with a rollout timeout, not a build timeout, when instances never serve", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const { layer } = setupCompute({
+          workdir: repo.dir,
+          routes: routes({
+            [`GET ${computeRoute("/api")}`]: tally({
+              declared: 2,
+              live: 1,
+              ready: 1,
+              stale: 0,
+            }),
+          }),
+        });
+
+        return yield* Effect.gen(function* () {
+          const error = yield* push({ instances: Option.some(2) }).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(ComputeRolloutTimeoutError);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+  });
+
+  // `V2DeployAWorkerOutput` permits a terminal state on the deploy response itself. A `failed`
+  // verdict is this deploy's and a poll could only contradict it — `awaitComputeServing` reads a
+  // post-deploy 404 as "not settled yet", so an already-failed deploy would burn the poll budget
+  // and surface as a timeout instead of the answer the platform already gave. An `active` one is
+  // different: it means nothing was built, not that the rollout is done.
+  describe("a terminal deploy response", () => {
     const settledOnDeploy = (repoDir: string, state: "active" | "failed") =>
       setupCompute({
         workdir: repoDir,
@@ -210,7 +345,11 @@ describe("compute push", () => {
         }),
       });
 
-    it.live("reports a deploy that came back already active", () =>
+    // The bare-image case: a redeploy whose code never enters the image builds nothing, so the
+    // deploy answers `active` while every instance still serves the previous code. Taking that
+    // as the end of the story is what let `push` report "Deployed" over a rollout that had not
+    // started, so an `active` response is polled like any other.
+    it.live("still waits for the rollout when the deploy came back already active", () =>
       Effect.gen(function* () {
         const repo = yield* project();
         const { layer, out, http } = settledOnDeploy(repo.dir, "active");
@@ -218,9 +357,10 @@ describe("compute push", () => {
         return yield* Effect.gen(function* () {
           yield* push();
 
-          expect(http.routeKeys).not.toContain(`GET ${computeRoute("/api")}`);
+          expect(http.routeKeys).toContain(`GET ${computeRoute("/api")}`);
           expect(out.stdoutText).toContain("Deployed Compute api");
           expect(out.stdoutText).toContain("v1");
+          expect(out.stdoutText).toContain("1/1 serving");
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     );
@@ -251,7 +391,7 @@ describe("compute push", () => {
         routes: routes({
           [`GET ${computeRoute("/api")}`]: {
             status: 200,
-            body: { data: computeResource({ name: "api", buildState: "active" }) },
+            body: { data: rolledOut({ name: "api", buildState: "active" }) },
           },
         }),
       });
@@ -701,7 +841,7 @@ describe("compute push", () => {
             {
               status: 200,
               body: {
-                data: computeResource({ name: "api", buildState: "active", imageVersion: "v2" }),
+                data: rolledOut({ name: "api", buildState: "active", imageVersion: "v2" }),
               },
             },
           ],
@@ -785,7 +925,7 @@ describe("compute push", () => {
           [`GET ${computeRoute("/api")}`]: {
             status: 200,
             body: {
-              data: computeResource({
+              data: rolledOut({
                 name: "api",
                 runtime: "node",
                 buildState: "active",
@@ -1392,7 +1532,7 @@ describe("compute push", () => {
             { status: 500, body: { message: "blip" } },
             {
               status: 200,
-              body: { data: computeResource({ name: "api", buildState: "active" }) },
+              body: { data: rolledOut({ name: "api", buildState: "active" }) },
             },
           ],
         }),
@@ -1483,7 +1623,7 @@ describe("compute push", () => {
           },
           [`GET ${computeRoute("/web")}`]: {
             status: 200,
-            body: { data: computeResource({ name: "web", runtime: "node", buildState: "active" }) },
+            body: { data: rolledOut({ name: "web", runtime: "node", buildState: "active" }) },
           },
         },
       });
@@ -1765,6 +1905,12 @@ describe("compute push", () => {
             build_state: "active",
             image_version: "v1",
             url: `https://${COMPUTE_PROJECT_REF}.supabase.co/compute/v1/api`,
+            instances_ready: 1,
+            instances_stale: 0,
+            // Wall-clock, so only its presence is assertable. This is what a machine consumer
+            // reads to see where a slow deploy spent its time.
+            waited_ms: expect.any(Number),
+            waited_build_ms: expect.any(Number),
           },
         ]);
       }).pipe(Effect.provide(layer));
@@ -1909,7 +2055,7 @@ describe("compute push", () => {
           },
           [`GET ${computeRoute("/web")}`]: {
             status: 200,
-            body: { data: computeResource({ name: "web", runtime: "node", buildState: "active" }) },
+            body: { data: rolledOut({ name: "web", runtime: "node", buildState: "active" }) },
           },
         },
       });
@@ -2000,7 +2146,7 @@ describe("compute push", () => {
         routes: routes({
           [`GET ${computeRoute("/api")}`]: {
             status: 200,
-            body: { data: computeResource({ name: "api", runtime: "node", buildState: "active" }) },
+            body: { data: rolledOut({ name: "api", runtime: "node", buildState: "active" }) },
           },
         }),
       });

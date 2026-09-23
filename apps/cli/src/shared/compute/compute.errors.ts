@@ -170,6 +170,20 @@ export class ComputeBuildTimeoutError extends Data.TaggedError("ComputeBuildTime
   }
 }
 
+/**
+ * The build landed, but the declared instances were not all serving inside the polling budget.
+ * Distinct from a build failure: the image is good, so the remedy is the instances' own logs
+ * rather than the Dockerfile.
+ */
+export class ComputeRolloutTimeoutError extends Data.TaggedError("ComputeRolloutTimeoutError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.apiStatus;
+  }
+}
+
 /** PUTting the build context to the presigned slot failed. */
 export class ComputeUploadFailedError extends Data.TaggedError("ComputeUploadFailedError")<{
   readonly detail: string;
