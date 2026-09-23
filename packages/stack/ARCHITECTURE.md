@@ -592,7 +592,7 @@ The endpoint renderer produces host-facing or stack-runtime-facing connection va
 | Runtime            | Report the launched workload's backend address                                                        |
 | Networking/proxy   | Render reachable connection values, bind listeners, route traffic and attribute activity to instances |
 
-Mutable files live under the stack namespace; container resources carry equivalent identity labels. Shared immutable artifact caches and host-wide port coordination are justified exceptions. User-requested exports can live at their chosen destination.
+Mutable files live under the stack namespace; container resources carry equivalent identity labels. Each managed container is addressed by its unique preassigned launch name for its whole owned lifetime; renaming a managed container is outside the lifecycle contract. Shared immutable artifact caches and host-wide port coordination are justified exceptions. User-requested exports can live at their chosen destination.
 
 The StackHost serializes updates to saved instance definitions, composition wiring and resource assignments. Lifecycle, health, active operations, runtime handles and errors remain in the live instance observation. There is no durable lifecycle/operation journal, projected capability state or duplicate stack lifecycle state.
 

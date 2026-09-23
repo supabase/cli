@@ -41,7 +41,7 @@ interface ContainerSpec {
 }
 
 export interface ContainerProcess {
-  /** The engine ID, or the unique launch name when identity recovery failed. */
+  /** The unique managed launch name used for the container's entire lifetime. */
   readonly id: string;
   readonly ports: Readonly<Record<number, number>>;
   /** A single-consumer stream; callers that need fanout should publish observations. */
@@ -173,7 +173,6 @@ export const makeContainerRuntime = (options: {
         .makeTempDirectoryScoped({ prefix: "supabase-container-" })
         .pipe(Effect.mapError((cause) => errorFor("environment", cause)));
       const envPath = path.join(directory, "environment");
-      const cidPath = path.join(directory, "container-id");
       yield* fs
         .writeFileString(
           envPath,
@@ -191,8 +190,6 @@ export const makeContainerRuntime = (options: {
         "create",
         "--pull",
         "never",
-        "--cidfile",
-        cidPath,
         ...(interactive ? ["--interactive", "--init"] : []),
         ...(options.engine === "docker" && process.platform === "linux"
           ? ["--add-host", "host.docker.internal:host-gateway"]
@@ -218,7 +215,7 @@ export const makeContainerRuntime = (options: {
 
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
-          // Keep creation and identity recovery atomic so cancellation cannot outrun the daemon.
+          // Creation must settle before cleanup can safely run.
           const creation = yield* run(args, { timeout: undefined }).pipe(
             Effect.mapError(
               (error) =>
@@ -230,92 +227,9 @@ export const makeContainerRuntime = (options: {
             ),
             Effect.exit,
           );
-          const recorded = yield* fs.readFileString(cidPath).pipe(Effect.option);
-          const fromFile =
-            Option.isSome(recorded) && recorded.value.trim().length > 0
-              ? Option.some(recorded.value.trim())
-              : Option.none<string>();
-          const fromCreation =
-            Exit.isSuccess(creation) && creation.value.trim().length > 0
-              ? Option.some(creation.value.trim())
-              : Option.none<string>();
-          const lookupByName = () =>
-            run(["ps", "--all", "--quiet", "--no-trunc", "--filter", `name=^/?${name}$`], {
-              timeout: "5 seconds",
-            }).pipe(
-              Effect.mapError(
-                (error) =>
-                  new ContainerError({
-                    operation: error.operation,
-                    message: `${error.message} (container name ${name})`,
-                    cause: error,
-                  }),
-              ),
-            );
-          const recovered =
-            Option.isSome(fromFile) || Option.isSome(fromCreation)
-              ? Option.none<Exit.Exit<string, ContainerError>>()
-              : Option.some(yield* lookupByName().pipe(Effect.exit));
-          const recoveredOutput =
-            Option.isSome(recovered) && Exit.isSuccess(recovered.value)
-              ? recovered.value.value.trim()
-              : undefined;
-          const candidate = Option.isSome(fromFile)
-            ? fromFile.value
-            : Option.isSome(fromCreation)
-              ? fromCreation.value
-              : recoveredOutput;
-          const id =
-            candidate !== undefined && /^[a-f0-9]{12,64}$/u.test(candidate) ? candidate : undefined;
-          if (
-            Exit.isFailure(creation) &&
-            Option.isSome(recovered) &&
-            Exit.isSuccess(recovered.value) &&
-            recovered.value.value.trim().length === 0
-          )
-            return yield* Effect.failCause(creation.cause);
-          const identityFailure =
-            candidate === undefined || candidate.length === 0
-              ? errorFor("create", "Engine returned no container identity")
-              : errorFor("create", "Engine returned an invalid container identity");
-          const recoveryFailure =
-            Option.isSome(recovered) && Exit.isFailure(recovered.value)
-              ? recovered.value.cause
-              : undefined;
-          const failure =
-            recoveryFailure === undefined
-              ? identityFailure
-              : new ContainerError({
-                  operation: "create",
-                  message: `Unable to recover container identity (container name ${name}): ${Cause.pretty(recoveryFailure)}`,
-                  cause: Cause.combine(
-                    Exit.isFailure(creation) ? creation.cause : Cause.empty,
-                    recoveryFailure,
-                  ),
-                });
           const stopped = yield* Ref.make(false);
           const removed = yield* Ref.make(false);
-          const resolved = yield* Ref.make(
-            id === undefined ? Option.none<string>() : Option.some(id),
-          );
-          const resolve = Effect.gen(function* () {
-            const current = yield* Ref.get(resolved);
-            if (Option.isSome(current)) return current;
-            const output = yield* lookupByName();
-            const recoveredId = output.trim();
-            if (recoveredId.length === 0) {
-              yield* Ref.set(stopped, true);
-              yield* Ref.set(removed, true);
-              return Option.none<string>();
-            }
-            if (!/^[a-f0-9]{12,64}$/u.test(recoveredId))
-              return yield* errorFor("cleanup", "Engine returned an invalid container identity");
-            const resolvedId = Option.some(recoveredId);
-            yield* Ref.set(resolved, resolvedId);
-            return resolvedId;
-          });
-          const reconcileRemoval = Effect.fn("Container.reconcileRemoval")(function* (
-            target: string,
+          const reconcileAbsent = Effect.fn("Container.reconcileAbsent")(function* (
             failure: ContainerError,
           ) {
             const probe = run(
@@ -324,18 +238,18 @@ export const makeContainerRuntime = (options: {
                 "--all",
                 "--no-trunc",
                 "--filter",
-                `id=${target}`,
+                `name=^/?${name}$`,
                 "--format",
-                "{{.ID}} {{.State}}",
+                "{{.State}}",
               ],
               { timeout: "5 seconds" },
             ).pipe(
               Effect.map((output) =>
                 output === ""
                   ? ("absent" as const)
-                  : output === `${target} removing`
-                    ? ("removing" as const)
-                    : ("retained" as const),
+                  : output === "removing"
+                    ? "removing"
+                    : "present",
               ),
               Effect.repeat({
                 schedule: Schedule.spaced("250 millis"),
@@ -343,7 +257,7 @@ export const makeContainerRuntime = (options: {
               }),
               Effect.timeout("10 seconds"),
               Effect.mapError((error) =>
-                error instanceof ContainerError ? error : errorFor("remove", error),
+                error instanceof ContainerError ? error : errorFor("cleanup", error),
               ),
             );
             const observed = yield* probe.pipe(Effect.exit);
@@ -352,25 +266,24 @@ export const makeContainerRuntime = (options: {
                 return yield* Effect.failCause(observed.cause);
               return yield* Effect.failCause(Cause.combine(Cause.fail(failure), observed.cause));
             }
-            if (observed.value === "absent") return;
+            if (observed.value === "absent") {
+              yield* Ref.set(stopped, true);
+              yield* Ref.set(removed, true);
+              return;
+            }
             return yield* failure;
           });
           const stop = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-            const target = yield* resolve;
-            if (Option.isNone(target)) return;
-            yield* run(["stop", "--time", "10", target.value]);
+            yield* run(["stop", "--time", "10", name]).pipe(
+              Effect.catchTag("ContainerError", reconcileAbsent),
+            );
             yield* Ref.set(stopped, true);
           });
           const remove = Effect.gen(function* () {
             if (yield* Ref.get(removed)) return;
-            const target = yield* resolve;
-            if (Option.isNone(target)) return;
-            yield* run(["rm", target.value]).pipe(
-              Effect.catchTag("ContainerError", (failure) =>
-                reconcileRemoval(target.value, failure),
-              ),
-            );
+            yield* run(["rm", name]).pipe(Effect.catchTag("ContainerError", reconcileAbsent));
+            yield* Ref.set(stopped, true);
             yield* Ref.set(removed, true);
           });
           yield* Scope.addFinalizer(
@@ -384,7 +297,7 @@ export const makeContainerRuntime = (options: {
             ),
           );
           const partial: ContainerProcess = {
-            id: id ?? name,
+            id: name,
             ports: {},
             stdout: Stream.empty,
             stderr: Stream.empty,
@@ -396,7 +309,6 @@ export const makeContainerRuntime = (options: {
           let owned = partial;
           const wrapFailure = (failure: ContainerError) =>
             new ContainerLaunchError({ failure, process: owned });
-          if (id === undefined) return yield* wrapFailure(failure);
           if (Exit.isFailure(creation)) {
             const failure = Cause.findErrorOption(creation.cause);
             return yield* Option.isSome(failure)
@@ -410,16 +322,16 @@ export const makeContainerRuntime = (options: {
                     .spawn(
                       ChildProcess.make(
                         options.engine,
-                        ["start", "--attach", "--interactive", id],
+                        ["start", "--attach", "--interactive", name],
                         { stdin: "pipe", forceKillAfter: "5 seconds" },
                       ),
                     )
                     .pipe(Effect.mapError((cause) => errorFor("start", cause)))
                 : undefined;
-              if (attached === undefined) yield* run(["start", id]);
+              if (attached === undefined) yield* run(["start", name]);
               const wait: Effect.Effect<number, ContainerError> =
                 attached === undefined
-                  ? run(["wait", id], {}).pipe(
+                  ? run(["wait", name], {}).pipe(
                       Effect.flatMap((output) => {
                         const code = Number(output);
                         return /^\d+$/u.test(output) && Number.isSafeInteger(code)
@@ -440,7 +352,7 @@ export const makeContainerRuntime = (options: {
                 "inspect",
                 "--format",
                 "{{json .NetworkSettings.Ports}}",
-                id,
+                name,
               ]);
               const bindings = yield* Schema.decodeEffect(Schema.fromJsonString(PublishedPorts))(
                 text,
@@ -459,7 +371,7 @@ export const makeContainerRuntime = (options: {
                 attached ??
                 (yield* spawner
                   .spawn(
-                    ChildProcess.make(options.engine, ["logs", "--follow", id], {
+                    ChildProcess.make(options.engine, ["logs", "--follow", name], {
                       stdin: "ignore",
                     }),
                   )

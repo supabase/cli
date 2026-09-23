@@ -228,6 +228,34 @@ describe("container process adapter", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("treats an externally removed container as already stopped", () =>
+    Effect.gen(function* () {
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const instanceId = `externally-removed-${token}`;
+      yield* Effect.ensuring(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const runtime = yield* makeContainerRuntime({ engine: "docker" });
+            yield* runtime.prepare(image);
+            const process = yield* runtime.launch({
+              image,
+              stackId: "x".repeat(64),
+              instanceId,
+              env: {},
+              args: ["-e", "setInterval(() => {}, 1000)"],
+            });
+            yield* removeExternally(process.id);
+            yield* process.stop;
+            yield* process.remove;
+            expect(yield* exists(process.id)).toBe(false);
+          }),
+        ),
+        removeByInstance(instanceId).pipe(Effect.orDie),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("confirms absence after the remove client loses its result", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -535,49 +563,83 @@ describe("container process adapter", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("recovers the container identity when create acknowledgement is interrupted", () =>
+  it.live("retains cleanup authority when create reports failure after creating a container", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
       const crypto = yield* Crypto.Crypto;
       const token = yield* crypto.randomUUIDv4;
-      const instanceId = `interrupted-create-${token}`;
-      const acknowledged = yield* Deferred.make<void>();
-      const createConsumed = yield* Ref.make(false);
-      const spawner = makeCreateInterruptionSpawner(delegate, createConsumed, acknowledged);
+      const instanceId = `failed-create-after-commit-${token}`;
+      const created = yield* Ref.make(false);
+      const spawner = makeCreateFailureSpawner(delegate, created, true);
+      yield* Effect.ensuring(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const runtime = yield* makeContainerRuntime({ engine: "docker" });
+            yield* runtime.prepare(image);
+            const result = yield* runtime
+              .launch({
+                image,
+                stackId: "g".repeat(64),
+                instanceId,
+                env: {},
+                args: ["-e", "setInterval(() => {}, 1000)"],
+              })
+              .pipe(Effect.exit);
+            if (Exit.isSuccess(result)) return yield* Effect.die("launch unexpectedly succeeded");
+            const failure = Cause.findErrorOption(result.cause);
+            if (Option.isNone(failure) || !(failure.value instanceof ContainerLaunchError))
+              return yield* Effect.die("launch failure did not retain cleanup authority");
+            expect(failure.value.failure.message).toContain("injected create failure");
+            expect(failure.value.failure.message).toContain("container name supabase-");
+            expect(yield* Ref.get(created)).toBe(true);
+            expect(yield* idsByInstance(instanceId)).toHaveLength(1);
+            yield* failure.value.process.stop;
+            yield* failure.value.process.remove;
+            expect(yield* idsByInstance(instanceId)).toHaveLength(0);
+          }),
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        removeByInstance(instanceId).pipe(Effect.orDie),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("retains cleanup authority when create fails without creating a container", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const instanceId = `failed-create-empty-${token}`;
+      const created = yield* Ref.make(false);
+      const spawner = makeCreateFailureSpawner(delegate, created, false);
       yield* Effect.ensuring(
         Effect.gen(function* () {
-          const id = yield* Effect.scoped(
+          const result = yield* Effect.scoped(
             Effect.gen(function* () {
               const runtime = yield* makeContainerRuntime({ engine: "docker" });
               yield* runtime.prepare(image);
-              const launch = yield* runtime
+              return yield* runtime
                 .launch({
                   image,
-                  stackId: "g".repeat(64),
+                  stackId: "q".repeat(64),
                   instanceId,
                   env: {},
                   args: ["-e", "setInterval(() => {}, 1000)"],
                 })
-                .pipe(Effect.forkChild({ startImmediately: true }));
-              yield* Deferred.await(acknowledged);
-              yield* Fiber.interrupt(launch);
-              const result = yield* Fiber.await(launch);
-              expect(Exit.isFailure(result)).toBe(true);
-              if (Exit.isSuccess(result)) return yield* Effect.die("launch unexpectedly succeeded");
-              expect(Exit.hasInterrupts(result)).toBe(true);
-              const ids = yield* idsByInstance(instanceId);
-              expect(ids).toHaveLength(1);
-              const [id] = ids;
-              if (id === undefined)
-                return yield* Effect.die("missing recovered container identity");
-              expect(yield* exists(id)).toBe(true);
-              return id;
+                .pipe(Effect.exit);
             }),
-          );
-          expect(yield* exists(id)).toBe(false);
+          ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+          if (Exit.isSuccess(result)) return yield* Effect.die("launch unexpectedly succeeded");
+          const failure = Cause.findErrorOption(result.cause);
+          if (Option.isNone(failure) || !(failure.value instanceof ContainerLaunchError))
+            return yield* Effect.die("launch failure did not retain cleanup authority");
+          expect(failure.value.failure.message).toContain("injected create failure");
+          expect(yield* Ref.get(created)).toBe(false);
+          yield* failure.value.process.stop;
+          yield* failure.value.process.remove;
+          expect(yield* idsByInstance(instanceId)).toHaveLength(0);
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
-      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -616,114 +678,6 @@ describe("container process adapter", () => {
       ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
       expect(Exit.isFailure(result)).toBe(true);
       expect(yield* Ref.get(present)).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.live("retains cleanup authority when identity recovery fails", () =>
-    Effect.gen(function* () {
-      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
-      const instanceId = `failed-recovery-${token}`;
-      const acknowledged = yield* Deferred.make<void>();
-      const createConsumed = yield* Ref.make(false);
-      const failRecovery = yield* Ref.make(true);
-      const spawner = makeCreateInterruptionSpawner(
-        delegate,
-        createConsumed,
-        acknowledged,
-        failRecovery,
-      );
-      yield* Effect.ensuring(
-        Effect.gen(function* () {
-          const result = yield* Effect.scoped(
-            Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker" });
-              yield* runtime.prepare(image);
-              const result = yield* runtime
-                .launch({
-                  image,
-                  stackId: "i".repeat(64),
-                  instanceId,
-                  env: {},
-                  args: ["-e", "setInterval(() => {}, 1000)"],
-                })
-                .pipe(Effect.exit);
-              yield* Ref.set(failRecovery, false);
-              return result;
-            }),
-          ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
-          if (Exit.isSuccess(result)) return yield* Effect.die("launch unexpectedly succeeded");
-          const failure = Cause.findErrorOption(result.cause);
-          if (Option.isNone(failure) || !(failure.value instanceof ContainerLaunchError))
-            return yield* Effect.die("launch failure did not retain cleanup authority");
-          expect(failure.value.failure.message).toContain("injected recovery failure");
-          expect(yield* idsByInstance(instanceId)).toHaveLength(0);
-        }),
-        removeByInstance(instanceId).pipe(Effect.orDie),
-      );
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.live("retains a partial cleanup handle when recovery fails during scope close", () =>
-    Effect.gen(function* () {
-      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
-      const instanceId = `retry-recovery-${token}`;
-      const acknowledged = yield* Deferred.make<void>();
-      const createConsumed = yield* Ref.make(false);
-      const failRecovery = yield* Ref.make(true);
-      const partialRef = yield* Ref.make<Option.Option<ContainerProcess>>(Option.none());
-      const spawner = makeCreateInterruptionSpawner(
-        delegate,
-        createConsumed,
-        acknowledged,
-        failRecovery,
-      );
-      yield* Effect.ensuring(
-        Effect.gen(function* () {
-          const scopeResult = yield* Effect.scoped(
-            Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker" });
-              yield* runtime.prepare(image);
-              const result = yield* runtime
-                .launch({
-                  image,
-                  stackId: "j".repeat(64),
-                  instanceId,
-                  env: {},
-                  args: ["-e", "setInterval(() => {}, 1000)"],
-                })
-                .pipe(Effect.exit);
-              if (Exit.isFailure(result)) {
-                const failure = Cause.findErrorOption(result.cause);
-                if (Option.isSome(failure) && failure.value instanceof ContainerLaunchError)
-                  yield* Ref.set(partialRef, Option.some(failure.value.process));
-              }
-              return result;
-            }),
-          ).pipe(
-            Effect.exit,
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          );
-          expect(Exit.isFailure(scopeResult)).toBe(true);
-          if (Exit.isFailure(scopeResult))
-            expect(Cause.pretty(scopeResult.cause)).toContain("injected recovery failure");
-          const partial = yield* Ref.get(partialRef).pipe(
-            Effect.flatMap(
-              Option.match({
-                onNone: () => Effect.die("launch failure did not retain cleanup authority"),
-                onSome: Effect.succeed,
-              }),
-            ),
-          );
-          yield* Ref.set(failRecovery, false);
-          yield* partial.remove;
-          expect(yield* idsByInstance(instanceId)).toHaveLength(0);
-        }),
-        removeByInstance(instanceId).pipe(Effect.orDie),
-      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
@@ -848,7 +802,7 @@ const makeRemoveFailureSpawner = (
       ChildProcess.isStandardCommand(command) &&
       command.command === "docker" &&
       command.args[0] === "ps" &&
-      command.args.some((arg) => arg.startsWith("id="))
+      command.args.some((arg) => arg.startsWith("name=^/?"))
     ) {
       return Effect.gen(function* () {
         if (!(yield* Ref.get(failProbe))) return yield* delegate.spawn(command);
@@ -892,20 +846,16 @@ const makePendingRemoveSpawner = (
       ChildProcess.isStandardCommand(command) &&
       command.command === "docker" &&
       command.args[0] === "ps" &&
-      command.args.some((arg) => arg.startsWith("id="))
+      command.args.some((arg) => arg.startsWith("name=^/?"))
     ) {
       return Effect.gen(function* () {
         const remaining = yield* Ref.get(pendingProbes);
         if (remaining === 0) return yield* delegate.spawn(command);
         yield* Ref.set(pendingProbes, remaining - 1);
-        const target = command.args.find((arg) => arg.startsWith("id="))?.slice(3);
-        if (target === undefined) return yield* delegate.spawn(command);
         return yield* delegate.spawn(
-          ChildProcess.make(
-            process.execPath,
-            ["-e", "process.stdout.write(process.argv.at(-1) ?? '')", `${target} removing\n`],
-            { stdin: "ignore" },
-          ),
+          ChildProcess.make(process.execPath, ["-e", "process.stdout.write('removing\\n')"], {
+            stdin: "ignore",
+          }),
         );
       });
     }
@@ -972,55 +922,32 @@ const makeInterruptedRemoveSpawner = (
     return delegate.spawn(command);
   });
 
-const makeCreateInterruptionSpawner = (
+const makeCreateFailureSpawner = (
   delegate: ChildProcessSpawnerService["Service"],
-  createConsumed: Ref.Ref<boolean>,
-  acknowledged: Deferred.Deferred<void>,
-  failRecovery?: Ref.Ref<boolean>,
+  created: Ref.Ref<boolean>,
+  createResource: boolean,
 ) =>
   ChildProcessSpawner.make((command) => {
-    if (
-      failRecovery !== undefined &&
-      ChildProcess.isStandardCommand(command) &&
-      command.command === "docker" &&
-      command.args[0] === "ps" &&
-      command.args.some((arg) => arg.startsWith("name=^/?supabase-"))
-    )
-      return Effect.gen(function* () {
-        if (!(yield* Ref.get(failRecovery))) return yield* delegate.spawn(command);
-        return yield* delegate.spawn(
-          ChildProcess.make(
-            process.execPath,
-            ["-e", "console.error('injected recovery failure'); process.exit(1)"],
-            { stdin: "ignore" },
-          ),
-        );
-      });
     if (
       ChildProcess.isStandardCommand(command) &&
       command.command === "docker" &&
       command.args[0] === "create"
     ) {
       return Effect.gen(function* () {
-        if (yield* Ref.get(createConsumed)) return yield* delegate.spawn(command);
-        yield* Ref.set(createConsumed, true);
-        const cidfile = command.args.indexOf("--cidfile");
-        if (cidfile < 0 || cidfile + 1 >= command.args.length)
-          return yield* delegate.spawn(command);
-        const args = command.args.filter((_, index) => index !== cidfile && index !== cidfile + 1);
-        const created = yield* delegate.spawn(
-          ChildProcess.make(command.command, args, command.options),
-        );
-        const exitCode = yield* created.exitCode;
-        yield* Deferred.succeed(acknowledged, undefined);
+        if (createResource) {
+          const actual = yield* delegate.spawn(command);
+          const code = yield* actual.exitCode;
+          expect(Number(code)).toBe(0);
+          yield* Ref.set(created, true);
+        }
         return ChildProcessSpawner.makeHandle({
-          pid: created.pid,
-          exitCode: Effect.succeed(exitCode),
+          pid: ChildProcessSpawner.ProcessId(0),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
           isRunning: Effect.succeed(false),
           kill: () => Effect.void,
           stdin: Sink.drain,
           stdout: Stream.empty,
-          stderr: Stream.empty,
+          stderr: Stream.make(new TextEncoder().encode("injected create failure\n")),
           all: Stream.empty,
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
@@ -1038,14 +965,6 @@ const makePendingCreateSpawner = (
   present: Ref.Ref<boolean>,
 ) =>
   ChildProcessSpawner.make((command) => {
-    if (
-      ChildProcess.isStandardCommand(command) &&
-      command.command === "docker" &&
-      command.args[0] === "ps" &&
-      command.args.some((arg) => arg.startsWith("name=^/?supabase-"))
-    ) {
-      return Effect.succeed(successfulHandle());
-    }
     if (!ChildProcess.isStandardCommand(command) || command.command !== "docker")
       return delegate.spawn(command);
     if (command.args[0] === "stop" || command.args[0] === "rm") {
@@ -1056,24 +975,15 @@ const makePendingCreateSpawner = (
     }
     if (command.args[0] !== "create") return delegate.spawn(command);
     return Effect.gen(function* () {
-      const cidfile = command.args.indexOf("--cidfile");
       yield* Deferred.succeed(started, undefined);
-      if (cidfile < 0 || cidfile + 1 >= command.args.length)
-        return yield* Effect.die("missing cidfile");
       const create = Deferred.await(release);
-      const output = Stream.unwrap(
-        Effect.gen(function* () {
-          yield* create;
-          return Stream.succeed(new TextEncoder().encode(`${pendingContainerId}\n`));
-        }),
-      );
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(0),
         exitCode: create.pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
         isRunning: create.pipe(Effect.as(false)),
         kill: () => Effect.void,
         stdin: Sink.drain,
-        stdout: output,
+        stdout: Stream.empty,
         stderr: Stream.empty,
         all: Stream.empty,
         getInputFd: () => Sink.drain,
@@ -1082,8 +992,6 @@ const makePendingCreateSpawner = (
       });
     });
   });
-
-const pendingContainerId = "a".repeat(64);
 
 const successfulHandle = () =>
   ChildProcessSpawner.makeHandle({
@@ -1126,6 +1034,23 @@ const exists = (id: string) =>
       }),
     );
     return Number(yield* child.exitCode) === 0;
+  });
+
+const removeExternally = (id: string) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make("docker", ["rm", "--force", id], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+    );
+    const code = yield* child.exitCode;
+    if (Number(code) !== 0)
+      return yield* new ContainerTestError({
+        message: `docker rm --force exited with ${String(code)}`,
+      });
   });
 
 const idsByInstance = (instanceId: string) =>
