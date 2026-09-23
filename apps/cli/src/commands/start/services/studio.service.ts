@@ -9,7 +9,7 @@
  * {@link buildStudioEnv}'s `SNIPPETS_MANAGEMENT_FOLDER`.
  */
 
-import { join } from "node:path";
+import type { Path } from "effect";
 
 import { toDockerMountPath } from "../../../command-internal/docker-path.ts";
 import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
@@ -76,7 +76,10 @@ export interface BuildStudioEnvInput {
  * Builds Studio's container env as a `KEY -> value` map, matching {@link StartContainerSpec.env}'s
  * shape, so secret values never round-trip through this process's own `docker create` argv.
  */
-export function buildStudioEnv(input: BuildStudioEnvInput): Record<string, string> {
+export function buildStudioEnv(
+  input: BuildStudioEnvInput,
+  path: Pick<Path.Path, "join">,
+): Record<string, string> {
   return {
     CURRENT_CLI_VERSION: input.cliVersion,
     STUDIO_PG_META_URL: `http://${input.pgMetaContainerName}:8080`,
@@ -99,7 +102,7 @@ export function buildStudioEnv(input: BuildStudioEnvInput): Record<string, strin
     NEXT_PUBLIC_ENABLE_LOGS: String(input.analyticsEnabled),
     NEXT_ANALYTICS_BACKEND_PROVIDER: input.analyticsBackend,
     EDGE_FUNCTIONS_MANAGEMENT_FOLDER: toDockerMountPath(
-      join(input.workdir, "supabase", "functions"),
+      path.join(input.workdir, "supabase", "functions"),
     ),
     SNIPPETS_MANAGEMENT_FOLDER: input.containerSnippetsPath,
     // Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
@@ -127,8 +130,11 @@ export interface StudioContainerInput {
 }
 
 /** Builds Studio's {@link StartContainerSpec}, including the snippets bind mount. */
-export function buildStudioContainerSpec(input: StudioContainerInput): StartContainerSpec {
-  const hostSnippetsPath = join(input.env.workdir, "supabase", "snippets");
+export function buildStudioContainerSpec(
+  input: StudioContainerInput,
+  path: Pick<Path.Path, "join">,
+): StartContainerSpec {
+  const hostSnippetsPath = path.join(input.env.workdir, "supabase", "snippets");
   const containerSnippetsPath = toDockerMountPath(hostSnippetsPath);
 
   // Order-preserving dedup; `Set` iteration order is first-seen-wins.
@@ -139,7 +145,7 @@ export function buildStudioContainerSpec(input: StudioContainerInput): StartCont
   return {
     image: input.image,
     containerName: input.containerName,
-    env: buildStudioEnv({ ...input.env, containerSnippetsPath }),
+    env: buildStudioEnv({ ...input.env, containerSnippetsPath }, path),
     binds,
     healthcheck: {
       test: [

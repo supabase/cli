@@ -1,6 +1,8 @@
-import { join } from "node:path";
+import { BunPath } from "@effect/platform-bun";
+import { Effect, Path } from "effect";
+import { it } from "@effect/vitest";
 
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, vi } from "vitest";
 
 import { buildLogflareContainerSpec, type LogflareContainerSpecInput } from "./logflare.service.ts";
 
@@ -25,132 +27,193 @@ const base: LogflareContainerSpecInput = {
 };
 
 describe("buildLogflareContainerSpec", () => {
-  test("builds the shared shape: identity, hostname, entrypoint/cmd, ports, healthcheck, aliases (start.go:350-394)", () => {
-    const spec = buildLogflareContainerSpec(base);
-    expect(spec.image).toBe("supabase/logflare:1.0.0");
-    expect(spec.containerName).toBe("supabase_analytics_proj");
-    expect(spec.hostname).toBe("127.0.0.1");
-    expect(spec.entrypoint).toBe("sh");
-    expect(spec.cmd).toEqual([
-      "-c",
-      "cat <<'EOF' > run.sh && exec sh run.sh\n" +
-        "./logflare eval Logflare.Release.migrate || exit $?\n" +
-        "./logflare start --sname logflare &\n" +
-        "BEAM_PID=$!\n" +
-        'trap \'kill -TERM "$BEAM_PID" 2>/dev/null; n=0; while [ "$n" -lt 3 ] && kill -0 "$BEAM_PID" 2>/dev/null; do n=$((n+1)); sleep 1; done; kill -KILL "$BEAM_PID" 2>/dev/null\' TERM\n' +
-        'wait "$BEAM_PID"\n' +
-        "code=$?\n" +
-        'if [ "$code" -gt 128 ]; then wait "$BEAM_PID" 2>/dev/null; code2=$?; [ "$code2" -ne 127 ] && code=$code2; fi\n' +
-        'exit "$code"\n' +
-        "EOF\n",
-    ]);
-    expect(spec.exposedPorts).toEqual([{ containerPort: "4000" }]);
-    expect(spec.ports).toEqual([{ hostPort: "54327", containerPort: "4000" }]);
-    expect(spec.healthcheck).toEqual({
-      test: ["CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/health"],
-      intervalSeconds: 10,
-      timeoutSeconds: 2,
-      retries: 3,
-      startPeriodSeconds: 10,
-    });
-    expect(spec.restartPolicy).toBe("unless-stopped");
-    expect(spec.networkAliases).toEqual(["analytics"]);
-    expect(spec.networkId).toBe("supabase_network_proj");
-  });
+  it.effect(
+    "builds the shared shape: identity, hostname, entrypoint/cmd, ports, healthcheck, aliases (start.go:350-394)",
+    () => {
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const spec = buildLogflareContainerSpec(base, path);
+        expect(spec.image).toBe("supabase/logflare:1.0.0");
+        expect(spec.containerName).toBe("supabase_analytics_proj");
+        expect(spec.hostname).toBe("127.0.0.1");
+        expect(spec.entrypoint).toBe("sh");
+        expect(spec.cmd).toEqual([
+          "-c",
+          "cat <<'EOF' > run.sh && exec sh run.sh\n" +
+            "./logflare eval Logflare.Release.migrate || exit $?\n" +
+            "./logflare start --sname logflare &\n" +
+            "BEAM_PID=$!\n" +
+            'trap \'kill -TERM "$BEAM_PID" 2>/dev/null; n=0; while [ "$n" -lt 3 ] && kill -0 "$BEAM_PID" 2>/dev/null; do n=$((n+1)); sleep 1; done; kill -KILL "$BEAM_PID" 2>/dev/null\' TERM\n' +
+            'wait "$BEAM_PID"\n' +
+            "code=$?\n" +
+            'if [ "$code" -gt 128 ]; then wait "$BEAM_PID" 2>/dev/null; code2=$?; [ "$code2" -ne 127 ] && code=$code2; fi\n' +
+            'exit "$code"\n' +
+            "EOF\n",
+        ]);
+        expect(spec.exposedPorts).toEqual([{ containerPort: "4000" }]);
+        expect(spec.ports).toEqual([{ hostPort: "54327", containerPort: "4000" }]);
+        expect(spec.healthcheck).toEqual({
+          test: [
+            "CMD",
+            "curl",
+            "-sSfL",
+            "--head",
+            "-o",
+            "/dev/null",
+            "http://127.0.0.1:4000/health",
+          ],
+          intervalSeconds: 10,
+          timeoutSeconds: 2,
+          retries: 3,
+          startPeriodSeconds: 10,
+        });
+        expect(spec.restartPolicy).toBe("unless-stopped");
+        expect(spec.networkAliases).toEqual(["analytics"]);
+        expect(spec.networkId).toBe("supabase_network_proj");
+      }).pipe(Effect.provide(BunPath.layer));
+    },
+  );
 
-  test("emits the common DB_*/LOGFLARE_* env vars regardless of backend (start.go:315-330)", () => {
-    const spec = buildLogflareContainerSpec(base);
-    expect(spec.env).toMatchObject({
-      DB_DATABASE: "_supabase",
-      DB_HOSTNAME: "supabase_db_proj",
-      DB_PORT: "5432",
-      DB_SCHEMA: "_analytics",
-      DB_USERNAME: "supabase_admin",
-      DB_PASSWORD: "secret",
-      LOGFLARE_MIN_CLUSTER_SIZE: "1",
-      LOGFLARE_SINGLE_TENANT: "true",
-      LOGFLARE_SUPABASE_MODE: "true",
-      LOGFLARE_PRIVATE_ACCESS_TOKEN: "api-key",
-      LOGFLARE_LOG_LEVEL: "warn",
-      LOGFLARE_NODE_HOST: "127.0.0.1",
-      LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
-      RELEASE_COOKIE: "cookie",
-    });
-  });
+  it.effect(
+    "emits the common DB_*/LOGFLARE_* env vars regardless of backend (start.go:315-330)",
+    () => {
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const spec = buildLogflareContainerSpec(base, path);
+        expect(spec.env).toMatchObject({
+          DB_DATABASE: "_supabase",
+          DB_HOSTNAME: "supabase_db_proj",
+          DB_PORT: "5432",
+          DB_SCHEMA: "_analytics",
+          DB_USERNAME: "supabase_admin",
+          DB_PASSWORD: "secret",
+          LOGFLARE_MIN_CLUSTER_SIZE: "1",
+          LOGFLARE_SINGLE_TENANT: "true",
+          LOGFLARE_SUPABASE_MODE: "true",
+          LOGFLARE_PRIVATE_ACCESS_TOKEN: "api-key",
+          LOGFLARE_LOG_LEVEL: "warn",
+          LOGFLARE_NODE_HOST: "127.0.0.1",
+          LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
+          RELEASE_COOKIE: "cookie",
+        });
+      }).pipe(Effect.provide(BunPath.layer));
+    },
+  );
 
-  test("postgres backend: sets POSTGRES_BACKEND_URL/SCHEMA, no GCP env or bind, no bind mounts (start.go:343-347)", () => {
-    const spec = buildLogflareContainerSpec({ ...base, backend: "postgres" });
-    expect(spec.env.POSTGRES_BACKEND_URL).toBe(
-      "postgresql://postgres:secret@supabase_db_proj:5432/_supabase",
-    );
-    expect(spec.env.POSTGRES_BACKEND_SCHEMA).toBe("_analytics");
-    expect(spec.env.GOOGLE_PROJECT_ID).toBeUndefined();
-    expect(spec.env.GOOGLE_PROJECT_NUMBER).toBeUndefined();
-    expect(spec.env.GOOGLE_DATASET_ID_APPEND).toBeUndefined();
-    expect(spec.binds).toEqual([]);
-  });
+  it.effect(
+    "postgres backend: sets POSTGRES_BACKEND_URL/SCHEMA, no GCP env or bind, no bind mounts (start.go:343-347)",
+    () => {
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const spec = buildLogflareContainerSpec({ ...base, backend: "postgres" }, path);
+        expect(spec.env.POSTGRES_BACKEND_URL).toBe(
+          "postgresql://postgres:secret@supabase_db_proj:5432/_supabase",
+        );
+        expect(spec.env.POSTGRES_BACKEND_SCHEMA).toBe("_analytics");
+        expect(spec.env.GOOGLE_PROJECT_ID).toBeUndefined();
+        expect(spec.env.GOOGLE_PROJECT_NUMBER).toBeUndefined();
+        expect(spec.env.GOOGLE_DATASET_ID_APPEND).toBeUndefined();
+        expect(spec.binds).toEqual([]);
+      }).pipe(Effect.provide(BunPath.layer));
+    },
+  );
 
-  test("bigquery backend: sets GOOGLE_* env and binds the host JWT path, no postgres env (start.go:334-342)", () => {
-    const spec = buildLogflareContainerSpec({
-      ...base,
-      backend: "bigquery",
-      gcpProjectId: "my-project",
-      gcpProjectNumber: "123456",
-      gcpJwtPath: "gcloud.json",
-      workdir: "/workdir",
-    });
-    expect(spec.env.GOOGLE_DATASET_ID_APPEND).toBe("_prod");
-    expect(spec.env.GOOGLE_PROJECT_ID).toBe("my-project");
-    expect(spec.env.GOOGLE_PROJECT_NUMBER).toBe("123456");
-    expect(spec.env.POSTGRES_BACKEND_URL).toBeUndefined();
-    expect(spec.env.POSTGRES_BACKEND_SCHEMA).toBeUndefined();
-    expect(spec.binds).toEqual([
-      `${join("/workdir", "gcloud.json")}:/opt/app/rel/logflare/bin/gcloud.json`,
-    ]);
-  });
+  it.effect(
+    "bigquery backend: sets GOOGLE_* env and binds the host JWT path, no postgres env (start.go:334-342)",
+    () => {
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const spec = buildLogflareContainerSpec(
+          {
+            ...base,
+            backend: "bigquery",
+            gcpProjectId: "my-project",
+            gcpProjectNumber: "123456",
+            gcpJwtPath: "gcloud.json",
+            workdir: "/workdir",
+          },
+          path,
+        );
+        expect(spec.env.GOOGLE_DATASET_ID_APPEND).toBe("_prod");
+        expect(spec.env.GOOGLE_PROJECT_ID).toBe("my-project");
+        expect(spec.env.GOOGLE_PROJECT_NUMBER).toBe("123456");
+        expect(spec.env.POSTGRES_BACKEND_URL).toBeUndefined();
+        expect(spec.env.POSTGRES_BACKEND_SCHEMA).toBeUndefined();
+        expect(spec.binds).toEqual([
+          `${path.join("/workdir", "gcloud.json")}:/opt/app/rel/logflare/bin/gcloud.json`,
+        ]);
+      }).pipe(Effect.provide(BunPath.layer));
+    },
+  );
 
-  test("bigquery backend still binds workdir itself when gcpJwtPath is empty, matching Go's unconditional filepath.Join", () => {
-    const spec = buildLogflareContainerSpec({
-      ...base,
-      backend: "bigquery",
-      gcpJwtPath: "",
-      workdir: "/workdir",
-    });
-    expect(spec.binds).toEqual([`${join("/workdir", "")}:/opt/app/rel/logflare/bin/gcloud.json`]);
-  });
+  it.effect(
+    "bigquery backend still binds workdir itself when gcpJwtPath is empty, matching Go's unconditional filepath.Join",
+    () => {
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const spec = buildLogflareContainerSpec(
+          {
+            ...base,
+            backend: "bigquery",
+            gcpJwtPath: "",
+            workdir: "/workdir",
+          },
+          path,
+        );
+        expect(spec.binds).toEqual([
+          `${path.join("/workdir", "")}:/opt/app/rel/logflare/bin/gcloud.json`,
+        ]);
+      }).pipe(Effect.provide(BunPath.layer));
+    },
+  );
 
-  test("bigquery on a slim analytics image uses the same gcloud.json bind as docker.io", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = buildLogflareContainerSpec({
-      ...base,
-      image: "ghcr.io/supabase/cli/analytics:v1.50.6",
-      backend: "bigquery",
-      gcpProjectId: "my-project",
-      gcpProjectNumber: "123456",
-      gcpJwtPath: "gcloud.json",
-    });
-    expect(spec.binds).toEqual([
-      `${join("/workdir", "gcloud.json")}:/opt/app/rel/logflare/bin/gcloud.json`,
-    ]);
-    expect(spec.env.GOOGLE_APPLICATION_CREDENTIALS).toBeUndefined();
-  });
+  it.effect(
+    "bigquery on a slim analytics image uses the same gcloud.json bind as docker.io",
+    () => {
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+        const spec = buildLogflareContainerSpec(
+          {
+            ...base,
+            image: "ghcr.io/supabase/cli/analytics:v1.50.6",
+            backend: "bigquery",
+            gcpProjectId: "my-project",
+            gcpProjectNumber: "123456",
+            gcpJwtPath: "gcloud.json",
+          },
+          path,
+        );
+        expect(spec.binds).toEqual([
+          `${path.join("/workdir", "gcloud.json")}:/opt/app/rel/logflare/bin/gcloud.json`,
+        ]);
+        expect(spec.env.GOOGLE_APPLICATION_CREDENTIALS).toBeUndefined();
+      }).pipe(Effect.provide(BunPath.layer));
+    },
+  );
 
-  test("overrides the entrypoint and uses wget on a slim analytics image", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const slim = buildLogflareContainerSpec({
-      ...base,
-      image: "ghcr.io/supabase/cli/analytics:v1.50.6",
-    });
-    const dockerIo = buildLogflareContainerSpec(base);
-    expect(slim.entrypoint).toBe(dockerIo.entrypoint);
-    expect(slim.cmd).toEqual(dockerIo.cmd);
-    expect(slim.healthcheck?.test).toEqual([
-      "CMD",
-      "wget",
-      "-q",
-      "--spider",
-      "http://127.0.0.1:4000/health",
-    ]);
-    expect(slim.healthcheck?.startPeriodSeconds).toBe(10);
+  it.effect("overrides the entrypoint and uses wget on a slim analytics image", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+      const slim = buildLogflareContainerSpec(
+        {
+          ...base,
+          image: "ghcr.io/supabase/cli/analytics:v1.50.6",
+        },
+        path,
+      );
+      const dockerIo = buildLogflareContainerSpec(base, path);
+      expect(slim.entrypoint).toBe(dockerIo.entrypoint);
+      expect(slim.cmd).toEqual(dockerIo.cmd);
+      expect(slim.healthcheck?.test).toEqual([
+        "CMD",
+        "wget",
+        "-q",
+        "--spider",
+        "http://127.0.0.1:4000/health",
+      ]);
+      expect(slim.healthcheck?.startPeriodSeconds).toBe(10);
+    }).pipe(Effect.provide(BunPath.layer));
   });
 });

@@ -68,11 +68,9 @@ const updateMigrationTable = Effect.fnUntraced(function* (
     for (const version of versions) {
       const resolved = yield* resolveMigrationFile(fs, path, migrationsDir, version);
       if (Option.isNone(resolved)) {
-        return yield* Effect.fail(
-          new MigrationFileNotFoundError({
-            message: `glob supabase/migrations/${version}_*.sql: file does not exist`,
-          }),
-        );
+        return yield* new MigrationFileNotFoundError({
+          message: `glob supabase/migrations/${version}_*.sql: file does not exist`,
+        });
       }
       appliedFiles.push(yield* readMigrationFile(fs, path, resolved.value));
     }
@@ -122,19 +120,15 @@ const runRepair = Effect.fnUntraced(function* (
   const dnsResolver = yield* DnsResolverFlag;
 
   if (target.setFlags.length > 1) {
-    return yield* Effect.fail(
-      new MigrationTargetFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new MigrationTargetFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+    });
   }
   if (Option.isSome(input.dbUrl) && Option.isSome(input.password)) {
-    return yield* Effect.fail(
-      new MigrationPasswordFlagsError({
-        message:
-          "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
-      }),
-    );
+    return yield* new MigrationPasswordFlagsError({
+      message:
+        "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
+    });
   }
 
   const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
@@ -144,12 +138,10 @@ const runRepair = Effect.fnUntraced(function* (
   // `--project-ref` never implies `--linked` and must not be silently
   // discarded on a non-linked target; see push.handler.ts's identical guard.
   if (Option.isSome(input.projectRef) && connType !== "linked") {
-    return yield* Effect.fail(
-      new MigrationTargetFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new MigrationTargetFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   // Resolves the DB config (and, for the linked default, the project ref) before the
@@ -168,27 +160,13 @@ const runRepair = Effect.fnUntraced(function* (
   const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
-  // Attached to the whole flow via `Effect.ensuring` below so the cache write still
-  // runs even when the version parse fails or the repair-all prompt is declined.
-  const cacheLinkedRef =
-    connType === "linked"
-      ? yield* Effect.gen(function* () {
-          const projectRef = yield* ProjectRefResolver;
-          const linkedProjectCache = yield* LinkedProjectCache;
-          const ref = yield* projectRef.loadProjectRef(input.projectRef);
-          return linkedProjectCache.cache(ref);
-        })
-      : undefined;
-
   const repairFlow = Effect.gen(function* () {
     // Rejects non-numeric and out-of-int64-range values.
     for (const version of input.versions) {
       if (parseMigrationVersion(version) === undefined) {
-        return yield* Effect.fail(
-          new MigrationInvalidVersionError({
-            message: `failed to parse ${version}: invalid version number`,
-          }),
-        );
+        return yield* new MigrationInvalidVersionError({
+          message: `failed to parse ${version}: invalid version number`,
+        });
       }
     }
 
@@ -200,9 +178,7 @@ const runRepair = Effect.fnUntraced(function* (
         { defaultValue: false, yes },
       );
       if (!confirmed) {
-        return yield* Effect.fail(
-          new OperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE }),
-        );
+        return yield* new OperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE });
       }
       versions = yield* loadLocalVersions(fs, path, migrationsDir);
     }
@@ -244,9 +220,15 @@ const runRepair = Effect.fnUntraced(function* (
     }
   });
 
-  return yield* cacheLinkedRef === undefined
-    ? repairFlow
-    : repairFlow.pipe(Effect.ensuring(cacheLinkedRef));
+  // Attached to the whole flow via `Effect.ensuring` below so the cache write still
+  // runs even when the version parse fails or the repair-all prompt is declined.
+  if (connType === "linked") {
+    const projectRef = yield* ProjectRefResolver;
+    const linkedProjectCache = yield* LinkedProjectCache;
+    const ref = yield* projectRef.loadProjectRef(input.projectRef);
+    return yield* repairFlow.pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
+  }
+  return yield* repairFlow;
 });
 
 export const migrationRepair = Effect.fn("migration.repair")(function* (

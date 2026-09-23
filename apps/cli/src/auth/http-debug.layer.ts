@@ -69,4 +69,4 @@ export const httpClientLayer = Layer.effect(
       logger.http(req.method, redactHttpUrl(req.url)).pipe(Effect.as(req)),
     );
   }),
-).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(dohFetchLayer));
+).pipe(Layer.provide(Layer.fresh(FetchHttpClient.layer)), Layer.provide(dohFetchLayer));

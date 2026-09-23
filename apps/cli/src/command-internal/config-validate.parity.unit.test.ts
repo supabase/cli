@@ -1,3 +1,4 @@
+import { unusedStackServices } from "../../tests/helpers/unused-stack.ts";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -320,6 +321,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
       const exit = yield* resolveStorageCredentials({ projectRef: "", config }).pipe(
         Effect.provide(
           Layer.mergeAll(
+            unusedStackServices,
             BunServices.layer,
             runtimeInfoLayer,
             mockCommandSettings({ workdir: dir }),

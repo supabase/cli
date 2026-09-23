@@ -2540,7 +2540,7 @@ export const V1GetASnippetOutput = Schema.Struct({
         description: "Deprecated: Rely on root-level favorite property instead.",
       }),
     ),
-    schema_version: Schema.String,
+    schema_version: Schema.optionalKey(Schema.String),
     sql: Schema.String,
   }),
 });
@@ -5197,8 +5197,8 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
         }),
       )
       .check(
-        Schema.isLessThanOrEqualTo(50000).annotate({
-          expected: "a value less than or equal to 50000",
+        Schema.isLessThanOrEqualTo(300000).annotate({
+          expected: "a value less than or equal to 300000",
         }),
       ),
     Schema.Null,
@@ -9608,8 +9608,8 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
         }),
       )
       .check(
-        Schema.isLessThanOrEqualTo(50000).annotate({
-          expected: "a value less than or equal to 50000",
+        Schema.isLessThanOrEqualTo(300000).annotate({
+          expected: "a value less than or equal to 300000",
         }),
       ),
   ),

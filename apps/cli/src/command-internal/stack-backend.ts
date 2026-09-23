@@ -27,6 +27,11 @@ const STACK_BACKEND_COMMANDS = new Set([
   "seed",
 ]);
 
+const isFunctionsServePath = (path: ReadonlyArray<string>): boolean =>
+  path.length >= 2 &&
+  ((path[0] === "functions" && path[1] === "serve") ||
+    (path[0] === "help" && path[1] === "functions" && path[2] === "serve"));
+
 export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
   readonly message: string;
   readonly cause?: unknown;
@@ -75,9 +80,13 @@ export const resolveStackBackend = (input: {
         ? commandPath.slice(1)
         : commandPath;
     const command = completePath[0] === "help" ? completePath[1] : completePath[0];
-    if (command !== undefined && command !== "stack" && !STACK_BACKEND_COMMANDS.has(command)) {
+    if (
+      command !== undefined &&
+      command !== "stack" &&
+      !STACK_BACKEND_COMMANDS.has(command) &&
+      !isFunctionsServePath(completePath)
+    )
       return "legacy";
-    }
 
     const enabled = yield* resolveExperimentalFeature({
       feature: "stack",

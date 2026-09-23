@@ -1,8 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
@@ -12,6 +10,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -141,19 +140,29 @@ const input = (over: Partial<MigrationRepairInput> = {}): MigrationRepairInput =
   password: over.password ?? Option.none(),
 });
 
-const seedMigration = (workdir: string, name: string, body: string) => {
-  const dir = join(workdir, "supabase", "migrations");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, name), body);
-};
+const seedMigration = Effect.fnUntraced(function* (workdir: string, name: string, body: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(workdir, "supabase", "migrations");
+  yield* fs.makeDirectory(dir, { recursive: true });
+  yield* fs.writeFileString(path.join(dir, name), body);
+});
+
+const writeProjectFile = Effect.fnUntraced(function* (workdir: string, name: string, body: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(workdir, "supabase");
+  yield* fs.makeDirectory(dir, { recursive: true });
+  yield* fs.writeFileString(path.join(dir, name), body);
+});
 
 const tmp = useTempWorkdir();
 
 describe("migration repair", () => {
   it.live("marks a version as applied by upserting from its local file", () => {
-    seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs, queries, out } = setup(tmp.current);
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       yield* migrationRepair(input({ versions: ["20240101000000"], status: "applied" }));
       expect(stripAnsi(out.stderrText)).toContain("Connecting to remote database...");
       expect(execs).toContain("BEGIN");
@@ -240,9 +249,9 @@ describe("migration repair", () => {
   });
 
   it.live("repair-all truncates and reapplies local files on confirm", () => {
-    seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs, queries } = setup(tmp.current, { confirm: true });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       yield* migrationRepair(input({ versions: [], status: "applied" }));
       expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
@@ -254,9 +263,9 @@ describe("migration repair", () => {
     () => {
       // repair-all + reverted only queues TRUNCATE; DELETE is the non-repair-all path
       // and UPSERT is the applied path.
-      seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       const { layer, execs, queries } = setup(tmp.current, { confirm: true });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
         yield* migrationRepair(input({ versions: [], status: "reverted" }));
         expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
         expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(false);
@@ -266,9 +275,9 @@ describe("migration repair", () => {
   );
 
   it.live("repair-all cancels on a declined prompt", () => {
-    seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs } = setup(tmp.current, { confirm: false });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       const exit = yield* migrationRepair(input({ versions: [], status: "applied" })).pipe(
         Effect.exit,
       );
@@ -299,9 +308,9 @@ describe("migration repair", () => {
 
   it.live("repair-all honors a piped 'y' answer without a TTY (proceeds)", () => {
     // Piped stdin is read even without a TTY, overriding the default no.
-    seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs, queries } = setup(tmp.current, { isTTY: false, pipedInput: "y\n" });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       yield* migrationRepair(input({ versions: [], status: "applied" }));
       expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
@@ -309,33 +318,23 @@ describe("migration repair", () => {
   });
 
   it.live("auto-confirms repair-all via SUPABASE_YES (no --yes flag)", () => {
-    const previous = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
-    seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs, queries } = setup(tmp.current);
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       yield* migrationRepair(input({ versions: [], status: "applied" }));
       expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = previous;
-        }),
-      ),
-    );
+    }).pipe(Effect.provide(layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
   });
 
   it.live(
     "auto-confirms repair-all via SUPABASE_YES in the project .env (Go loadNestedEnv)",
     () => {
       // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
-      seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
-      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
       const { layer, execs, queries } = setup(tmp.current);
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+        yield* writeProjectFile(tmp.current, ".env", "SUPABASE_YES=true\n");
         yield* migrationRepair(input({ versions: [], status: "applied" }));
         expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
         expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
@@ -359,9 +358,9 @@ describe("migration repair", () => {
   });
 
   it.live("prints the repaired, finished, and suggestion lines on success", () => {
-    seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, out } = setup(tmp.current);
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       yield* migrationRepair(input({ versions: ["20240101000000"], status: "applied" }));
       const stderr = stripAnsi(out.stderrText);
       const stdout = stripAnsi(out.stdoutText);
@@ -376,10 +375,10 @@ describe("migration repair", () => {
   it.live("prints multiple repaired versions using Go's %v slice format", () => {
     // The established format is space-separated and bracketed, with no commas; a
     // `.join(", ")` cleanup would silently change established output.
-    seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
-    seedMigration(tmp.current, "20240102000000_more.sql", "create table b;\n");
     const { layer, out } = setup(tmp.current);
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+      yield* seedMigration(tmp.current, "20240102000000_more.sql", "create table b;\n");
       yield* migrationRepair(
         input({ versions: ["20240101000000", "20240102000000"], status: "applied" }),
       );
@@ -440,9 +439,9 @@ describe("migration repair", () => {
     // VALID_REF is the fake resolver's fallback; the flag must win over it and drive
     // the cached ref.
     const FLAG_REF = "flagflagflagflagflag";
-    seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, cache } = setup(tmp.current);
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       yield* migrationRepair(
         input({
           versions: ["20240101000000"],

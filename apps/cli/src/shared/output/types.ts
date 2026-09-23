@@ -9,6 +9,7 @@ export type StreamEvent =
     }
   | {
       readonly type: "log-entry";
+      readonly instance_id?: string;
       readonly timestamp: string;
       readonly service: string;
       readonly stream: "stdout" | "stderr" | "internal";

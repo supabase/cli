@@ -1,8 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
@@ -23,6 +21,7 @@ import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { MigrationVaultError } from "../../../command-internal/vault.ts";
+import { MigrationMissingLocalError } from "./up.errors.ts";
 import { migrationUp } from "./up.handler.ts";
 import type { MigrationUpFlags } from "./up.command.ts";
 
@@ -35,15 +34,10 @@ interface SetupOpts {
   readonly remote?: ReadonlyArray<string>;
   readonly failApply?: boolean;
   readonly failVault?: boolean;
-  readonly config?: string;
   readonly existingVault?: ReadonlyArray<{ id: string; name: string }>;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
-  if (opts.config !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), opts.config);
-  }
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
@@ -135,11 +129,25 @@ const flags = (over: Partial<MigrationUpFlags> = {}): MigrationUpFlags => ({
   projectRef: over.projectRef ?? Option.none(),
 });
 
-const seed = (workdir: string, name: string, body = "create table a;\n") => {
-  const dir = join(workdir, "supabase", "migrations");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, name), body);
-};
+const seed = Effect.fnUntraced(function* (
+  workdir: string,
+  name: string,
+  body = "create table a;\n",
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(workdir, "supabase", "migrations");
+  yield* fs.makeDirectory(dir, { recursive: true });
+  yield* fs.writeFileString(path.join(dir, name), body);
+});
+
+const writeProjectFile = Effect.fnUntraced(function* (workdir: string, name: string, body: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(workdir, "supabase");
+  yield* fs.makeDirectory(dir, { recursive: true });
+  yield* fs.writeFileString(path.join(dir, name), body);
+});
 const insertedVersions = (queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }>) =>
   queries
     .filter((q) => q.sql.includes("INSERT INTO supabase_migrations"))
@@ -149,11 +157,11 @@ const tmp = useTempWorkdir();
 
 describe("migration up", () => {
   it.live("applies pending migrations in order and prints progress", () => {
-    seed(tmp.current, "20240101000000_a.sql");
-    seed(tmp.current, "20240102000000_b.sql");
-    seed(tmp.current, "20240103000000_c.sql");
     const { layer, out, queries } = setup(tmp.current, { remote: ["20240101000000"] });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* seed(tmp.current, "20240102000000_b.sql");
+      yield* seed(tmp.current, "20240103000000_c.sql");
       yield* migrationUp(flags());
       const stderr = stripAnsi(out.stderrText);
       const stdout = stripAnsi(out.stdoutText);
@@ -168,25 +176,29 @@ describe("migration up", () => {
   });
 
   it.live("errors with a revert suggestion when a remote version is missing locally", () => {
-    seed(tmp.current, "20240101000000_a.sql");
     const { layer } = setup(tmp.current, { remote: ["20240101000000", "20240199000000"] });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
       const exit = yield* migrationUp(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationMissingLocalError");
-        expect(JSON.stringify(exit.cause)).toContain("migration repair --local --status reverted");
-        expect(JSON.stringify(exit.cause)).toContain("supabase db pull --local");
+        const suggestion =
+          Option.isSome(failure) && failure.value instanceof MigrationMissingLocalError
+            ? failure.value.suggestion
+            : "";
+        expect(suggestion).toContain("migration repair --local --status reverted");
+        expect(suggestion).toContain("supabase db pull --local");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("errors with an --include-all suggestion on an out-of-order local migration", () => {
-    seed(tmp.current, "20240101000000_a.sql");
-    seed(tmp.current, "20240102000000_b.sql");
     const { layer } = setup(tmp.current, { remote: ["20240102000000"] });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* seed(tmp.current, "20240102000000_b.sql");
       const exit = yield* migrationUp(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -197,23 +209,23 @@ describe("migration up", () => {
   });
 
   it.live("applies out-of-order migrations with --include-all in the right order", () => {
-    seed(tmp.current, "20240101000000_a.sql"); // out-of-order (before applied 02)
-    seed(tmp.current, "20240102000000_b.sql"); // already applied on remote
-    seed(tmp.current, "20240103000000_c.sql"); // trailing pending
     const { layer, queries } = setup(tmp.current, { remote: ["20240102000000"] });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql"); // out-of-order (before applied 02)
+      yield* seed(tmp.current, "20240102000000_b.sql"); // already applied on remote
+      yield* seed(tmp.current, "20240103000000_c.sql"); // trailing pending
       yield* migrationUp(flags({ includeAll: true }));
       expect(insertedVersions(queries)).toEqual(["20240101000000", "20240103000000"]);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("creates a new [db.vault] secret before applying migrations", () => {
-    seed(tmp.current, "20240101000000_a.sql");
     const { layer, out, queries } = setup(tmp.current, {
       remote: [],
-      config: '[db.vault]\nmy_secret = "shhh"\n',
     });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* writeProjectFile(tmp.current, "config.toml", '[db.vault]\nmy_secret = "shhh"\n');
       yield* migrationUp(flags());
       expect(stripAnsi(out.stderrText)).toContain("Updating vault secrets...");
       const create = queries.find((q) => q.sql.includes("create_secret"));
@@ -222,13 +234,13 @@ describe("migration up", () => {
   });
 
   it.live("reports a vault upsert failure", () => {
-    seed(tmp.current, "20240101000000_a.sql");
     const { layer } = setup(tmp.current, {
       remote: [],
-      config: '[db.vault]\nmy_secret = "shhh"\n',
       failVault: true,
     });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* writeProjectFile(tmp.current, "config.toml", '[db.vault]\nmy_secret = "shhh"\n');
       const exit = yield* migrationUp(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -239,13 +251,13 @@ describe("migration up", () => {
   });
 
   it.live("updates an existing [db.vault] secret by id", () => {
-    seed(tmp.current, "20240101000000_a.sql");
     const { layer, queries } = setup(tmp.current, {
       remote: [],
-      config: '[db.vault]\nmy_secret = "shhh"\n',
       existingVault: [{ id: "vault-id-1", name: "my_secret" }],
     });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* writeProjectFile(tmp.current, "config.toml", '[db.vault]\nmy_secret = "shhh"\n');
       yield* migrationUp(flags());
       const update = queries.find((q) => q.sql.includes("update_secret"));
       expect(update?.params).toEqual(["vault-id-1", "shhh"]);
@@ -306,9 +318,9 @@ describe("migration up", () => {
   });
 
   it.live("emits a structured result in json", () => {
-    seed(tmp.current, "20240101000000_a.sql");
     const { layer, out } = setup(tmp.current, { format: "json", remote: [] });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
       yield* migrationUp(flags());
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "Migrations applied" }),
@@ -317,9 +329,9 @@ describe("migration up", () => {
   });
 
   it.live("surfaces an apply failure", () => {
-    seed(tmp.current, "20240101000000_a.sql", "create table boom;\n");
     const { layer } = setup(tmp.current, { remote: [], failApply: true });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql", "create table boom;\n");
       const exit = yield* migrationUp(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {

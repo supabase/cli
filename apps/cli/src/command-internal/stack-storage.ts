@@ -1,12 +1,10 @@
 /**
- * Resolves Storage REST credentials from a managed stack. The endpoint is the stack's `api`
- * gateway URL; Storage is lazy-activated by the gateway itself on the first request
- * (`packages/stack/src/gateway/HttpGateway.ts`), so this module never polls for readiness and
- * never falls back to the legacy Kong-derived endpoint.
+ * Resolves Storage REST credentials from a managed stack. The endpoint is a composition HTTP
+ * endpoint; lazy Storage members may be woken by the first gateway request.
  */
 
-import { Data, Effect, Match, Option, Redacted } from "effect";
-import type { CapabilityStatus, EffectStack, StackStatus } from "@supabase/stack/effect";
+import { Data, Effect, Match, Option, Path, Redacted } from "effect";
+import type { Observation, ServiceInstance, Stack } from "@supabase/stack/effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -19,6 +17,7 @@ import { stackOpenProjectBy } from "./stack-local-database.ts";
 import { sanitizeInlineName } from "./http-errors.ts";
 import { StorageGatewayStatusError } from "./storage-gateway.errors.ts";
 import type { StorageCredentials } from "./storage-credentials.ts";
+import { generateGoJwt } from "./go-jwt.ts";
 
 const INSPECT_OR_RESTART_SUGGESTION =
   "Run supabase stack status to inspect the stack, or supabase stack restart.";
@@ -38,7 +37,6 @@ export class StackStorageCapabilityError extends Data.TaggedError("StackStorageC
   readonly message: string;
   readonly suggestion?: string;
   readonly disabled?: boolean;
-  /** The original error, preserved for `--debug` (e.g. a `StorageGatewayStatusError`). */
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -46,152 +44,177 @@ export class StackStorageCapabilityError extends Data.TaggedError("StackStorageC
   }
 }
 
-/**
- * Classifies a stack's Storage capability for reporting purposes: `"proceed"` when the gateway
- * can serve requests (including the states it activates or wakes on demand), `"disabled"` when
- * Storage was excluded from the stack, and `"unusable"` when it stopped, failed, or is absent.
- */
+const capabilityState = (observation: Observation | undefined) => {
+  if (observation === undefined) return undefined;
+  if (observation.error !== undefined) return "failed" as const;
+  if (observation.health === "unhealthy") return "failed" as const;
+  if (observation.lifecycle === "stopped" && observation.wakeEnabled) return "dormant" as const;
+  if (observation.lifecycle === "stopping" && observation.wakeEnabled) return "dormant" as const;
+  if (observation.lifecycle === "running" && observation.health === "healthy")
+    return "ready" as const;
+  if (observation.lifecycle === "running") return "starting" as const;
+  return observation.lifecycle;
+};
+
+/** Resolves bucket-seeding credentials from a configured Storage instance. */
+export const stackStorageCredentialsFor = (
+  storage: ServiceInstance<"storage">,
+  jwtSecret: string,
+): Effect.Effect<StorageCredentials, StackStorageUnavailableError | StackStorageCapabilityError> =>
+  storage.status.pipe(
+    Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
+    Effect.flatMap(
+      (
+        observation,
+      ): Effect.Effect<
+        StorageCredentials,
+        StackStorageUnavailableError | StackStorageCapabilityError
+      > => {
+        if (classifyStorageCapability(observation) !== "proceed")
+          return Effect.fail(
+            new StackStorageUnavailableError({ message: describeStorageCapability(observation) }),
+          );
+        return storageCredentialsFrom(observation, jwtSecret);
+      },
+    ),
+  );
+
+/** Classifies the composition Storage observation without starting it. */
 export const classifyStorageCapability = (
-  capability: CapabilityStatus | undefined,
+  observation: Observation | undefined,
 ): "proceed" | "disabled" | "unusable" => {
-  if (capability === undefined) return "unusable";
-  return Match.value(capability.state).pipe(
-    Match.when("disabled", () => "disabled" as const),
-    Match.whenOr("dormant", "starting", "ready", "stopping", () => "proceed" as const),
-    Match.whenOr("stopped", "failed", () => "unusable" as const),
+  const state = capabilityState(observation);
+  if (state === undefined) return "disabled";
+  return Match.value(state).pipe(
+    Match.when("dormant", () => "proceed" as const),
+    Match.when("starting", () => "proceed" as const),
+    Match.when("ready", () => "proceed" as const),
+    Match.whenOr("stopped", "stopping", "failed", () => "unusable" as const),
     Match.exhaustive,
   );
 };
 
-// Callers concatenate this with a following sentence (a next-step suggestion), so the
-// sanitized error always needs its own terminal punctuation.
 const withTerminalPunctuation = (text: string): string => (/[.!?]$/.test(text) ? text : `${text}.`);
 
-/**
- * Renders the current Storage capability state in the same wording `stackStorageEndpointFor`
- * fails with, so pre-check warnings (`db reset`, `stack start`) and the endpoint resolver never
- * drift apart.
- */
-export const describeStorageCapability = (capability: CapabilityStatus | undefined): string =>
-  Match.value(classifyStorageCapability(capability)).pipe(
-    Match.when("disabled", () => "Storage is disabled for this stack."),
-    Match.when("proceed", () => "Storage is available for this stack."),
-    Match.when("unusable", () =>
-      capability === undefined
-        ? "The stack reports no Storage capability."
-        : capability.state === "failed"
-          ? `Storage failed to start for this stack${
-              capability.error === undefined
-                ? "."
-                : `: ${withTerminalPunctuation(sanitizeInlineName(capability.error))}`
-            }`
-          : "Storage is stopped for this stack.",
-    ),
-    Match.exhaustive,
-  );
+/** Renders the current Storage observation for command diagnostics. */
+export const describeStorageCapability = (observation: Observation | undefined): string => {
+  const state = capabilityState(observation);
+  if (state === undefined) return "Storage is disabled for this stack.";
+  if (state === "failed") {
+    const detail = observation?.error?.message;
+    return `Storage failed to start for this stack${
+      detail === undefined ? "." : `: ${withTerminalPunctuation(sanitizeInlineName(detail))}`
+    }`;
+  }
+  if (state === "stopped" || state === "stopping") return "Storage is stopped for this stack.";
+  return "Storage is available for this stack.";
+};
 
-const notRunningSuggestion = (lifecycle: Exclude<StackStatus["lifecycle"], "running">): string =>
+const notRunningSuggestion = (lifecycle: "starting" | "stopping" | "stopped"): string =>
   Match.value(lifecycle).pipe(
     Match.when("starting", () => "The stack is still starting; retry shortly."),
     Match.when(
       "stopping",
       () => "The stack is shutting down; run supabase start once it has stopped.",
     ),
-    Match.when(
-      "destroying",
-      () => "The stack is being destroyed; run supabase start to create a new one.",
-    ),
-    Match.whenOr("stopped", "unconfigured", () => "Run supabase start."),
+    Match.when("stopped", () => "Run supabase start."),
     Match.exhaustive,
   );
 
-/** Storage REST credentials resolved from an already-open stack handle and its current status. */
+const storageCredentialsFrom = (
+  observation: Observation,
+  jwtSecret: string,
+): Effect.Effect<StorageCredentials, StackStorageCapabilityError> => {
+  const endpoint = observation.endpoints.find(({ name }) => name === "http");
+  return endpoint === undefined
+    ? Effect.fail(
+        new StackStorageCapabilityError({ message: "The stack exposes no Storage endpoint." }),
+      )
+    : Effect.succeed({
+        baseUrl: `http://${endpoint.host}:${endpoint.port}`,
+        apiKey: generateGoJwt(jwtSecret, "service_role"),
+        localKongCa: undefined,
+      });
+};
+
+/** Resolves the composition Storage endpoint without launching the owner or any member. */
 export const stackStorageEndpointFor = (
-  stack: EffectStack,
-  status: StackStatus,
+  stack: Stack,
 ): Effect.Effect<StorageCredentials, StackStorageUnavailableError | StackStorageCapabilityError> =>
   Effect.gen(function* () {
-    if (status.lifecycle !== "running") {
-      return yield* new StackStorageUnavailableError({
-        message:
-          status.lifecycle === "unconfigured"
-            ? "The stack has not been started yet."
-            : `The stack is ${status.lifecycle}, not running.`,
-        suggestion: notRunningSuggestion(status.lifecycle),
-      });
-    }
-    const apiEndpoint = status.endpoints.api;
-    if (apiEndpoint === undefined) {
-      return yield* new StackStorageUnavailableError({
-        message: "The stack exposes no API gateway endpoint.",
-        suggestion: INSPECT_OR_RESTART_SUGGESTION,
-      });
-    }
-    const capability = status.capabilities.find((entry) => entry.name === "storage");
-    const classification = classifyStorageCapability(capability);
-    if (classification === "disabled") {
-      return yield* new StackStorageCapabilityError({
-        message: describeStorageCapability(capability),
-        suggestion:
-          "Set [storage] enabled = true in supabase/config.toml, then run supabase stack stop followed by supabase stack start without -x storage, and retry.",
-        disabled: true,
-      });
-    }
-    if (classification === "unusable") {
-      return yield* new StackStorageCapabilityError({
-        message: describeStorageCapability(capability),
-        suggestion:
-          capability === undefined
-            ? INSPECT_OR_RESTART_SUGGESTION
-            : "Run supabase stack restart, then retry.",
-      });
-    }
-    const credentials = yield* stack.credentials.pipe(
+    const composition = yield* stack.composition.describe.pipe(
       Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
     );
-    if (credentials.api === undefined) {
-      return yield* new StackStorageUnavailableError({
-        message: "The stack exposes no API credentials because Auth is disabled.",
+    const members = yield* Effect.forEach(composition.members, ({ id }) =>
+      stack.services
+        .get(id)
+        .pipe(
+          Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
+        ),
+    );
+    const storage = members.find((instance) => instance.service === "storage");
+    if (storage === undefined)
+      return yield* new StackStorageCapabilityError({
+        message: "Storage is disabled for this stack.",
         suggestion:
-          "Set [auth] enabled = true in supabase/config.toml, then run supabase stack stop followed by supabase stack start without -x auth, and retry.",
+          "Set [storage] enabled = true in supabase/config.toml, then run supabase start without --exclude storage.",
+        disabled: true,
       });
-    }
-    return {
-      baseUrl: apiEndpoint.url,
-      apiKey: Redacted.value(credentials.api.serviceRoleJwt),
-      localKongCa: undefined,
-    } satisfies StorageCredentials;
+    const database = members.find((instance) => instance.service === "database");
+    if (database === undefined)
+      return yield* new StackStorageUnavailableError({
+        message: "The stack has no primary database composition member.",
+        suggestion: INSPECT_OR_RESTART_SUGGESTION,
+      });
+    const databaseObservation = yield* database.status.pipe(
+      Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
+    );
+    if (databaseObservation.lifecycle !== "running" || databaseObservation.health !== "healthy")
+      return yield* new StackStorageUnavailableError({
+        message: "The primary database is not ready for Storage requests.",
+        suggestion:
+          databaseObservation.health === "starting"
+            ? notRunningSuggestion("starting")
+            : databaseObservation.lifecycle === "starting" ||
+                databaseObservation.lifecycle === "stopping" ||
+                databaseObservation.lifecycle === "stopped"
+              ? notRunningSuggestion(databaseObservation.lifecycle)
+              : INSPECT_OR_RESTART_SUGGESTION,
+      });
+    const storageObservation = yield* storage.status.pipe(
+      Effect.mapError((cause) => new StackStorageCapabilityError({ message: cause.message })),
+    );
+    if (classifyStorageCapability(storageObservation) !== "proceed")
+      return yield* new StackStorageCapabilityError({
+        message: describeStorageCapability(storageObservation),
+        suggestion: "Run supabase stack restart, then retry.",
+      });
+    if (databaseObservation.config.service !== "database")
+      return yield* new StackStorageUnavailableError({
+        message: "The primary database configuration is unavailable.",
+        suggestion: INSPECT_OR_RESTART_SUGGESTION,
+      });
+    return yield* storageCredentialsFrom(
+      storageObservation,
+      Redacted.value(databaseObservation.config.config.jwtSecret),
+    );
   });
 
-/** Storage REST credentials for the project stack, opening it from the command's workdir. */
+/** Storage credentials for the project stack, opening it without launching the owner. */
 export const stackStorageEndpoint: Effect.Effect<
   StorageCredentials,
   StackStorageUnavailableError | StackStorageCapabilityError,
-  CommandSettings
+  CommandSettings | StackApi | Path.Path
 > = Effect.gen(function* () {
-  const api = yield* Effect.serviceOption(StackApi);
-  if (Option.isNone(api)) {
-    return yield* new StackStorageUnavailableError({
-      message: "The stack API is unavailable for this command.",
-      suggestion: "Re-run with --debug and report this at https://github.com/supabase/cli/issues.",
-    });
-  }
   const opened = yield* stackOpenProjectBy(
-    (cause) =>
-      new StackStorageUnavailableError({
-        message: cause.message,
-      }),
+    (cause) => new StackStorageUnavailableError({ message: cause.message }),
   );
-  if (Option.isNone(opened)) {
+  if (Option.isNone(opened))
     return yield* new StackStorageUnavailableError({
       message: "No stack is registered for this project.",
       suggestion: "Run supabase start to create it.",
     });
-  }
-  const status = yield* opened.value.status.pipe(
-    Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
-  );
-  return yield* stackStorageEndpointFor(opened.value, status);
+  return yield* stackStorageEndpointFor(opened.value);
 });
 
 /**

@@ -94,13 +94,14 @@ const relativePath = (base: string, value: string): string =>
   value.length === 0 ? "" : value.startsWith("/") ? value : join(base, value);
 
 /** Resolves one request's persisted override/default against the live functions tree. */
-export const resolveFunctionConfig = (options: {
-  readonly root: string;
-  readonly slug: string;
-  readonly overrides: FunctionOverrides;
-  readonly fs: FunctionFileSystem;
-}): Effect.Effect<FunctionConfig | undefined> =>
-  Effect.gen(function* () {
+export const resolveFunctionConfig = Effect.fn("Functions.resolveFunctionConfig")(
+  function* (options: {
+    readonly root: string;
+    readonly filesRoot?: string;
+    readonly slug: string;
+    readonly overrides: FunctionOverrides;
+    readonly fs: FunctionFileSystem;
+  }) {
     const { root, slug, overrides, fs } = options;
     if (!root.startsWith("/") || !slugPattern.test(slug) || slug === "_shared") return undefined;
     const rootInfo = yield* optionalInfo(fs, root);
@@ -111,6 +112,11 @@ export const resolveFunctionConfig = (options: {
     if (!canonicalRoot.startsWith("/")) return undefined;
     const canonicalInfo = yield* optionalInfo(fs, canonicalRoot);
     if (canonicalInfo === undefined || !canonicalInfo.isDirectory) return undefined;
+    const filesRoot =
+      options.filesRoot === undefined
+        ? canonicalRoot
+        : yield* fs.realPath(options.filesRoot).pipe(Effect.orElseSucceed(() => ""));
+    if (!filesRoot.startsWith("/") || !contained(filesRoot, canonicalRoot)) return undefined;
     const globalDefaults = overrides.$default;
     const functionOverride = overrides[slug];
     // `$default` cannot be a function slug (the slug schema only accepts letters, digits, `_`,
@@ -134,7 +140,7 @@ export const resolveFunctionConfig = (options: {
       if (!(yield* safeRealPath(fs, canonicalRoot, functionDirectory))) return undefined;
     }
     const entrypointPath = relativePath(functionDirectory, rawEntrypoint);
-    if (!(yield* safeRealPath(fs, canonicalRoot, entrypointPath))) return undefined;
+    if (!(yield* safeRealPath(fs, filesRoot, entrypointPath))) return undefined;
     const entrypointInfo = yield* optionalInfo(fs, entrypointPath);
     if (entrypointInfo === undefined || !entrypointInfo.isFile || entrypointInfo.isSymbolicLink)
       return undefined;
@@ -150,7 +156,7 @@ export const resolveFunctionConfig = (options: {
           ? relativePath(canonicalRoot, globalImportMap)
           : relativePath(functionDirectory, "");
     if (importMapPath.length > 0) {
-      if (!(yield* safeRealPath(fs, canonicalRoot, importMapPath))) return undefined;
+      if (!(yield* safeRealPath(fs, filesRoot, importMapPath))) return undefined;
       const info = yield* optionalInfo(fs, importMapPath);
       if (info === undefined || !info.isFile || info.isSymbolicLink) return undefined;
     } else {
@@ -158,11 +164,7 @@ export const resolveFunctionConfig = (options: {
         const path = join(functionDirectory, candidate);
         const info = yield* optionalInfo(fs, path);
         if (info !== undefined) {
-          if (
-            !info.isFile ||
-            info.isSymbolicLink ||
-            !(yield* safeRealPath(fs, canonicalRoot, path))
-          )
+          if (!info.isFile || info.isSymbolicLink || !(yield* safeRealPath(fs, filesRoot, path)))
             return undefined;
           importMapPath = path;
           break;
@@ -174,19 +176,19 @@ export const resolveFunctionConfig = (options: {
       relativePath(functionDirectory, pattern),
     );
     for (const pattern of staticFiles) {
-      if (!contained(canonicalRoot, pattern)) return undefined;
+      if (!contained(filesRoot, pattern)) return undefined;
       const wildcardIndex = pattern.search(globPattern);
       const prefix = wildcardIndex < 0 ? pattern : pattern.slice(0, wildcardIndex);
       const searchRoot =
         wildcardIndex < 0
           ? dirname(pattern)
           : prefix.slice(0, Math.max(0, prefix.lastIndexOf("/"))) || canonicalRoot;
-      if (!(yield* rejectSymlinkDescendants(fs, canonicalRoot, searchRoot))) return undefined;
+      if (!(yield* rejectSymlinkDescendants(fs, filesRoot, searchRoot))) return undefined;
       if (!globPattern.test(pattern)) {
         const info = yield* optionalInfo(fs, pattern);
         if (
           info !== undefined &&
-          (!(yield* safeRealPath(fs, canonicalRoot, pattern)) || info.isSymbolicLink)
+          (!(yield* safeRealPath(fs, filesRoot, pattern)) || info.isSymbolicLink)
         )
           return undefined;
       }
@@ -199,7 +201,8 @@ export const resolveFunctionConfig = (options: {
       verifyJWT: override.verifyJWT ?? override.verify_jwt ?? true,
       env: override.env,
     };
-  });
+  },
+);
 
 const packageJsonPathFor = (config: FunctionConfig): string =>
   join(dirname(config.entrypointPath), "package.json");
@@ -221,12 +224,12 @@ export const createWorkerServicePathResolver = (makeTempDirectory: () => string)
 };
 
 /** Checks package discovery without allowing a package.json symlink to leave the root. */
-export const packageJsonContainedFor = (options: {
-  readonly root: string;
-  readonly config: FunctionConfig;
-  readonly fs: FunctionFileSystem;
-}): Effect.Effect<boolean> =>
-  Effect.gen(function* () {
+export const packageJsonContainedFor = Effect.fn("Functions.packageJsonContainedFor")(
+  function* (options: {
+    readonly root: string;
+    readonly config: FunctionConfig;
+    readonly fs: FunctionFileSystem;
+  }) {
     if (!options.root.startsWith("/")) return false;
     const rootInfo = yield* optionalInfo(options.fs, options.root);
     if (rootInfo === undefined || (!rootInfo.isDirectory && !rootInfo.isSymbolicLink)) return false;
@@ -241,4 +244,5 @@ export const packageJsonContainedFor = (options: {
     if (packageInfo === undefined || !packageInfo.isFile || packageInfo.isSymbolicLink)
       return false;
     return yield* safeRealPath(options.fs, canonicalRoot, packagePath);
-  });
+  },
+);

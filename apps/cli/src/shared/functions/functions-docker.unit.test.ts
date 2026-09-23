@@ -1,14 +1,37 @@
-import process from "node:process";
-
+import { BunPath } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Layer,
+  Path,
+  PlatformError,
+  Runtime,
+  Schema,
+  Sink,
+  Stream,
+} from "effect";
+import { CliError } from "effect/unstable/cli";
 import { ChildProcessSpawner } from "effect/unstable/process";
-
+import process from "node:process";
+import { formatCliError, normalizeCause, normalizeCliError } from "../output/normalize-error.ts";
+import { FileWatcherError } from "../runtime/file-watcher.service.ts";
+import {
+  actionability,
+  classifyCliCauseActionability,
+  classifyCliErrorActionability,
+  ErrorActionabilityId,
+  unwrapNativeFailure,
+} from "../telemetry/error-actionability.ts";
 import {
   buildFunctionsDockerRunArgs,
   containerArchiveBytes,
   edgeRuntimeCacheVolume,
   localDockerId,
+  NativeFailure,
+  nativeFailure,
+  nativePlatformFailure,
   resolveDockerNetworkMode,
   runChildProcess,
   toDockerPath,
@@ -50,26 +73,46 @@ function mockStreamingChildProcessLayer(
 }
 
 describe("toDockerPath", () => {
-  it("keeps a posix absolute path unchanged", () => {
-    expect(toDockerPath("/home/u/p/supabase/functions")).toBe("/home/u/p/supabase/functions");
+  it.effect("keeps a posix absolute path unchanged", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      expect(toDockerPath("/home/u/p/supabase/functions", path)).toBe(
+        "/home/u/p/supabase/functions",
+      );
+    }).pipe(Effect.provide(BunPath.layer));
   });
 
-  it.runIf(process.platform === "win32")(
-    "strips the drive letter and flips separators for a Windows path",
-    () => {
-      // A drive-letter colon surviving into the container path would corrupt
-      // every `host:container:mode` bind built from it (supabase/cli#6035).
-      // `resolve()` only treats a drive-letter path as absolute on Windows,
-      // so this guard only runs there.
-      const containerPath = toDockerPath("C:\\Users\\u\\p\\supabase\\functions");
+  it.effect("translates Windows drive paths with the Windows path service on every host", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const containerPath = toDockerPath("C:\\Users\\u\\p\\supabase\\functions", path);
       expect(containerPath).toBe("/Users/u/p/supabase/functions");
       expect(containerPath).not.toContain(":");
+    }).pipe(Effect.provide(BunPath.layerWin32)),
+  );
+
+  it.effect.runIf(process.platform === "win32")(
+    "strips the drive letter and flips separators for a Windows path",
+    () => {
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        // A drive-letter colon surviving into the container path would corrupt
+        // every `host:container:mode` bind built from it (supabase/cli#6035).
+        // `resolve()` only treats a drive-letter path as absolute on Windows,
+        // so this guard only runs there.
+        const containerPath = toDockerPath("C:\\Users\\u\\p\\supabase\\functions", path);
+        expect(containerPath).toBe("/Users/u/p/supabase/functions");
+        expect(containerPath).not.toContain(":");
+      }).pipe(Effect.provide(BunPath.layer));
     },
   );
 
-  it("never leaves a separator-breaking colon in a locally resolvable path", () => {
-    const containerPath = toDockerPath("/home/u/repo:with:colons/supabase/functions");
-    expect(containerPath).toBe("/home/u/repo:with:colons/supabase/functions");
+  it.effect("never leaves a separator-breaking colon in a locally resolvable path", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const containerPath = toDockerPath("/home/u/repo:with:colons/supabase/functions", path);
+      expect(containerPath).toBe("/home/u/repo:with:colons/supabase/functions");
+    }).pipe(Effect.provide(BunPath.layer));
   });
 });
 
@@ -245,12 +288,28 @@ describe("containerArchiveBytes", () => {
     return entries;
   }
 
-  it("strips leading slashes into root-relative tar entries with the contractual 0644 mode", async () => {
-    const archive = await containerArchiveBytes({ "/root/index.ts": "export const x = 1;\n" });
-    expect(tarRegularFileEntries(archive)).toEqual([["root/index.ts", 0o644]]);
-    const files = await new Bun.Archive(archive).files();
-    expect(await files.get("root/index.ts")?.text()).toBe("export const x = 1;\n");
-  });
+  it.effect(
+    "strips leading slashes into root-relative tar entries with the contractual 0644 mode",
+    () => {
+      return Effect.gen(function* () {
+        const archive = yield* Effect.tryPromise({
+          try: () => containerArchiveBytes({ "/root/index.ts": "export const x = 1;\n" }),
+          catch: nativeFailure,
+        });
+        expect(tarRegularFileEntries(archive)).toEqual([["root/index.ts", 0o644]]);
+        const files = yield* Effect.tryPromise({
+          try: () => new Bun.Archive(archive).files(),
+          catch: nativeFailure,
+        });
+        expect(
+          yield* Effect.tryPromise({
+            try: () => Promise.resolve(files.get("root/index.ts")?.text()),
+            catch: nativeFailure,
+          }),
+        ).toBe("export const x = 1;\n");
+      });
+    },
+  );
 });
 
 describe("resolveDockerNetworkMode", () => {
@@ -358,4 +417,133 @@ describe("runChildProcess", () => {
       expect(stderrTee.some((chunk) => chunk.includes("stdout"))).toBe(false);
     }),
   );
+});
+
+describe("native failure compatibility", () => {
+  it.each([
+    new Error("failed to create docker network: local"),
+    new TypeError("invalid archive"),
+    new RangeError("archive too large"),
+    new FileWatcherError({ path: "/project", cause: new Error("permission denied") }),
+    Object.assign(new Error("EACCES: permission denied, open '/project/docker.env'"), {
+      code: "EACCES",
+      errno: -13,
+      syscall: "open",
+      path: "/project/docker.env",
+    }),
+    Object.assign(new Error("failure"), {
+      detail: "details",
+      suggestion: "\nTry again",
+      [Runtime.errorExitCode]: 42,
+    }),
+  ])("preserves the original diagnostics and CLI result for %s", (original) => {
+    const wrapped = nativeFailure(original);
+    expect(wrapped.cause).toBe(original);
+    expect(unwrapNativeFailure(wrapped)).toBe(original);
+    expect(wrapped.message).toBe(original.message);
+    expect(normalizeCliError(wrapped)).toEqual(normalizeCliError(original));
+    expect(normalizeCause(Cause.fail(wrapped))).toEqual(normalizeCause(Cause.fail(original)));
+    expect(formatCliError(normalizeCliError(wrapped))).toBe(
+      formatCliError(normalizeCliError(original)),
+    );
+    expect(classifyCliErrorActionability(wrapped)).toEqual(classifyCliErrorActionability(original));
+    expect(classifyCliCauseActionability(Cause.fail(wrapped))).toEqual(
+      classifyCliCauseActionability(Cause.fail(original)),
+    );
+    expect(Runtime.getErrorExitCode(wrapped)).toBe(Runtime.getErrorExitCode(original));
+    expect(Runtime.getErrorExitCode(Cause.squash(Cause.fail(wrapped)))).toBe(
+      Runtime.getErrorExitCode(original),
+    );
+  });
+
+  it.effect("preserves schema failure diagnostics and classification", () =>
+    Effect.gen(function* () {
+      const original = yield* Schema.decodeUnknownEffect(Schema.String)(123).pipe(Effect.flip);
+      const wrapped = nativeFailure(original);
+      expect(wrapped.cause).toBe(original);
+      expect(normalizeCause(Cause.fail(wrapped))).toEqual(normalizeCause(Cause.fail(original)));
+      expect(classifyCliCauseActionability(Cause.fail(wrapped))).toEqual(
+        classifyCliCauseActionability(Cause.fail(original)),
+      );
+      expect(Runtime.getErrorExitCode(wrapped)).toBe(Runtime.getErrorExitCode(original));
+    }),
+  );
+
+  it("preserves cause-less native filesystem argument diagnostics", () => {
+    const original = Object.assign(
+      new TypeError("The argument 'path' must be a string without null bytes"),
+      { code: "ERR_INVALID_ARG_VALUE" },
+    );
+    const wrapped = nativePlatformFailure(
+      PlatformError.badArgument({
+        module: "FileSystem",
+        method: "readFile",
+        description: original.message,
+      }),
+      "/project/bad\0path",
+    );
+    expect(wrapped.cause).toBeInstanceOf(TypeError);
+    expect(Reflect.get(wrapped.cause, "code")).toBe("ERR_INVALID_ARG_VALUE");
+    expect(normalizeCliError(wrapped)).toEqual(normalizeCliError(original));
+    expect(classifyCliErrorActionability(wrapped)).toEqual(classifyCliErrorActionability(original));
+    expect(Runtime.getErrorExitCode(wrapped)).toBe(Runtime.getErrorExitCode(original));
+  });
+
+  it("uses filesystem input rather than diagnostic prose to identify native NUL errors", () => {
+    const reason = PlatformError.badArgument({
+      module: "FileSystem",
+      method: "readFile",
+      description: "a custom rejection without null bytes",
+    });
+    expect(nativePlatformFailure(reason, "/project/valid").cause).toBe(reason.reason);
+    const original = Object.assign(new Error("custom NUL-path rejection"), { code: "CUSTOM" });
+    const withCause = PlatformError.badArgument({
+      module: "FileSystem",
+      method: "readFile",
+      description: "without null bytes",
+      cause: original,
+    });
+    expect(nativePlatformFailure(withCause, "/project/bad\0path").cause).toBe(original);
+  });
+
+  it.each([0, 7, 8])("preserves the existing cause budget with %s UserError layers", (depth) => {
+    const original = new FileWatcherError({
+      path: "/project",
+      cause: new Error("permission denied"),
+    });
+    let before: Error = original;
+    let after: Error = nativeFailure(original);
+    for (let i = 0; i < depth; i++) {
+      before = new CliError.UserError({ cause: before });
+      after = new CliError.UserError({ cause: after });
+    }
+    expect(classifyCliErrorActionability(after)).toEqual(classifyCliErrorActionability(before));
+  });
+
+  it("does not wrap an already typed native failure again", () => {
+    const original = nativeFailure(new Error("failure"));
+    expect(nativeFailure(original)).toBe(original);
+  });
+
+  it("handles malformed cyclic wrappers without recursing", () => {
+    const cyclic = nativeFailure(new Error("failure"));
+    Reflect.set(cyclic, "cause", cyclic);
+    expect(unwrapNativeFailure(cyclic)).toBeUndefined();
+    expect(normalizeCliError(cyclic)).toEqual({ code: "UnknownError", message: "Unknown error" });
+    expect(classifyCliErrorActionability(cyclic)).toEqual(classifyCliErrorActionability(undefined));
+    expect(Runtime.getErrorExitCode(cyclic)).toBe(1);
+    expect(cyclic.message).toBe("");
+  });
+
+  it("keeps the established non-Error rejection conversion", () => {
+    expect(nativeFailure("failure").cause.message).toBe("failure");
+    expect(nativeFailure(undefined).cause.message).toBe("undefined");
+  });
+
+  it("has a valid declaration even when probed without fields", () => {
+    const probe = Reflect.construct(NativeFailure, [{}]);
+    expect(probe[ErrorActionabilityId]).toEqual(actionability.unknown);
+    expect(probe.message).toBe("");
+    expect(Runtime.getErrorExitCode(probe)).toBe(1);
+  });
 });

@@ -267,6 +267,7 @@ FunctionsNewFileExistsError
 FunctionsNewInvalidSlugError
 FunctionsNewWorkdirError
 FunctionsNewWriteError
+FunctionsServeStackError
 GenBearerJwtConfigParseError
 GenBearerJwtDecodeError
 GenBearerJwtKeyNotFoundError
@@ -360,6 +361,7 @@ MigrationVaultError
 MigrationsReadError
 MissingComputeExposureError
 MissingComputeNameError
+NativeFailure
 NetworkBansEnvNotSupportedError
 NetworkBansGetNetworkError
 NetworkBansGetUnexpectedStatusError
@@ -505,8 +507,11 @@ SsoUpdateMetadataFileError
 SsoUpdateNetworkError
 SsoUpdateNotFoundError
 SsoUpdateUnexpectedStatusError
+StackBootstrapError
 StackCatalogSetupError
 StackConfigError
+StackFunctionsBundleError
+StackFunctionsEnvError
 StackNativeEngineError
 StackRoutingError
 StackRuntimeUnavailableError
@@ -547,6 +552,7 @@ StorageMissingPathError
 StorageMissingProjectConfigError
 StorageMutuallyExclusiveFlagsError
 StorageObjectNotFoundError
+StorageRmConfirmationRequiredError
 StorageUnsupportedMoveError
 StorageUnsupportedOperationError
 StorageUrlParseError

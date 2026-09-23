@@ -1,7 +1,6 @@
-import { Effect, FileSystem, Option, Path, Predicate } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
-import { resolveEphemeralPostgresRelease } from "@supabase/stack/effect";
 
 import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -42,16 +41,11 @@ import type { ResolvedDbConfig } from "../../../command-internal/db-config.types
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
-import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { stackWithShadowDatabase } from "../../../command-internal/stack-shadow.ts";
-import {
-  dumpConnForHostClient,
-  rewriteDumpHostForToolContainer,
-  toolContainerUsesHostNetwork,
-} from "../../../command-internal/postgres-client.run.ts";
-import { bundledPostgresClientRuntime } from "../../../command-internal/bundled-postgres-client.ts";
+import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
+
 import { applyMigrations, MigrationApplyError } from "../../../command-internal/migration-apply.ts";
 import {
   INSERT_MIGRATION_VERSION,
@@ -122,7 +116,6 @@ const squashMigrations = Effect.fnUntraced(function* (
   const image = localInputs.bootstrapConfig.postgresImage;
 
   if (stackBackend) {
-    const runtimeInfo = yield* RuntimeInfo;
     return yield* stackWithShadowDatabase(shadowInput, (handle) =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -133,32 +126,18 @@ const squashMigrations = Effect.fnUntraced(function* (
             password: toml.password,
             database: "postgres",
           };
-          const networkIdFlag = yield* NetworkIdFlag;
-          const networkId = Option.getOrUndefined(networkIdFlag);
-          const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);
-          const dumpRuntime =
-            bundledPostgresClientRuntime(handle.runtime, runtimeInfo.platform, runtimeInfo.arch) ??
-            handle.runtime;
-          const release = yield* resolveEphemeralPostgresRelease(handle.ephemeral.version).pipe(
-            Effect.orElseSucceed(() => undefined),
-          );
-          const image = release?.image ?? localInputs.bootstrapConfig.postgresImage;
+          const credentials = yield* handle.database.credentials({ from: "runtime" });
+          const dumpConn = parseConnectionString(credentials.databaseUrl ?? "");
+          if (dumpConn === undefined)
+            return yield* new MigrationSquashDumpError({
+              message: "Shadow database tool URL is unavailable",
+            });
           const dumpClient = {
-            kind: "bundled" as const,
+            kind: "stack" as const,
+            stack: handle.stack,
             command: "pg_dump" as const,
-            version: handle.ephemeral.version,
-            runtime: dumpRuntime,
+            major: toml.majorVersion === 15 ? (15 as const) : (17 as const),
           };
-          const dumpConn: PgConnInput =
-            dumpRuntime.kind === "native"
-              ? dumpConnForHostClient(stackConn)
-              : {
-                  ...stackConn,
-                  host: rewriteDumpHostForToolContainer(handle.host, {
-                    platform: runtimeInfo.platform,
-                    usesHostNetwork: dumpUsesHostNetwork,
-                  }),
-                };
           const session = yield* connectShadowDatabase(stackConn);
           const before = yield* squashDumpSchemaToString({
             image,
@@ -221,20 +200,6 @@ const squashMigrations = Effect.fnUntraced(function* (
             }),
           );
         }),
-      ).pipe(
-        Effect.catchIf(
-          (error): error is DockerRunError =>
-            Predicate.isTagged(error, "DockerRunError") &&
-            handle.runtime.kind === "native" &&
-            runtimeInfo.platform === "win32",
-          (error) =>
-            Effect.fail(
-              new MigrationSquashDumpError({
-                message: error.message,
-                suggestion: "Install Docker Desktop to squash a native stack on Windows.",
-              }),
-            ),
-        ),
       ),
     );
   }
@@ -367,9 +332,7 @@ const squashToVersion = Effect.fnUntraced(function* (
   const output = yield* Output;
   const migrations = yield* loadPartialMigrations(fs, path, migrationsDir, version);
   if (migrations.length === 0) {
-    return yield* Effect.fail(
-      new MigrationSquashMissingVersionError({ message: "version not found" }),
-    );
+    return yield* new MigrationSquashMissingVersionError({ message: "version not found" });
   }
 
   const local = migrations[migrations.length - 1]!;
@@ -458,11 +421,9 @@ const baselineMigrations = Effect.fnUntraced(function* (
 
       const resolvedFile = yield* resolveMigrationFile(fs, path, migrationsDir, resolvedVersion);
       if (Option.isNone(resolvedFile)) {
-        return yield* Effect.fail(
-          new MigrationFileNotFoundError({
-            message: `glob supabase/migrations/${resolvedVersion}_*.sql: file does not exist`,
-          }),
-        );
+        return yield* new MigrationFileNotFoundError({
+          message: `glob supabase/migrations/${resolvedVersion}_*.sql: file does not exist`,
+        });
       }
       const m = yield* readMigrationFile(fs, path, resolvedFile.value);
 
@@ -512,24 +473,14 @@ const runSquash = Effect.fnUntraced(function* (
   yield* Effect.gen(function* () {
     // Checked here, ahead of the root pre-run.
     if (target.setFlags.length > 1) {
-      return yield* Effect.fail(
-        new MigrationTargetFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(
-            ["db-url", "linked", "local"],
-            target.setFlags,
-          ),
-        }),
-      );
+      return yield* new MigrationTargetFlagsError({
+        message: cobraMutuallyExclusiveErrorMessage(["db-url", "linked", "local"], target.setFlags),
+      });
     }
     if (Option.isSome(flags.dbUrl) && Option.isSome(flags.password)) {
-      return yield* Effect.fail(
-        new MigrationPasswordFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(
-            ["db-url", "password"],
-            ["db-url", "password"],
-          ),
-        }),
-      );
+      return yield* new MigrationPasswordFlagsError({
+        message: cobraMutuallyExclusiveErrorMessage(["db-url", "password"], ["db-url", "password"]),
+      });
     }
 
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
@@ -538,12 +489,10 @@ const runSquash = Effect.fnUntraced(function* (
     // `--project-ref` never implies `--linked` and must not be silently
     // discarded on a non-linked target; see push.handler.ts's identical guard.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new MigrationTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new MigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // Resolves and caches the project ref, then reads the remote-merged config before
@@ -597,17 +546,13 @@ const runSquash = Effect.fnUntraced(function* (
     if (version.length > 0) {
       if (parseMigrationVersion(version) === undefined) {
         // Bare message; squash does not inherit repair's "failed to parse <v>:" prefix.
-        return yield* Effect.fail(
-          new MigrationInvalidVersionError({ message: "invalid version number" }),
-        );
+        return yield* new MigrationInvalidVersionError({ message: "invalid version number" });
       }
       const versionFile = yield* resolveMigrationFile(fs, path, migrationsDir, version);
       if (Option.isNone(versionFile)) {
-        return yield* Effect.fail(
-          new MigrationFileNotFoundError({
-            message: `glob supabase/migrations/${version}_*.sql: file does not exist`,
-          }),
-        );
+        return yield* new MigrationFileNotFoundError({
+          message: `glob supabase/migrations/${version}_*.sql: file does not exist`,
+        });
       }
     }
 

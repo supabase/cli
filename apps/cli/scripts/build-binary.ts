@@ -1,4 +1,6 @@
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
+import { bundleStackFunctionsServeMainTemplate } from "../src/command-internal/stack-functions-bundler.ts";
+import { Effect } from "effect";
 import { OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "./bundle-externals.ts";
 
 /**
@@ -23,6 +25,9 @@ const result = await Bun.build({
   define: {
     SUPABASE_CLI_VERSION: JSON.stringify(packageJson.version),
     SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleServeMainTemplate()),
+    SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(
+      await Effect.runPromise(bundleStackFunctionsServeMainTemplate()),
+    ),
   },
 });
 for (const log of result.logs) {

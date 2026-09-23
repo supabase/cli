@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Effect, Exit, Layer, Option, Stdio } from "effect";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
@@ -1612,7 +1612,7 @@ describe("functions deploy", () => {
           const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
           expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
             "-w",
-            toDockerPath(tempRoot.current),
+            toDockerPath(tempRoot.current, { resolve }),
           ]);
         }).pipe(
           Effect.provide(layer),

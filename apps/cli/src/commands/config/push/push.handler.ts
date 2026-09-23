@@ -286,17 +286,17 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
             : { kind: "uuid" };
       }
     }
+    const tty = yield* Tty;
+    const confirm = (label: string, defaultValue: boolean) =>
+      !yes && tty.stdinIsTty && !output.interactive
+        ? Effect.succeed(defaultValue)
+        : promptYesNo(output, yes, label, defaultValue, true, { readMachineStdin: true });
     const target = yield* resolveConfigPushTarget(ref, { knownBranch });
     yield* output.raw(configPushTargetLines(target), "stderr");
     if (target.kind === "branch" && knownBranch === undefined) {
-      const proceed = yield* promptYesNo(
-        output,
-        yes,
-        configPushBranchPromptLabel(target),
-        // Defaults `false`, unlike this file's other prompts: an unattended run without `--yes`
-        // must decline a branch mutation rather than silently proceed.
-        false,
-      );
+      // Defaults `false`: an unattended run without affirmative consent
+      // must decline a branch mutation rather than silently proceed.
+      const proceed = yield* confirm(configPushBranchPromptLabel(target), false);
       if (!proceed) {
         return yield* new ConfigPushCancelledError({
           message: CONTEXT_CANCELED_MESSAGE,
@@ -309,6 +309,8 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     const cost = yield* getCostMatrix(ref);
 
     // `promptYesNo` scans piped stdin on a non-TTY before falling back to the default.
+    const defaultProceed =
+      yes || (tty.stdinIsTty && output.interactive && output.format === "text");
     const keep = (name: string) =>
       Effect.gen(function* () {
         const item = cost.get(name);
@@ -316,7 +318,16 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
           item === undefined
             ? `Do you want to push ${name} config to remote?`
             : `Enabling ${item.name} will cost you ${item.price}. Keep it enabled?`;
-        return yield* promptYesNo(output, yes, title, true);
+        const confirmed = yield* confirm(title, defaultProceed);
+        if (!confirmed && output.format === "text" && (!tty.stdinIsTty || !output.interactive)) {
+          yield* output.raw(
+            tty.stdinIsTty
+              ? `Skipped ${name}: confirmation unavailable with redirected output. Pass --yes (or set SUPABASE_YES) to approve.\n`
+              : `Skipped ${name}: no affirmative confirmation received. Pass --yes (or set SUPABASE_YES) to approve.\n`,
+            "stderr",
+          );
+        }
+        return confirmed;
       });
 
     // 7. Read the project's effective configuration in one call. No spinner, matching the rest

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -76,9 +76,9 @@ describe("sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoInvalidUuidError");
-        expect(dump).toContain('identity provider ID \\"not-a-uuid\\" is not a UUID');
+        expect(dump).toContain('identity provider ID "not-a-uuid" is not a UUID');
       }
     }).pipe(Effect.provide(layer));
   });
@@ -109,7 +109,7 @@ describe("sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoShowNotFoundError");
         expect(dump).toContain("An identity provider with ID");
         expect(dump).toContain("could not be found");
@@ -129,7 +129,7 @@ describe("sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoShowUnexpectedStatusError");
         expect(dump).toContain("Unexpected error fetching identity provider");
       }
@@ -148,7 +148,7 @@ describe("sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("SsoShowNetworkError");
+        expect(Cause.pretty(exit.cause)).toContain("SsoShowNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -165,7 +165,7 @@ describe("sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoShowEnvNotSupportedError");
         expect(dump).toContain("--output env flag is not supported");
       }

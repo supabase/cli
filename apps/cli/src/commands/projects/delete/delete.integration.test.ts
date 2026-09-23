@@ -200,6 +200,18 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  for (const format of ["json", "stream-json"] as const) {
+    it.live(`${format} does not authorize deletion from piped y`, () => {
+      const { layer, out, api } = setup({ format, stdinIsTty: false, stdinInput: "y\n" });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(hasMethod(api, "DELETE")).toBe(false);
+        expect(out.stderrText).not.toContain("[y/N]");
+      }).pipe(Effect.provide(layer));
+    });
+  }
+
   it.live("non-TTY with piped `n` declines like Go", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "n\n" });
     return Effect.gen(function* () {

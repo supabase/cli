@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node";
+import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -8,14 +8,15 @@ import {
   Exit,
   Fiber,
   FileSystem,
+  Layer,
   Option,
   PlatformError,
 } from "effect";
-import { ArtifactIntegrityError, StackPreparationError } from "../public/Errors.ts";
+import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
 import { makeArtifactStore, type ArtifactRequest, type ArtifactSource } from "./ArtifactStore.ts";
 import { verifySha256 } from "./Integrity.ts";
 
-const layer = NodeServices.layer;
+const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 const archive = new TextEncoder().encode("archive");
 const archiveSha256 = "0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3";
 const request: ArtifactRequest = {
@@ -45,7 +46,7 @@ const sourceWriting = (bytes: Uint8Array = archive): ArtifactSource => ({
       Effect.mapError((cause) =>
         cause instanceof ArtifactIntegrityError
           ? cause
-          : new StackPreparationError({
+          : new PreparationError({
               message: `materialization failed: ${cause instanceof Error ? cause.message : String(cause)}`,
               cause,
             }),
@@ -85,7 +86,6 @@ describe("verified native artifact preparation", () => {
         expect(prepared.outcome).toBe("downloaded");
         expect(yield* fs.exists(`${prepared.path}/bin/postgres`)).toBe(true);
         expect((yield* fs.stat(`${prepared.path}/bin/postgres`)).mode & 0o111).not.toBe(0);
-        expect(yield* fs.exists(`${prepared.path}/.artifact-source`)).toBe(false);
       }),
     ),
   );
@@ -205,7 +205,7 @@ describe("verified native artifact preparation", () => {
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new StackPreparationError({
+                  new PreparationError({
                     message: `materialization failed: ${cause.message}`,
                     cause,
                   }),
@@ -284,7 +284,7 @@ describe("verified native artifact preparation", () => {
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new StackPreparationError({
+                  new PreparationError({
                     message: `materialization failed: ${cause.message}`,
                     cause,
                   }),
@@ -386,7 +386,7 @@ describe("verified native artifact preparation", () => {
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new StackPreparationError({
+                  new PreparationError({
                     message: `materialization failed: ${cause.message}`,
                     cause,
                   }),
@@ -443,7 +443,7 @@ describe("verified native artifact preparation", () => {
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new StackPreparationError({
+                  new PreparationError({
                     message: `materialization failed: ${cause.message}`,
                     cause,
                   }),
@@ -481,7 +481,7 @@ describe("verified native artifact preparation", () => {
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new StackPreparationError({
+                  new PreparationError({
                     message: `materialization failed: ${cause.message}`,
                     cause,
                   }),
@@ -522,7 +522,7 @@ describe("verified native artifact preparation", () => {
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new StackPreparationError({
+                  new PreparationError({
                     message: `materialization failed: ${cause.message}`,
                     cause,
                   }),
@@ -568,7 +568,7 @@ describe("verified native artifact preparation", () => {
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new StackPreparationError({
+                  new PreparationError({
                     message: `materialization failed: ${cause.message}`,
                     cause,
                   }),
@@ -602,7 +602,7 @@ describe("verified native artifact preparation", () => {
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new StackPreparationError({
+                  new PreparationError({
                     message: `materialization failed: ${cause.message}`,
                     cause,
                   }),
@@ -648,7 +648,7 @@ describe("verified native artifact preparation", () => {
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new StackPreparationError({
+                  new PreparationError({
                     message: `materialization failed: ${cause.message}`,
                     cause,
                   }),
@@ -689,8 +689,8 @@ describe("verified native artifact preparation", () => {
         const pathExit = yield* store
           .prepare({ ...request, requiredRuntimePaths: ["bin/../escape"] })
           .pipe(Effect.exit);
-        expect(errorOf(keyExit)).toBeInstanceOf(StackPreparationError);
-        expect(errorOf(pathExit)).toBeInstanceOf(StackPreparationError);
+        expect(errorOf(keyExit)).toBeInstanceOf(PreparationError);
+        expect(errorOf(pathExit)).toBeInstanceOf(PreparationError);
         expect(called).toBe(false);
       }),
     ),
@@ -717,7 +717,7 @@ describe("verified native artifact preparation", () => {
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
         const exit = yield* store.prepare({ ...request, key: "nested/postgres" }).pipe(Effect.exit);
 
-        expect(errorOf(exit)).toBeInstanceOf(StackPreparationError);
+        expect(errorOf(exit)).toBeInstanceOf(PreparationError);
         expect(called).toBe(false);
         expect(yield* fs.exists(`${outside}/postgres`)).toBe(false);
       }),

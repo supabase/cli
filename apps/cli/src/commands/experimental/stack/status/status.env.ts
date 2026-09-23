@@ -1,5 +1,5 @@
-import type { EffectStackCredentials, StackStatus } from "@supabase/stack/effect";
-import { Effect, Redacted } from "effect";
+import { Effect } from "effect";
+import { generateGoJwt } from "../../../../command-internal/go-jwt.ts";
 import { StackCommandStatusError } from "./status.errors.ts";
 
 const variableNames = [
@@ -52,32 +52,26 @@ export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
   });
 
 export const stackEnvValues = (
-  status: StackStatus,
-  credentials: EffectStackCredentials,
+  status: {
+    readonly endpoints: Readonly<{
+      readonly api?: { readonly url: string };
+      readonly studio?: { readonly url: string };
+      readonly mailUi?: { readonly url: string };
+    }>;
+    readonly jwtSecret?: string;
+  },
+  credentials: Readonly<Record<string, string>>,
   names: ReadonlyMap<string, string>,
 ): Readonly<Record<string, string>> => {
-  const values: Record<string, string> = {
-    DB_URL: Redacted.value(credentials.database.url),
-    ...(credentials.api === undefined
-      ? {}
-      : {
-          ANON_KEY: credentials.api.anonJwt,
-          SERVICE_ROLE_KEY: Redacted.value(credentials.api.serviceRoleJwt),
-          PUBLISHABLE_KEY: credentials.api.publishableKey,
-          SECRET_KEY: Redacted.value(credentials.api.secretKey),
-        }),
-    ...(status.endpoints.api === undefined ? {} : { API_URL: status.endpoints.api.url }),
-    ...(status.endpoints.studio === undefined ? {} : { STUDIO_URL: status.endpoints.studio.url }),
-    ...(status.endpoints.mailUi === undefined ? {} : { INBUCKET_URL: status.endpoints.mailUi.url }),
-    ...(credentials.storage === undefined
-      ? {}
-      : {
-          S3_PROTOCOL_ACCESS_KEY_ID: credentials.storage.accessKeyId,
-          S3_PROTOCOL_ACCESS_KEY_SECRET: Redacted.value(credentials.storage.secretAccessKey),
-          S3_PROTOCOL_REGION: credentials.storage.region,
-          S3_PROTOCOL_URL: credentials.storage.endpoint,
-        }),
-  };
+  const values: Record<string, string> = {};
+  if (credentials.databaseUrl !== undefined) values.DB_URL = credentials.databaseUrl;
+  if (status.jwtSecret !== undefined) {
+    values.ANON_KEY = generateGoJwt(status.jwtSecret, "anon");
+    values.SERVICE_ROLE_KEY = generateGoJwt(status.jwtSecret, "service_role");
+  }
+  if (status.endpoints.api !== undefined) values.API_URL = status.endpoints.api.url;
+  if (status.endpoints.studio !== undefined) values.STUDIO_URL = status.endpoints.studio.url;
+  if (status.endpoints.mailUi !== undefined) values.INBUCKET_URL = status.endpoints.mailUi.url;
   return Object.fromEntries(
     Object.entries(values).map(([key, value]) => [names.get(key) ?? key, value]),
   );
