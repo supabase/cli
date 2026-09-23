@@ -80,7 +80,12 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
         "ghcr.io/supabase/cli/postgres:15.14.1.173@sha256:b7d210fa3bca26568fa20448e3bec092bd4f8da6a5af5029597639d38e7d896e",
     },
   ),
-  rest: definition("postgrest", "v16.2", "ghcr.io/supabase/cli/postgrest:v16.2", "bin/postgrest"),
+  rest: definition(
+    "postgrest",
+    "v16.3",
+    "ghcr.io/supabase/cli/postgrest:v16.3@sha256:42ffa3af7048a63f0b5a6b1336b0e93161fb034eff9d6476bef0edcbdcd5e393",
+    "bin/postgrest",
+  ),
   auth: definition("auth", "v2.196.0", "ghcr.io/supabase/cli/auth:v2.196.0", "bin/auth"),
   realtime: definition(
     "realtime",
