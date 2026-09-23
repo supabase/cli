@@ -75,8 +75,9 @@ stack = true
 
 The selected backend determines accepted flags, help, and completion before the command is parsed.
 Set the flag to `false`, or remove it, to restore the legacy top-level commands. The explicit
-`supabase stack` namespace is available only when this flag is enabled. `supabase status` is routed
-the same way as `supabase start` and `supabase stop`.
+`supabase stack` namespace is available only when this flag is enabled; otherwise `supabase stack`
+exits with an error that names both ways to enable it. `supabase status` is routed the same way as
+`supabase start` and `supabase stop`.
 
 Root help and root completion resolve the same feature flag from the environment or project
 configuration. Help and completion for `start`, `status`, and `stop` resolve the same backend as the

@@ -111,13 +111,13 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   studio: definition(
     "studio",
     "2026.09.04-sha-5a67366",
-    "ghcr.io/supabase/cli/studio:2026.09.04-sha-5a67366@sha256:9823a31668028f1846e87331bc21598d9cd74bcaa1466c72dab58c33c9c82720",
+    "ghcr.io/supabase/cli/studio:2026.09.04-sha-5a67366@sha256:9362a66196c1622bb90e1b8014ff5376505969906fac38e58ffee0ca178daf07",
     "bin/studio",
   ),
   pgmeta: definition(
     "pgmeta",
     "v0.99.0",
-    "ghcr.io/supabase/cli/pgmeta:v0.99.0@sha256:90de2dcf03ac548ae2d1d3e71b3cd10bde4c627572720a42e4c3946b7090292e",
+    "ghcr.io/supabase/cli/pgmeta:v0.99.0@sha256:4a49f779f78b66af42a20425d66b0cc3083ffe09fb42da05e62c9d771bc309b0",
     "bin/pgmeta",
   ),
   mail: definition("mailpit", "v1.30.2", "ghcr.io/supabase/cli/mailpit:v1.30.2", "bin/mailpit"),
@@ -135,7 +135,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   pooler: definition(
     "pooler",
     "v2.9.12",
-    "ghcr.io/supabase/cli/pooler:v2.9.12@sha256:12bb9dcb7ddace79bee173ccb7327c6646af2236679f3bd932a86b3a06479aac",
+    "ghcr.io/supabase/cli/pooler:v2.9.12@sha256:a0278f60f7bc73b8fabc28d8d144eeb326afea566ea81012826c9a869d62664a",
     "bin/server",
     ["bin/server", "bin/prepare", "bin/provision-tenant"],
   ),

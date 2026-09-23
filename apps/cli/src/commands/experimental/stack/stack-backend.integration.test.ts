@@ -29,9 +29,21 @@ const completionFlags = (backend: "legacy" | "stack", command: string) =>
   ])?.candidates.map(({ name }) => name);
 
 describe("resolveStackBackend", () => {
-  it.effect("keeps the explicit stack namespace disabled without the feature flag", () =>
+  it.effect("explains how to enable the explicit stack namespace without the feature flag", () =>
     Effect.gen(function* () {
-      expect(yield* resolve({ args: ["stack", "start"], cwd: "/missing", env: {} })).toBe("legacy");
+      for (const args of [
+        ["stack", "start"],
+        ["help", "stack"],
+      ]) {
+        const error = yield* resolve({ args, cwd: "/missing", env: {} }).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(StackRoutingError);
+        expect(error.message).toBe("`supabase stack` requires the experimental stack backend.");
+        expect(error.suggestion).toContain("SUPABASE_EXPERIMENTAL_STACK=1");
+        expect(error.suggestion).toContain("[experimental]");
+      }
+      expect(yield* resolve({ args: ["__complete", "stack", ""], cwd: "/missing", env: {} })).toBe(
+        "legacy",
+      );
     }),
   );
 

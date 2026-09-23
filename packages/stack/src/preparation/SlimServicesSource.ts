@@ -233,8 +233,9 @@ const fallbackDetail = (error: PreparationError): string => {
 
 /**
  * Runs `attempt` against each candidate until one succeeds. When every candidate fails, the
- * returned error is still the primary's. A fallback failure, including a checksum mismatch, is
- * logged as a warning, and a fallback that succeeds names the host it used.
+ * returned error is the primary's, with each fallback failure appended to its message. A fallback
+ * failure, including a checksum mismatch, is logged as a warning, and a fallback that succeeds
+ * names the host it used.
  */
 const firstSuccess = <T, A, R>(
   candidates: readonly [T, ...ReadonlyArray<T>],
@@ -255,7 +256,15 @@ const firstSuccess = <T, A, R>(
           `Slim-services fallback ${describe(candidate)} failed: ${fallbackDetail(cause)}`,
         ),
       ),
-      Effect.catch(() => fallback(primaryError, rest)),
+      Effect.catch((cause) =>
+        fallback(
+          new PreparationError({
+            ...primaryError,
+            message: `${primaryError.message}\nFallback ${describe(candidate)} also failed: ${fallbackDetail(cause)}`,
+          }),
+          rest,
+        ),
+      ),
     );
   };
   return attempt(primary).pipe(Effect.catch((primaryError) => fallback(primaryError, fallbacks)));

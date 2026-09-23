@@ -19,7 +19,7 @@ ECR Public tags are always mutable; `ecr-public create-repository` has no immuta
 
 A public S3 bucket on `*.amazonaws.com` holds native archives for hosts that cannot reach GitHub Releases ([infra/cli-artifacts](../../infra/cli-artifacts/README.md)). It is not a checksum authority. The stack tries the GitHub Release first and falls back to that bucket. The expected checksum comes from the release `SHA256SUMS` or, when that is blocked, from the archive layer of the `:version-native-<target>` artifact on GHCR. An archive from either host is accepted only when it matches.
 
-The container runtime pulls a catalog image from GHCR first and falls back to the same reference on ECR Public. A failing fallback, for an image or a native archive, still reports the primary's original error.
+The container runtime pulls a catalog image from GHCR first and falls back to the same reference on ECR Public. When every source fails, for an image or a native archive, the error leads with the primary's failure and then lists each fallback's. The catalog sync refuses a pin until ECR Public serves the GHCR digest, because a digest pin that only GHCR carries cannot fall back.
 
 ## Follow-up
 

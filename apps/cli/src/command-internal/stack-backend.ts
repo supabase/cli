@@ -36,9 +36,12 @@ const isFunctionsServePath = (path: ReadonlyArray<string>): boolean =>
 export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
   readonly message: string;
   readonly cause?: unknown;
+  readonly disabledNamespace?: boolean;
 }> {
   get suggestion(): string {
-    return "Set SUPABASE_EXPERIMENTAL_STACK=1 to enable stack commands, or 0 to use legacy start/stop/status.";
+    return this.disabledNamespace === true
+      ? "Set SUPABASE_EXPERIMENTAL_STACK=1, or add `stack = true` under [experimental] in supabase/config.toml."
+      : "Set SUPABASE_EXPERIMENTAL_STACK=1 to enable stack commands, or 0 to use legacy start/stop/status.";
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -69,10 +72,8 @@ export const resolveStackBackend = (input: {
   Effect.gen(function* () {
     // Completion passes the final token as the cursor word, so it is not part of
     // the resolved command path.
-    const routingArgs =
-      input.args[0] === "__complete" || input.args[0] === "__completeNoDesc"
-        ? input.args.slice(0, -1)
-        : input.args;
+    const completing = input.args[0] === "__complete" || input.args[0] === "__completeNoDesc";
+    const routingArgs = completing ? input.args.slice(0, -1) : input.args;
     if (hasRootVersionFlag(routingArgs)) return "legacy";
 
     const commandPath = extractCommandPath(routingArgs);
@@ -96,5 +97,10 @@ export const resolveStackBackend = (input: {
     }).pipe(
       Effect.mapError((error) => new StackRoutingError({ message: error.message, cause: error })),
     );
+    if (!enabled && command === "stack" && !completing)
+      return yield* new StackRoutingError({
+        message: "`supabase stack` requires the experimental stack backend.",
+        disabledNamespace: true,
+      });
     return enabled ? "stack" : "legacy";
   });

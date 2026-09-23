@@ -377,26 +377,31 @@ describe("slim-services artifact source", () => {
     ),
   );
 
-  it.live("reports the primary checksum failure when every checksum source fails", () =>
-    Effect.gen(function* () {
-      const mirrored: SlimServicesArtifact = {
-        ...artifact,
-        checksums: [
-          { kind: "sha256sums", url: "https://release.test/SHA256SUMS" },
-          registryChecksum,
-        ],
-      };
-      const requested: string[] = [];
-      const failed = yield* withFetch((input) => {
-        requested.push(requestUrl(input));
-        return Promise.resolve(new Response("", { status: 403 }));
-      }, slimServicesChecksum(mirrored, immediate).pipe(Effect.exit));
-      expect(errorOf(failed)?.message).toBe("Unable to download https://release.test/SHA256SUMS");
-      expect(requested).toEqual([
-        "https://release.test/SHA256SUMS",
-        "https://registry.test/token?scope=repository:supabase/cli/demo:pull&service=registry.test",
-      ]);
-    }),
+  it.live(
+    "reports the primary checksum failure, then the fallback's, when every source fails",
+    () =>
+      Effect.gen(function* () {
+        const mirrored: SlimServicesArtifact = {
+          ...artifact,
+          checksums: [
+            { kind: "sha256sums", url: "https://release.test/SHA256SUMS" },
+            registryChecksum,
+          ],
+        };
+        const requested: string[] = [];
+        const failed = yield* withFetch((input) => {
+          requested.push(requestUrl(input));
+          return Promise.resolve(new Response("", { status: 403 }));
+        }, slimServicesChecksum(mirrored, immediate).pipe(Effect.exit));
+        expect(errorOf(failed)?.message.split("\n")).toEqual([
+          "Unable to download https://release.test/SHA256SUMS",
+          "Fallback registry.test/supabase/cli/demo:v1.0.0-native-linux-amd64 also failed: Unable to download https://registry.test/token?scope=repository:supabase/cli/demo:pull&service=registry.test (HTTP 403)",
+        ]);
+        expect(requested).toEqual([
+          "https://release.test/SHA256SUMS",
+          "https://registry.test/token?scope=repository:supabase/cli/demo:pull&service=registry.test",
+        ]);
+      }),
   );
 
   it.live("accepts a fallback archive only when it matches the checksum", () =>
@@ -445,7 +450,9 @@ describe("slim-services artifact source", () => {
             .materialize(request, rejected, expected)
             .pipe(Effect.exit),
         );
-        expect(errorOf(failed)?.message).toBe("Unable to download slim-services archive");
+        expect(errorOf(failed)?.message.split("\n")[0]).toBe(
+          "Unable to download slim-services archive",
+        );
         expect(yield* fs.exists(`${rejected}/bin/demo`)).toBe(false);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),

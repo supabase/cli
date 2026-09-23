@@ -4,10 +4,10 @@ import { slimImageMirrors } from "./Artifacts.ts";
 it("rewrites a GHCR catalog image onto ECR Public and keeps the tag and digest", () => {
   expect(
     slimImageMirrors(
-      "ghcr.io/supabase/cli/postgres:17.6.1.173@sha256:1581c433d71a48a81e356a3ed2d4aa5ecfc8fc0465ea98661da7a88023317dcf",
+      "ghcr.io/supabase/cli/postgres:17.6.1.173@sha256:9d6e542382946cad5eb1f11f1c8108a51297902ee42fe5098358816d3784ba5a",
     ),
   ).toEqual([
-    "public.ecr.aws/supabase/cli/postgres:17.6.1.173@sha256:1581c433d71a48a81e356a3ed2d4aa5ecfc8fc0465ea98661da7a88023317dcf",
+    "public.ecr.aws/supabase/cli/postgres:17.6.1.173@sha256:9d6e542382946cad5eb1f11f1c8108a51297902ee42fe5098358816d3784ba5a",
   ]);
 });
 

@@ -134,18 +134,22 @@ describe("container image mirror", () => {
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
   });
 
-  it.live("reports the primary pull failure when the mirror also fails", () => {
+  it.live("reports the primary pull failure, then each mirror's, when every mirror fails", () => {
     const engine = fakeEngine({ pullable: [] });
     return Effect.gen(function* () {
       const runtime = yield* makeContainerRuntime({
         engine: "docker",
-        imageMirrors: (image) => (image === primary ? [mirror] : []),
+        imageMirrors: (image) => (image === primary ? [mirror, secondMirror] : []),
       });
       const failed = yield* runtime.prepare(primary).pipe(Effect.exit);
       const error = Exit.isFailure(failed)
         ? Option.getOrUndefined(Cause.findErrorOption(failed.cause))
         : undefined;
-      expect(error?.message).toContain(`denied: ${primary}`);
+      expect(error?.message.split("\n")).toEqual([
+        `denied: ${primary}`,
+        `Mirror ${mirror} also failed: denied: ${mirror}`,
+        `Mirror ${secondMirror} also failed: denied: ${secondMirror}`,
+      ]);
       yield* launchImage(runtime);
       expect(engine.commands.find((args) => args[0] === "create")?.at(-1)).toBe(primary);
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
@@ -201,6 +205,25 @@ describe("container image mirror", () => {
       yield* TestClock.adjust("1 minute");
       yield* Fiber.join(throttled);
       expect(engine.commands.filter((args) => args[0] === "pull")).toHaveLength(2);
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+  });
+
+  it.effect("retries the chain when the primary is unreachable and the mirror is rate-limited", () => {
+    const engine = fakeEngine({ pullable: [mirror], throttled: { [mirror]: 1 } });
+    return Effect.gen(function* () {
+      const runtime = yield* makeContainerRuntime({
+        engine: "docker",
+        imageMirrors: (image) => (image === primary ? [mirror] : []),
+      });
+      const prepared = yield* runtime.prepare(primary).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(prepared);
+      expect(engine.commands.filter((args) => args[0] === "pull")).toEqual([
+        ["pull", primary],
+        ["pull", mirror],
+        ["pull", primary],
+        ["pull", mirror],
+      ]);
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
   });
 

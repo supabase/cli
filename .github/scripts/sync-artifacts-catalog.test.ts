@@ -92,6 +92,24 @@ FROM postgrest/postgrest:v16.3 AS postgrest
     expect(oriole.source).toContain(`"${POSTGRES_17}"`);
   });
 
+  test("an image the ECR mirror does not serve under the GHCR digest blocks the commit", async () => {
+    const plan = await planArtifactCatalogUpdate({
+      baseDockerfile: "FROM supabase/postgres:17.6.1.168 AS pg\n",
+      dockerfile: "FROM supabase/postgres:17.6.1.171 AS pg\n",
+      catalog: fixture,
+      publication: async () => ({ status: "unmirrored" }),
+    });
+    expect(plan.source).toBe(fixture);
+    expect(plan.skipped).toEqual([
+      {
+        alias: "pg",
+        reason:
+          "postgres:17.6.1.171 on public.ecr.aws/supabase/cli does not match the GHCR digest.",
+        blocking: true,
+      },
+    ]);
+  });
+
   test("refuses a backward pin and a tag that would escape the catalog string", async () => {
     const backward = await planArtifactCatalogUpdate({
       baseDockerfile: "FROM supabase/postgres:17.6.1.170 AS pg\n",

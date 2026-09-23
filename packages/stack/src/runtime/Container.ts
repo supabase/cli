@@ -109,8 +109,8 @@ const mountField = (key: string, value: string) => {
 /**
  * Captures the selected local engine; each launch owns one exact container. An image whose pull
  * fails is pulled from the first of its `imageMirrors` that succeeds, and launches of it then use
- * that mirror reference. When every mirror fails, the primary pull error is reported; a
- * rate-limited primary retries the whole chain with backoff.
+ * that mirror reference. When every mirror fails, the primary pull error is reported first,
+ * followed by each mirror's failure; a rate-limited source retries the whole chain with backoff.
  */
 export const makeContainerRuntime = (options: {
   readonly engine: "docker" | "podman";
@@ -189,7 +189,17 @@ export const makeContainerRuntime = (options: {
       }).pipe(
         Effect.tap(() => Effect.logInfo(`Pulled image from mirror ${mirror}`)),
         Effect.tapError((cause) => Effect.logWarning(`Image mirror ${mirror} failed`, cause)),
-        Effect.catch(() => fromMirror(image, rest, primaryError)),
+        Effect.catch((mirrorError) =>
+          fromMirror(
+            image,
+            rest,
+            new ContainerError({
+              operation: primaryError.operation,
+              message: `${primaryError.message}\nMirror ${mirror} also failed: ${mirrorError.message}`,
+              cause: primaryError.cause,
+            }),
+          ),
+        ),
       );
     };
 

@@ -3,6 +3,8 @@
  * `apps/cli/src/shared/services/Dockerfile`. Native archive URLs are derived
  * from service + version. An entry that already carries a digest keeps one:
  * the published `ghcr.io/supabase/cli/<service>:<version>` manifest digest.
+ * A pin is refused until ECR Public serves the same digest, so the stack's
+ * image fallback can pull it.
  *
  * Run: `bun .github/scripts/sync-artifacts-catalog.ts <dockerfile> <catalog> [base-dockerfile]`
  */
@@ -10,6 +12,7 @@
 import { parseDockerfileServiceImages } from "../../apps/cli/src/shared/services/parse-dockerfile-service-images.ts";
 import { isOrioleImage, slimCatalogPin } from "../../apps/cli/src/shared/services/slim-images.ts";
 import {
+  DEST_REGISTRY,
   DIGEST_PATTERN,
   InvalidPayloadError,
   SOURCE_REGISTRY,
@@ -71,7 +74,7 @@ export interface CatalogPlan {
 
 export type ReleasePublication =
   | { readonly status: "published"; readonly digest?: string }
-  | { readonly status: "missing" | "lookup-failed" };
+  | { readonly status: "missing" | "unmirrored" | "lookup-failed" };
 
 /** `definition("<service>", "<version>", "<image>"`. */
 function defaultEntryPattern(service: string): RegExp {
@@ -267,7 +270,9 @@ export async function planArtifactCatalogUpdate(input: {
         reason:
           release.status === "missing"
             ? `${pin.service}:${pin.version} has no published slim image and native release.`
-            : `${pin.service}:${pin.version} publication check failed.`,
+            : release.status === "unmirrored"
+              ? `${pin.service}:${pin.version} on ${DEST_REGISTRY} does not match the GHCR digest.`
+              : `${pin.service}:${pin.version} publication check failed.`,
         blocking: true,
       });
       continue;
@@ -347,15 +352,17 @@ async function probeNativeRelease(service: string, version: string): Promise<Pro
 }
 
 async function lookupPublication(service: string, version: string): Promise<ReleasePublication> {
-  const reference = `${SLIM_IMAGE_PREFIX}${service}:${version}`;
-  const [manifest, native] = await Promise.all([
-    probeManifest(reference),
+  const [manifest, mirror, native] = await Promise.all([
+    probeManifest(`${SLIM_IMAGE_PREFIX}${service}:${version}`),
+    probeManifest(`${DEST_REGISTRY}/${service}:${version}`),
     probeNativeRelease(service, version),
   ]);
   if (manifest.probe === "lookup-failed" || native === "lookup-failed") {
     return { status: "lookup-failed" };
   }
   if (manifest.probe === "missing" || native === "missing") return { status: "missing" };
+  if (mirror.probe === "lookup-failed") return { status: "lookup-failed" };
+  if (mirror.digest !== manifest.digest) return { status: "unmirrored" };
   return { status: "published", digest: manifest.digest };
 }
 
