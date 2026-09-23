@@ -48,7 +48,7 @@ const AUTH_FUNCTIONS_CONFIG = JSON.stringify({
     verifyJWT: true,
   },
 });
-const KONG_FUNCTIONS_CONFIG = {
+const KONG_FUNCTIONS_CONFIG = JSON.stringify({
   test: {
     entrypointPath: "/app/functions/custom/index.ts",
     importMapPath: "",
@@ -78,20 +78,7 @@ const KONG_FUNCTIONS_CONFIG = {
     staticFiles: [],
     verifyJWT: false,
   },
-};
-
-function resolveDiagnosticFunctionNames(): string[] {
-  const raw = process.env["EDGE_RUNTIME_DIAGNOSTIC_WORKERS"];
-  if (raw === undefined) return [];
-
-  const count = Number(raw.trim());
-  if (raw.trim() === "" || !Number.isInteger(count) || count < 0 || count > 12) {
-    throw new Error(
-      `EDGE_RUNTIME_DIAGNOSTIC_WORKERS must be an integer from 0 through 12, got ${raw}`,
-    );
-  }
-  return Array.from({ length: count }, (_, index) => `custom-alias-${index + 1}`);
-}
+});
 const CUSTOM_FUNCTION = `import { sharedValue } from "../_shared/value.ts";
 
 Deno.serve((req) => {
@@ -190,75 +177,6 @@ async function containerState(container: string): Promise<string> {
   }
 }
 
-async function containerDebugMetadata(container: string): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync(
-      "docker",
-      [
-        "inspect",
-        "--format",
-        "{{json .State}}\t{{json .Id}}\t{{json .Name}}\t{{json .Config.Image}}",
-        container,
-      ],
-      { encoding: "utf8", timeout: DOCKER_COMMAND_TIMEOUT_MS },
-    );
-    return stdout.trim();
-  } catch (error) {
-    const stderr = error instanceof Error && "stderr" in error ? String(error.stderr) : "";
-    return `not inspectable (${stderr.trim() || String(error)})`;
-  }
-}
-
-function imageDebugMetadata(images: readonly string[]): string {
-  return images
-    .map((image) => {
-      const result = spawnSync(
-        "docker",
-        [
-          "image",
-          "inspect",
-          "--format",
-          "{{json .Id}}\t{{json .RepoDigests}}\t{{.Os}}/{{.Architecture}}",
-          image,
-        ],
-        { encoding: "utf8", timeout: DOCKER_COMMAND_TIMEOUT_MS },
-      );
-      const output = `${result.stdout ?? ""}`.trim();
-      const error = result.error ? ` error=${result.error.message}` : "";
-      return `[DEBUG-edge-runtime] image=${image} inspect=${output || result.stderr || "unavailable"}${error}`;
-    })
-    .join("\n");
-}
-
-async function captureRuntimeArtifacts(container: string, crashDir: string): Promise<void> {
-  const state = await containerState(container);
-  const captureLog = join(crashDir, `${container}.capture.log`);
-  if (!isTerminalContainerState(state)) {
-    await writeFile(
-      captureLog,
-      `[DEBUG-edge-runtime] skipped binary capture for ${container}: state=${state}\n`,
-    );
-    return;
-  }
-  const binary = join(crashDir, "edge-runtime");
-  const debug = join(crashDir, "edge-runtime.debug");
-  const results = [
-    ["/usr/local/bin/edge-runtime", binary],
-    ["/usr/local/bin/edge-runtime.debug", debug],
-  ] as const;
-  const lines = [`[DEBUG-edge-runtime] stopped runtime state=${state}`];
-  for (const [source, destination] of results) {
-    const result = spawnSync("docker", ["cp", `${container}:${source}`, destination], {
-      encoding: "utf8",
-      timeout: DOCKER_COMMAND_TIMEOUT_MS,
-    });
-    lines.push(
-      `[DEBUG-edge-runtime] docker cp source=${source} status=${String(result.status)} stdout=${result.stdout ?? ""} stderr=${result.stderr ?? ""}${result.error ? ` error=${result.error.message}` : ""}`,
-    );
-  }
-  await writeFile(captureLog, `${lines.join("\n")}\n`);
-}
-
 function isTerminalContainerState(state: string): boolean {
   return /^(exited|dead)\b/u.test(state);
 }
@@ -267,7 +185,7 @@ async function containerDiagnostics(containers: readonly string[]): Promise<stri
   const blocks = await Promise.all(
     containers.map(
       async (container) =>
-        `[DEBUG-edge-runtime] container=${container} state=${await containerState(container)} metadata=${await containerDebugMetadata(container)} logs:\n${containerLogs(container)}`,
+        `${container} (${await containerState(container)}) logs:\n${containerLogs(container)}`,
     ),
   );
   return blocks.join("\n");
@@ -516,27 +434,10 @@ describe("functions serve runtime template (offline)", () => {
         ensureImage(edgeRuntimeDockerfileImage(), imageDeadline),
         ensureImage(dockerfileServiceImage("kong"), imageDeadline),
       ]);
-      const diagnosticFunctionNames = resolveDiagnosticFunctionNames();
-      const functionsConfig = {
-        ...KONG_FUNCTIONS_CONFIG,
-        ...Object.fromEntries(
-          diagnosticFunctionNames.map((name) => [name, KONG_FUNCTIONS_CONFIG["custom-alias"]]),
-        ),
-      };
-      console.log(
-        `[DEBUG-edge-runtime] resolved images before container creation:\n${imageDebugMetadata([runtimeImage, kongImage])}`,
-      );
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-kong-e2e-"));
       const network = `supabase-serve-kong-e2e-${process.pid.toString()}`;
       const runtimeContainer = `${network}-runtime`;
       const kongContainer = `${network}-kong`;
-      const diagnosticContainers = [kongContainer, runtimeContainer] as const;
-      const crashDir = process.env["EDGE_RUNTIME_CRASH_DIR"];
-      const crashMount =
-        crashDir === undefined
-          ? []
-          : ["-v", `${crashDir}:/edge-runtime-crashes`, "--ulimit", "core=1073741824"];
-      let completed = false;
       try {
         await writeFile(join(dir, "index.ts"), await bundleServeMainTemplate());
         await mkdir(join(dir, "functions", "custom"), { recursive: true });
@@ -576,11 +477,9 @@ describe("functions serve runtime template (offline)", () => {
             "-e",
             `SUPABASE_URL=http://${kongContainer}:8000`,
             "-e",
-            `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${JSON.stringify(functionsConfig)}`,
+            `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${KONG_FUNCTIONS_CONFIG}`,
             "-e",
             "SUPABASE_INTERNAL_DEBUG=true",
-            "-e",
-            "RUST_BACKTRACE=full",
             "-e",
             "SHARED=shared",
             "-e",
@@ -589,7 +488,6 @@ describe("functions serve runtime template (offline)", () => {
             "SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=400",
             "-e",
             'SUPABASE_JWKS={"keys":[]}',
-            ...crashMount,
             "-v",
             `${dir}:/app:ro`,
             "--entrypoint",
@@ -641,6 +539,7 @@ describe("functions serve runtime template (offline)", () => {
         const functionsUrl = `http://127.0.0.1:${port}/functions/v1`;
         const authUrl = `${functionsUrl}/test`;
 
+        const diagnosticContainers = [kongContainer, runtimeContainer] as const;
         const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
         let ready = false;
         let lastError: unknown;
@@ -666,17 +565,13 @@ describe("functions serve runtime template (offline)", () => {
           );
         }
 
-        const [customResponse, aliasResponse, nestedResponse, ...diagnosticResponses] =
-          await Promise.all([
-            fetchColdFunction(`${functionsUrl}/custom`, diagnosticContainers, {
-              headers: { Origin: "http://localhost:3000" },
-            }),
-            fetchColdFunction(`${functionsUrl}/custom-alias`, diagnosticContainers),
-            fetchColdFunction(`${functionsUrl}/nested-worker-path`, diagnosticContainers),
-            ...diagnosticFunctionNames.map((name) =>
-              fetchColdFunction(`${functionsUrl}/${name}`, diagnosticContainers),
-            ),
-          ]);
+        const [customResponse, aliasResponse, nestedResponse] = await Promise.all([
+          fetchColdFunction(`${functionsUrl}/custom`, diagnosticContainers, {
+            headers: { Origin: "http://localhost:3000" },
+          }),
+          fetchColdFunction(`${functionsUrl}/custom-alias`, diagnosticContainers),
+          fetchColdFunction(`${functionsUrl}/nested-worker-path`, diagnosticContainers),
+        ]);
         expect(customResponse.status).toBe(200);
         expect(customResponse.headers.get("x-custom-id")).toBe("abc123");
         expect(customResponse.headers.get("x-function-slug")).toBe("custom");
@@ -692,12 +587,6 @@ describe("functions serve runtime template (offline)", () => {
         expect(aliasResponse.headers.get("x-shared-import")).toBe("shared-import-ok");
         expect(nestedResponse.status).toBe(200);
         expect(nestedResponse.headers.get("x-function-slug")).toBe("nested-worker-path");
-        for (const [index, response] of diagnosticResponses.entries()) {
-          const name = diagnosticFunctionNames[index];
-          expect(response.status).toBe(200);
-          expect(response.headers.get("x-function-slug")).toBe(name);
-          await response.text();
-        }
         const earlyResponse = await fetchFunctionWithDiagnostics(
           `${functionsUrl}/custom`,
           diagnosticContainers,
@@ -731,18 +620,7 @@ describe("functions serve runtime template (offline)", () => {
         const reusedCustomResponse = await fetch(`${functionsUrl}/custom`);
         expect(reusedCustomResponse.status).toBe(200);
         expect(reusedCustomResponse.headers.get("x-function-slug")).toBe("custom");
-        completed = true;
       } finally {
-        if (crashDir !== undefined && !completed) {
-          try {
-            await captureRuntimeArtifacts(runtimeContainer, crashDir);
-          } catch (error) {
-            console.log(`[DEBUG-edge-runtime] binary capture failed: ${String(error)}`);
-          }
-        }
-        console.log(
-          `[DEBUG-edge-runtime] diagnostics before cleanup:\n${await containerDiagnostics(diagnosticContainers)}\n${imageDebugMetadata([runtimeImage, kongImage])}`,
-        );
         spawnSync("docker", ["rm", "-f", kongContainer, runtimeContainer], {
           stdio: "ignore",
         });
