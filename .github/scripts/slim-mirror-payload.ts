@@ -31,7 +31,7 @@ export const nativeTagPattern = (version: string): RegExp =>
   new RegExp(`^${escapeRegExp(version)}-native-(${NATIVE_TARGETS.join("|")})$`);
 
 /** `service` / `version` / `digest` are the image fields. Extra keys such as `natives[]` are ignored. */
-export const validatePayload = (input: {
+const validatePayload = (input: {
   readonly service: string;
   readonly version: string;
   readonly digest: string;
