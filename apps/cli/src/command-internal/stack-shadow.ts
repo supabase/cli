@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path, Redacted, Schema } from "effect";
+import { Effect, FileSystem, Path, Redacted, Result, Schema } from "effect";
 import type { DatabaseInstance, Stack } from "@supabase/stack/effect";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { Output } from "../shared/output/output.service.ts";
@@ -17,6 +17,7 @@ import {
 import type { SetupDatabaseOptions } from "./db-bootstrap/db-setup.ts";
 import { listLocalMigrationPaths } from "./migration-history.ts";
 import { applyMigrations } from "./migration-apply.ts";
+import { stackShadowCacheEntry, stackShadowCacheRoles } from "./stack-shadow-cache.ts";
 
 type Runtime = "native" | "docker" | "podman";
 
@@ -28,18 +29,25 @@ export interface StackShadowAcquiredHandle {
   readonly port: number;
   readonly runtime: Runtime;
   readonly version: string;
+  /** Cache lineage when a baseline was restored or atomically published by this handle. */
+  readonly snapshotKey?: string;
+  readonly restoredFromSnapshot: boolean;
 }
 
 interface ShadowOptions {
   readonly port?: number;
   readonly runtime?: Runtime;
   readonly webhooks?: SetupDatabaseOptions["webhooks"];
+  readonly bypassCache?: boolean;
 }
 
 const shadowError = (cause: { readonly message: string }) =>
   cause instanceof ShadowDbError
     ? cause
     : new ShadowDbError({ message: cause.message, reason: "database" });
+
+const causeMessage = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
 
 const acquireNamespace = Effect.fn("StackShadow.acquireNamespace")(function* (opts: ShadowOptions) {
   const fs = yield* FileSystem.FileSystem;
@@ -64,49 +72,121 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
   input: ShadowSetupInput<unknown>,
   opts: ShadowOptions,
 ) {
-  const settings = yield* Schema.decodeEffect(
+  const runtimeInfo = yield* RuntimeInfo;
+  const dbSettings = yield* Schema.decodeEffect(
     Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Finite, Schema.Boolean])),
   )(
     Object.fromEntries(
       Object.entries(input.db.settings ?? {}).filter(([, value]) => value !== undefined),
     ),
   ).pipe(Effect.mapError(shadowError));
-  const database = yield* stack.services.create({
-    service: "database",
-    config: {
-      version: String(input.setup.majorVersion),
-      databasePassword: Redacted.make(input.password),
-      jwtSecret: Redacted.make(input.jwtSecret),
-      jwtExpiry: input.jwtExpiry,
-      healthTimeoutMs: input.healthTimeoutSeconds * 1_000,
-      ...(input.rootKey === undefined ? {} : { rootKey: Redacted.make(input.rootKey) }),
-      settings,
-    },
-    endpoints: { sql: { port: opts.port ?? "auto" } },
-  });
-  yield* database.start;
-  yield* database.ready;
+  const createDatabase = () =>
+    stack.services.create({
+      service: "database",
+      config: {
+        version: String(input.setup.majorVersion),
+        databasePassword: Redacted.make(input.password),
+        jwtSecret: Redacted.make(input.jwtSecret),
+        jwtExpiry: input.jwtExpiry,
+        healthTimeoutMs: input.healthTimeoutSeconds * 1_000,
+        ...(input.rootKey === undefined ? {} : { rootKey: Redacted.make(input.rootKey) }),
+        settings: dbSettings,
+      },
+      endpoints: { sql: { port: opts.port ?? "auto" } },
+    });
+  let database = yield* createDatabase();
+  const cacheResolution = yield* Effect.result(
+    stackShadowCacheEntry(
+      input,
+      runtime,
+      runtimeInfo.platform,
+      runtimeInfo.arch,
+      opts.webhooks,
+      opts.bypassCache,
+    ),
+  );
+  const output = yield* Output;
+  const cache = Result.isSuccess(cacheResolution) ? cacheResolution.success : undefined;
+  if (Result.isFailure(cacheResolution))
+    yield* output.raw(
+      `Warning: stack shadow cache unavailable: ${causeMessage(cacheResolution.failure)}; continuing uncached.\n`,
+      "stderr",
+    );
+  let restored = false;
+  if (cache !== undefined) {
+    const warmAttempt = yield* Effect.result(
+      database
+        .restoreSnapshot(cache.key)
+        .pipe(
+          Effect.flatMap((restoredSnapshot) =>
+            restoredSnapshot
+              ? database.start.pipe(Effect.andThen(database.ready), Effect.as(true))
+              : Effect.succeed(false),
+          ),
+        ),
+    );
+    if (Result.isSuccess(warmAttempt)) {
+      restored = warmAttempt.success;
+      if (!restored) {
+        yield* database.start;
+        yield* database.ready;
+      }
+    } else {
+      yield* output.raw("Warning: cached stack shadow baseline unusable; recreating.\n", "stderr");
+      yield* database.destroy;
+      database = yield* createDatabase();
+      yield* database.start;
+      yield* database.ready;
+    }
+  } else {
+    yield* database.start;
+    yield* database.ready;
+  }
   const catalog = yield* StackCatalogSetup;
-  yield* catalog.apply({
-    target: {
-      stack,
-      database,
-      databaseServices: [
-        ...(input.setup.authEnabledForSetup ? ["auth" as const] : []),
-        ...(input.setup.storageEnabledForSetup ? ["storage" as const] : []),
-        ...(input.setup.realtimeEnabledForSetup ? ["realtime" as const] : []),
-      ],
-      jwtSecret: input.jwtSecret,
-    },
-    overlay: {
-      ...(opts.webhooks === undefined ? {} : { webhooks: opts.webhooks }),
-      webhooksEnabled: input.setup.webhooksEnabled,
-      apiAutoExposeNewTables: input.setup.apiAutoExposeNewTables,
-      vault: input.setup.vault,
-      workdir: input.workdir,
-      announceRoles: false,
-    },
-  });
+  if (!restored)
+    yield* catalog.apply({
+      target: {
+        stack,
+        database,
+        databaseServices: [
+          ...(input.setup.authEnabledForSetup ? ["auth" as const] : []),
+          ...(input.setup.storageEnabledForSetup ? ["storage" as const] : []),
+          ...(input.setup.realtimeEnabledForSetup ? ["realtime" as const] : []),
+        ],
+        jwtSecret: input.jwtSecret,
+      },
+      overlay: {
+        ...(opts.webhooks === undefined ? {} : { webhooks: opts.webhooks }),
+        webhooksEnabled: input.setup.webhooksEnabled,
+        apiAutoExposeNewTables: input.setup.apiAutoExposeNewTables,
+        vault: input.setup.vault,
+        workdir: input.workdir,
+        announceRoles: false,
+      },
+    });
+  let snapshotKey = restored ? cache?.key : undefined;
+  if (!restored && cache !== undefined) {
+    const rolesAfter = yield* Effect.result(stackShadowCacheRoles(input));
+    if (Result.isFailure(rolesAfter)) {
+      yield* output.raw(
+        `Warning: stack shadow baseline not cached: unable to read supabase/roles.sql (${causeMessage(rolesAfter.failure)}).\n`,
+        "stderr",
+      );
+    } else if (rolesAfter.success === cache.rolesSql) {
+      const published = yield* Effect.result(
+        database.stop.pipe(Effect.flatMap(() => database.saveSnapshot(cache.key))),
+      );
+      yield* database.start.pipe(Effect.andThen(database.ready));
+      if (Result.isSuccess(published)) {
+        snapshotKey = cache.key;
+      } else {
+        yield* output.raw(
+          `Warning: stack shadow baseline not cached: ${causeMessage(published.failure)}.\n`,
+          "stderr",
+        );
+      }
+    }
+  }
   const credentials = yield* database.credentials({ from: "host" });
   const credentialUrl = credentials.databaseUrl;
   const credentialsConn =
@@ -126,6 +206,8 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
     port: conn.port,
     runtime,
     version: String(input.setup.majorVersion),
+    snapshotKey,
+    restoredFromSnapshot: restored,
   } satisfies StackShadowAcquiredHandle;
 });
 

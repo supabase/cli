@@ -1,8 +1,6 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import { Effect, Exit, Layer, Option, Stdio } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Stdio } from "effect";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";
@@ -14,6 +12,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
@@ -47,21 +46,33 @@ const baseFlags: FunctionsDeployFlags = {
   legacyBundle: false,
 };
 
-async function writeCliConfig(cwd: string, content = 'project_id = "test-project"\n') {
-  await mkdir(join(cwd, "supabase"), { recursive: true });
-  await writeFile(join(cwd, "supabase", "config.toml"), content);
-}
+const removeTempRoot = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.remove(tempRoot.current, { recursive: true, force: true });
+}).pipe(Effect.provide(BunServices.layer), Effect.orDie);
 
-async function writeLocalFunction(
+const writeCliConfig = Effect.fnUntraced(function* (
+  cwd: string,
+  content = 'project_id = "test-project"\n',
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(cwd, "supabase"), { recursive: true });
+  yield* fs.writeFileString(path.join(cwd, "supabase", "config.toml"), content);
+});
+
+const writeLocalFunction = Effect.fnUntraced(function* (
   cwd: string,
   slug: string,
   source = "Deno.serve(() => new Response())\n",
 ) {
-  const functionDir = join(cwd, "supabase", "functions", slug);
-  await mkdir(functionDir, { recursive: true });
-  await writeFile(join(functionDir, "index.ts"), source);
-  await writeFile(join(functionDir, "deno.json"), '{"imports":{}}\n');
-}
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const functionDir = path.join(cwd, "supabase", "functions", slug);
+  yield* fs.makeDirectory(functionDir, { recursive: true });
+  yield* fs.writeFileString(path.join(functionDir, "index.ts"), source);
+  yield* fs.writeFileString(path.join(functionDir, "deno.json"), '{"imports":{}}\n');
+});
 
 function resolveDockerOutputPath(args: ReadonlyArray<string>): string {
   const outputIndex = args.indexOf("--output");
@@ -79,16 +90,19 @@ function resolveDockerOutputPath(args: ReadonlyArray<string>): string {
 function mockDockerBundleSpawner() {
   const spawnerOpts: {
     exitCode?: number;
-    onSpawn?: (record: { command: string; args: ReadonlyArray<string> }) => void;
+    beforeSpawn?: (record: { command: string; args: ReadonlyArray<string> }) => Effect.Effect<void>;
   } = { exitCode: 0 };
-  spawnerOpts.onSpawn = (record) => {
-    if (record.command !== "docker" || record.args[0] !== "run") {
-      return;
-    }
-    const outputPath = resolveDockerOutputPath(record.args);
-    mkdirSync(dirname(outputPath), { recursive: true });
-    writeFileSync(outputPath, "eszip-test-output");
-  };
+  spawnerOpts.beforeSpawn = (record) =>
+    Effect.gen(function* () {
+      if (record.command !== "docker" || record.args[0] !== "run") {
+        return;
+      }
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const outputPath = resolveDockerOutputPath(record.args);
+      yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
+      yield* fs.writeFileString(outputPath, "eszip-test-output");
+    }).pipe(Effect.provide(BunServices.layer), Effect.orDie);
   return mockChildProcessSpawner(spawnerOpts);
 }
 
@@ -138,8 +152,8 @@ describe("functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
 
       yield* functionsDeploy(baseFlags);
 
@@ -156,12 +170,7 @@ describe("functions deploy", () => {
       );
       expect(linkedProjectCache.cached).toBe(true);
       expect(telemetry.flushed).toBe(true);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
   it.live("prints a duplicated slug argument verbatim, matching Go's raw strings.Join", () => {
@@ -205,8 +214,8 @@ describe("functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
 
       yield* functionsDeploy({
         ...baseFlags,
@@ -221,12 +230,7 @@ describe("functions deploy", () => {
       expect(stripControlSequences(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: hello-world, hello-world\n",
       );
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
   it.live("uses an explicit project ref when provided", () => {
@@ -277,8 +281,8 @@ describe("functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
 
       yield* functionsDeploy({
         ...baseFlags,
@@ -289,16 +293,11 @@ describe("functions deploy", () => {
         (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
       );
       expect(deployRequest?.url).toContain("/projects/qrstuvwxyzabcdefghij/functions/deploy");
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
   it.live("resolves --import-map relative to the caller cwd", () => {
-    const callerDir = join(tempRoot.current, "caller");
+    const callerDir = `${tempRoot.current}/caller`;
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) => {
@@ -343,12 +342,12 @@ describe("functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
-      yield* Effect.tryPromise(() => mkdir(callerDir, { recursive: true }));
-      yield* Effect.tryPromise(() =>
-        writeFile(join(callerDir, "import_map.json"), '{"imports":{}}'),
-      );
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+      yield* fs.makeDirectory(callerDir, { recursive: true });
+      yield* fs.writeFileString(path.join(callerDir, "import_map.json"), '{"imports":{}}');
 
       yield* functionsDeploy({
         ...baseFlags,
@@ -359,16 +358,11 @@ describe("functions deploy", () => {
       expect(stripControlSequences(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
       );
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
   it.live("loads project config from the resolved workdir", () => {
-    const callerDir = join(tempRoot.current, "caller");
+    const callerDir = `${tempRoot.current}/caller`;
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) =>
@@ -402,16 +396,15 @@ describe("functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeCliConfig(
-          tempRoot.current,
-          ['project_id = "test-project"', "[functions.configured]", "verify_jwt = false", ""].join(
-            "\n",
-          ),
+      const fs = yield* FileSystem.FileSystem;
+      yield* writeCliConfig(
+        tempRoot.current,
+        ['project_id = "test-project"', "[functions.configured]", "verify_jwt = false", ""].join(
+          "\n",
         ),
       );
-      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "configured"));
-      yield* Effect.tryPromise(() => mkdir(callerDir, { recursive: true }));
+      yield* writeLocalFunction(tempRoot.current, "configured");
+      yield* fs.makeDirectory(callerDir, { recursive: true });
 
       yield* functionsDeploy({
         ...baseFlags,
@@ -420,19 +413,14 @@ describe("functions deploy", () => {
 
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.urlParams).toContain("slug=configured");
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
   it.live("rejects a bundled file whose workdir-relative name escapes with a `..` segment", () => {
     // Uploaded paths are anchored at the workdir, not the git root, so this
     // monorepo import fails the `fs.FS` boundary check before upload.
     const repoRoot = tempRoot.current;
-    const workdir = join(repoRoot, "app");
+    const workdir = `${repoRoot}/app`;
     const multiparts: Array<{ metadata?: string; fileNames: ReadonlyArray<string> }> = [];
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
@@ -480,31 +468,25 @@ describe("functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
-      yield* Effect.tryPromise(() => writeCliConfig(workdir));
-      yield* Effect.tryPromise(() =>
-        writeLocalFunction(
-          workdir,
-          "hello-world",
-          'import { shared } from "@repo/shared"\nDeno.serve(() => new Response(shared))\n',
-        ),
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(repoRoot, ".git"), { recursive: true });
+      yield* writeCliConfig(workdir);
+      yield* writeLocalFunction(
+        workdir,
+        "hello-world",
+        'import { shared } from "@repo/shared"\nDeno.serve(() => new Response(shared))\n',
       );
-      yield* Effect.tryPromise(() =>
-        mkdir(join(repoRoot, "packages", "shared", "src"), { recursive: true }),
+      yield* fs.makeDirectory(path.join(repoRoot, "packages", "shared", "src"), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(
+        path.join(repoRoot, "packages", "shared", "src", "index.ts"),
+        'export const shared = "ok"\n',
       );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(repoRoot, "packages", "shared", "src", "index.ts"),
-          'export const shared = "ok"\n',
-        ),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(workdir, "supabase", "functions", "hello-world", "deno.json"),
-          JSON.stringify({
-            imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
-          }),
-        ),
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", "functions", "hello-world", "deno.json"),
+        '{"imports":{"@repo/shared":"../../../../packages/shared/src/index.ts"}}',
       );
 
       const exit = yield* Effect.exit(functionsDeploy(baseFlags));
@@ -516,12 +498,7 @@ describe("functions deploy", () => {
         );
       }
       expect(multiparts).toHaveLength(0);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
   it.live("deploys config-declared custom entrypoints when deploying all functions", () => {
@@ -562,33 +539,28 @@ describe("functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeCliConfig(
-          tempRoot.current,
-          [
-            'project_id = "test-project"',
-            '[functions."custom-entry"]',
-            'entrypoint = "./functions/custom-entry/handler.ts"',
-            "",
-          ].join("\n"),
-        ),
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeCliConfig(
+        tempRoot.current,
+        [
+          'project_id = "test-project"',
+          '[functions."custom-entry"]',
+          'entrypoint = "./functions/custom-entry/handler.ts"',
+          "",
+        ].join("\n"),
       );
-      yield* Effect.tryPromise(() =>
-        mkdir(join(tempRoot.current, "supabase", "functions", "custom-entry"), {
-          recursive: true,
-        }),
+      yield* fs.makeDirectory(
+        path.join(tempRoot.current, "supabase", "functions", "custom-entry"),
+        { recursive: true },
       );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(tempRoot.current, "supabase", "functions", "custom-entry", "handler.ts"),
-          'Deno.serve(() => new Response("custom"))\n',
-        ),
+      yield* fs.writeFileString(
+        path.join(tempRoot.current, "supabase", "functions", "custom-entry", "handler.ts"),
+        'Deno.serve(() => new Response("custom"))\n',
       );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(tempRoot.current, "supabase", "functions", "custom-entry", "deno.json"),
-          '{"imports":{}}\n',
-        ),
+      yield* fs.writeFileString(
+        path.join(tempRoot.current, "supabase", "functions", "custom-entry", "deno.json"),
+        '{"imports":{}}\n',
       );
 
       yield* functionsDeploy({
@@ -604,12 +576,7 @@ describe("functions deploy", () => {
       expect(stripControlSequences(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: custom-entry\n",
       );
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
   it.live("honors global --yes when pruning remote functions", () => {
@@ -674,8 +641,8 @@ describe("functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
 
       yield* functionsDeploy({ ...baseFlags, prune: true });
 
@@ -684,12 +651,7 @@ describe("functions deploy", () => {
         "Do you want to delete the following Functions from your project?\n • remote-only\n\n [y/N] y\n",
       );
       expect(api.requests.some((request) => request.method === "DELETE")).toBe(true);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
   // A `bundleOnly` upload bumps the remote version without persisting metadata,
@@ -764,9 +726,9 @@ describe("functions deploy", () => {
       const { out, api, layer } = setupBulkDeploy({ deployStatuses: [201, 409] });
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "bye-world"));
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* writeLocalFunction(tempRoot.current, "bye-world");
 
         const error = yield* functionsDeploy({
           ...baseFlags,
@@ -786,21 +748,16 @@ describe("functions deploy", () => {
         const bulkUpdate = api.requests.find((request) => request.method === "PUT");
         expect(bulkUpdate?.body).toMatchObject([{ slug: "hello-world" }]);
         expect(out.stdoutText).not.toContain("Deployed Functions on project");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 
     it.live("skips the bulk update entirely when every upload fails", () => {
       const { out, api, layer } = setupBulkDeploy({ deployStatuses: [409, 400] });
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "bye-world"));
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* writeLocalFunction(tempRoot.current, "bye-world");
 
         const error = yield* functionsDeploy({
           ...baseFlags,
@@ -815,12 +772,7 @@ describe("functions deploy", () => {
         );
         expect(api.requests.some((request) => request.method === "PUT")).toBe(false);
         expect(out.stdoutText).not.toContain("Deployed Functions on project");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 
     it.live("reports the upload failure and the bulk update failure together", () => {
@@ -830,9 +782,9 @@ describe("functions deploy", () => {
       });
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "bye-world"));
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* writeLocalFunction(tempRoot.current, "bye-world");
 
         const error = yield* functionsDeploy({
           ...baseFlags,
@@ -847,12 +799,7 @@ describe("functions deploy", () => {
           ].join("\n"),
         );
         expect(api.requests.filter((request) => request.method === "PUT")).toHaveLength(1);
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
   });
 
@@ -982,8 +929,8 @@ describe("functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
 
         yield* functionsDeploy({
           ...baseFlags,
@@ -994,12 +941,7 @@ describe("functions deploy", () => {
         expect(stripControlSequences(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 
     it.live("treats --jobs 0 as 1 and does not require --use-api", () => {
@@ -1040,8 +982,8 @@ describe("functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
 
         yield* functionsDeploy({
           ...baseFlags,
@@ -1052,12 +994,7 @@ describe("functions deploy", () => {
         expect(stripControlSequences(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
   });
 
@@ -1104,8 +1041,8 @@ describe("functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
 
         yield* functionsDeploy({
           ...baseFlags,
@@ -1118,12 +1055,7 @@ describe("functions deploy", () => {
         expect(stripControlSequences(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
   });
 
@@ -1155,6 +1087,7 @@ describe("functions deploy", () => {
       );
       const deployNoFunctions = Effect.gen(function* () {
         const platformApi = yield* CommandPlatformApi;
+        const path = yield* Path.Path;
         return yield* deployFunctions(
           { ...baseFlags, functionNames: [] },
           {
@@ -1162,7 +1095,7 @@ describe("functions deploy", () => {
             cwd: tempRoot.current,
             flagCwd: tempRoot.current,
             projectRoot: tempRoot.current,
-            supabaseDir: join(tempRoot.current, "supabase"),
+            supabaseDir: path.join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
             goConfigCompat: functionsGoConfigCompat,
             yes: false,
@@ -1179,7 +1112,7 @@ describe("functions deploy", () => {
     it.live("keeps the injected styling out of the json error payload", () => {
       const { out, layer, deployNoFunctions } = setupNoFunctionsTest("json");
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
+        yield* writeCliConfig(tempRoot.current);
 
         yield* deployNoFunctions.pipe(withJsonErrorHandling);
 
@@ -1187,18 +1120,13 @@ describe("functions deploy", () => {
           type: "fail",
           message: "No Functions specified or found in supabase/functions",
         });
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 
     it.live("still emphasizes the functions dir in the text-mode error", () => {
       const { layer, deployNoFunctions } = setupNoFunctionsTest("text");
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
+        yield* writeCliConfig(tempRoot.current);
 
         const error = yield* deployNoFunctions.pipe(Effect.flip);
 
@@ -1209,12 +1137,7 @@ describe("functions deploy", () => {
         expect(error.message).toBe(
           "No Functions specified or found in <sgr>supabase/functions</sgr>",
         );
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
   });
 
@@ -1238,20 +1161,15 @@ describe("functions deploy", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current, 'project_id = ""\n'));
-          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+          yield* writeCliConfig(tempRoot.current, 'project_id = ""\n');
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
 
           const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(Error);
           expect((error as Error).message).toBe("Missing required field in config: project_id");
           expect(api.requests).toEqual([]);
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-        );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
       },
     );
 
@@ -1274,13 +1192,11 @@ describe("functions deploy", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            writeCliConfig(
-              tempRoot.current,
-              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
-            ),
+          yield* writeCliConfig(
+            tempRoot.current,
+            ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
           );
-          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
 
           const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
 
@@ -1289,12 +1205,7 @@ describe("functions deploy", () => {
             "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
           );
           expect(api.requests).toEqual([]);
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-        );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
       },
     );
 
@@ -1317,7 +1228,7 @@ describe("functions deploy", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current, 'project_id = ""\n'));
+          yield* writeCliConfig(tempRoot.current, 'project_id = ""\n');
 
           const error = yield* functionsDeploy({
             ...baseFlags,
@@ -1327,12 +1238,7 @@ describe("functions deploy", () => {
           expect(error).toBeInstanceOf(Error);
           expect((error as Error).message).toBe("Missing required field in config: project_id");
           expect(api.requests).toEqual([]);
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-        );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
       },
     );
 
@@ -1353,7 +1259,7 @@ describe("functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
+        yield* writeCliConfig(tempRoot.current);
 
         const error = yield* functionsDeploy({
           ...baseFlags,
@@ -1362,12 +1268,7 @@ describe("functions deploy", () => {
 
         expect(error).toBeInstanceOf(InvalidFunctionDeploySlugError);
         expect(api.requests).toEqual([]);
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
   });
 
@@ -1416,12 +1317,9 @@ describe("functions deploy", () => {
           }),
         );
 
-        const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-        process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
-
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+          yield* writeCliConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
 
           yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
@@ -1431,20 +1329,8 @@ describe("functions deploy", () => {
             command: "docker",
             args: ["image", "inspect", "public.ecr.aws/supabase/edge-runtime:v1.68.4"],
           });
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) {
-                delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-              } else {
-                process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
-              }
-            }),
-          ),
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot), (body) =>
+          withEnvVar("SUPABASE_EDGE_RUNTIME_DENO_VERSION", "1", body),
         );
       },
     );
@@ -1469,12 +1355,9 @@ describe("functions deploy", () => {
           }),
         );
 
-        const previous = process.env["SUPABASE_NETWORK_ID"];
-        process.env["SUPABASE_NETWORK_ID"] = "env-network";
-
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+          yield* writeCliConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
 
           yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
@@ -1484,20 +1367,8 @@ describe("functions deploy", () => {
           });
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args).toContain("env-network");
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) {
-                delete process.env["SUPABASE_NETWORK_ID"];
-              } else {
-                process.env["SUPABASE_NETWORK_ID"] = previous;
-              }
-            }),
-          ),
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot), (body) =>
+          withEnvVar("SUPABASE_NETWORK_ID", "env-network", body),
         );
       },
     );
@@ -1529,12 +1400,9 @@ describe("functions deploy", () => {
           }),
         );
 
-        const previous = process.env["SUPABASE_NETWORK_ID"];
-        process.env["SUPABASE_NETWORK_ID"] = "env-network";
-
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+          yield* writeCliConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
 
           yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
@@ -1545,20 +1413,8 @@ describe("functions deploy", () => {
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args).toContain("flag-network");
           expect(runCommand?.args).not.toContain("env-network");
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) {
-                delete process.env["SUPABASE_NETWORK_ID"];
-              } else {
-                process.env["SUPABASE_NETWORK_ID"] = previous;
-              }
-            }),
-          ),
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot), (body) =>
+          withEnvVar("SUPABASE_NETWORK_ID", "env-network", body),
         );
       },
     );
@@ -1584,10 +1440,9 @@ describe("functions deploy", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            writeCliConfig(tempRoot.current, 'project_id = "test-project"\n'),
-          );
-          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+          const path = yield* Path.Path;
+          yield* writeCliConfig(tempRoot.current, 'project_id = "test-project"\n');
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
 
           yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
@@ -1612,21 +1467,16 @@ describe("functions deploy", () => {
           const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
           expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
             "-w",
-            toDockerPath(tempRoot.current, { resolve }),
+            toDockerPath(tempRoot.current, path),
           ]);
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-        );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
       },
     );
 
     it.live(
       "does not climb to an ancestor project's config.toml for the Docker bundling path",
       () => {
-        const nestedWorkdir = join(tempRoot.current, "nested");
+        const nestedWorkdir = `${tempRoot.current}/nested`;
         const out = mockOutput({ format: "text" });
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
@@ -1645,10 +1495,8 @@ describe("functions deploy", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            writeCliConfig(tempRoot.current, 'project_id = "ancestor-project"\n'),
-          );
-          yield* Effect.tryPromise(() => writeLocalFunction(nestedWorkdir, "hello-world"));
+          yield* writeCliConfig(tempRoot.current, 'project_id = "ancestor-project"\n');
+          yield* writeLocalFunction(nestedWorkdir, "hello-world");
 
           yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
@@ -1659,12 +1507,7 @@ describe("functions deploy", () => {
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args).toContain("supabase_network_abcdefghijklmnopqrst");
           expect(runCommand?.args).not.toContain("supabase_network_ancestor-project");
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-        );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
       },
     );
   });
@@ -1672,7 +1515,7 @@ describe("functions deploy", () => {
   it.live(
     "does not treat an ancestor project's deno.json as this project's own import map when --workdir names a config-less subdirectory of it",
     () => {
-      const nestedWorkdir = join(tempRoot.current, "nested");
+      const nestedWorkdir = `${tempRoot.current}/nested`;
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi({
         handler: (request) => {
@@ -1712,22 +1555,18 @@ describe("functions deploy", () => {
       );
 
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         // Ancestor project: a config.toml plus a function with an entrypoint and a deno.json.
-        yield* Effect.tryPromise(() =>
-          writeCliConfig(tempRoot.current, 'project_id = "ancestor-project"\n'),
-        );
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+        yield* writeCliConfig(tempRoot.current, 'project_id = "ancestor-project"\n');
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
         // The sub-project has its own entrypoint but no deno.json.
-        yield* Effect.tryPromise(() =>
-          mkdir(join(nestedWorkdir, "supabase", "functions", "hello-world"), {
-            recursive: true,
-          }),
-        );
-        yield* Effect.tryPromise(() =>
-          writeFile(
-            join(nestedWorkdir, "supabase", "functions", "hello-world", "index.ts"),
-            "Deno.serve(() => new Response())\n",
-          ),
+        yield* fs.makeDirectory(path.join(nestedWorkdir, "supabase", "functions", "hello-world"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(nestedWorkdir, "supabase", "functions", "hello-world", "index.ts"),
+          "Deno.serve(() => new Response())\n",
         );
 
         yield* functionsDeploy(baseFlags);
@@ -1736,12 +1575,7 @@ describe("functions deploy", () => {
           (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
         );
         expect(deployRequest).toBeDefined();
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     },
   );
 
@@ -1787,8 +1621,9 @@ describe("functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+        const path = yield* Path.Path;
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
 
         const platformApi = yield* CommandPlatformApi;
         yield* deployFunctions(
@@ -1798,7 +1633,7 @@ describe("functions deploy", () => {
             cwd: tempRoot.current,
             flagCwd: tempRoot.current,
             projectRoot: tempRoot.current,
-            supabaseDir: join(tempRoot.current, "supabase"),
+            supabaseDir: path.join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
             goConfigCompat: functionsGoConfigCompat,
             yes: false,
@@ -1810,12 +1645,7 @@ describe("functions deploy", () => {
         );
 
         expect(out.stderrText).toContain("<warn>WARNING:</warn> Docker is not running\n");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
   });
 });

@@ -35,6 +35,8 @@ interface ContainerSpec {
     readonly source: string;
     readonly target: string;
     readonly readOnly: boolean;
+    readonly type?: "bind" | "volume";
+    readonly volumeSubpath?: string;
   }>;
   readonly workingDir?: string;
   readonly ports?: ReadonlyArray<number>;
@@ -146,10 +148,13 @@ export const makeContainerRuntime = (options: {
 
     const prepare = Effect.fn("Container.prepare")(function* (image: string) {
       const inspected = yield* run(["image", "inspect", "--format", "{{.Id}}", image]).pipe(
-        Effect.option,
+        Effect.catchTag("ContainerError", (error) =>
+          /no such image|image .*not known/iu.test(error.message)
+            ? Effect.succeed("")
+            : Effect.fail(error),
+        ),
       );
-      if (Option.isNone(inspected) || inspected.value.length === 0)
-        yield* run(["pull", image], { timeout: "5 minutes" });
+      if (inspected.length === 0) yield* run(["pull", image], { timeout: "5 minutes" });
     });
 
     const launch = Effect.fn("Container.launch")(function* (
@@ -204,7 +209,15 @@ export const makeContainerRuntime = (options: {
         envPath,
         ...(spec.mounts ?? []).flatMap((mount) => [
           "--mount",
-          `type=bind,${mountField("src", mount.source)},${mountField("dst", mount.target)}${mount.readOnly ? ",ro" : ""}`,
+          [
+            `type=${mount.type ?? "bind"}`,
+            mountField("src", mount.source),
+            mountField("dst", mount.target),
+            ...(mount.volumeSubpath === undefined
+              ? []
+              : [mountField("volume-subpath", mount.volumeSubpath)]),
+            ...(mount.readOnly ? ["ro"] : []),
+          ].join(","),
         ]),
         ...(spec.workingDir === undefined ? [] : ["--workdir", spec.workingDir]),
         ...(spec.ports ?? []).flatMap((port) => ["--publish", `127.0.0.1::${port}`]),

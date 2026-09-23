@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Stream } from "effect";
 import type {
   ServiceCreation,
+  ServiceCreationInput,
   ServiceInstance,
   ServiceInstances,
   Stack,
@@ -87,7 +88,7 @@ const instance = (
         service: "database",
         credentials: () =>
           Effect.succeed({ databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres" }),
-        exportSnapshot: () => Effect.die("unused"),
+        saveSnapshot: () => Effect.die("unused"),
         restoreSnapshot: () => Effect.die("unused"),
         resetData: Effect.die("unused"),
       };
@@ -128,6 +129,22 @@ const instance = (
   }
 };
 
+const requireConcreteCreation = (creation: ServiceCreationInput): ServiceCreation => {
+  if (creation.service !== "database") return creation;
+  if (creation.config.jwtSecret === undefined)
+    throw new Error("Database creation is missing jwtSecret");
+  if (creation.config.rootKey === undefined)
+    throw new Error("Database creation is missing rootKey");
+  return {
+    ...creation,
+    config: {
+      ...creation.config,
+      jwtSecret: creation.config.jwtSecret,
+      rootKey: creation.config.rootKey,
+    },
+  };
+};
+
 const fakeStack = () => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   let stopped = 0;
@@ -135,7 +152,7 @@ const fakeStack = () => {
   const stack: Stack = {
     id: "a".repeat(64),
     services: {
-      create: <Input extends ServiceCreation>(_creation: Input) => Effect.die("unused"),
+      create: <Input extends ServiceCreationInput>(_creation: Input) => Effect.die("unused"),
       get: (id: string) => {
         const found = members.find((entry) => entry.id === id);
         return found === undefined ? Effect.die(`missing instance ${id}`) : Effect.succeed(found);
@@ -149,10 +166,12 @@ const fakeStack = () => {
         members: members.map(({ id }) => ({ id, activation: "eager" as const })),
         dependencies: [],
       })),
-      supabase: (creations: ReadonlyArray<ServiceCreation>) =>
+      supabase: (creations: ReadonlyArray<ServiceCreationInput>) =>
         Effect.sync(() => {
           composed += 1;
-          members = creations.map((creation) => instance(creation, `${creation.service}-member`));
+          members = creations.map((creation) =>
+            instance(requireConcreteCreation(creation), `${creation.service}-member`),
+          );
           return members;
         }),
       configure: () => Effect.void,

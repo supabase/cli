@@ -45,11 +45,11 @@ await stack.tools.run(postgres.psql({ major: 17 }), {
 });
 
 await database.stop();
-await database.exportSnapshot("/tmp/example-stack/baseline.tar");
+await database.saveSnapshot("baseline");
 await stack.close(); // disconnects this client
 ```
 
-`start` and `ready` are separate operations. `restart({ config })` replaces recipe configuration while retaining the instance identity and endpoint intentions. A health failure leaves a launched process running and observable; it does not prevent `stop`. Database snapshots require a stopped instance with wake disabled. Other service handles have no snapshot methods.
+`start` and `ready` are separate operations. `restart({ config })` replaces recipe configuration while retaining the instance identity and endpoint intentions. A health failure leaves a launched process running and observable; it does not prevent `stop`. Database snapshots require a stopped instance with wake disabled. `saveSnapshot(key)` publishes complete data to managed backend storage and replaces the previous entry for that key; `restoreSnapshot(key)` returns `false` on a miss and `true` after restoring a compatible entry. Managed retention may evict older keys, while snapshots survive destruction of the source stack. Other service handles have no snapshot methods.
 
 Creating a service records its definition. Configured public ports are bound during startup and retained across normal stop/start and owner reopening. An occupied saved port reports a conflict instead of moving. Omitted public endpoints are not exposed.
 
@@ -61,9 +61,11 @@ On Linux, native Functions project files must be outside `/tmp`: Edge Runtime us
 
 `open({ id, stateRoot, cacheRoot })` reconnects to a saved stack. The package stores the stack document at `<stateRoot>/<id>/state.json` and service data at `<stateRoot>/<id>/data/<instance-id>`. `discover({ stateRoot })` lists saved definitions and port assignments separately from live-owner availability. Offline definitions are not live lifecycle observations.
 
-The stack owns database, Functions bootstrap, and tool-job directories below its data directory. Storage uploads remain at the caller-supplied Storage `filePath` and are preserved when the stack is destroyed; the caller owns that directory.
+The stack owns database, Functions bootstrap, and tool-job directories below its data directory. Storage uploads remain at the caller-supplied Storage `filePath` and are preserved when the stack is destroyed; the caller owns that directory. Host metadata remains under `stateRoot`; native database data uses host files. Docker database data normally uses a managed volume, while existing host data is retained through the host-backed fallback. A host marker records the selected Docker storage and detects a missing or mismatched volume; deleting that volume loses the associated database data. Native snapshot entries live below `cacheRoot`. Docker snapshots share the managed data volume in a separate namespace derived from `cacheRoot`, so they survive source destruction and can use filesystem cloning. A Docker cache hit requires the same daemon, `stateRoot`, and `cacheRoot`. There is no portable tar snapshot API.
 
-Without an explicit database root key, PostgreSQL generates one in its data directory. The key survives stop/reopen and is removed with the database data on reset or destroy.
+Omitted database `jwtSecret` and `rootKey` inputs use the shared local-development values exported
+as `DEFAULT_LOCAL_JWT_SECRET` and `DEFAULT_POSTGRES_ROOT_KEY`. Explicit values override these defaults.
+The effective root key is supplied through a stack-owned file for both native and container runtimes.
 
 ## Composition and operation scope
 

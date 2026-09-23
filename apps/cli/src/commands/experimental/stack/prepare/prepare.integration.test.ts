@@ -4,7 +4,7 @@ import { Effect, FileSystem, Layer, Option, Path, Redacted, Stream } from "effec
 import {
   StackError,
   type Stack,
-  type ServiceCreation,
+  type ServiceCreationInput,
   type ServiceInstances,
 } from "@supabase/stack/effect";
 import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
@@ -88,15 +88,15 @@ const makeFixture = (root: string, failPreparation = false) => {
     followStatus: Stream.empty,
     logs: Stream.empty,
     credentials: () => Effect.succeed({}),
-    exportSnapshot: () => Effect.die("unused"),
+    saveSnapshot: () => Effect.die("unused"),
     restoreSnapshot: () => Effect.die("unused"),
     resetData: Effect.die("unused"),
   };
-  function create<Input extends ServiceCreation>(
+  function create<Input extends ServiceCreationInput>(
     creation: Input,
   ): Effect.Effect<ServiceInstances[Input["service"]]>;
   function create(
-    creation: ServiceCreation,
+    creation: ServiceCreationInput,
   ): Effect.Effect<ServiceInstances[keyof ServiceInstances]> {
     switch (creation.service) {
       case "database":

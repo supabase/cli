@@ -2,7 +2,6 @@ import { Data, Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/unstable/rpc";
 import { ServiceCreation } from "./services/Catalog.ts";
 import { CompositionConfig } from "./Orchestrator.ts";
-import { SnapshotDescriptor } from "./services/DatabaseSnapshot.ts";
 import { PgProveOptions, PostgresTool } from "./Tools.ts";
 
 const Outcome = Schema.Struct({
@@ -56,7 +55,6 @@ export const Definition = Schema.Struct({ id: Schema.String, creation: ServiceCr
 export interface Definition extends Schema.Schema.Type<typeof Definition> {}
 
 const Instance = { id: Schema.String };
-const Snapshot = Schema.Struct({ descriptor: SnapshotDescriptor, destination: Schema.String });
 const Log = Schema.Struct({
   stream: Schema.Literals(["stdout", "stderr"]),
   bytes: Schema.Uint8ArrayFromBase64,
@@ -100,14 +98,13 @@ export const StackRpc = RpcGroup.make(
     success: Schema.Record(Schema.String, Schema.String),
     error: StackErrorSchema,
   }),
-  Rpc.make("exportSnapshot", {
-    payload: { ...Instance, destination: Schema.String },
-    success: Snapshot,
+  Rpc.make("saveSnapshot", {
+    payload: { ...Instance, key: Schema.String },
     error: StackErrorSchema,
   }),
   Rpc.make("restoreSnapshot", {
-    payload: { ...Instance, source: Schema.String },
-    success: Snapshot,
+    payload: { ...Instance, key: Schema.String },
+    success: Schema.Boolean,
     error: StackErrorSchema,
   }),
   Rpc.make("resetData", { payload: Instance, error: StackErrorSchema }),

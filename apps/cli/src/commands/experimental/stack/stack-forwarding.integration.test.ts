@@ -1,5 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "@supabase/stack";
 import { Effect, FileSystem, Layer, Redacted, Schema } from "effect";
 import { ServiceCreation } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { makeSpec as authSpec } from "../../../../../../packages/stack/src/services/Auth.ts";
@@ -166,7 +167,7 @@ jwt_secret = "encrypted:BOsrXIZY2BNTW43BeRhMbfvlOIUjwI7GCyFHxJD/Ik+UQ4mqkgVl2+61
       }).pipe(Effect.provide(layer)),
   );
 
-  it.live("reopens with an empty configured JWT secret and omits an empty database root key", () =>
+  it.live("reopens with empty configured secrets using package defaults", () =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(`project_id = "empty-secrets"
 [auth]
@@ -176,9 +177,12 @@ root_key = ""
 `);
       const config = yield* loadStackConfig(root);
       const creations = yield* config.creations("empty-secrets", { jwtSecret: config.jwtSecret });
+      expect(Redacted.value(config.jwtSecret)).toBe(DEFAULT_LOCAL_JWT_SECRET);
       const database = creations.find((creation) => creation.service === "database");
       expect(database).toBeDefined();
-      expect(database?.config.rootKey).toBeUndefined();
+      expect(database?.config.rootKey && Redacted.value(database.config.rootKey)).toBe(
+        DEFAULT_POSTGRES_ROOT_KEY,
+      );
     }).pipe(Effect.provide(layer)),
   );
 

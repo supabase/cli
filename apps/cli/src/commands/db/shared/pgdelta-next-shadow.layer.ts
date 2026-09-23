@@ -293,10 +293,10 @@ export const pgDeltaNextShadowLayer = Layer.effect(
       }).pipe(Effect.provide(runtimeWith(outputService)), Effect.mapError(nextShadowError));
 
     const stackAcquire = (input: NativeShadowInput, opts: ShadowCacheOpts) =>
-      stackAcquireShadowDatabase(
-        input.base,
-        opts.webhooks === undefined ? {} : { webhooks: opts.webhooks },
-      );
+      stackAcquireShadowDatabase(input.base, {
+        ...(opts.webhooks === undefined ? {} : { webhooks: opts.webhooks }),
+        ...(opts.bypassCache === true ? { bypassCache: true } : {}),
+      });
 
     const stackProvisionMigrations = (input: NativeShadowInput, opts: ShadowCacheOpts) =>
       Effect.gen(function* () {
@@ -304,7 +304,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         yield* Effect.scoped(stackMigrateShadow(handle, input.base));
         return {
           migrationsUrl: handle.url,
-          snapshotKey: undefined,
+          snapshotKey: handle.snapshotKey,
         } satisfies ProvisionedMigrationsShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
@@ -313,8 +313,8 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         const handle = yield* stackAcquire(input, opts);
         return {
           declarativeUrl: handle.url,
-          restoredFromPgDataSnapshot: false,
-          snapshotKey: undefined,
+          restoredFromPgDataSnapshot: handle.restoredFromSnapshot,
+          snapshotKey: handle.snapshotKey,
         } satisfies ProvisionedDeclarativeShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 

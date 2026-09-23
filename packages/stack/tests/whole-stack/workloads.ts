@@ -5,6 +5,7 @@ import { service, type Runtime, type WholeStack } from "./fixture.ts";
 
 export const WorkloadSnapshot = Schema.Struct({
   identities: Schema.Array(Schema.String),
+  managedIdentities: Schema.Array(Schema.String),
   markers: Schema.Array(Schema.String),
 });
 export type WorkloadSnapshot = Schema.Schema.Type<typeof WorkloadSnapshot>;
@@ -29,7 +30,11 @@ const snapshotOutput = (runtime: Runtime, fixture: WholeStack, includeStopped: b
         .split("\n")
         .map((line) => line.trim())
         .filter((line) => line.includes(stackMarker) || line.includes(databaseMarker));
-      return { identities, markers: [stackMarker, databaseMarker] } satisfies WorkloadSnapshot;
+      return {
+        identities,
+        managedIdentities: [],
+        markers: [stackMarker, databaseMarker],
+      } satisfies WorkloadSnapshot;
     }
     const marker = `com.supabase.stack=${fixture.stack.id}`;
     const output = yield* commandOutput("docker", [
@@ -38,13 +43,23 @@ const snapshotOutput = (runtime: Runtime, fixture: WholeStack, includeStopped: b
       "--filter",
       `label=${marker}`,
       "--format",
-      '{{.ID}} {{.Label "com.supabase.instance"}}',
+      '{{.ID}}\t{{.Label "com.supabase.instance"}}\t{{.Label "com.supabase.stack-managed"}}',
     ]);
+    const records = output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const [id, instance, managed] = line.split("\t");
+        return { identity: `${id ?? ""} ${instance ?? ""}`.trim(), managed };
+      });
     return {
-      identities: output
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0),
+      identities: records
+        .filter((record) => record.managed !== "true")
+        .map((record) => record.identity),
+      managedIdentities: records
+        .filter((record) => record.managed === "true")
+        .map((record) => record.identity),
       markers: [marker],
     } satisfies WorkloadSnapshot;
   });
@@ -60,6 +75,7 @@ export const assertWorkloadsGone = Effect.fn("WholeStack.assertWorkloadsGone")(
       expect(snapshot.identities.length).toBeGreaterThan(0);
       const current = yield* snapshotOutput(runtime, fixture, includeStopped);
       if (runtime === "docker") expect(current.identities).toEqual([]);
+      if (runtime === "docker" && includeStopped) expect(current.managedIdentities).toEqual([]);
       for (const marker of snapshot.markers)
         expect(current.identities.some((identity) => identity.includes(marker))).toBe(false);
       for (const identity of snapshot.identities)
