@@ -27,7 +27,7 @@ permissions: {}
 # One source of truth for the model names; resolve, claude-review, codex-review, and
 # post-review's footer all read these instead of hardcoding them separately.
 env:
-  CLAUDE_MODEL: claude-opus-5
+  CLAUDE_MODEL: claude-opus-5-5
   CODEX_MODEL: gpt-6-sol
 
 # Non-command issue_comment events fire for every comment on every PR, so grouping by PR number
