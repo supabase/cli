@@ -7,6 +7,7 @@ const environment = (name: string) => Effect.runSync(Config.option(Config.string
 const marker = environment("SUPABASE_TIMEOUT_MARKER");
 const defectMarker = environment("SUPABASE_TIMEOUT_DEFECT_MARKER");
 const doubleFailure = environment("SUPABASE_TIMEOUT_DOUBLE_FAILURE");
+const singleDefect = environment("SUPABASE_TIMEOUT_SINGLE_DEFECT");
 
 if (Option.isSome(marker)) {
   const markerPath = marker.value;
@@ -75,5 +76,11 @@ if (Option.isSome(doubleFailure)) {
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
     5_000,
+  );
+}
+
+if (Option.isSome(singleDefect)) {
+  it.live("retains the formatted diagnostic for a single defect", () =>
+    Effect.die("single-defect"),
   );
 }

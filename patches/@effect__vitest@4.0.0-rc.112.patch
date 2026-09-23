@@ -10,7 +10,7 @@ index 0000000..0000000 100644
 +const runTest = ctx => effect => {
 +  const failure = cause => {
 +    const errors = Cause.prettyErrors(cause);
-+    return errors.length > 1 ? new AggregateError(errors) : Cause.squash(cause);
++    return errors.length > 1 ? new AggregateError(errors) : errors[0] ?? Cause.squash(cause);
 +  };
 +  const exitPromise = Effect.runPromiseExit(effect, {
 +    signal: ctx?.signal
@@ -36,7 +36,7 @@ index 0000000..0000000 100644
 +const runTest = (ctx?: Vitest.TestContext) => <E, A>(effect: Effect.Effect<A, E>) => {
 +  const failure = (cause: Cause.Cause<E>) => {
 +    const errors = Cause.prettyErrors(cause)
-+    return errors.length > 1 ? new AggregateError(errors) : Cause.squash(cause)
++    return errors.length > 1 ? new AggregateError(errors) : errors[0] ?? Cause.squash(cause)
 +  }
 +  const exitPromise = Effect.runPromiseExit(effect, { signal: ctx?.signal })
 +  const promise = exitPromise.then((exit) => Exit.isSuccess(exit)

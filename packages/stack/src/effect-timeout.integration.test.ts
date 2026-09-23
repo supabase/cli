@@ -141,3 +141,35 @@ it.live("retains body and cleanup diagnostics together", () =>
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.live("retains the formatted diagnostic for a single defect", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make(process.execPath, ["--bun", "vitest", "run", "--config", config], {
+          cwd: fileURLToPath(new URL("..", import.meta.url)),
+          env: { ...process.env, SUPABASE_TIMEOUT_SINGLE_DEFECT: "1" },
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
+      const stdout = yield* child.stdout.pipe(
+        Stream.decodeText,
+        Stream.mkString,
+        Effect.forkScoped,
+      );
+      const stderr = yield* child.stderr.pipe(
+        Stream.decodeText,
+        Stream.mkString,
+        Effect.forkScoped,
+      );
+      const code = yield* child.exitCode;
+      const output = `${yield* Fiber.join(stdout)}\n${yield* Fiber.join(stderr)}`;
+      expect(Number(code), output).not.toBe(0);
+      expect(output).toContain("single-defect");
+      expect(output).toMatch(/^\s*Error: single-defect$/m);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
