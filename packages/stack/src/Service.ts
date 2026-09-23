@@ -412,6 +412,17 @@ export const makeService = <Config>(
       });
     });
 
+    /** A wake has no caller to receive a preparation failure, so an idle observation records it. */
+    const recordPreparationFailure = Effect.fn("Service.recordPreparationFailure")(function* (
+      expectedRevision: number,
+      error: ServiceError,
+    ) {
+      if ((yield* Ref.get(revision)) !== expectedRevision) return;
+      yield* SubscriptionRef.update(observations, (value) =>
+        value.registered && value.lifecycle === "stopped" ? { ...value, error } : value,
+      );
+    });
+
     const startAt = Effect.fn("Service.startAt")(function* (
       expectedRevision: number,
       candidate?: Config,
@@ -428,7 +439,10 @@ export const makeService = <Config>(
         if (existing.lifecycle === "running") return;
       }
       const nextConfig = candidate ?? (yield* Ref.get(config));
-      if (definition.prepare !== undefined) yield* definition.prepare(nextConfig);
+      if (definition.prepare !== undefined)
+        yield* definition
+          .prepare(nextConfig)
+          .pipe(Effect.tapError((error) => recordPreparationFailure(expectedRevision, error)));
       yield* run(
         Effect.gen(function* () {
           const observation = yield* SubscriptionRef.get(observations);

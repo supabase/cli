@@ -1,23 +1,36 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+
+import { BunServices } from "@effect/platform-bun";
+import { Cause, Data, Effect, Exit, FileSystem, Path } from "effect";
 import { expect } from "vitest";
 import { describe } from "vitest";
 
-import { expectFunctionOk, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
+import {
+  expectFunctionOk,
+  type LiveFixtures,
+  test,
+  throwWithCleanup,
+} from "../../../../tests/helpers/live.ts";
 
-async function cleanupFunction(
-  cli: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
-  slug: string,
-  ref: string,
-): Promise<void> {
-  const deleted = await cli(["functions", "delete", slug, "--project-ref", ref]);
-  if (
-    deleted.exitCode !== 0 &&
-    !/not found|does not exist/i.test(`${deleted.stdout}\n${deleted.stderr}`)
-  ) {
-    throw new Error(`functions delete cleanup failed:\n${deleted.stdout}\n${deleted.stderr}`);
-  }
+type LiveCliEffect = LiveFixtures["cliEffect"];
+
+class FunctionsDeployLiveError extends Data.TaggedError("FunctionsDeployLiveError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+function cleanupFunction(cliEffect: LiveCliEffect, slug: string, ref: string) {
+  return Effect.gen(function* () {
+    const deleted = yield* cliEffect(["functions", "delete", slug, "--project-ref", ref]);
+    if (
+      deleted.exitCode !== 0 &&
+      !/not found|does not exist/i.test(`${deleted.stdout}\n${deleted.stderr}`)
+    ) {
+      return yield* new FunctionsDeployLiveError({
+        message: `functions delete cleanup failed:\n${deleted.stdout}\n${deleted.stderr}`,
+      });
+    }
+  });
 }
 
 function codeSafeJson(value: string) {
@@ -25,38 +38,39 @@ function codeSafeJson(value: string) {
 }
 
 describe("functions deploy (live)", () => {
-  test("deploys a function that responds over HTTP", async ({
-    cli,
-    invoke,
-    project,
-    workspace,
-  }) => {
-    const slug = `cli-e2e-deploy-${randomUUID().slice(0, 8)}`;
-    const directory = join(workspace.path, "supabase", "functions", slug);
-    await mkdir(directory, { recursive: true });
-    await writeFile(
-      join(directory, "index.ts"),
-      `Deno.serve(() => Response.json({ case: ${codeSafeJson(slug)}, ok: true }));\n`,
-    );
-    await writeFile(join(directory, "deno.json"), '{\n  "imports": {}\n}\n');
+  test("deploys a function that responds over HTTP", ({ cliEffect, invoke, project, workspace }) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const slug = `cli-e2e-deploy-${randomUUID().slice(0, 8)}`;
+        const directory = path.join(workspace.path, "supabase", "functions", slug);
+        yield* fs.makeDirectory(directory, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(directory, "index.ts"),
+          `Deno.serve(() => Response.json({ case: ${codeSafeJson(slug)}, ok: true }));\n`,
+        );
+        yield* fs.writeFileString(path.join(directory, "deno.json"), '{\n  "imports": {}\n}\n');
 
-    let targetError: unknown;
-    let cleanupError: unknown;
-    try {
-      const result = await cli(["functions", "deploy", "--project-ref", project.ref]);
-      expect(result.exitCode, result.stderr).toBe(0);
-      expect(result.stdout).toMatch(/Deployed Function/i);
+        const target = Effect.gen(function* () {
+          const result = yield* cliEffect(["functions", "deploy", "--project-ref", project.ref]);
+          expect(result.exitCode, result.stderr).toBe(0);
+          expect(result.stdout).toMatch(/Deployed Function/i);
 
-      expectFunctionOk(await invoke(slug), slug);
-    } catch (error) {
-      targetError = error;
-    } finally {
-      try {
-        await cleanupFunction(cli, slug, project.ref);
-      } catch (error) {
-        cleanupError = error;
-      }
-    }
-    throwWithCleanup(targetError, cleanupError === undefined ? [] : [cleanupError]);
-  });
+          const invoked = yield* Effect.tryPromise({
+            try: () => invoke(slug),
+            catch: (cause) =>
+              new FunctionsDeployLiveError({ message: `functions invoke ${slug} failed`, cause }),
+          });
+          expectFunctionOk(invoked, slug);
+        });
+
+        const targetExit = yield* Effect.exit(target);
+        const cleanupExit = yield* Effect.exit(cleanupFunction(cliEffect, slug, project.ref));
+        return {
+          targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
+          cleanupErrors: Exit.isFailure(cleanupExit) ? [Cause.squash(cleanupExit.cause)] : [],
+        };
+      }).pipe(Effect.provide(BunServices.layer)),
+    ).then(({ targetError, cleanupErrors }) => throwWithCleanup(targetError, cleanupErrors)));
 });

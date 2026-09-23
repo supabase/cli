@@ -56,7 +56,7 @@ export const acquireHost = Effect.fn("HostProcess.acquireHost")(function* (
     readonly closeConnections: Effect.Effect<void>;
   },
   HostProcessError | PortError | State.StateError,
-  Scope.Scope | import("effect").Crypto.Crypto
+  Scope.Scope
 > {
   if ((yield* state.read(stackId)) === undefined)
     return yield* error("acquire", "Stack is not registered");
@@ -307,10 +307,7 @@ export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
 ): Effect.fn.Return<
   HostEndpoint,
   HostProcessError | State.StateError,
-  | Scope.Scope
-  | HttpClient.HttpClient
-  | import("effect").Crypto.Crypto
-  | ChildProcessSpawner.ChildProcessSpawner
+  Scope.Scope | HttpClient.HttpClient | ChildProcessSpawner.ChildProcessSpawner
 > {
   const existing = yield* connectHost(state, options.stackId).pipe(
     Effect.map(Option.some),

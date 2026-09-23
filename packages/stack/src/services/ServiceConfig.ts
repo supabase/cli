@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { SignJWT } from "jose";
 import { ServiceError } from "../Service.ts";
+import { DEFAULT_LOCAL_JWT_SECRET } from "../Defaults.ts";
 
 const serviceError = (operation: string, cause: unknown): ServiceError =>
   cause instanceof ServiceError
@@ -11,7 +12,7 @@ const serviceError = (operation: string, cause: unknown): ServiceError =>
         cause,
       });
 
-export const localJwtSecret = "supabase-local-development-jwt-secret";
+export const localJwtSecret = DEFAULT_LOCAL_JWT_SECRET;
 
 export const serviceJwt = Effect.fn("ServiceConfig.serviceJwt")(
   (role: string, secret: string): Effect.Effect<string, ServiceError> =>

@@ -55,7 +55,8 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       # Payload is untrusted; the script revalidates it. Passed via env, never
-      # interpolated into the shell.
+      # interpolated into the shell. Extra payload fields such as natives[] are
+      # ignored here; this workflow pins the image digest only.
       - name: Sync workload catalog
         env:
           SLIM_SERVICE: ${{ github.event.client_payload.service || inputs.service }}

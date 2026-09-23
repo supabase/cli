@@ -63,7 +63,9 @@ On Linux, native Functions project files must be outside `/tmp`: Edge Runtime us
 
 The stack owns database, Functions bootstrap, and tool-job directories below its data directory. Storage uploads remain at the caller-supplied Storage `filePath` and are preserved when the stack is destroyed; the caller owns that directory. Host metadata remains under `stateRoot`; native database data uses host files. Docker database data normally uses a managed volume, while existing host data is retained through the host-backed fallback. A host marker records the selected Docker storage and detects a missing or mismatched volume; deleting that volume loses the associated database data. Native snapshot entries live below `cacheRoot`. Docker snapshots share the managed data volume in a separate namespace derived from `cacheRoot`, so they survive source destruction and can use filesystem cloning. A Docker cache hit requires the same daemon, `stateRoot`, and `cacheRoot`. There is no portable tar snapshot API.
 
-Without an explicit database root key, PostgreSQL generates one in its data directory. The key survives stop/reopen and is removed with the database data on reset or destroy.
+Omitted database `jwtSecret` and `rootKey` inputs use the shared local-development values exported
+as `DEFAULT_LOCAL_JWT_SECRET` and `DEFAULT_POSTGRES_ROOT_KEY`. Explicit values override these defaults.
+The effective root key is supplied through a stack-owned file for both native and container runtimes.
 
 ## Composition and operation scope
 

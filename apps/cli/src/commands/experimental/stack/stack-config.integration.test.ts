@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Schema } from "effect";
+import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "@supabase/stack";
+import { Effect, Exit, Layer, Redacted, Schema } from "effect";
 import { ServiceCreation } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
@@ -30,9 +31,15 @@ enabled = true
 `);
       const config = yield* load(root);
       const services = yield* config.creations("stack-defaults");
+      expect(Redacted.value(config.jwtSecret)).toBe(DEFAULT_LOCAL_JWT_SECRET);
       for (const service of services) yield* Schema.decodeEffect(ServiceCreation)(service);
 
       const recipes = byService(services);
+      const database = recipes.get("database");
+      const rootKey = database?.service === "database" ? database.config.rootKey : undefined;
+      expect(rootKey === undefined ? undefined : Redacted.value(rootKey)).toBe(
+        DEFAULT_POSTGRES_ROOT_KEY,
+      );
       expect(recipes.get("database")?.endpoints).toEqual({ sql: { port: "auto" } });
       expect(recipes.get("rest")?.endpoints).toEqual({ http: { port: "auto" } });
       expect(recipes.get("analytics")?.endpoints).toEqual({ http: { port: "auto" } });
