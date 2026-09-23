@@ -100,7 +100,7 @@ function generateStackApi(workdir: string) {
     destroy: unusedStack,
     prepare: unusedStack,
     credentials: unusedStackFn,
-    exportSnapshot: unusedStackFn,
+    saveSnapshot: unusedStackFn,
     restoreSnapshot: unusedStackFn,
     resetData: unusedStack,
     logs: Stream.empty,

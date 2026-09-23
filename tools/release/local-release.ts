@@ -16,7 +16,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import { oxfmtExternalArgs } from "../../apps/cli/scripts/bundle-externals.ts";
+import { oxfmtStubPlugin } from "../../apps/cli/scripts/bundle-externals.ts";
+import { compileOptions } from "../../apps/cli/scripts/compile-options.ts";
 
 const PORT = 4873;
 const REGISTRY = `http://localhost:${PORT}`;
@@ -97,13 +98,6 @@ function getPlatformInfo(): PlatformInfo {
     process.exit(1);
   }
   return info;
-}
-
-function libcForBunTarget(target: string): "glibc" | "musl" | "" {
-  if (!target.startsWith("bun-linux-")) {
-    return "";
-  }
-  return target.includes("-musl") ? "musl" : "glibc";
 }
 
 async function checkRegistry(): Promise<void> {
@@ -188,10 +182,20 @@ async function main() {
 
     const entrypoint = path.join(root, "apps", "cli", "src", "main.ts");
     const bunBinary = path.join(tmpPlatformBinDir, `supabase${platform.ext}`);
-    const libc = libcForBunTarget(platform.bunTarget);
 
     console.log("[1/3] Compiling CLI binary...");
-    await $`bun build ${entrypoint} --compile --target=${platform.bunTarget} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${bunBinary} ${oxfmtExternalArgs}`;
+    const buildResult = await Bun.build({
+      entrypoints: [entrypoint],
+      compile: { target: platform.bunTarget, outfile: bunBinary },
+      ...compileOptions,
+      plugins: [oxfmtStubPlugin],
+    });
+    for (const log of buildResult.logs) {
+      console.warn(log);
+    }
+    if (!buildResult.success) {
+      throw new Error("failed to compile the CLI binary");
+    }
 
     {
       const goBinary = path.join(tmpPlatformBinDir, `supabase-go${platform.ext}`);

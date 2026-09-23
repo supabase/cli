@@ -187,6 +187,35 @@ const databaseRecipe = (
       : Effect.fail(
           new CatalogError({ operation: "reset", message: "Service kind cannot change" }),
         ),
+  saveDatabaseSnapshot: (context, key) =>
+    context.config.service === "database"
+      ? component
+          .saveSnapshot({ ...context, config: context.config.config }, key)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new CatalogError({ operation: "snapshot-save", message: cause.message, cause }),
+            ),
+          )
+      : Effect.fail(
+          new CatalogError({ operation: "snapshot-save", message: "Service kind cannot change" }),
+        ),
+  restoreDatabaseSnapshot: (context, key) =>
+    context.config.service === "database"
+      ? component
+          .restoreSnapshot({ ...context, config: context.config.config }, key)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new CatalogError({ operation: "snapshot-restore", message: cause.message, cause }),
+            ),
+          )
+      : Effect.fail(
+          new CatalogError({
+            operation: "snapshot-restore",
+            message: "Service kind cannot change",
+          }),
+        ),
   endpoint: (name) =>
     name === "sql"
       ? component.endpoint.pipe(
@@ -346,4 +375,12 @@ export type CatalogRecipe = RecipeCatalogRecipe<ServiceCreation> & {
   readonly resetDatabaseData?: (
     context: ServiceInstanceContext<ServiceCreation>,
   ) => Effect.Effect<void, CatalogError>;
+  readonly saveDatabaseSnapshot?: (
+    context: ServiceInstanceContext<ServiceCreation>,
+    key: string,
+  ) => Effect.Effect<void, CatalogError>;
+  readonly restoreDatabaseSnapshot?: (
+    context: ServiceInstanceContext<ServiceCreation>,
+    key: string,
+  ) => Effect.Effect<boolean, CatalogError>;
 };

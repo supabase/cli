@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeService } from "../Service.ts";
 import { makeDatabase, type BackendEndpoint, type DatabaseConfig } from "./Database.ts";
+import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 
 const config: DatabaseConfig = {
   version: "17",
@@ -52,7 +53,10 @@ describe("database component", { timeout: 180_000 }, () => {
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
-            const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-default-key-" });
+            const root =
+              target.runtime === "docker"
+                ? yield* makeDockerDatabaseRoot("stack-default-key-", "default-key-test")
+                : yield* fs.makeTempDirectoryScoped({ prefix: "stack-default-key-" });
             const recipe = yield* makeDatabase({
               stackId: "default-key-test",
               instanceId: "database",
@@ -300,8 +304,10 @@ describe("database component", { timeout: 180_000 }, () => {
       Effect.scoped(
         Effect.gen(function* () {
           const databaseConfig: DatabaseConfig = { ...config, version };
-          const fs = yield* FileSystem.FileSystem;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-container-" });
+          const root = yield* makeDockerDatabaseRoot(
+            "stack-database-container-",
+            "stack-integration-container",
+          );
           const cacheRoot = artifactCacheRoot;
           const database = yield* makeDatabase({
             stackId: "stack-integration-container",

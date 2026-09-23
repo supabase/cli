@@ -160,6 +160,14 @@ describe("splitAndTrim", () => {
       "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; /* a /*/ b */ SELECT 2 END; SELECT 3; END";
     expect(splitAndTrim(`${body}; SELECT 4;`)).toEqual([body, "SELECT 4"]);
   });
+
+  it.each([
+    ["dollar-quoted body", "$$", "$$"],
+    ["block comment", "/*", "*/"],
+  ])("splits a 1 MB %s without quadratic slowdown", (_, open, close) => {
+    const statement = `DO ${open}\n${"SELECT 1;\n".repeat(100_000)}${close}`;
+    expect(splitAndTrim(`${statement}; SELECT 2;`)).toEqual([statement, "SELECT 2"]);
+  });
 });
 
 describe("splitSql", () => {

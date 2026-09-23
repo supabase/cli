@@ -302,6 +302,7 @@ InspectMutuallyExclusiveFlagsError
 InspectReportMkdirError
 InspectReportWriteError
 InvalidAccessTokenError
+InvalidComputeExcludeError
 InvalidComputeNameError
 InvalidComputeSourceError
 InvalidFunctionDeploySlugError
