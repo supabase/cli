@@ -4,7 +4,7 @@ const SLIM_IMAGE_PREFIX = "ghcr.io/supabase/cli/";
 /**
  * Maps embedded-Dockerfile aliases onto the slim service catalog. Aliases with
  * no slim build (kong, the `differ`/`migra`/`pgprove` job images) are absent and
- * keep their docker.io reference.
+ * keep their docker.io reference. OrioleDB tags are excluded in `slimCatalogPin`.
  */
 const SLIM_SERVICE_BY_ALIAS = {
   pg: "postgres",
@@ -65,11 +65,21 @@ export interface SlimCatalogPin {
   readonly version: string;
 }
 
+/** OrioleDB tags are docker.io-only; slim-services does not publish them. */
+export function isOrioleImage(image: string): boolean {
+  const tagSeparator = image.lastIndexOf(":");
+  const tag = tagSeparator === -1 ? image : image.slice(tagSeparator + 1);
+  return tag.toLowerCase().includes("orioledb");
+}
+
 /**
  * Slim service and tag for a Dockerfile alias. Absent when that alias has no
- * slim build (kong and the one-shot job images).
+ * slim build (kong, the one-shot job images, and OrioleDB tags).
  */
 export function slimCatalogPin(alias: string, image: string): SlimCatalogPin | undefined {
+  if (isOrioleImage(image)) {
+    return undefined;
+  }
   const service = SLIM_SERVICE_LOOKUP[alias];
   if (service === undefined) {
     return undefined;

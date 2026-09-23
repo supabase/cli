@@ -123,7 +123,39 @@ describe("planArtifactCatalogUpdate", () => {
       },
     });
 
-    expect(plan).toEqual({ source: fixture, updates: [] });
+    expect(plan).toEqual({ source: fixture, updates: [], skipped: [] });
+  });
+
+  test("leaves an OrioleDB tag on docker.io and still pins the other images", () => {
+    const plan = planArtifactCatalogUpdate({
+      dockerfile: `FROM supabase/postgres:16.0.0.1-orioledb AS pg
+FROM postgrest/postgrest:v16.3 AS postgrest
+FROM supabase/postgres:orioledb-15.1.0.55 AS orioledb
+`,
+      catalog: fixture,
+      digestFor: digests(),
+    });
+
+    expect(plan.updates.map((update) => update.service)).toEqual(["postgrest"]);
+    expect(plan.source).toContain(
+      `"ghcr.io/supabase/cli/postgres:17.6.1.168@sha256:${"9".repeat(64)}"`,
+    );
+    expect(plan.source).toContain(`"ghcr.io/supabase/cli/postgrest:v16.3"`);
+    expect(plan.skipped.map((skip) => skip.alias)).toEqual(["pg", "orioledb"]);
+  });
+
+  test("skips a pin with no slim manifest and still applies the next one", () => {
+    const plan = planArtifactCatalogUpdate({
+      dockerfile: `FROM supabase/postgres:17.6.1.171 AS pg
+FROM postgrest/postgrest:v16.3 AS postgrest
+`,
+      catalog: fixture,
+      digestFor: (service) => (service === "postgres" ? undefined : DIGEST_B),
+    });
+
+    expect(plan.updates.map((update) => update.service)).toEqual(["postgrest"]);
+    expect(plan.source).toContain(`"17.6.1.168"`);
+    expect(plan.skipped.map((skip) => skip.alias)).toEqual(["pg"]);
   });
 
   test("refuses a Dockerfile tag that would escape the catalog string", () => {
@@ -136,14 +168,18 @@ describe("planArtifactCatalogUpdate", () => {
     ).toThrow(InvalidPayloadError);
   });
 
-  test("refuses a release line the catalog does not carry", () => {
-    expect(() =>
-      planArtifactCatalogUpdate({
-        dockerfile: "FROM supabase/postgres:16.1.1.1 AS pg\n",
-        catalog: fixture,
-        digestFor: digests(),
-      }),
-    ).toThrow(InvalidPayloadError);
+  test("skips a release line the catalog does not carry and still pins the rest", () => {
+    const plan = planArtifactCatalogUpdate({
+      dockerfile: `FROM supabase/postgres:16.1.1.1 AS pg
+FROM postgrest/postgrest:v16.3 AS postgrest
+`,
+      catalog: fixture,
+      digestFor: digests(),
+    });
+
+    expect(plan.updates.map((update) => update.service)).toEqual(["postgrest"]);
+    expect(plan.skipped.map((skip) => skip.alias)).toEqual(["pg"]);
+    expect(plan.source).toContain(`"17.6.1.168"`);
   });
 });
 

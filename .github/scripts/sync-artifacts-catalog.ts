@@ -7,7 +7,8 @@
  * Run: `bun .github/scripts/sync-artifacts-catalog.ts <dockerfile> <catalog>`
  */
 
-import { slimCatalogPin } from "../../apps/cli/src/shared/services/slim-images.ts";
+import { parseDockerfileServiceImages } from "../../apps/cli/src/shared/services/parse-dockerfile-service-images.ts";
+import { isOrioleImage, slimCatalogPin } from "../../apps/cli/src/shared/services/slim-images.ts";
 import {
   DIGEST_PATTERN,
   InvalidPayloadError,
@@ -20,24 +21,6 @@ export const CATALOG_PATH = "packages/stack/src/Artifacts.ts";
 const DOCKERFILE_PATH = "apps/cli/src/shared/services/Dockerfile";
 
 const SLIM_IMAGE_PREFIX = `${SOURCE_REGISTRY}/`;
-
-// Same FROM shape as `parseDockerfileServiceImages` in dockerfile-images.ts.
-const FROM_LINE_PATTERN = /^FROM\s+(.+):([^:\s]+)\s+AS\s+([^\s#]+)/i;
-
-function parseDockerfileServiceImages(
-  dockerfile: string,
-): ReadonlyArray<{ readonly alias: string; readonly image: string }> {
-  return dockerfile
-    .split("\n")
-    .map((line) => line.trim())
-    .flatMap((line) => {
-      const match = FROM_LINE_PATTERN.exec(line);
-      if (match === null) return [];
-      const [, repository, tag, alias] = match;
-      if (repository === undefined || tag === undefined || alias === undefined) return [];
-      return [{ alias, image: `${repository}:${tag}` }];
-    });
-}
 
 /** Leading numeric component, `v` stripped. Only postgres carries more than one line. */
 export function releaseLine(version: string): string {
@@ -53,15 +36,15 @@ export interface CatalogPinUpdate {
   readonly target: "default" | "additional";
 }
 
+export interface SkippedCatalogPin {
+  readonly alias: string;
+  readonly reason: string;
+}
+
 export interface CatalogPlan {
   readonly source: string;
   readonly updates: ReadonlyArray<CatalogPinUpdate>;
-}
-
-interface DockerfilePin {
-  readonly alias: string;
-  readonly service: string;
-  readonly version: string;
+  readonly skipped: ReadonlyArray<SkippedCatalogPin>;
 }
 
 /** `definition("<service>", "<version>", "<image>"`. */
@@ -90,11 +73,11 @@ function desiredImage(
   service: string,
   version: string,
   currentImage: string,
-  digest: string | undefined,
+  digest: string,
 ): string {
   const tagged = `${SLIM_IMAGE_PREFIX}${service}:${version}`;
   if (!imageHasDigest(currentImage)) return tagged;
-  if (digest === undefined || !DIGEST_PATTERN.test(digest)) {
+  if (!DIGEST_PATTERN.test(digest)) {
     throw new InvalidPayloadError(`missing slim digest for ${service}:${version}`);
   }
   return `${tagged}@${digest}`;
@@ -131,35 +114,14 @@ function selectEntry(source: string, service: string, version: string): Selected
   return { kind: "additional", version: sameLine.version, image: sameLine.image };
 }
 
-function dockerfilePins(dockerfile: string): ReadonlyArray<DockerfilePin> {
-  const pins: DockerfilePin[] = [];
-  for (const from of parseDockerfileServiceImages(dockerfile)) {
-    const pin = slimCatalogPin(from.alias, from.image);
-    if (pin === undefined) continue;
-    if (!VERSION_PATTERN.test(pin.version)) {
-      throw new InvalidPayloadError(`invalid version for ${from.alias}: '${pin.version}'`);
-    }
-    pins.push({ alias: from.alias, service: pin.service, version: pin.version });
-  }
-  return pins;
-}
-
-function rejectUnmodelled(
-  alias: string,
-  service: string,
-  version: string,
-  entry: SelectedEntry,
-): void {
+function skipReason(alias: string, version: string, entry: SelectedEntry): string | undefined {
   if (entry.kind === "unmodelled-service") {
-    throw new InvalidPayloadError(
-      `${CATALOG_PATH} has no ${service} entry for the ${alias} image.`,
-    );
+    return `${CATALOG_PATH} has no slim entry for ${alias}.`;
   }
   if (entry.kind === "unmodelled-release-line") {
-    throw new InvalidPayloadError(
-      `${service} ${version} is not on a release line ${CATALOG_PATH} carries (${entry.known.join(", ")}).`,
-    );
+    return `${alias} ${version} is not on a release line ${CATALOG_PATH} carries (${entry.known.join(", ")}).`;
   }
+  return undefined;
 }
 
 /** Slim tags whose catalog entry stores a digest, so the rewrite can resolve them first. */
@@ -168,9 +130,10 @@ export function catalogDigestPins(
   catalog: string,
 ): ReadonlyArray<{ readonly service: string; readonly version: string }> {
   const pins: Array<{ service: string; version: string }> = [];
-  for (const pin of dockerfilePins(dockerfile)) {
+  for (const from of parseDockerfileServiceImages(dockerfile)) {
+    const pin = slimCatalogPin(from.alias, from.image);
+    if (pin === undefined || !VERSION_PATTERN.test(pin.version)) continue;
     const entry = selectEntry(catalog, pin.service, pin.version);
-    rejectUnmodelled(pin.alias, pin.service, pin.version, entry);
     if (entry.kind !== "default" && entry.kind !== "additional") continue;
     if (imageHasDigest(entry.image)) pins.push({ service: pin.service, version: pin.version });
   }
@@ -196,7 +159,10 @@ function pinService(
   if (entry.kind !== "default" && entry.kind !== "additional") {
     throw new InvalidPayloadError(`${service} ${version} is not a catalog entry.`);
   }
-  const desired = desiredImage(service, version, entry.image, digest);
+  if (imageHasDigest(entry.image) && (digest === undefined || !DIGEST_PATTERN.test(digest))) {
+    throw new InvalidPayloadError(`missing slim digest for ${service}:${version}`);
+  }
+  const desired = desiredImage(service, version, entry.image, digest ?? "");
   if (entry.version === version && entry.image === desired) return { kind: "unchanged" };
 
   if (entry.kind === "default") {
@@ -224,25 +190,50 @@ function pinService(
 }
 
 /**
- * Rewrites `catalog` so every slim Dockerfile pin matches. Aliases with no slim
- * build are skipped. A modelled service on an unknown release line throws:
- * the docker.io tag and the catalog would otherwise diverge.
+ * Rewrites `catalog` from the service-image Dockerfile. OrioleDB tags and other
+ * images with no slim build are left unchanged. A pin that cannot be applied
+ * is reported in `skipped` and does not stop the remaining pins.
  */
 export function planArtifactCatalogUpdate(input: {
   readonly dockerfile: string;
   readonly catalog: string;
-  readonly digestFor: (service: string, version: string) => string;
+  readonly digestFor: (service: string, version: string) => string | undefined;
 }): CatalogPlan {
   let source = input.catalog;
   const updates: CatalogPinUpdate[] = [];
+  const skipped: SkippedCatalogPin[] = [];
 
-  for (const pin of dockerfilePins(input.dockerfile)) {
+  for (const from of parseDockerfileServiceImages(input.dockerfile)) {
+    if (isOrioleImage(from.image)) {
+      skipped.push({
+        alias: from.alias,
+        reason: `${from.alias} ${from.image} has no slim image.`,
+      });
+      continue;
+    }
+    const pin = slimCatalogPin(from.alias, from.image);
+    if (pin === undefined) continue;
+    if (!VERSION_PATTERN.test(pin.version)) {
+      throw new InvalidPayloadError(`invalid version for ${from.alias}: '${pin.version}'`);
+    }
+
     const entry = selectEntry(source, pin.service, pin.version);
-    rejectUnmodelled(pin.alias, pin.service, pin.version, entry);
+    const reason = skipReason(from.alias, pin.version, entry);
+    if (reason !== undefined) {
+      skipped.push({ alias: from.alias, reason });
+      continue;
+    }
     if (entry.kind !== "default" && entry.kind !== "additional") continue;
     const digest = imageHasDigest(entry.image)
       ? input.digestFor(pin.service, pin.version)
       : undefined;
+    if (imageHasDigest(entry.image) && digest === undefined) {
+      skipped.push({
+        alias: from.alias,
+        reason: `${pin.service}:${pin.version} has no published slim manifest.`,
+      });
+      continue;
+    }
     const result = pinService(source, pin.service, pin.version, digest);
     if (result.kind === "unchanged") continue;
     source = result.source;
@@ -254,10 +245,10 @@ export function planArtifactCatalogUpdate(input: {
     });
   }
 
-  return { source, updates };
+  return { source, updates, skipped };
 }
 
-async function publishedDigest(service: string, version: string): Promise<string> {
+async function publishedDigest(service: string, version: string): Promise<string | undefined> {
   const reference = `${SLIM_IMAGE_PREFIX}${service}:${version}`;
   const proc = Bun.spawn(["regctl", "manifest", "head", reference], {
     stdout: "pipe",
@@ -271,9 +262,10 @@ async function publishedDigest(service: string, version: string): Promise<string
   const live = stdout.trim();
   if (exit !== 0 || !DIGEST_PATTERN.test(live)) {
     const detail = stderr.trim();
-    throw new InvalidPayloadError(
-      `${reference} has no slim manifest digest${detail === "" ? "" : `: ${detail}`}`,
+    console.log(
+      `::warning ::${reference} has no slim manifest digest${detail === "" ? "" : `: ${detail}`}`,
     );
+    return undefined;
   }
   return live;
 }
@@ -285,21 +277,21 @@ async function main(argv: ReadonlyArray<string>): Promise<void> {
   const digests = new Map<string, string>();
   for (const pin of catalogDigestPins(dockerfile, catalog)) {
     const key = `${pin.service}:${pin.version}`;
-    if (!digests.has(key)) digests.set(key, await publishedDigest(pin.service, pin.version));
+    if (!digests.has(key)) {
+      const digest = await publishedDigest(pin.service, pin.version);
+      if (digest !== undefined) digests.set(key, digest);
+    }
   }
 
   const plan = planArtifactCatalogUpdate({
     dockerfile,
     catalog,
-    digestFor: (service, version) => {
-      const digest = digests.get(`${service}:${version}`);
-      if (digest === undefined) {
-        throw new InvalidPayloadError(`missing slim digest for ${service}:${version}`);
-      }
-      return digest;
-    },
+    digestFor: (service, version) => digests.get(`${service}:${version}`),
   });
   await Bun.write(catalogPath, plan.source);
+  for (const skip of plan.skipped) {
+    console.log(`::warning ::Left ${skip.alias} unchanged: ${skip.reason}`);
+  }
   if (plan.updates.length === 0) {
     console.log("Workload catalog already matches the Dockerfile.");
     return;

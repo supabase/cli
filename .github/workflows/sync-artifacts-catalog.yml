@@ -1,10 +1,11 @@
 name: Sync Artifacts catalog
 
-# Dependabot bumps apps/cli/src/shared/services/Dockerfile. This commits the
-# matching slim pins into packages/stack/src/Artifacts.ts on that same branch,
-# so the docker.io tag, the slim image, and the native archive stay on one
-# version. Native URLs are derived from service + version; a digest already
-# stored on the entry is replaced with the published slim manifest digest.
+# Dependabot bumps apps/cli/src/shared/services/Dockerfile, the service-image
+# manifest. This commits the matching slim pins into packages/stack/src/Artifacts.ts
+# on that same branch. OrioleDB tags and any pin with no published slim image
+# stay unchanged and do not block the other pins. Native URLs are derived from
+# service + version; a digest already stored on the entry is replaced with the
+# published slim manifest digest.
 #
 # The rewrite runs from the base revision. The pull request only supplies the
 # Dockerfile and catalog text, and the job runs for Dependabot so a pull
