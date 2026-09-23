@@ -49,6 +49,7 @@ import {
 } from "../runtime/NativeProcess.ts";
 import type { StackId } from "../identity/StackId.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
+import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 
 export const DatabaseConfig = Schema.Struct({
   version: Schema.String,
@@ -621,14 +622,13 @@ export const makeDatabase = (
           yield* fs
             .makeDirectory(dataPath, { recursive: true, mode: 0o700 })
             .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
-          const rootKeyPath =
-            config.rootKey === undefined ? undefined : path.join(instanceRoot, "pgsodium_root.key");
-          if (rootKeyPath !== undefined && config.rootKey !== undefined)
-            yield* fs
-              .writeFileString(rootKeyPath, Redacted.value(config.rootKey), {
-                mode: options.runtime === "native" ? 0o600 : 0o644,
-              })
-              .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
+          const rootKey = config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY);
+          const rootKeyPath = path.join(instanceRoot, "pgsodium_root.key");
+          yield* fs
+            .writeFileString(rootKeyPath, Redacted.value(rootKey), {
+              mode: options.runtime === "native" ? 0o600 : 0o644,
+            })
+            .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
           const settings = Object.entries(config.settings ?? {}).flatMap(([key, value]) => [
             "-c",
             `${key}=${String(value)}`,
@@ -653,7 +653,7 @@ export const makeDatabase = (
               config,
               dataPath,
               socketPath,
-              rootKeyPath ?? path.join(dataPath, "pgsodium_root.key"),
+              rootKeyPath,
               settings,
               context,
               String(options.stackId),
@@ -697,10 +697,7 @@ export const makeDatabase = (
               instanceId: options.instanceId,
               env: {
                 PGDATA: "/var/lib/postgresql/data",
-                PGSODIUM_KEY_FILE:
-                  rootKeyPath === undefined
-                    ? "/var/lib/postgresql/data/pgsodium_root.key"
-                    : "/etc/postgresql-custom/pgsodium_root.key",
+                PGSODIUM_KEY_FILE: "/etc/postgresql-custom/pgsodium_root.key",
                 POSTGRES_USER: "supabase_admin",
                 POSTGRES_DB: "postgres",
                 POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
@@ -708,15 +705,11 @@ export const makeDatabase = (
               args: ["-p", "5432", "-c", "listen_addresses=*", ...settings],
               mounts: [
                 { source: dataPath, target: "/var/lib/postgresql/data", readOnly: false },
-                ...(rootKeyPath === undefined
-                  ? []
-                  : [
-                      {
-                        source: rootKeyPath,
-                        target: "/etc/postgresql-custom/pgsodium_root.key",
-                        readOnly: true,
-                      },
-                    ]),
+                {
+                  source: rootKeyPath,
+                  target: "/etc/postgresql-custom/pgsodium_root.key",
+                  readOnly: true,
+                },
               ],
               ports: [5432],
             })

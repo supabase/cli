@@ -45,6 +45,7 @@ import {
   StackError,
   type DatabaseInstance,
   type ServiceCreation,
+  type ServiceCreationInput,
   type Stack,
 } from "@supabase/stack/effect";
 
@@ -1647,7 +1648,7 @@ describe("db start stack backend", () => {
           members: members.map(({ id }) => ({ id, activation: "eager" as const })),
           dependencies: [],
         })),
-        supabase: (creations: ReadonlyArray<ServiceCreation>) =>
+        supabase: (creations: ReadonlyArray<ServiceCreationInput>) =>
           Effect.sync(() => {
             members = creations.map(() => database);
             registered = [database];
