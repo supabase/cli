@@ -382,6 +382,7 @@ NotLoggedInError
 NotebookFileError
 NotebookIdError
 NotebookNameConflictError
+NotebookNotFoundError
 NotebooksEnvNotSupportedError
 NotebooksNetworkError
 NotebooksPaginationError
