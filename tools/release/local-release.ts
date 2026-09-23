@@ -16,7 +16,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import { oxfmtExternalArgs } from "../../apps/cli/scripts/bundle-externals.ts";
+import { OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "../../apps/cli/scripts/bundle-externals.ts";
+import { compileOptions } from "../../apps/cli/scripts/compile-options.ts";
 
 const PORT = 4873;
 const REGISTRY = `http://localhost:${PORT}`;
@@ -191,7 +192,19 @@ async function main() {
     const libc = libcForBunTarget(platform.bunTarget);
 
     console.log("[1/3] Compiling CLI binary...");
-    await $`bun build ${entrypoint} --compile --minify --bytecode --bytecode-depth=2 --format=esm --target=${platform.bunTarget} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${bunBinary} ${oxfmtExternalArgs}`;
+    const buildResult = await Bun.build({
+      entrypoints: [entrypoint],
+      compile: { target: platform.bunTarget, outfile: bunBinary },
+      ...compileOptions,
+      external: [...OXFMT_OPTIONAL_PLUGIN_EXTERNALS],
+      define: { SUPABASE_LIBC: JSON.stringify(libc) },
+    });
+    for (const log of buildResult.logs) {
+      console.warn(log);
+    }
+    if (!buildResult.success) {
+      throw new Error("failed to compile the CLI binary");
+    }
 
     {
       const goBinary = path.join(tmpPlatformBinDir, `supabase-go${platform.ext}`);

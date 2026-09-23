@@ -7,7 +7,8 @@ import { parseArgs } from "node:util";
 import { Effect } from "effect";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
 import { bundleStackFunctionsServeMainTemplate } from "../src/command-internal/stack-functions-bundler.ts";
-import { compiledBytecode, OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "./bundle-externals.ts";
+import { OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "./bundle-externals.ts";
+import { compileOptions } from "./compile-options.ts";
 import { darwinBinaries, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
 const MUSL_TARGETS = [
@@ -121,7 +122,7 @@ function libcForBunTarget(target: string): "glibc" | "musl" | "" {
 async function runBunBuild(config: Bun.BuildConfig) {
   const result = await Bun.build({
     ...config,
-    ...compiledBytecode,
+    ...compileOptions,
     external: [...(config.external ?? []), ...OXFMT_OPTIONAL_PLUGIN_EXTERNALS],
   });
   for (const log of result.logs) {
@@ -140,7 +141,6 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
   await runBunBuild({
     entrypoints: [entrypoint],
     compile: { target: target.bunTarget, outfile },
-    minify: true,
     define: {
       ...buildDefines,
       SUPABASE_CLI_VERSION: JSON.stringify(version),
@@ -279,7 +279,6 @@ async function buildMuslBinaries() {
       await runBunBuild({
         entrypoints: [entrypoint],
         compile: { target: target.bunTarget, outfile },
-        minify: true,
         define: {
           ...buildDefines,
           SUPABASE_CLI_VERSION: JSON.stringify(version),
