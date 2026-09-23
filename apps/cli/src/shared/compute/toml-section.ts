@@ -72,8 +72,6 @@ export type TomlSectionValue = string | number | ReadonlyArray<string>;
  * before it is written, and a single-line array is the form that check is known to survive.
  */
 function renderPair(key: string, value: TomlSectionValue): string {
-  // Narrowed by what each branch is, not by what it isn't: `Array.isArray` does not narrow a
-  // `ReadonlyArray` out of the union, so testing for the array first left a cast behind.
   const rendered =
     typeof value === "number"
       ? String(value)

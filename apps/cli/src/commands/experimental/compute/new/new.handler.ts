@@ -274,9 +274,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
     const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
     const instances = recordedInstances(flags.instances);
-    // The chosen runtime's own defaults, written down rather than applied invisibly at push
-    // time: the list is the runtime's opinion about its build, and a `config.toml` the user
-    // can read and edit is the only place that opinion can be argued with.
+    // Recorded in `config.toml` rather than applied at push time; see ./SIDE_EFFECTS.md.
     const exclude = COMPUTE_RUNTIME_EXCLUSIONS[runtime];
 
     // Validated before anything is written: this is the directory the starter files
@@ -398,8 +396,6 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         // `declared`, the way `compute status` labels the same number: nothing
         // is running yet, so a bare count would read as a live tally.
         ["Instances", `${instances ?? DEFAULT_COMPUTE_INSTANCES} declared`],
-        // Shown because the scaffold decided it: a compute that silently leaves files out of
-        // its deploy should say so where the rest of its dials are reported.
         ["Excluded", exclude.join(", ")],
       ]),
     );
