@@ -144,6 +144,34 @@ it.live.skipIf(process.platform === "win32")(
     ),
 );
 
+it.live.skipIf(process.platform === "win32")(
+  "removes an empty stack root after destroy removed state before sentinel shutdown",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "sentinel-destroy-root-" });
+        const stackRoot = path.join(root, "stack");
+        yield* fs.makeDirectory(stackRoot);
+        const sentinel = yield* ContainerSentinel.start({
+          directory: stackRoot,
+          stackId: "destroy-root",
+          engine: "/usr/bin/true",
+        });
+        if (sentinel === undefined) return yield* Effect.die("Unix sentinel was not started");
+
+        yield* fs.makeDirectory(path.join(stackRoot, "data"));
+        yield* fs.remove(path.join(stackRoot, "state.json"), { force: true });
+        yield* fs.remove(path.join(stackRoot, "data"), { recursive: true, force: true });
+        expect(yield* fs.exists(stackRoot)).toBe(true);
+
+        yield* sentinel.close;
+        expect(yield* fs.exists(stackRoot)).toBe(false);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+);
+
 const waitForFile = (directory: string, name: string) =>
   Effect.callback<void, never>((resume) => {
     const finish = () => {

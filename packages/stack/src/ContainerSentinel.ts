@@ -16,6 +16,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessHandle } from "effect/unstable/process/ChildProcessSpawner";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FIFO descriptors must be held by the host process itself.
 import { closeSync, constants, openSync, readSync, writeSync } from "node:fs";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Only empty sentinel and stack directories may be removed after host shutdown.
+import { rmdir } from "node:fs/promises";
 
 export const Owner = Schema.Struct({
   generation: Schema.String,
@@ -284,11 +286,43 @@ export const start = Effect.fn("ContainerSentinel.start")(function* (options: {
   }
   const fifo = startup.value;
   let closed = false;
+  const cleanupDirectories = Effect.gen(function* () {
+    for (const directoryPath of [directory, options.directory]) {
+      yield* Effect.tryPromise({
+        try: () => rmdir(directoryPath),
+        catch: (cause) =>
+          new ContainerSentinelError({
+            operation: "directory-cleanup",
+            message: String(cause),
+            cause,
+          }),
+      }).pipe(
+        Effect.catch((cause) => {
+          const nested = cause.cause;
+          const code =
+            typeof nested === "object" && nested !== null && "code" in nested
+              ? nested.code
+              : undefined;
+          return code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST"
+            ? Effect.void
+            : Effect.fail(cause);
+        }),
+      );
+    }
+  });
+  const awaitAndClean = () =>
+    awaitSentinel(fifo.child).pipe(
+      Effect.timeout("30 seconds"),
+      Effect.matchCauseEffect({
+        onSuccess: () => cleanupDirectories,
+        onFailure: (cause) => cleanupDirectories.pipe(Effect.andThen(Effect.failCause(cause))),
+      }),
+    );
   const close = Effect.suspend(() => {
     if (!closed) {
       closed = true;
       return closeFifos(fifo).pipe(
-        Effect.andThen(awaitSentinel(fifo.child).pipe(Effect.timeout("30 seconds"))),
+        Effect.andThen(awaitAndClean()),
         Effect.mapError((cause) =>
           cause instanceof ContainerSentinelError
             ? cause
@@ -296,8 +330,7 @@ export const start = Effect.fn("ContainerSentinel.start")(function* (options: {
         ),
       );
     }
-    return awaitSentinel(fifo.child).pipe(
-      Effect.timeout("30 seconds"),
+    return awaitAndClean().pipe(
       Effect.mapError((cause) =>
         cause instanceof ContainerSentinelError
           ? cause
