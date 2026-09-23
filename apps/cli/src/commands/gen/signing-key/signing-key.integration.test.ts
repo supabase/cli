@@ -156,6 +156,56 @@ const readSigningKeys = Effect.fnUntraced(function* () {
   return yield* readSigningKeysFile(path.join(tempRoot.current, "supabase", "signing_keys.json"));
 });
 
+const readSigningKeysText = Effect.fnUntraced(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fs.readFileString(path.join(tempRoot.current, "supabase", "signing_keys.json"));
+});
+
+function expectedEs256FileEntry(key: Readonly<Record<string, unknown>> | undefined): string {
+  return [
+    "  {",
+    '    "kty": "EC",',
+    `    "kid": "${String(key?.["kid"])}",`,
+    '    "use": "sig",',
+    '    "key_ops": [',
+    '      "sign",',
+    '      "verify"',
+    "    ],",
+    '    "alg": "ES256",',
+    '    "ext": true,',
+    `    "d": "${String(key?.["d"])}",`,
+    '    "crv": "P-256",',
+    `    "x": "${String(key?.["x"])}",`,
+    `    "y": "${String(key?.["y"])}"`,
+    "  }",
+  ].join("\n");
+}
+
+function expectedRs256FileEntry(key: Readonly<Record<string, unknown>> | undefined): string {
+  return [
+    "  {",
+    '    "kty": "RSA",',
+    `    "kid": "${String(key?.["kid"])}",`,
+    '    "use": "sig",',
+    '    "key_ops": [',
+    '      "sign",',
+    '      "verify"',
+    "    ],",
+    '    "alg": "RS256",',
+    '    "ext": true,',
+    `    "n": "${String(key?.["n"])}",`,
+    `    "e": "${String(key?.["e"])}",`,
+    `    "d": "${String(key?.["d"])}",`,
+    `    "p": "${String(key?.["p"])}",`,
+    `    "q": "${String(key?.["q"])}",`,
+    `    "dp": "${String(key?.["dp"])}",`,
+    `    "dq": "${String(key?.["dq"])}",`,
+    `    "qi": "${String(key?.["qi"])}"`,
+    "  }",
+  ].join("\n");
+}
+
 const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([
     Command.make("gen").pipe(Command.withSubcommands([genSigningKeyCommand])),
@@ -192,6 +242,18 @@ describe("gen signing-key integration", () => {
       for (const field of ["n", "e", "d", "p", "q", "dp", "dq", "qi"]) {
         expect(typeof parsed[field]).toBe("string");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("prints the generated key to stdout as compact JSON in a fixed field order", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* genSigningKey({ algorithm: "ES256", append: false });
+
+      const parsed = yield* Schema.decodeEffect(storedSigningKeyJson)(out.stdoutText);
+      expect(out.stdoutText).toBe(
+        `{"kty":"EC","kid":"${String(parsed["kid"])}","use":"sig","key_ops":["sign","verify"],"alg":"ES256","ext":true,"d":"${String(parsed["d"])}","crv":"P-256","x":"${String(parsed["x"])}","y":"${String(parsed["y"])}"}\n`,
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -341,6 +403,55 @@ describe("gen signing-key integration", () => {
       expect(parsed).toHaveLength(2);
       expect(parsed[0]?.x).toBe("existing-x");
       expect(parsed[1]?.alg).toBe("ES256");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("writes the overwritten signing keys file as two-space indented JSON", () => {
+    const { layer, out } = setup({ yes: true });
+    return Effect.gen(function* () {
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("[]\n");
+
+      yield* genSigningKey({ algorithm: "RS256", append: false });
+
+      const parsed = yield* readSigningKeys();
+      expect(yield* readSigningKeysText()).toBe(
+        `${["[", expectedRs256FileEntry(parsed[0]), "]"].join("\n")}\n`,
+      );
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("keeps non-standard fields of existing keys when appending", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys(
+        '[{"kty":"EC","kid":"existing-key","x":"existing-x","x_custom":{"nested":[1,"two",null,true]}}]\n',
+      );
+
+      yield* genSigningKey({ algorithm: "ES256", append: true });
+
+      const parsed = yield* readSigningKeys();
+      const seededEntry = [
+        "  {",
+        '    "kty": "EC",',
+        '    "kid": "existing-key",',
+        '    "x": "existing-x",',
+        '    "x_custom": {',
+        '      "nested": [',
+        "        1,",
+        '        "two",',
+        "        null,",
+        "        true",
+        "      ]",
+        "    }",
+        "  },",
+      ].join("\n");
+      expect(yield* readSigningKeysText()).toBe(
+        `${["[", seededEntry, expectedEs256FileEntry(parsed[1]), "]"].join("\n")}\n`,
+      );
+      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
