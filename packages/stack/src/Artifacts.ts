@@ -111,7 +111,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   studio: definition(
     "studio",
     "2026.09.04-sha-5a67366",
-    "ghcr.io/supabase/cli/studio:2026.09.04-sha-5a67366@sha256:9823a31668028f1846e87331bc21598d9cd74bcaa1466c72dab58c33c9c82720",
+    "ghcr.io/supabase/cli/studio:2026.09.04-sha-5a67366@sha256:89f6ca78bd517be06003089390cae1a1ae527f0e688b8f8b3e16b1c65daffa72",
     "bin/studio",
   ),
   pgmeta: definition(
