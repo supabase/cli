@@ -327,16 +327,20 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
       onConfigParseError("failed to resolve environment variable: SUPABASE_ENV"),
     ),
   );
+  const supabaseEnvValue = Option.getOrElse(
+    Option.filter(supabaseEnv, (value) => value.length > 0),
+    () => "development",
+  );
   const projectEnv = yield* loadCliProjectEnvironment({
     cwd,
     baseEnv: process.env,
     search: false,
-    skipEnvLocal: Option.exists(supabaseEnv, (value) => value === "test"),
+    skipEnvLocal: supabaseEnvValue === "test",
   }).pipe(
     Effect.mapError((cause) => onConfigParseError(`failed to read config: ${String(cause)}`)),
   );
   const projectEnvValues = yield* Effect.try({
-    try: () => resolveProjectEnvironmentValues(projectEnv, cwd),
+    try: () => resolveProjectEnvironmentValues(projectEnv, cwd, supabaseEnvValue),
     catch: (cause) => onConfigParseError(`failed to read config: ${String(cause)}`),
   });
   const loaded = yield* loadCliConfig(cwd, {
