@@ -157,6 +157,13 @@ const platformText = (platform: { readonly os: string; readonly arch: string }):
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : typeof cause === "string" ? cause : String(cause);
 
+/**
+ * Public S3 copy of the release assets for hosts that block GitHub release downloads, such as
+ * agent sandboxes that allow `*.amazonaws.com`.
+ * @see ../../../infra/cli-artifacts/README.md
+ */
+const SLIM_ARTIFACTS_BUCKET_URL = "https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com";
+
 const artifactFor = (
   service: ServiceKind,
   resolved: ArtifactResolution,
@@ -165,7 +172,8 @@ const artifactFor = (
   const sourceService = definitions[service].sourceService;
   const releaseTag = `${sourceService}-${resolved.version}`;
   const assetName = `${releaseTag}-${target}`;
-  const base = `https://github.com/supabase/slim-services/releases/download/${releaseTag}`;
+  const release = `https://github.com/supabase/slim-services/releases/download/${releaseTag}`;
+  const bucket = `${SLIM_ARTIFACTS_BUCKET_URL}/${sourceService}/${resolved.version}`;
   return {
     provider: "supabase/slim-services",
     service: sourceService,
@@ -174,9 +182,18 @@ const artifactFor = (
     target,
     archive: "tar.zst",
     assetName,
-    downloadUrl: `${base}/${assetName}.tar.zst`,
-    manifestUrl: `${base}/${assetName}.manifest.json`,
-    checksumUrl: `${base}/SHA256SUMS`,
+    mirrors: [
+      {
+        downloadUrl: `${release}/${assetName}.tar.zst`,
+        manifestUrl: `${release}/${assetName}.manifest.json`,
+        checksumUrl: `${release}/SHA256SUMS`,
+      },
+      {
+        downloadUrl: `${bucket}/${assetName}.tar.zst`,
+        manifestUrl: `${bucket}/${assetName}.manifest.json`,
+        checksumUrl: `${bucket}/${assetName}.SHA256SUMS`,
+      },
+    ],
     requiredRuntimePaths: resolved.requiredRuntimePaths,
     executablePath: resolved.executablePath,
   };
