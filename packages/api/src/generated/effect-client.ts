@@ -2397,6 +2397,20 @@ export const versionedEffectOperations = {
           input,
         );
       }),
+    createNotebook: (
+      input: typeof operationDefinitions.v2CreateNotebook.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2CreateNotebook.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2CreateNotebook">(
+          operationDefinitions.v2CreateNotebook,
+          input,
+        );
+      }),
     createOrganizationInvitations: (
       input: typeof operationDefinitions.v2CreateOrganizationInvitations.inputSchema.Type,
     ): Effect.Effect<
@@ -2450,6 +2464,20 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2DeleteLogDrain">(
           operationDefinitions.v2DeleteLogDrain,
+          input,
+        );
+      }),
+    deleteNotebook: (
+      input: typeof operationDefinitions.v2DeleteNotebook.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2DeleteNotebook.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2DeleteNotebook">(
+          operationDefinitions.v2DeleteNotebook,
           input,
         );
       }),
@@ -2523,6 +2551,17 @@ export const versionedEffectOperations = {
           input,
         );
       }),
+    getNotebook: (
+      input: typeof operationDefinitions.v2GetNotebook.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2GetNotebook.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2GetNotebook">(operationDefinitions.v2GetNotebook, input);
+      }),
     getProjectConfig: (
       input: typeof operationDefinitions.v2GetProjectConfig.inputSchema.Type,
     ): Effect.Effect<
@@ -2562,6 +2601,20 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2ListLogDrains">(
           operationDefinitions.v2ListLogDrains,
+          input,
+        );
+      }),
+    listNotebooks: (
+      input: typeof operationDefinitions.v2ListNotebooks.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListNotebooks.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListNotebooks">(
+          operationDefinitions.v2ListNotebooks,
           input,
         );
       }),
@@ -2688,6 +2741,20 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2UpdateLogDrain">(
           operationDefinitions.v2UpdateLogDrain,
+          input,
+        );
+      }),
+    updateNotebook: (
+      input: typeof operationDefinitions.v2UpdateNotebook.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2UpdateNotebook.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2UpdateNotebook">(
+          operationDefinitions.v2UpdateNotebook,
           input,
         );
       }),
@@ -3399,6 +3466,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v2CreateLogDrain.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v2.createLogDrain(decoded)));
+    case "v2CreateNotebook":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2CreateNotebook.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.createNotebook(decoded)));
     case "v2CreateOrganizationInvitations":
       return Schema.decodeUnknownEffect(
         operationDefinitions.v2CreateOrganizationInvitations.inputSchema,
@@ -3415,6 +3486,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v2DeleteLogDrain.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v2.deleteLogDrain(decoded)));
+    case "v2DeleteNotebook":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2DeleteNotebook.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.deleteNotebook(decoded)));
     case "v2DeleteOrganizationInvitations":
       return Schema.decodeUnknownEffect(
         operationDefinitions.v2DeleteOrganizationInvitations.inputSchema,
@@ -3437,6 +3512,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v2GetAComputeInstance.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v2.getAComputeInstance(decoded)));
+    case "v2GetNotebook":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2GetNotebook.inputSchema)(input).pipe(
+        Effect.flatMap((decoded) => api.v2.getNotebook(decoded)),
+      );
     case "v2GetProjectConfig":
       return Schema.decodeUnknownEffect(operationDefinitions.v2GetProjectConfig.inputSchema)(
         input,
@@ -3449,6 +3528,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v2ListLogDrains.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v2.listLogDrains(decoded)));
+    case "v2ListNotebooks":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2ListNotebooks.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.listNotebooks(decoded)));
     case "v2ListOrganizationGithubConnections":
       return Schema.decodeUnknownEffect(
         operationDefinitions.v2ListOrganizationGithubConnections.inputSchema,
@@ -3485,5 +3568,9 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v2UpdateLogDrain.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v2.updateLogDrain(decoded)));
+    case "v2UpdateNotebook":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2UpdateNotebook.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.updateNotebook(decoded)));
   }
 }

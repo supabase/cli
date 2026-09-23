@@ -63,7 +63,9 @@ On Linux, native Functions project files must be outside `/tmp`: Edge Runtime us
 
 The stack owns database, Functions bootstrap, and tool-job directories below its data directory. Storage uploads remain at the caller-supplied Storage `filePath` and are preserved when the stack is destroyed; the caller owns that directory.
 
-Without an explicit database root key, PostgreSQL generates one in its data directory. The key survives stop/reopen and is removed with the database data on reset or destroy.
+Omitted database `jwtSecret` and `rootKey` inputs use the shared local-development values exported
+as `DEFAULT_LOCAL_JWT_SECRET` and `DEFAULT_POSTGRES_ROOT_KEY`. Explicit values override these defaults.
+The effective root key is supplied through a stack-owned file for both native and container runtimes.
 
 ## Composition and operation scope
 

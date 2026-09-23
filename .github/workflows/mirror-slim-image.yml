@@ -11,11 +11,12 @@ name: Mirror Slim Image
 # `.github/scripts/mirror-slim-image.ts` rather than trusted from the payload, and the source
 # must resolve to the claimed digest before anything is copied.
 #
-# `upload-natives-s3` then copies the same native triplets (fetched from GHCR by digest and
+# `upload-natives-s3` copies the same native triplets (fetched from GHCR by digest and
 # re-verified) to the public-read S3 bucket in the cli-artifacts-prod account, for sandboxes that
-# allow `*.amazonaws.com` but block registry blob CDNs. It runs only after the image mirror and its
-# digest checks succeeded, is best-effort like the native ECR copy, and uses the PutObject-only
-# `slim-artifacts-publisher` role (infra/cli-artifacts/README.md).
+# allow `*.amazonaws.com` but block registry blob CDNs. It runs in parallel with the ECR copy so an
+# ECR Public outage or missing permission never holds back the S3 mirror, is best-effort like the
+# native ECR copy, and uses the PutObject-only `slim-artifacts-publisher` role
+# (infra/cli-artifacts/README.md).
 #
 # Replay locally: `bun .github/scripts/mirror-slim-image.ts --help`
 # Full contract: docs/design/ecr-mirror-dispatch.md in supabase/slim-services.
@@ -145,12 +146,10 @@ jobs:
         run: bun .github/scripts/mirror-slim-image.ts copy-natives
 
   upload-natives-s3:
-    needs: mirror
     # Natives only ride in repository_dispatch payloads. Nothing reaches the public bucket from a
-    # dispatch whose image digest check failed; a release whose mirror failed for other reasons is
-    # re-dispatched by the sender's backfill. The job is skipped until the cli-artifacts-prod
-    # account exists and its ID is set as a repository variable.
-    if: ${{ success() && github.event_name == 'repository_dispatch' && vars.CLI_ARTIFACTS_AWS_ACCOUNT_ID != '' }}
+    # dispatch whose source image digest check fails. The job is skipped until the
+    # cli-artifacts-prod account exists and its ID is set as a repository variable.
+    if: ${{ github.event_name == 'repository_dispatch' && vars.CLI_ARTIFACTS_AWS_ACCOUNT_ID != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
@@ -195,6 +194,12 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify source digest
+        env:
+          REFERENCE: ${{ steps.validate.outputs.source }}
+          DIGEST: ${{ steps.validate.outputs.digest }}
+        run: bun .github/scripts/mirror-slim-image.ts verify-digest
 
       - name: Fetch and verify native artifacts
         id: fetch
