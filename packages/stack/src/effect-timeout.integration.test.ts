@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, FileSystem, Path, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { watch } from "node:fs"; // oxlint-disable-line effecttsgo/node-builtin-import -- synchronous watcher subscription must precede child spawn.
+import { stripVTControlCharacters } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const config = fileURLToPath(new URL("../tests/effect-timeout.vitest.config.ts", import.meta.url));
@@ -167,9 +168,10 @@ it.live("retains the formatted diagnostic for a single defect", () =>
       );
       const code = yield* child.exitCode;
       const output = `${yield* Fiber.join(stdout)}\n${yield* Fiber.join(stderr)}`;
+      const diagnostic = stripVTControlCharacters(output);
       expect(Number(code), output).not.toBe(0);
-      expect(output).toContain("single-defect");
-      expect(output).toMatch(/^\s*Error: single-defect$/m);
+      expect(diagnostic).toContain("single-defect");
+      expect(diagnostic).toMatch(/^\s*Error: single-defect$/m);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
