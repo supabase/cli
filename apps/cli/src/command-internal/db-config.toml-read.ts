@@ -618,6 +618,15 @@ export function envRefName(value: string): string | undefined {
 }
 
 /**
+ * The substitution rule for an `env(VAR)` reference: the resolved value wins only when it
+ * is set and non-empty; otherwise the `env(VAR)` literal is preserved unchanged. Shared
+ * with the inspect report reader, which resolves the name through Effect's `Config`.
+ */
+export function envRefValue(literal: string, resolved: string | undefined): string {
+  return resolved !== undefined && resolved.length > 0 ? resolved : literal;
+}
+
+/**
  * Expand `env(VAR)` config form: a string matching `^env\((.*)\)$` resolves to
  * the named environment variable, but only when that variable is set and
  * non-empty; otherwise the literal value is preserved unchanged. `lookup`
@@ -627,8 +636,7 @@ export function envRefName(value: string): string | undefined {
 function expandEnv(value: string, lookup: (name: string) => string | undefined): string {
   const name = envRefName(value);
   if (name === undefined) return value;
-  const env = lookup(name);
-  return env !== undefined && env.length > 0 ? env : value;
+  return envRefValue(value, lookup(name));
 }
 
 /** `[db]` ports decode into `uint16`. */

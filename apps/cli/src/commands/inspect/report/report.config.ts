@@ -4,6 +4,7 @@ import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts
 import {
   configEnvOption,
   envRefName,
+  envRefValue,
   loadProjectEnv,
 } from "../../../command-internal/db-config.toml-read.ts";
 import type { InspectRule } from "./report.rules.ts";
@@ -95,8 +96,10 @@ export const readInspectRules = Effect.fnUntraced(function* (
     const name = envRefName(value);
     if (name === undefined) return value;
     const fromEnv = yield* configEnvOption(name);
-    const resolved = Option.getOrElse(fromEnv, () => projectEnv[name]);
-    return resolved !== undefined && resolved.length > 0 ? resolved : value;
+    return envRefValue(
+      value,
+      Option.getOrElse(fromEnv, () => projectEnv[name]),
+    );
   });
 
   const rules: Array<InspectRule> = [];
