@@ -72,6 +72,108 @@ const docker = Effect.fn("DockerStorageTest.docker")((args: ReadonlyArray<string
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 describe("Docker database storage", { timeout: 120_000 }, () => {
+  it.live("round-trips PostgreSQL 15 data with its catalog image", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const helperImage = yield* postgresImage("15");
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-pg15-" });
+        const storageRoot = path.join(root, "state", "stack", "data");
+        const cacheRoot = path.join(root, "cache");
+        const sourceRoot = path.join(storageRoot, "source");
+        const targetRoot = path.join(storageRoot, "target");
+        yield* fs.makeDirectory(sourceRoot, { recursive: true });
+        yield* fs.makeDirectory(targetRoot, { recursive: true });
+        yield* fs.makeDirectory(cacheRoot, { recursive: true });
+        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const stackId = `storage-pg15-${yield* crypto.randomUUIDv4}`;
+        const makeStorage = (instanceId: string, instanceRoot: string) =>
+          makeDockerDatabaseStorage({
+            runtime: "docker",
+            stackId,
+            instanceId,
+            instanceRoot,
+            root: storageRoot,
+            cacheRoot,
+            fs,
+            path,
+            crypto,
+            container,
+            spawner,
+          });
+        const source = yield* makeStorage("source", sourceRoot);
+        const target = yield* makeStorage("target", targetRoot);
+        const ownerScope = yield* Scope.Scope;
+        yield* Scope.addFinalizer(
+          ownerScope,
+          Effect.gen(function* () {
+            yield* source.destroyData("15").pipe(Effect.ignore);
+            yield* target.destroyData("15").pipe(Effect.ignore);
+            const marker = yield* fs
+              .readFileString(path.join(sourceRoot, ".supabase-database-storage.json"))
+              .pipe(Effect.option);
+            if (Option.isSome(marker)) {
+              const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+                marker.value,
+              ).pipe(Effect.option);
+              if (Option.isSome(parsed) && parsed.value.volume !== undefined)
+                yield* docker(["volume", "rm", parsed.value.volume]).pipe(Effect.ignore);
+            }
+          }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.ignore,
+          ),
+        );
+
+        yield* source.prepare("15");
+        const sourceMarker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+          yield* fs.readFileString(path.join(sourceRoot, ".supabase-database-storage.json")),
+        );
+        if (sourceMarker.backend !== "docker" || sourceMarker.volume === undefined)
+          return yield* new DockerTestError({ message: "Docker test selected host fallback" });
+        yield* docker([
+          "run",
+          "--rm",
+          "--mount",
+          `type=volume,src=${sourceMarker.volume},dst=/store`,
+          helperImage,
+          "/bin/sh",
+          "-c",
+          `set -eu; printf 15 > ${quote(`/store/${sourceMarker.namespace}/data/PG_VERSION`)}; printf pg15-source > ${quote(`/store/${sourceMarker.namespace}/data/fixture`)}`,
+        ]);
+        yield* source.markInitialized("15");
+        yield* fs.writeFileString(
+          path.join(sourceRoot, ".supabase-database-ready.json"),
+          '{"version":"15","runtime":"docker","profile":"supabase"}',
+        );
+        yield* source.saveSnapshot("15", "restore-me");
+
+        yield* target.prepare("15");
+        expect(yield* target.restoreSnapshot("15", "restore-me")).toBe(true);
+        const targetMarker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+          yield* fs.readFileString(path.join(targetRoot, ".supabase-database-storage.json")),
+        );
+        expect(targetMarker.volume).toBe(sourceMarker.volume);
+        yield* docker([
+          "run",
+          "--rm",
+          "--mount",
+          `type=volume,src=${sourceMarker.volume},dst=/store,volume-subpath=${targetMarker.namespace}/data`,
+          helperImage,
+          "/bin/sh",
+          "-c",
+          'test "$(cat /store/PG_VERSION)" = 15 && test "$(cat /store/fixture)" = pg15-source',
+        ]);
+        yield* target.destroyData("15");
+        yield* source.destroyData("15");
+        yield* docker(["volume", "rm", sourceMarker.volume]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("round-trips stopped data and protects managed namespaces", () =>
     Effect.scoped(
       Effect.gen(function* () {
