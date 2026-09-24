@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Option, Path } from "effect";
+import { postgresVersion, resolveArtifact } from "@supabase/stack/internal/postgres-artifact";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import {
@@ -12,6 +13,8 @@ import { resolveDbImage } from "../../command-internal/db-image.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import { readServiceVersionOverrides } from "../../command-internal/service-version-overrides.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
+import { currentStackBackend } from "../../command-internal/stack-backend.ts";
+import { loadValidatedStackConfig } from "../../command-internal/stack-config.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { encodeGoJson } from "../../command-internal/go-output.encoders.ts";
 import {
@@ -57,6 +60,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
   const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const stack = (yield* currentStackBackend).kind === "stack";
 
   const projectRefPath = path.join(cliSettings.workdir, "supabase", ".temp", "project-ref");
   const linkedProjectRef = yield* Effect.gen(function* () {
@@ -110,46 +114,9 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
       yield* output.raw(`${INVALID_PROJECT_REF_MESSAGE}\n`, "stderr");
     }
 
-    const tomlValues = yield* readDbToml(
-      fs,
-      path,
-      cliSettings.workdir,
-      Option.getOrUndefined(linkedProjectRef),
-    ).pipe(
-      Effect.catch((error) =>
-        output.raw(`${formatConfigLoadError(error)}\n`, "stderr").pipe(Effect.as(null)),
-      ),
-    );
-    const serviceVersions =
-      tomlValues === null
-        ? {}
-        : yield* readServiceVersionOverrides(
-            fs,
-            path,
-            cliSettings.workdir,
-            tomlValues.majorVersion,
-          );
-    const postgresImage =
-      tomlValues === null
-        ? undefined
-        : (yield* resolveDbImage(
-            fs,
-            path,
-            cliSettings.workdir,
-            tomlValues.majorVersion,
-            Option.getOrUndefined(tomlValues.orioledbVersion),
-          )).image;
-    const edgeRuntimeImage =
-      tomlValues === null
-        ? undefined
-        : yield* resolveEdgeRuntimeImage(fs, path, cliSettings.workdir, tomlValues.denoVersion);
-    const imageOverrides: LocalServiceImageOverrides = {};
-    if (postgresImage !== undefined) {
-      imageOverrides.postgres = postgresImage;
-    }
-    if (edgeRuntimeImage !== undefined) {
-      imageOverrides["edge-runtime"] = edgeRuntimeImage;
-    }
+    const { imageOverrides, serviceVersions } = stack
+      ? { imageOverrides: yield* stackImageOverrides(cliSettings.workdir), serviceVersions: {} }
+      : yield* legacyLocalImages(cliSettings.workdir, Option.getOrUndefined(linkedProjectRef));
     const localImageOptions = {
       imageOverrides,
       normalizeVersionTags: false,
@@ -169,7 +136,12 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
       rows = mergeRemoteServiceVersions(remote, localImageOptions);
     }
 
-    const warning = renderServicesWarning(rows);
+    const warning = renderServicesWarning(
+      rows,
+      stack
+        ? "The experimental stack runs its pinned service versions; supabase link does not change them."
+        : undefined,
+    );
     if (warning !== undefined) {
       yield* output.raw(formatServicesWarning(warning, output.format === "text"), "stderr");
     }
@@ -207,6 +179,70 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
 
     yield* output.raw(renderServicesTable(rows));
   }).pipe(Effect.ensuring(cacheLinkedProject), Effect.ensuring(telemetryState.flush));
+});
+
+const legacyLocalImages = Effect.fnUntraced(function* (
+  workdir: string,
+  linkedProjectRef: string | undefined,
+) {
+  const output = yield* Output;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tomlValues = yield* readDbToml(fs, path, workdir, linkedProjectRef).pipe(
+    Effect.catch((error) =>
+      output.raw(`${formatConfigLoadError(error)}\n`, "stderr").pipe(Effect.as(null)),
+    ),
+  );
+  const serviceVersions =
+    tomlValues === null
+      ? {}
+      : yield* readServiceVersionOverrides(fs, path, workdir, tomlValues.majorVersion);
+  const postgresImage =
+    tomlValues === null
+      ? undefined
+      : (yield* resolveDbImage(
+          fs,
+          path,
+          workdir,
+          tomlValues.majorVersion,
+          Option.getOrUndefined(tomlValues.orioledbVersion),
+        )).image;
+  const edgeRuntimeImage =
+    tomlValues === null
+      ? undefined
+      : yield* resolveEdgeRuntimeImage(fs, path, workdir, tomlValues.denoVersion);
+  const imageOverrides: LocalServiceImageOverrides = {};
+  if (postgresImage !== undefined) {
+    imageOverrides.postgres = postgresImage;
+  }
+  if (edgeRuntimeImage !== undefined) {
+    imageOverrides["edge-runtime"] = edgeRuntimeImage;
+  }
+  return { imageOverrides, serviceVersions };
+});
+
+const stackImage = (request: Parameters<typeof resolveArtifact>[0]) =>
+  resolveArtifact(request).pipe(Effect.map(({ image }) => image.replace(/@sha256:[0-9a-f]+$/, "")));
+
+/** The stack runs its pinned artifact catalog and validates config like `start`; `.temp` pins are ignored. */
+const stackImageOverrides = Effect.fnUntraced(function* (workdir: string) {
+  const { config } = yield* loadValidatedStackConfig(workdir);
+  const imageOverrides: Required<LocalServiceImageOverrides> = yield* Effect.all({
+    postgres: stackImage({
+      service: "database",
+      version: postgresVersion(String(config.db.major_version)),
+    }),
+    auth: stackImage({ service: "auth" }),
+    postgrest: stackImage({ service: "rest" }),
+    realtime: stackImage({ service: "realtime" }),
+    storage: stackImage({ service: "storage" }),
+    "edge-runtime": stackImage({ service: "functions" }),
+    studio: stackImage({ service: "studio" }),
+    pgmeta: stackImage({ service: "pgmeta" }),
+    analytics: stackImage({ service: "analytics" }),
+    pooler: stackImage({ service: "pooler" }),
+  });
+  return imageOverrides;
 });
 
 function formatConfigLoadError(error: unknown): string {

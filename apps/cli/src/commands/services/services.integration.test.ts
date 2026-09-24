@@ -17,11 +17,13 @@ import {
   Stdio,
 } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
+import { postgresVersion, resolveArtifact } from "@supabase/stack/internal/postgres-artifact";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { INVALID_PROJECT_REF_MESSAGE } from "../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { GLOBAL_FLAGS, OutputFlag } from "../../command-internal/global-flags.ts";
+import { type StackBackend, stackBackendLayer } from "../../command-internal/stack-backend.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -65,6 +67,7 @@ function setup(
     accessToken?: string;
     accessTokenFailure?: PlatformError.PlatformError;
     apiUrl?: string;
+    backend?: StackBackend;
   } = {},
 ) {
   const out = mockOutput({
@@ -83,6 +86,8 @@ function setup(
       FetchHttpClient.layer,
       out.layer,
       telemetry.layer,
+      mockRuntimeInfo(),
+      stackBackendLayer(opts.backend ?? "legacy"),
       Layer.succeed(OutputFlag, opts.goOutput ?? Option.none()),
       Layer.succeed(
         CommandSettings,
@@ -191,10 +196,95 @@ function postgresVersionForDbMajorVersion(majorVersion: number): string {
   return image.slice(image.lastIndexOf(":") + 1);
 }
 
+const stackCatalogRows = (majorVersion: number) =>
+  Effect.forEach(
+    [
+      { service: "database", version: postgresVersion(String(majorVersion)) },
+      { service: "auth" },
+      { service: "rest" },
+      { service: "realtime" },
+      { service: "storage" },
+      { service: "functions" },
+      { service: "studio" },
+      { service: "pgmeta" },
+      { service: "analytics" },
+      { service: "pooler" },
+    ] satisfies ReadonlyArray<Parameters<typeof resolveArtifact>[0]>,
+    (request) =>
+      resolveArtifact(request).pipe(
+        Effect.map(({ image, version }) => {
+          const [reference = image] = image.split("@");
+          return {
+            name: reference.slice(0, reference.lastIndexOf(":")),
+            local: version,
+            remote: "",
+          };
+        }),
+      ),
+  );
+
 class ServicesTestServerError extends Data.TaggedError("ServicesTestServerError")<{
   readonly message: string;
   readonly cause: unknown;
 }> {}
+
+const serveLinkedProject = (databaseVersion: string) =>
+  Effect.acquireRelease(
+    Effect.try({
+      catch: (cause) =>
+        new ServicesTestServerError({ message: "test API server failed to start", cause }),
+      try: () =>
+        Bun.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          fetch(request) {
+            const url = new URL(request.url);
+            if (url.pathname === "/v1/projects/abcdefghijklmnopqrst") {
+              return Response.json({
+                id: "abcdefghijklmnopqrst",
+                ref: "abcdefghijklmnopqrst",
+                organization_id: "org-id",
+                organization_slug: "org",
+                name: "Linked Project",
+                region: "us-east-1",
+                created_at: "2026-03-13T12:00:00.000Z",
+                status: "ACTIVE_HEALTHY",
+                database: {
+                  host: "db.supabase.internal",
+                  version: databaseVersion,
+                  postgres_engine: "17",
+                  release_channel: "ga",
+                },
+              });
+            }
+
+            if (url.pathname === "/v1/projects/abcdefghijklmnopqrst/api-keys") {
+              // No service-role key: proves only the fetch+merge wiring, not the
+              // tenant probe (covered in services.shared.unit.test.ts).
+              return Response.json([
+                {
+                  name: "anon",
+                  id: "publishable-id",
+                  type: "publishable",
+                  api_key: "publishable-key",
+                  description: null,
+                },
+              ]);
+            }
+
+            return new Response("not found", { status: 404 });
+          },
+        }),
+    }),
+    (running) =>
+      // `acquireRelease` types the release as `Effect<unknown, never, _>`, so die instead
+      // of fail; the tagged wrapper keeps a failed stop attributable.
+      Effect.tryPromise({
+        try: () => running.stop(true),
+        catch: (cause) =>
+          new ServicesTestServerError({ message: "test API server failed to stop", cause }),
+      }).pipe(Effect.orDie),
+  );
 
 function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string) {
   expect(Exit.isFailure(exit)).toBe(true);
@@ -398,62 +488,7 @@ major_version = 15
       const workdir = yield* makeWorkdir();
       yield* writeTempFile(workdir, "project-ref", "abcdefghijklmnopqrst");
 
-      const server = yield* Effect.acquireRelease(
-        Effect.try({
-          catch: (cause) =>
-            new ServicesTestServerError({ message: "test API server failed to start", cause }),
-          try: () =>
-            Bun.serve({
-              hostname: "127.0.0.1",
-              port: 0,
-              fetch(request) {
-                const url = new URL(request.url);
-                if (url.pathname === "/v1/projects/abcdefghijklmnopqrst") {
-                  return Response.json({
-                    id: "abcdefghijklmnopqrst",
-                    ref: "abcdefghijklmnopqrst",
-                    organization_id: "org-id",
-                    organization_slug: "org",
-                    name: "Linked Project",
-                    region: "us-east-1",
-                    created_at: "2026-03-13T12:00:00.000Z",
-                    status: "ACTIVE_HEALTHY",
-                    database: {
-                      host: "db.supabase.internal",
-                      version: "17.6.1.200",
-                      postgres_engine: "17",
-                      release_channel: "ga",
-                    },
-                  });
-                }
-
-                if (url.pathname === "/v1/projects/abcdefghijklmnopqrst/api-keys") {
-                  // No service-role key: proves only the fetch+merge wiring, not the
-                  // tenant probe (covered in services.shared.unit.test.ts).
-                  return Response.json([
-                    {
-                      name: "anon",
-                      id: "publishable-id",
-                      type: "publishable",
-                      api_key: "publishable-key",
-                      description: null,
-                    },
-                  ]);
-                }
-
-                return new Response("not found", { status: 404 });
-              },
-            }),
-        }),
-        (running) =>
-          // `acquireRelease` types the release as `Effect<unknown, never, _>`, so die instead
-          // of fail; the tagged wrapper keeps a failed stop attributable.
-          Effect.tryPromise({
-            try: () => running.stop(true),
-            catch: (cause) =>
-              new ServicesTestServerError({ message: "test API server failed to stop", cause }),
-          }).pipe(Effect.orDie),
-      );
+      const server = yield* serveLinkedProject("17.6.1.200");
 
       const { layer, out } = setup({
         workdir,
@@ -491,6 +526,134 @@ major_version = 15
         ]),
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("lists the stack artifact catalog under the experimental stack", () => {
+    const { layer, out } = setup({ goOutput: Option.some("json"), backend: "stack" });
+
+    return Effect.gen(function* () {
+      yield* services({}).pipe(Effect.provide(layer));
+
+      expect(yield* decodeServiceRows(out.stdoutText)).toEqual(yield* stackCatalogRows(17));
+    });
+  });
+
+  it.live("ignores legacy temp pins under the experimental stack", () =>
+    Effect.gen(function* () {
+      const workdir = yield* makeProjectWithDbMajorVersion(17);
+      yield* writeTempFile(workdir, "postgres-version", "17.4.1.001\n");
+      yield* writeTempFile(workdir, "gotrue-version", "2.74.2\n");
+      yield* writeTempFile(workdir, "storage-version", "v1.28.0\n");
+      yield* writeTempFile(workdir, "edge-runtime-version", "v9.9.9\n");
+      const { layer, out } = setup({ goOutput: Option.some("json"), workdir, backend: "stack" });
+
+      yield* services({}).pipe(Effect.provide(layer));
+
+      expect(yield* decodeServiceRows(out.stdoutText)).toEqual(yield* stackCatalogRows(17));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("reports the stack Postgres 15 artifact under the experimental stack", () =>
+    Effect.gen(function* () {
+      const workdir = yield* makeProjectWithDbMajorVersion(15);
+      const { layer, out } = setup({ goOutput: Option.some("json"), workdir, backend: "stack" });
+
+      yield* services({}).pipe(Effect.provide(layer));
+
+      expect(yield* decodeServiceRows(out.stdoutText)).toEqual(yield* stackCatalogRows(15));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("ignores linked remote overrides the experimental stack does not apply", () =>
+    Effect.gen(function* () {
+      const workdir = yield* makeProjectWithConfig(`
+[db]
+major_version = 17
+
+[remotes.linked]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.linked.db]
+major_version = 15
+`);
+      yield* writeTempFile(workdir, "project-ref", "abcdefghijklmnopqrst");
+      const { layer, out } = setup({ goOutput: Option.some("json"), workdir, backend: "stack" });
+
+      yield* services({}).pipe(Effect.provide(layer));
+
+      expect(yield* decodeServiceRows(out.stdoutText)).toEqual(yield* stackCatalogRows(17));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  describe.each([
+    {
+      scenario: "an unsupported db.major_version",
+      config: "[db]\nmajor_version = 14\n",
+      message: "db.major_version must be 15 or 17 for the experimental stack",
+    },
+    {
+      scenario: "the Deno 1 edge runtime",
+      config: "[edge_runtime]\ndeno_version = 1\n",
+      message: "edge_runtime.deno_version",
+    },
+    {
+      scenario: "an OrioleDB image",
+      config: '[experimental]\norioledb_version = "15.1.1.14"\n',
+      message: "experimental.orioledb_version",
+    },
+    {
+      scenario: "a malformed config.toml",
+      config: "[db]\nmajor_version = ",
+      message: "failed to read config",
+    },
+  ])("a project config with $scenario", ({ config, message }) => {
+    it.live("fails like start under the experimental stack", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeProjectWithConfig(config);
+        const { layer, out } = setup({ goOutput: Option.some("json"), workdir, backend: "stack" });
+
+        const exit = yield* services({}).pipe(Effect.provide(layer), Effect.exit);
+
+        expectFailureTag(exit, "StackConfigError");
+        expect(String(exit)).toContain(message);
+        expect(out.stdoutText).toBe("");
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+  });
+
+  describe.each([
+    { backend: "legacy", closingLine: "Run supabase link to update them." },
+    {
+      backend: "stack",
+      closingLine:
+        "The experimental stack runs its pinned service versions; supabase link does not change them.",
+    },
+  ] satisfies ReadonlyArray<{ backend: StackBackend; closingLine: string }>)(
+    "linked version mismatch on the $backend backend",
+    ({ backend, closingLine }) => {
+      it.live("closes the warning with the backend's remedy", () =>
+        Effect.gen(function* () {
+          const workdir = yield* makeWorkdir();
+          yield* writeTempFile(workdir, "project-ref", "abcdefghijklmnopqrst");
+          const server = yield* serveLinkedProject("17.6.1.200");
+          const { layer, out } = setup({
+            workdir,
+            accessToken: "sbp_test-token",
+            apiUrl: server.url.origin,
+            goOutput: Option.some("json"),
+            backend,
+          });
+
+          yield* services({}).pipe(Effect.provide(layer));
+
+          expect(out.stderrText).toContain(
+            "You are running different service versions locally than your linked project:",
+          );
+          expect(out.stderrText).toContain(" => 17.6.1.200");
+          expect(out.stderrText).toContain(` => 17.6.1.200\n${closingLine}\n`);
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      );
+    },
   );
 
   it.live("reports the Deno 1 edge-runtime image instead of the temp pin", () =>

@@ -131,6 +131,10 @@ env-precedence rule as `start`/`stop`/`status`. See
 [Storage and bucket seeding](#storage-and-bucket-seeding) below. Explicit `--linked`/
 `--project-ref` remote targeting for these commands is unaffected by the flag either way.
 
+`services` also consults `experimental.stack` with the same precedence rule. On the stack it validates
+the project config like `start`, lists the pinned stack artifact versions instead of the legacy Docker
+image matrix, and ignores `[remotes.*]` overrides and `supabase/.temp` version pins.
+
 `db start` brings up a postgres-only project stack on first create. An existing stack resumes its
 primary database without changing other services (webhooks setup only; no second overlay or
 migrate-and-seed).

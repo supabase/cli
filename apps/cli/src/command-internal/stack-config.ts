@@ -816,46 +816,51 @@ const endpoint = (port: number | undefined): { readonly port: number | "auto" } 
   port: port === undefined ? "auto" : port,
 });
 
+/** Loads the effective project config and applies the stack's config validation. */
+export const loadValidatedStackConfig = Effect.fn("StackConfig.loadValidated")(function* (
+  projectRoot: string,
+  opts?: { readonly context?: LocalProjectContext },
+) {
+  const context =
+    opts?.context ??
+    (yield* loadLocalProjectContext(projectRoot, (message) => new StackConfigError({ message })));
+  const effectiveInput = yield* Effect.try({
+    try: () =>
+      resolveEffectiveCliConfig(context.config, context.loaded?.document, context.projectEnvValues),
+    catch: (cause) =>
+      new StackConfigError({
+        message: cause instanceof Error ? cause.message : "invalid config overrides",
+      }),
+  });
+  const validatedConfig = yield* validateCliConfig(withoutUndefined(effectiveInput)).pipe(
+    Effect.mapError((cause) => {
+      const issues = SchemaIssue.makeFormatterStandardSchemaV1({
+        leafHook: () => "Invalid value",
+        checkHook: () => undefined,
+      })(cause.issue).issues;
+      const path = issues[0]?.path
+        ?.map((segment) => String(typeof segment === "object" ? segment.key : segment))
+        .join(".");
+      return new StackConfigError({
+        message: path === undefined ? "invalid config" : `invalid config at ${path}`,
+      });
+    }),
+  );
+  const validationError = configValidationError(validatedConfig);
+  if (validationError !== undefined)
+    return yield* new StackConfigError({ message: validationError });
+  return { context, config: validatedConfig };
+});
+
 /** Loads and translates the effective project config for all stack commands.
  * Pass `opts.context` to reuse an already-loaded project context. */
 export const loadStackConfig = Effect.fn("StackConfig.load")(
   (projectRoot: string, opts?: { readonly context?: LocalProjectContext }): StackConfigEffect =>
     Effect.gen(function* () {
-      const context =
-        opts?.context ??
-        (yield* loadLocalProjectContext(
-          projectRoot,
-          (message) => new StackConfigError({ message }),
-        ));
-      const effectiveInput = yield* Effect.try({
-        try: () =>
-          resolveEffectiveCliConfig(
-            context.config,
-            context.loaded?.document,
-            context.projectEnvValues,
-          ),
-        catch: (cause) =>
-          new StackConfigError({
-            message: cause instanceof Error ? cause.message : "invalid config overrides",
-          }),
-      });
-      const validatedConfig = yield* validateCliConfig(withoutUndefined(effectiveInput)).pipe(
-        Effect.mapError((cause) => {
-          const issues = SchemaIssue.makeFormatterStandardSchemaV1({
-            leafHook: () => "Invalid value",
-            checkHook: () => undefined,
-          })(cause.issue).issues;
-          const path = issues[0]?.path
-            ?.map((segment) => String(typeof segment === "object" ? segment.key : segment))
-            .join(".");
-          return new StackConfigError({
-            message: path === undefined ? "invalid config" : `invalid config at ${path}`,
-          });
-        }),
+      const { context, config: validatedConfig } = yield* loadValidatedStackConfig(
+        projectRoot,
+        opts,
       );
-      const validationError = configValidationError(validatedConfig);
-      if (validationError !== undefined)
-        return yield* new StackConfigError({ message: validationError });
 
       const externalProviders = yield* Effect.try({
         try: () =>

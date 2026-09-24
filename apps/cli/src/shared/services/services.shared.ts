@@ -425,7 +425,10 @@ export function renderServicesTable(rows: ReadonlyArray<ServiceVersionRow>): str
   );
 }
 
-export function renderServicesWarning(rows: ReadonlyArray<ServiceVersionRow>): string | undefined {
+export function renderServicesWarning(
+  rows: ReadonlyArray<ServiceVersionRow>,
+  closingLine = "Run supabase link to update them.",
+): string | undefined {
   const mismatches = rows.filter((row) => row.remote.length > 0 && row.remote !== row.local);
   if (mismatches.length === 0) {
     return undefined;
@@ -434,7 +437,7 @@ export function renderServicesWarning(rows: ReadonlyArray<ServiceVersionRow>): s
   return [
     "You are running different service versions locally than your linked project:",
     ...mismatches.map((row) => `${row.name}:${row.local} => ${row.remote}`),
-    "Run supabase link to update them.",
+    closingLine,
   ].join("\n");
 }
 
