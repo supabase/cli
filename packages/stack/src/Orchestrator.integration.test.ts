@@ -389,9 +389,8 @@ describe("service composition", () => {
         expect((yield* independentLazy.core.get).wakeEnabled).toBe(true);
 
         yield* Deferred.succeed(healthGate, undefined);
-        yield* Fiber.join(composition);
-        yield* Fiber.join(armedObserver);
         expect(Option.isSome(observedIndependentArm)).toBe(true);
+        yield* Fiber.join(composition);
         expect((yield* dependent.core.get).wakeEnabled).toBe(true);
         expect(yield* Ref.get(dependent.starts)).toEqual([]);
         yield* orchestrator.stopNamespace;
@@ -432,8 +431,8 @@ describe("service composition", () => {
           Effect.timeoutOption("5 seconds"),
         );
         yield* Deferred.succeed(launchGate, undefined);
-        const interrupted = yield* Fiber.await(composition);
         expect(Option.isSome(interruptFinished)).toBe(true);
+        const interrupted = yield* Fiber.await(composition);
         expect(Exit.isFailure(interrupted)).toBe(true);
         expect(yield* Ref.get(descendant.starts)).toEqual([]);
 
