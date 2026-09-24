@@ -901,6 +901,7 @@ def main() -> int:
     version = run([str(cli), "--version"], cwd=root, env=env, timeout=30)
     record["cli"]["version_command"] = version
     error: BaseException | None = None
+    cold_phase_succeeded: bool | None = None
     for name, project in (("cold", project_cold), ("cached-fresh-project", project_cached)):
         phase_env = env.copy()
         phase_env["SUPABASE_WORKDIR"] = str(project)
@@ -915,6 +916,11 @@ def main() -> int:
         except BaseException as failure:
             data = {"name": name, "project": str(project), "started_at": now(), "ready": False,
                     "failure": {"stage": "harness", "error": repr(failure)}}
+        data["cache_state"] = (
+            "isolated-cold-attempt" if name == "cold" else
+            "cached-after-successful-cold" if cold_phase_succeeded else
+            "cached-after-failed-cold"
+        )
         record["phases"].append(data)
         if data["ready"] and name == "cached-fresh-project":
             stopped = stop_command(cli, args.implementation, project, this_project_id, phase_env)
@@ -925,7 +931,7 @@ def main() -> int:
                 "elapsed_ms": None if restarted is None else restarted["elapsed_ms"],
                 "ready": bool(restarted and restarted["ok"] and restarted_status and restarted_status["ok"]),
             }
-            if not data["retained_restart"]["ready"]:
+            if not data["retained_restart"]["ready"] and error is None:
                 error = RuntimeError("retained-data restart failed; raw CLI outputs are in the result")
         cleanup = (
             cleanup_phase(cli, args.implementation, project, this_project_id, phase_env)
@@ -934,8 +940,14 @@ def main() -> int:
         )
         record["cleanup"].append({"phase": name, **cleanup})
         if not data["ready"]:
-            error = RuntimeError(f"{name} phase failed; raw CLI outputs are in the result")
-            break
+            if error is None:
+                error = RuntimeError(f"{name} phase failed; raw CLI outputs are in the result")
+            if name != "cold" or not cleanup.get("ok", False):
+                break
+            cold_phase_succeeded = False
+            continue
+        if name == "cold":
+            cold_phase_succeeded = True
 
     if args.implementation == "legacy" and args.runtime == "docker":
         record["image_pull_replay"] = legacy_image_pull_replay(
