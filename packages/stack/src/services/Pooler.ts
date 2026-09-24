@@ -79,6 +79,18 @@ const nativeStartupEnvironment: NonNullable<ProcessRecipeSpec<Creation>["nativeS
     })),
   );
 
+const nativeReadinessOutput: NonNullable<ProcessRecipeSpec<Creation>["nativeReadinessOutput"]> = (
+  line,
+  endpoints,
+) => {
+  const http = endpoints.get("http");
+  if (http === undefined || /\bfailed\b/i.test(line)) return false;
+  return (
+    line.includes("Running SupavisorWeb.Endpoint") &&
+    new RegExp(`:${http.port}\\s+\\(http\\)(?:\\s|$)`).test(line)
+  );
+};
+
 export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   service: "pooler",
   executable: "bin/server",
@@ -86,6 +98,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   healthPath: "/api/health",
   env: environment,
   nativeStartupEnv: nativeStartupEnvironment,
+  nativeReadinessOutput,
   args: (_creation, _endpoints, context) =>
     Effect.succeed(context.container ? ["-s", "-g", "--", "/app/bin/server"] : ["start"]),
   mounts: () => Effect.succeed([]),
