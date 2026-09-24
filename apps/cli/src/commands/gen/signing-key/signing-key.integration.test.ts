@@ -579,6 +579,32 @@ describe("gen signing-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "ignores an unparseable supabase/.env.local when the injected SUPABASE_ENV is test",
+    () => {
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys("[]\n");
+        yield* fs.writeFileString(
+          path.join(tempRoot.current, "supabase", ".env.local"),
+          "!=broken\n",
+        );
+
+        yield* genSigningKey({ algorithm: "ES256", append: false }).pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromEnvRecord({ SUPABASE_ENV: "test" }, { preserveEmptyStrings: true }),
+          ),
+        );
+
+        expect(yield* readSigningKeys()).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("fails when signing_keys_path is configured but the file is missing", () => {
     const { layer } = setup();
     return Effect.gen(function* () {

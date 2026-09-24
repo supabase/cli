@@ -197,7 +197,8 @@ function skipJsonValue(text: string, start: number): number {
 /**
  * Parses only the first JSON value's span and ignores trailing content, since plain
  * `JSON.parse` would otherwise error on trailing bytes that a single-value decode
- * should silently ignore.
+ * should silently ignore. Native parser errors are CLI output; schema decoding discards
+ * their messages.
  */
 function parseLeadingJsonValue(text: string): unknown {
   return JSON.parse(text.slice(0, skipJsonValue(text, 0)));
