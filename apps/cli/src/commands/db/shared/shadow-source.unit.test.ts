@@ -428,7 +428,7 @@ describe("loadDeclaredSchemas", () => {
         const workdir = yield* makeWorkdir;
         yield* fs.makeDirectory(path.join(workdir, "supabase", "schemas"), { recursive: true });
         const supplementary = "a\u{1F600}.sql";
-        const privateUse = "a.sql";
+        const privateUse = "a\u{E000}.sql";
         yield* fs.writeFileString(
           path.join(workdir, "supabase", "schemas", supplementary),
           "select 1;\n",
