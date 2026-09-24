@@ -259,7 +259,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             })
             .pipe(Effect.mapError(stackError))
         : yield* stackApi
-            .open({ id: target.id, stateRoot, cacheRoot })
+            .open({ id: target.id, stateRoot, cacheRoot, startOwner: true })
             .pipe(Effect.mapError(stackError));
     const existingServices = yield* stack.services.list.pipe(Effect.mapError(stackError));
     const composition = yield* stack.composition.describe.pipe(Effect.mapError(stackError));
