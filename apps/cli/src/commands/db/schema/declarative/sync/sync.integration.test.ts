@@ -1525,13 +1525,17 @@ describe("db schema declarative sync integration", () => {
       ],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* seedDeclarative(tmp.current);
       const exit = yield* Effect.exit(
         dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
       );
       expect(failError(exit)).toMatchObject({
+        _tag: "DeclarativeApplyError",
         message: 'unknown pg-delta transaction mode "batched"',
       });
+      expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 });
