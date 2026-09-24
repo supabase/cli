@@ -195,11 +195,16 @@ export const makeContainerRuntime = (options: {
         next.delete(image);
         return next;
       });
-      if (yield* present(image)) return yield* usePrimary;
       const mirrors = options.imageMirrors?.(image) ?? [];
-      yield* pull(image).pipe(
-        Effect.andThen(usePrimary),
-        Effect.catch((primaryError) => fromMirror(image, mirrors, primaryError)),
+      // Presence is rechecked per attempt: a concurrent prepare may land the image during backoff.
+      const attempt = Effect.gen(function* () {
+        if (yield* present(image)) return yield* usePrimary;
+        yield* pull(image).pipe(
+          Effect.andThen(usePrimary),
+          Effect.catch((primaryError) => fromMirror(image, mirrors, primaryError)),
+        );
+      });
+      yield* attempt.pipe(
         Effect.tapError((error) =>
           rateLimited(error)
             ? Effect.logWarning(`Registry rate-limited the pull of ${image}`)

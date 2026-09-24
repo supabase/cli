@@ -191,6 +191,19 @@ describe("container image mirror", () => {
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
   });
 
+  it.effect("stops pulling once a concurrent prepare lands the image during backoff", () => {
+    const engine = fakeEngine({ pullable: [primary], throttled: { [primary]: 1 } });
+    return Effect.gen(function* () {
+      const runtime = yield* makeContainerRuntime({ engine: "docker" });
+      const throttled = yield* runtime.prepare(primary).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 millis");
+      yield* runtime.prepare(primary);
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(throttled);
+      expect(engine.commands.filter((args) => args[0] === "pull")).toHaveLength(2);
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+  });
+
   it.effect("falls back to a mirror before backing off on a rate-limited primary", () => {
     const engine = fakeEngine({ pullable: [mirror], throttled: { [primary]: 10 } });
     return Effect.gen(function* () {
