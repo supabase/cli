@@ -9,7 +9,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { TestNewWriteError } from "./new.errors.ts";
+import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
+import { TestNewInvalidNameError } from "./new.errors.ts";
 import { PGTAP_TEMPLATE } from "./new.template.ts";
 import { testNew } from "./new.handler.ts";
 
@@ -220,9 +221,13 @@ describe("test new integration", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure)).toBe(true);
         if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(TestNewWriteError);
+          expect(failure.value).toBeInstanceOf(TestNewInvalidNameError);
           expect(failure.value.message).toContain("must not escape the supabase/tests directory");
         }
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_category: "invalid_input",
+          suggestion_type: "provide_flags",
+        });
       }
       expect(yield* fs.exists(path.join(workdir, "nested"))).toBe(false);
       expect(yield* fs.exists(path.join(workdir, "supabase", "tests"))).toBe(false);

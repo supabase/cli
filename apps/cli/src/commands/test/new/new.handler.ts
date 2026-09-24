@@ -5,7 +5,11 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
 import type { TestNewFlags } from "./new.command.ts";
-import { TestNewFileExistsError, TestNewWriteError } from "./new.errors.ts";
+import {
+  TestNewFileExistsError,
+  TestNewInvalidNameError,
+  TestNewWriteError,
+} from "./new.errors.ts";
 import { PGTAP_TEMPLATE } from "./new.template.ts";
 
 const TEMPLATE_CONTENT: Record<"pgtap", string> = {
@@ -31,7 +35,7 @@ export const testNew = Effect.fn("test.new")(function* (flags: TestNewFlags) {
     // subdirectories as long as they resolve inside supabase/tests.
     const testsDir = path.join(cliSettings.workdir, "supabase", "tests");
     if (!target.startsWith(testsDir + path.sep)) {
-      return yield* new TestNewWriteError({
+      return yield* new TestNewInvalidNameError({
         path: relPath,
         message: `invalid test name: "${flags.name}" must not escape the ${path.join("supabase", "tests")} directory`,
       });
