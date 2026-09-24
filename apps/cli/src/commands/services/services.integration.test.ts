@@ -22,6 +22,7 @@ import { CommandSettings } from "../../config/command-settings.service.ts";
 import { INVALID_PROJECT_REF_MESSAGE } from "../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { GLOBAL_FLAGS, OutputFlag } from "../../command-internal/global-flags.ts";
+import { stackBackendLayer } from "../../command-internal/stack-backend.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -81,6 +82,10 @@ function setup(
     layer: Layer.mergeAll(
       BunServices.layer,
       FetchHttpClient.layer,
+      mockRuntimeInfo({
+        cwd: opts.workdir ?? defaultWorkdir.current,
+        homeDir: opts.workdir ?? defaultWorkdir.current,
+      }),
       out.layer,
       telemetry.layer,
       Layer.succeed(OutputFlag, opts.goOutput ?? Option.none()),
@@ -317,6 +322,87 @@ describe("services", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  it.live("uses the stack artifact catalog when the stack backend is selected", () =>
+    Effect.gen(function* () {
+      const workdir = yield* makeProjectWithDbMajorVersion(15);
+      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+      yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+
+      const rows = yield* decodeServiceRows(out.stdoutText);
+      expect(out.stderrText).toBe("");
+      expect(rows).toHaveLength(13);
+      expect(rows).toContainEqual(
+        expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "15.14.1.173" }),
+      );
+      expect(rows).toContainEqual(
+        expect.objectContaining({ name: "ghcr.io/supabase/cli/mailpit", local: "v1.30.2" }),
+      );
+      expect(rows).toContainEqual(
+        expect.objectContaining({ name: "ghcr.io/supabase/cli/vector", local: "0.53.0" }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("applies the stack PostgreSQL environment override", () =>
+    Effect.gen(function* () {
+      const workdir = yield* makeProjectWithDbMajorVersion(17);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", ".env"),
+        "SUPABASE_DB_MAJOR_VERSION=15\n",
+      );
+      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+      yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+
+      const rows = yield* decodeServiceRows(out.stdoutText);
+      expect(rows).toContainEqual(
+        expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "15.14.1.173" }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "falls back to stack catalog defaults for unsupported database config and ignores legacy pins",
+    () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeProjectWithDbMajorVersion(16);
+        yield* writeTempFile(workdir, "postgres-version", "legacy-postgres-tag\n");
+        yield* writeTempFile(workdir, "gotrue-version", "legacy-auth-tag\n");
+        const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+        yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+
+        const rows = yield* decodeServiceRows(out.stdoutText);
+        expect(rows).toContainEqual(
+          expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "17.6.1.173" }),
+        );
+        expect(rows).toContainEqual(
+          expect.objectContaining({ name: "ghcr.io/supabase/cli/auth", local: "v2.196.0" }),
+        );
+        expect(out.stderrText).toContain("unsupported PostgreSQL major version: 16");
+        expect(out.stderrText).toContain("using default stack catalog versions");
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("reports malformed config causes before falling back to the stack catalog", () =>
+    Effect.gen(function* () {
+      const workdir = yield* makeProjectWithConfig("[db]\nmajor_version = ");
+      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+      yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+
+      const rows = yield* decodeServiceRows(out.stdoutText);
+      expect(rows).toContainEqual(
+        expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "17.6.1.173" }),
+      );
+      expect(out.stderrText).toContain("failed to read config:");
+      expect(out.stderrText).toContain("using default stack catalog versions");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.live("ignores config.json and reads legacy config.toml for local image selection", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfigFiles({
@@ -396,6 +482,13 @@ major_version = 15
   it.live("fetches and merges remote versions for a valid ref when logged in", () =>
     Effect.gen(function* () {
       const workdir = yield* makeWorkdir();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", "config.toml"),
+        '[db]\nmajor_version = 17\n\n[remotes.linked]\nproject_id = "abcdefghijklmnopqrst"\n\n[remotes.linked.db]\nmajor_version = 15\n',
+      );
       yield* writeTempFile(workdir, "project-ref", "abcdefghijklmnopqrst");
 
       const server = yield* Effect.acquireRelease(
@@ -467,8 +560,32 @@ major_version = 15
       expect(out.stderrText).not.toContain(INVALID_PROJECT_REF_MESSAGE);
       const rows = yield* decodeServiceRows(out.stdoutText);
       expect(rows).toContainEqual(
-        expect.objectContaining({ name: "supabase/postgres", remote: "17.6.1.200" }),
+        expect.objectContaining({
+          name: "supabase/postgres",
+          local: postgresVersionForDbMajorVersion(15),
+          remote: "17.6.1.200",
+        }),
       );
+
+      const stack = setup({
+        workdir,
+        accessToken: "sbp_test-token",
+        apiUrl: server.url.origin,
+        goOutput: Option.some("json"),
+      });
+      yield* services({}).pipe(
+        Effect.provide(Layer.mergeAll(stack.layer, stackBackendLayer("stack"))),
+      );
+      const stackRows = yield* decodeServiceRows(stack.out.stdoutText);
+      expect(stackRows).toContainEqual(
+        expect.objectContaining({
+          name: "ghcr.io/supabase/cli/postgres",
+          local: "17.6.1.173",
+          remote: "17.6.1.200",
+        }),
+      );
+      expect(stack.out.stderrText).toContain("cannot be changed with supabase link");
+      expect(stack.out.stderrText).not.toContain("You are running different service versions");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 

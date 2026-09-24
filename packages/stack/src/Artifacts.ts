@@ -1,4 +1,4 @@
-import { Data, Effect, Path } from "effect";
+import { Data, Effect, Path, Record } from "effect";
 import { makeArtifactStore } from "./preparation/ArtifactStore.ts";
 import {
   makeSlimServicesSource,
@@ -249,6 +249,9 @@ export const postgresVersion = (version: string): string =>
   Object.keys(definitions.database.images).find(
     (candidate) => candidate.split(".")[0] === version,
   ) ?? version;
+
+/** Service kinds in artifact catalog order. */
+export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> => Record.keys(definitions);
 
 const artifactKey = (artifact: SlimServicesArtifact): string =>
   `slim-services/${artifact.service}/${artifact.version}/${artifact.target}`;
