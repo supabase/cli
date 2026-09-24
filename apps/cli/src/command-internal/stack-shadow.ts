@@ -89,7 +89,7 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
         jwtSecret: Redacted.make(input.jwtSecret),
         jwtExpiry: input.jwtExpiry,
         healthTimeoutMs: input.healthTimeoutSeconds * 1_000,
-        // Destroy issues stop without waiting. The stop before a snapshot still checkpoints.
+        // The disposable shadow can skip durability work; an explicit stop still checkpoints.
         stopGraceSeconds: 0,
         ...(input.rootKey === undefined ? {} : { rootKey: Redacted.make(input.rootKey) }),
         settings: dbSettings,

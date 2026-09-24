@@ -614,12 +614,14 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           ),
           Effect.asVoid,
         );
-      // Only the process that created the container removes it. `docker rm` without -f
-      // fails while the container is running, so a racing creator cannot delete it.
       // A container left in `created` cannot exec; remove it and start another.
-      const openSharedHelper = (mounts: ReadonlyArray<DatabaseStorageMount>, key: string) =>
+      const openSharedHelper = (
+        mounts: ReadonlyArray<DatabaseStorageMount>,
+        key: string,
+        ownerId: string,
+      ) =>
         Effect.gen(function* () {
-          const name = `supabase-db-helper-${(yield* hash(key)).slice(0, 32)}`;
+          const name = `supabase-db-helper-${(yield* hash(`${ownerId}\0${key}`)).slice(0, 32)}`;
           const status = yield* engineCommand([
             "inspect",
             "--format",
@@ -682,7 +684,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         if (sharedKey !== undefined && options.helpers !== undefined) {
           const helpers = options.helpers;
           const exec = (id: string) => engineCommand(["exec", id, "/bin/sh", "-c", command]);
-          const open = openSharedHelper(mounts, sharedKey);
+          const open = openSharedHelper(mounts, sharedKey, helpers.ownerId);
           return helpers.use(sharedKey, open, closeSharedHelper, exec).pipe(
             Effect.catchTag("DockerDatabaseStorageError", (cause) =>
               /no such container|is not running/iu.test(cause.message)

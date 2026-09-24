@@ -63,7 +63,7 @@ export const DatabaseConfig = Schema.Struct({
   jwtSecret: Schema.Redacted(Schema.String),
   jwtExpiry: Schema.Finite,
   healthTimeoutMs: Schema.optionalKey(Schema.Finite),
-  /** When 0, destroy issues stop in the background. An explicit stop still waits. */
+  /** When 0, the database is disposable and can use reduced-durability settings. */
   stopGraceSeconds: Schema.optionalKey(Schema.Finite),
   rootKey: Schema.optionalKey(Schema.Redacted(Schema.String)),
   settings: Schema.optionalKey(
@@ -143,7 +143,7 @@ const postgresArguments = (config: DatabaseConfig): Array<string> => {
     "-c",
     `${key}=${String(value)}`,
   ]);
-  // stopGraceSeconds 0 is the discarded shadow. Crash safety only adds wait.
+  // Shadow databases are discarded, so they can use reduced-durability settings.
   if (config.stopGraceSeconds === 0)
     for (const setting of ["fsync=off", "synchronous_commit=off", "full_page_writes=off"])
       if (!configured.has(setting.slice(0, setting.indexOf("=")))) settings.push("-c", setting);
@@ -358,7 +358,7 @@ const runtimeFromContainer = (process: ContainerProcess, discard: boolean): Runt
   stop: process.stop.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
   ...(discard
     ? {
-        discard: process.beginStop.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
+        discard: process.discard.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
       }
     : {}),
   remove: process.remove.pipe(Effect.mapError((cause) => errorFor("remove", cause))),

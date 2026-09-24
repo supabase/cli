@@ -16,6 +16,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { makeContainerRuntime } from "../runtime/Container.ts";
 import { makeDatabaseSnapshots } from "../services/DatabaseSnapshot.ts";
 import { makeDockerDatabaseStorage } from "./DockerDatabaseStorage.ts";
+import { makeDockerHelperRegistry } from "./DockerHelperRegistry.ts";
+import type { DockerHelperRegistry } from "./DockerHelperRegistry.ts";
 
 const helperImage =
   "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
@@ -354,6 +356,11 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const stackId = `storage-helper-recovery-${yield* crypto.randomUUIDv4}`;
         const instanceId = "recovery";
+        const helperScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(helperScope, Exit.void));
+        const helperRegistry = yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4).pipe(
+          Effect.provideService(Scope.Scope, helperScope),
+        );
         const storage = yield* makeDockerDatabaseStorage({
           runtime: "docker",
           stackId,
@@ -366,6 +373,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           crypto,
           container,
           spawner,
+          helpers: helperRegistry,
         });
         yield* storage.prepare("17");
         const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
@@ -378,8 +386,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           "ps",
           "--filter",
           "label=com.supabase.stack=" + stackId,
-          "--filter",
-          "label=com.supabase.instance=" + instanceId,
           "--format",
           "{{.Names}}",
         ]);
@@ -387,11 +393,101 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         if (helper === undefined)
           return yield* new DockerTestError({ message: "Owned helper was not discoverable" });
         yield* docker(["rm", "-f", helper]);
-        const failed = yield* storage.prepare("17").pipe(Effect.exit);
-        expect(failed).toSatisfy((exit) => Exit.isFailure(exit));
         yield* storage.prepare("17");
         yield* storage.destroyData("17");
+        yield* Scope.close(helperScope, Exit.void);
         yield* docker(["volume", "rm", volume]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps another owner's volume helper running when one owner closes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-helper-owner-" });
+        const storageRoot = path.join(root, "state", "stack", "data");
+        const cacheRoot = path.join(root, "cache");
+        const instanceRoot = path.join(storageRoot, "database");
+        yield* fs.makeDirectory(instanceRoot, { recursive: true });
+        yield* fs.makeDirectory(cacheRoot, { recursive: true });
+        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const stackId = `storage-helper-owner-${yield* crypto.randomUUIDv4}`;
+        const firstScope = yield* Scope.make();
+        const secondScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function* () {
+            yield* Scope.close(secondScope, Exit.void);
+            yield* Scope.close(firstScope, Exit.void);
+            const markerText = yield* fs
+              .readFileString(path.join(instanceRoot, ".supabase-database-storage.json"))
+              .pipe(Effect.option);
+            if (Option.isNone(markerText)) return;
+            const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+              markerText.value,
+            ).pipe(Effect.option);
+            if (Option.isSome(marker) && marker.value.volume !== undefined)
+              yield* docker(["volume", "rm", marker.value.volume]).pipe(Effect.ignore);
+          }).pipe(Effect.ignore),
+        );
+        const firstHelpers = yield* makeDockerHelperRegistry("first-owner").pipe(
+          Effect.provideService(Scope.Scope, firstScope),
+        );
+        const secondHelpers = yield* makeDockerHelperRegistry("second-owner").pipe(
+          Effect.provideService(Scope.Scope, secondScope),
+        );
+        const makeStorage = (helpers: DockerHelperRegistry) =>
+          makeDockerDatabaseStorage({
+            runtime: "docker",
+            stackId,
+            instanceId: "database",
+            instanceRoot,
+            root: storageRoot,
+            cacheRoot,
+            fs,
+            path,
+            crypto,
+            container,
+            spawner,
+            helpers,
+          });
+        const firstStorage = yield* makeStorage(firstHelpers).pipe(
+          Effect.provideService(Scope.Scope, firstScope),
+        );
+        const secondStorage = yield* makeStorage(secondHelpers).pipe(
+          Effect.provideService(Scope.Scope, secondScope),
+        );
+        yield* firstStorage.prepare("17");
+        yield* secondStorage.prepare("17");
+        const runningHelpers = (yield* docker([
+          "ps",
+          "--filter",
+          `label=com.supabase.stack=${stackId}`,
+          "--format",
+          "{{.Names}}",
+        ]))
+          .split("\n")
+          .filter((name) => name.length > 0);
+        expect(runningHelpers).toHaveLength(2);
+
+        yield* Scope.close(firstScope, Exit.void);
+        const remainingHelpers = (yield* docker([
+          "ps",
+          "--filter",
+          `label=com.supabase.stack=${stackId}`,
+          "--format",
+          "{{.Names}}",
+        ]))
+          .split("\n")
+          .filter((name) => name.length > 0);
+        expect(remainingHelpers).toHaveLength(1);
+        expect(runningHelpers).toContain(remainingHelpers[0]);
+        yield* secondStorage.prepare("17");
+        yield* secondStorage.destroyData("17");
+        yield* Scope.close(secondScope, Exit.void);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

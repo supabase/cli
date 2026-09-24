@@ -9,7 +9,7 @@ it.effect("opens a helper once and closes it with the host scope", () =>
     const seen = yield* Ref.make<Array<string>>([]);
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeDockerHelperRegistry;
+        const registry = yield* makeDockerHelperRegistry("owner-one");
         const open = Ref.updateAndGet(opened, (count) => count + 1).pipe(
           Effect.map((count) => ({ id: `helper-${String(count)}`, created: true })),
         );
@@ -28,7 +28,7 @@ it.effect("opens a helper once and closes it with the host scope", () =>
 it.effect("keeps the helper when a command fails", () =>
   Effect.gen(function* () {
     const opened = yield* Ref.make(0);
-    const registry = yield* makeDockerHelperRegistry;
+    const registry = yield* makeDockerHelperRegistry("owner-one");
     const open = Ref.updateAndGet(opened, (count) => count + 1).pipe(
       Effect.map((count) => ({ id: `helper-${String(count)}`, created: true })),
     );
@@ -48,7 +48,7 @@ it.effect("does not remove a helper this process did not create", () =>
     const closed = yield* Ref.make<Array<string>>([]);
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeDockerHelperRegistry;
+        const registry = yield* makeDockerHelperRegistry("owner-one");
         yield* registry.use(
           "volume",
           Effect.succeed({ id: "adopted", created: false }),

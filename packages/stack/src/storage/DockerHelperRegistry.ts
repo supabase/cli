@@ -7,6 +7,8 @@ interface DockerHelperHandle {
 }
 
 export interface DockerHelperRegistry {
+  /** Identifies helpers owned by one host process. */
+  readonly ownerId: string;
   /** Runs `body` with the helper for `key`, opening it once per host lifetime. */
   readonly use: <A, E>(
     key: string,
@@ -22,7 +24,9 @@ export interface DockerHelperRegistry {
  * One sleeping container per volume mount. Mounts are fixed when the container is created,
  * and every database in a state directory uses that same volume.
  */
-export const makeDockerHelperRegistry: Effect.Effect<DockerHelperRegistry, never, Scope.Scope> =
+export const makeDockerHelperRegistry = (
+  ownerId: string,
+): Effect.Effect<DockerHelperRegistry, never, Scope.Scope> =>
   Effect.gen(function* () {
     const helpers = yield* Ref.make(
       new Map<
@@ -86,5 +90,5 @@ export const makeDockerHelperRegistry: Effect.Effect<DockerHelperRegistry, never
           yield* release(entry.id, entry.close);
         }),
       );
-    return { use, drop };
+    return { ownerId, use, drop };
   });
