@@ -247,13 +247,8 @@ def container_process_memory(
         container_id = container.get("id")
         if not isinstance(container_id, str):
             continue
-        top = run(["docker", "top", container_id, "-eo", "pid="], cwd=cwd, env=env, timeout=30)
-        pids = []
-        for line in top["stdout"].splitlines():
-            try:
-                pids.append(int(line.strip()))
-            except ValueError:
-                continue
+        top = run(["docker", "top", container_id, "-eo", "pid"], cwd=cwd, env=env, timeout=30)
+        pids = process_ids_from_top(top["stdout"])
         process_records = []
         for pid in pids:
             target = Path("/proc") / str(pid) / "smaps_rollup"
@@ -273,19 +268,35 @@ def container_process_memory(
                 "pid": pid, "rss_bytes": values.get("rss_bytes"),
                 "pss_bytes": values.get("pss_bytes"), "source": source,
             })
+        available = top["ok"] and bool(process_records) and all(
+            row["rss_bytes"] is not None and row["pss_bytes"] is not None
+            for row in process_records
+        )
         per_container.append({
             "container_id": container_id, "process_count": len(pids),
             "processes": process_records,
-            "rss_bytes": sum(row.get("rss_bytes") or 0 for row in process_records),
-            "pss_bytes": sum(row.get("pss_bytes") or 0 for row in process_records),
-            "collector": top, "available": top["ok"] and bool(pids) and all(row["source"] != "unavailable" for row in process_records),
+            "rss_bytes": sum(row["rss_bytes"] for row in process_records) if available else None,
+            "pss_bytes": sum(row["pss_bytes"] for row in process_records) if available else None,
+            "collector": top, "available": available,
         })
+    available = bool(per_container) and all(row["available"] for row in per_container)
     return {
         "sampled_at": now(), "containers": per_container,
-        "rss_bytes_total": sum(row["rss_bytes"] for row in per_container),
-        "pss_bytes_total": sum(row["pss_bytes"] for row in per_container),
+        "available": available,
+        "rss_bytes_total": sum(row["rss_bytes"] for row in per_container) if available else None,
+        "pss_bytes_total": sum(row["pss_bytes"] for row in per_container) if available else None,
         "scope": "host-process RSS/PSS for processes inside exact stack-labeled containers",
     }
+
+
+def process_ids_from_top(output: str) -> list[int]:
+    pids = []
+    for line in output.splitlines():
+        try:
+            pids.append(int(line.strip()))
+        except ValueError:
+            continue
+    return pids
 
 
 def docker_image_inventory(env: dict[str, str], cwd: Path) -> dict[str, Any]:

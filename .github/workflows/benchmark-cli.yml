@@ -19,6 +19,14 @@ on:
         required: true
         type: string
         default: 2.117.0
+      case_set:
+        description: Benchmark all cases or only Docker stack cases
+        required: true
+        type: choice
+        options:
+          - all
+          - docker-stack
+        default: all
       samples:
         description: Independent samples per supported case
         required: true
@@ -127,18 +135,7 @@ jobs:
         platform:
           - linux-x64
           - macos-arm64
-        case:
-          - stack-new-native-default
-          - stack-new-native-eager
-          - stack-new-native-eager-pooler
-          - stack-new-docker-default
-          - stack-new-docker-eager
-          - stack-new-docker-eager-pooler
-          - stack-legacy-docker-default
-          - stack-legacy-docker-eager-pooler
-          - schema-new-native
-          - schema-new-docker
-          - schema-legacy-docker
+        case: ${{ fromJSON((inputs.case_set || 'all') == 'docker-stack' && '["stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler"]' || '["stack-new-native-default","stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler","schema-new-native","schema-new-docker","schema-legacy-docker"]') }}
         sample: ${{ fromJSON(github.event_name == 'push' && '[1]' || inputs.samples == '1' && '[1]' || inputs.samples == '3' && '[1,2,3]' || '[1,2,3,4,5]') }}
         exclude:
           - platform: macos-arm64
