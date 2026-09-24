@@ -2,6 +2,8 @@ import { Effect, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
+import { tagForServiceVersion } from "../shared/services/services.shared.ts";
+
 /**
  * Best-effort probes for the deployed versions of a project's REST, Auth,
  * and Storage services, used by `supabase link`. Requests use the
@@ -46,13 +48,13 @@ export function parseGotrueVersion(body: unknown): Option.Option<string> {
 }
 
 /**
- * Storage returns its bare version string at `GET /storage/v1/version`. An
- * empty body or the `0.0.0` sentinel means "not found"; otherwise the body is
- * prefixed with `v`.
+ * Storage's `GET /storage/v1/version` body. Empty or `0.0.0` means not found.
+ * Any other body becomes the storage image tag.
  */
 export function parseStorageVersion(body: string): Option.Option<string> {
-  if (body.length === 0 || body === "0.0.0") return Option.none();
-  return Option.some(`v${body}`);
+  const version = body.trim();
+  if (version.length === 0 || version === "0.0.0") return Option.none();
+  return Option.some(tagForServiceVersion("storage", version));
 }
 
 function tenantRequest(opts: TenantVersionOptions, pathName: string) {

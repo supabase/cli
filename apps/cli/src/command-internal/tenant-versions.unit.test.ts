@@ -40,12 +40,22 @@ describe("parseGotrueVersion", () => {
 });
 
 describe("parseStorageVersion", () => {
-  it("prefixes the body with v", () => {
+  it("prefixes a bare semver with v", () => {
     expect(parseStorageVersion("1.19.3")).toEqual(Option.some("v1.19.3"));
+  });
+
+  it("keeps a body that already starts with v, including a suffix", () => {
+    expect(parseStorageVersion("v1.77.1-versions")).toEqual(Option.some("v1.77.1-versions"));
+  });
+
+  it("trims surrounding whitespace before deciding the prefix", () => {
+    expect(parseStorageVersion("  1.77.1\n")).toEqual(Option.some("v1.77.1"));
+    expect(parseStorageVersion(" v1.77.1-versions\n")).toEqual(Option.some("v1.77.1-versions"));
   });
 
   it("treats empty body and 0.0.0 sentinel as not found", () => {
     expect(Option.isNone(parseStorageVersion(""))).toBe(true);
+    expect(Option.isNone(parseStorageVersion("   "))).toBe(true);
     expect(Option.isNone(parseStorageVersion("0.0.0"))).toBe(true);
   });
 });
