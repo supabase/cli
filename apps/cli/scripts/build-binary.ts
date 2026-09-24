@@ -30,6 +30,8 @@ const result = await Bun.build({
     SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(
       await Effect.runPromise(bundleStackFunctionsServeMainTemplate()),
     ),
+    // Matches build.ts (supabase/cli#6771).
+    "process.env.MSGPACKR_NATIVE_ACCELERATION_DISABLED": JSON.stringify("true"),
   },
 });
 for (const log of result.logs) {
