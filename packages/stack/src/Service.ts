@@ -135,6 +135,8 @@ interface SessionRecord {
   readonly health: Deferred.Deferred<Exit.Exit<void, ServiceError>>;
   readonly stopped: Ref.Ref<boolean>;
   readonly removed: Ref.Ref<boolean>;
+  /** Set when the runtime exits without a requested stop. */
+  readonly crash: Ref.Ref<ServiceError | undefined>;
 }
 
 const contextFor = <Config>(
@@ -338,6 +340,7 @@ export const makeService = <Config>(
           health,
           stopped: yield* Ref.make(false),
           removed: yield* Ref.make(false),
+          crash: yield* Ref.make<ServiceError | undefined>(undefined),
         };
         yield* Ref.set(current, record);
         yield* update({
@@ -373,14 +376,16 @@ export const makeService = <Config>(
             Effect.gen(function* () {
               if ((yield* Ref.get(current)) !== record) return;
               const observation = yield* SubscriptionRef.get(observations);
-              const error =
+              const crash =
                 observation.lifecycle === "stopping"
-                  ? observation.error
+                  ? undefined
                   : (exitError("exit", exit) ??
                     new ServiceError({
                       operation: "exit",
                       message: "Runtime exited unexpectedly",
                     }));
+              yield* Ref.set(record.crash, crash);
+              const error = crash ?? observation.error;
               yield* update({
                 lifecycle: "stopping",
                 health: undefined,
@@ -574,16 +579,18 @@ export const makeService = <Config>(
         return yield* new ServiceStaleLaunch({ id: options.id, launchId });
       if (expectedLaunchId !== undefined && record.launchId !== expectedLaunchId)
         return yield* new ServiceStaleLaunch({ id: options.id, launchId });
-      if ((yield* SubscriptionRef.get(observations)).lifecycle === "stopping") {
+      const stale = Effect.gen(function* () {
+        const crash = yield* Ref.get(record.crash);
+        if (crash !== undefined) return yield* crash;
         return yield* new ServiceStaleLaunch({ id: options.id, launchId });
-      }
+      });
+      if ((yield* SubscriptionRef.get(observations)).lifecycle === "stopping") return yield* stale;
       const healthResult = yield* Deferred.await(record.health);
       if (
         (yield* Ref.get(current)) !== record ||
         (yield* SubscriptionRef.get(observations)).lifecycle !== "running"
-      ) {
-        return yield* new ServiceStaleLaunch({ id: options.id, launchId });
-      }
+      )
+        return yield* stale;
       yield* healthResult;
     });
 
