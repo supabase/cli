@@ -82,6 +82,7 @@ function normalizeStoredJwk(record: Record<string, unknown>): Jwk {
   };
 }
 
+// Native parser errors are CLI output; schema decoding discards their messages.
 function parseJwkInput(input: string): unknown {
   return JSON.parse(input);
 }
