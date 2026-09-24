@@ -143,6 +143,7 @@ function generateStackApi(workdir: string) {
           ? Effect.succeed(database)
           : Effect.fail(new StackError({ operation: "get", message: "unknown instance" })),
     },
+    credentials: { get: unusedStack },
     composition: {
       describe: Effect.succeed(composition),
       supabase: unusedStackFn,

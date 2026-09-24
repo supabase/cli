@@ -10,11 +10,9 @@ export interface NetworkEndpoint {
   readonly protocol: "tcp" | "http";
   readonly port: number | "auto";
   readonly backend: Effect.Effect<BackendAddress, ProxyError, Scope.Scope>;
-  readonly shared?: ReadonlyArray<{
-    readonly prefix: string;
-    readonly upstreamPrefix?: string;
-    readonly upstreamHost?: string;
-  }>;
+  readonly shared?: ReadonlyArray<
+    Pick<HttpRoute, "prefix" | "upstreamPrefix" | "upstreamHost" | "keyRewrite">
+  >;
   readonly enabled: Effect.Effect<boolean>;
 }
 
@@ -182,6 +180,7 @@ const makeNetwork = (options: {
                         prefix: route.prefix,
                         upstreamPrefix: route.upstreamPrefix,
                         upstreamHost: route.upstreamHost,
+                        ...(route.keyRewrite === undefined ? {} : { keyRewrite: route.keyRewrite }),
                         target: endpoint.backend,
                       })),
                     ];

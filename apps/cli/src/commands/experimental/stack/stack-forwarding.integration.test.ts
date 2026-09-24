@@ -1,6 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "@supabase/stack";
 import { Effect, FileSystem, Layer, Redacted, Schema } from "effect";
 import { ServiceCreation } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { makeSpec as authSpec } from "../../../../../../packages/stack/src/services/Auth.ts";
@@ -19,6 +18,8 @@ describe("stack service configuration", () => {
   it.live("carries editable TOML settings into native and container service environments", () =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(`project_id = "forwarding"
+[auth]
+jwt_secret = "forwarding-jwt-secret-with-at-least-32-characters"
 [api]
 extra_search_path = ["public", "extensions", "custom"]
 [db]
@@ -46,10 +47,19 @@ vector_port = 59001
       const loaded = yield* loadStackConfig(root);
       const services = yield* loaded.creations("forwarding");
       const database = services.find((s) => s.service === "database");
+      expect(
+        database?.service === "database"
+          ? Redacted.value(database.config.jwtSecret ?? Redacted.make(""))
+          : undefined,
+      ).toBe("forwarding-jwt-secret-with-at-least-32-characters");
       expect(database?.config.healthTimeoutMs).toBe(12500);
       expect(database?.config.rootKey && Redacted.value(database.config.rootKey)).toBe(
         "a".repeat(64),
       );
+      const realtime = services.find((service) => service.service === "realtime");
+      expect(
+        realtime?.service === "realtime" ? realtime.config.secretKeyBase : undefined,
+      ).toBeUndefined();
       expect(services.find((s) => s.service === "vector")?.endpoints?.http?.port).toBe(59001);
       for (const container of [false, true]) {
         for (const service of services) {
@@ -70,6 +80,7 @@ vector_port = 59001
               expect(yield* realtimeSpec().env(service, new Map(), container)).toMatchObject({
                 MAX_HEADER_LENGTH: "8192",
                 ERL_AFLAGS: "-proto_dist inet6_tcp",
+                DB_IP_VERSION: "ipv4",
               });
               break;
             case "storage":
@@ -141,33 +152,28 @@ enabled = false
         expect(functions?.endpoints?.inspector?.port).toBe(59229);
       }).pipe(Effect.provide(layer)),
   );
-  it.live(
-    "decrypts a configured signing secret before deriving service credentials and reopening",
-    () =>
-      Effect.gen(function* () {
-        const plaintext = "test-jwt-secret-with-more-than-32-characters";
-        const root = yield* createStackConfigProject(
-          `project_id = "encrypted-jwt"
+  it.live("decrypts a configured signing secret before forwarding it to the stack", () =>
+    Effect.gen(function* () {
+      const plaintext = "test-jwt-secret-with-more-than-32-characters";
+      const root = yield* createStackConfigProject(
+        `project_id = "encrypted-jwt"
 [auth]
 jwt_secret = "encrypted:BOsrXIZY2BNTW43BeRhMbfvlOIUjwI7GCyFHxJD/Ik+UQ4mqkgVl2+61WWhEf3+8SEDngaEMZnSWajCMCInbHJbRnH+C1xgcAZlWKR0qLcHanvkM+zDKWxcQgMbN5AmOqwn3olCjpHbqkSzoyPri015szpcZMp5JKGmUsw6KEwTFE7LyQwRlTbqlVn7u"
 `,
-          {
-            rootEnv:
-              "DOTENV_PRIVATE_KEY=7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb\n",
-          },
-        );
-        const config = yield* loadStackConfig(root);
-        expect(Redacted.value(config.jwtSecret)).toBe(plaintext);
-        const services = yield* config.creations("encrypted-jwt", {
-          jwtSecret: Redacted.make(plaintext),
-        });
-        expect(services.find((service) => service.service === "auth")?.config.jwtSecret).toBe(
-          plaintext,
-        );
-      }).pipe(Effect.provide(layer)),
+        {
+          rootEnv:
+            "DOTENV_PRIVATE_KEY=7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb\n",
+        },
+      );
+      const config = yield* loadStackConfig(root);
+      const services = yield* config.creations("encrypted-jwt");
+      expect(services.find((service) => service.service === "auth")?.config.jwtSecret).toBe(
+        plaintext,
+      );
+    }).pipe(Effect.provide(layer)),
   );
 
-  it.live("reopens with empty configured secrets using package defaults", () =>
+  it.live("leaves empty configured secrets for the stack to normalize", () =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(`project_id = "empty-secrets"
 [auth]
@@ -176,13 +182,15 @@ jwt_secret = ""
 root_key = ""
 `);
       const config = yield* loadStackConfig(root);
-      const creations = yield* config.creations("empty-secrets", { jwtSecret: config.jwtSecret });
-      expect(Redacted.value(config.jwtSecret)).toBe(DEFAULT_LOCAL_JWT_SECRET);
+      const creations = yield* config.creations("empty-secrets");
       const database = creations.find((creation) => creation.service === "database");
       expect(database).toBeDefined();
-      expect(database?.config.rootKey && Redacted.value(database.config.rootKey)).toBe(
-        DEFAULT_POSTGRES_ROOT_KEY,
-      );
+      expect(
+        database?.service === "database" ? database.config.rootKey : undefined,
+      ).toBeUndefined();
+      expect(
+        database?.service === "database" ? database.config.jwtSecret : undefined,
+      ).toBeUndefined();
     }).pipe(Effect.provide(layer)),
   );
 
@@ -190,6 +198,8 @@ root_key = ""
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(
         `project_id = "auth-forwarding"
+[api]
+external_url = "https://api.example.test"
 [auth]
 additional_redirect_urls = ["https://app.example.test/callback"]
 enable_refresh_token_rotation = false
@@ -283,6 +293,7 @@ allow_dynamic_registration = true
       expect(decoded.config.settings?.email?.notification.password_changed?.subject).toBe(
         "Password changed",
       );
+      expect(decoded.config.apiExternalUrl).toBe("https://api.example.test");
       expect(decoded.config.smtp).toMatchObject({
         host: "smtp.example.test",
         port: 2525,
@@ -294,7 +305,6 @@ allow_dynamic_registration = true
           config: {
             ...auth.config,
             smtpUrl: "smtp://127.0.0.1:1025",
-            externalApiUrl: "http://localhost:54321/auth/v1",
           },
         },
         new Map(),
@@ -302,6 +312,7 @@ allow_dynamic_registration = true
       );
       expect(env).toMatchObject({
         GOTRUE_URI_ALLOW_LIST: "https://app.example.test/callback",
+        API_EXTERNAL_URL: "https://api.example.test/auth/v1",
         GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: "false",
         GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "15",
         GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: "true",
@@ -342,7 +353,7 @@ allow_dynamic_registration = true
         GOTRUE_SESSIONS_INACTIVITY_TIMEOUT: "1h",
         GOTRUE_EXTERNAL_GITHUB_CLIENT_ID: "github-client",
         GOTRUE_EXTERNAL_GITHUB_SECRET: "github-secret",
-        GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI: "http://localhost:54321/auth/v1/callback",
+        GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI: "https://issuer.example.test/callback",
         GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED: "true",
         GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH: "/oauth/consent",
       });

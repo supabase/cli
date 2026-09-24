@@ -235,13 +235,27 @@ describe("stack start (compiled e2e)", () => {
           yield* writeText(join(projectDir, "supabase", "config.toml"), minimalConfig);
 
           const excluded = yield* runSupabaseEffect(
-            ["stack", "start", "--runtime", "native", "--exclude", "rest", "--eager"],
+            [
+              "stack",
+              "start",
+              "--runtime",
+              "native",
+              "--exclude",
+              "rest",
+              "--eager",
+              "--output-format",
+              "json",
+            ],
             { cwd: projectDir, home: home.dir, exitTimeoutMs: START_TIMEOUT_MS },
           );
           expect(
             excluded.exitCode,
             `stdout:\n${excluded.stdout}\nstderr:\n${excluded.stderr}`,
           ).toBe(0);
+          const excludedResult = yield* Schema.decodeEffect(
+            Schema.fromJsonString(StartResultSchema),
+          )(excluded.stdout.trim());
+          stackId = excludedResult.id;
 
           const result = yield* runSupabaseEffect(
             ["stack", "start", "--runtime", "native", "--eager", "--output-format", "json"],
@@ -251,12 +265,58 @@ describe("stack start (compiled e2e)", () => {
           const startResult = yield* Schema.decodeEffect(Schema.fromJsonString(StartResultSchema))(
             result.stdout.trim(),
           );
-          stackId = startResult.id;
+          expect(startResult.id).toBe(stackId);
           const idText = stackId;
           const homeDir = home;
           const projectRoot = projectDir;
           if (idText === undefined || homeDir === undefined || projectRoot === undefined)
             throw new Error("compiled start did not return a stack id");
+
+          const unchanged = yield* inspectStackState(homeDir.dir, idText);
+          expect(unchanged.owner).toBe("reachable");
+          expect(unchanged.identity.project_root).toBe(yield* realPath(projectRoot));
+          expect(unchanged.runtime).toBe("native");
+          expect(unchanged.lifecycle).toBe("running");
+          expect(
+            unchanged.composition.members.find(({ service }) => service === "database")?.state,
+          ).toBe("running");
+          expect(unchanged.composition.members.some(({ service }) => service === "rest")).toBe(
+            false,
+          );
+          const databaseEndpoint = unchanged.endpoints["database.sql"]?.url;
+          expect(databaseEndpoint).toMatch(/^tcp:\/\/127\.0\.0\.1:\d+$/);
+          const databaseId = unchanged.composition.members.find(
+            ({ service }) => service === "database",
+          )?.id;
+          if (databaseId === undefined) return yield* Effect.die("database member id is missing");
+          const databasePath = join(homeDir.dir, "stacks", idText, "data", databaseId);
+          yield* access(join(databasePath, "data", "PG_VERSION"));
+
+          const stoppedRunningStack = yield* runSupabaseEffect(
+            ["stack", "stop", "--stack-id", idText],
+            {
+              cwd: projectRoot,
+              home: homeDir.dir,
+              env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+              exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+            },
+          );
+          expect(
+            stoppedRunningStack.exitCode,
+            `stdout:\n${stoppedRunningStack.stdout}\nstderr:\n${stoppedRunningStack.stderr}`,
+          ).toBe(0);
+          const included = yield* runSupabaseEffect(
+            ["stack", "start", "--runtime", "native", "--eager", "--output-format", "json"],
+            { cwd: projectRoot, home: homeDir.dir, exitTimeoutMs: START_TIMEOUT_MS },
+          );
+          expect(
+            included.exitCode,
+            `stdout:\n${included.stdout}\nstderr:\n${included.stderr}`,
+          ).toBe(0);
+          const includedResult = yield* Schema.decodeEffect(
+            Schema.fromJsonString(StartResultSchema),
+          )(included.stdout.trim());
+          expect(includedResult.id).toBe(idText);
 
           const running = yield* inspectStackState(homeDir.dir, idText);
           expect(running.owner).toBe("reachable");
@@ -267,12 +327,10 @@ describe("stack start (compiled e2e)", () => {
             running.composition.members.find(({ service }) => service === "database")?.state,
           ).toBe("running");
           expect(running.composition.members.some(({ service }) => service === "rest")).toBe(true);
-          expect(running.endpoints["database.sql"]?.url).toMatch(/^tcp:\/\/127\.0\.0\.1:\d+$/);
-          const databaseId = running.composition.members.find(
-            ({ service }) => service === "database",
-          )?.id;
-          if (databaseId === undefined) return yield* Effect.die("database member id is missing");
-          const databasePath = join(homeDir.dir, "stacks", idText, "data", databaseId);
+          expect(running.endpoints["database.sql"]?.url).toBe(databaseEndpoint);
+          expect(
+            running.composition.members.find(({ service }) => service === "database")?.id,
+          ).toBe(databaseId);
           yield* access(join(databasePath, "data", "PG_VERSION"));
 
           const followResult = yield* Effect.scoped(
@@ -398,11 +456,15 @@ describe("stack start (compiled e2e)", () => {
             "DB_URL",
             "ANON_KEY",
             "SERVICE_ROLE_KEY",
+            "PUBLISHABLE_KEY",
+            "SECRET_KEY",
             "API_URL",
           ]);
           expect(variables.DB_URL).toMatch(
             /^postgresql:\/\/supabase_admin:.+@.+:\d+\/postgres(?:\?.*)?$/u,
           );
+          expect(variables.PUBLISHABLE_KEY).toMatch(/^sb_publishable_.+$/u);
+          expect(variables.SECRET_KEY).toMatch(/^sb_secret_.+$/u);
 
           const dotenv = yield* runSupabaseEffect(
             ["stack", "status", "--env", "--stack-id", idText, "--output-format", "text"],

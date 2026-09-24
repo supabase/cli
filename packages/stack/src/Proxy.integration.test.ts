@@ -56,8 +56,10 @@ it.live(
         yield* Deferred.await(acquired);
         expect(yield* Deferred.isDone(released)).toBe(false);
         yield* Deferred.succeed(ready, undefined);
-        const bytes = new Uint8Array(yield* Fiber.join(response));
-        expect(bytes).toEqual(body);
+        const bytes = Buffer.from(yield* Fiber.join(response));
+        // An element-wise toEqual over 2 MiB blocks the event loop for seconds.
+        expect(bytes.byteLength).toBe(body.byteLength);
+        expect(bytes.equals(body)).toBe(true);
         yield* Deferred.await(released);
       }),
     ).pipe(Effect.provide(NodeHttpClient.layerNodeHttp)),

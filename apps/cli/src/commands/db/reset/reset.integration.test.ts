@@ -55,6 +55,7 @@ import type {
   ServiceCreation,
   ServiceInstance,
   ServiceInstances,
+  StackCredentials,
   Stack,
   Observation,
 } from "@supabase/stack/effect";
@@ -483,6 +484,20 @@ function recordingStackStorageHttpClientBucketListTransportFails() {
 
 const RESET_STACK_ID = "c".repeat(64);
 const RESET_JWT = "stack-jwt-secret-with-at-least-32-characters";
+const RESET_STACK_CREDENTIALS: StackCredentials = {
+  jwtSecret: RESET_JWT,
+  postgresRootKey: "postgres-root-key",
+  databasePassword: "postgres",
+  publishableKey: "publishable-key",
+  secretKey: "secret-key",
+  anonKey: "anon-key",
+  serviceRoleKey: generateGoJwt(RESET_JWT, "service_role"),
+  jwks: '{"keys":[]}',
+  gotrueJwtKeys: "[]",
+  remoteJwks: "[]",
+  anonKeyIsOverride: false,
+  serviceRoleKeyIsOverride: false,
+};
 
 type ResetServiceKind = "database" | "auth" | "storage" | "realtime" | "pooler";
 type StackService = ServiceInstances[ResetServiceKind];
@@ -612,6 +627,8 @@ function mockResetStackApi(opts: {
     | "disabled";
   readonly storageError?: string;
   readonly apiEndpoint?: { readonly url: string; readonly port: number };
+  /** Models the `db start` overlay, whose composition holds only the database. */
+  readonly postgresOnly?: boolean;
 }) {
   let resetCalls = 0;
   let stopCalls = 0;
@@ -700,7 +717,7 @@ function mockResetStackApi(opts: {
     }),
     ready: Effect.void,
   });
-  const members: Array<StackService> = [
+  const composed: Array<StackService> = [
     db,
     stackService(
       "supabase_auth_test",
@@ -719,6 +736,7 @@ function mockResetStackApi(opts: {
       Effect.succeed(makeStackObservation("supabase_pooler_test", pooler)),
     ),
   ];
+  const members = opts.postgresOnly === true ? [db] : composed;
   const stack: Stack = {
     id: RESET_STACK_ID,
     services: {
@@ -729,6 +747,7 @@ function mockResetStackApi(opts: {
       },
       list: Effect.succeed(members),
     },
+    credentials: { get: Effect.succeed(RESET_STACK_CREDENTIALS) },
     composition: {
       describe: Effect.succeed({
         members: members.map(({ id }, index) => ({
@@ -852,6 +871,7 @@ function setup(
       | "disabled";
     stackStorageError?: string;
     stackApiEndpoint?: { readonly url: string; readonly port: number };
+    stackPostgresOnly?: boolean;
     httpClient?: Layer.Layer<HttpClient.HttpClient>;
   },
 ) {
@@ -887,6 +907,7 @@ function setup(
     storageState: opts.stackStorageState,
     storageError: opts.stackStorageError,
     apiEndpoint: opts.stackApiEndpoint,
+    postgresOnly: opts.stackPostgresOnly,
   });
   const catalog =
     opts.stackBackend === true
@@ -1168,7 +1189,7 @@ describe("db reset", () => {
         expect(stackApi.stopCalls).toBe(1);
         expect(stackApi.startCalls).toBe(2);
         expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "storage", "realtime"]);
-        expect(catalogApplied[0]?.target.jwtSecret).toBe(RESET_JWT);
+        expect(catalogApplied[0]?.target).not.toHaveProperty("jwtSecret");
         expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
           false,
         );
@@ -1188,6 +1209,48 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "storage", "realtime"]);
+      });
+    });
+
+    it.live("keeps a service excluded from the saved stack out of schema provisioning", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackStorageState: "disabled",
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "realtime"]);
+      });
+    });
+
+    it.live("provisions configured service schemas for a postgres-only stack", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackPostgresOnly: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "realtime", "storage"]);
+      });
+    });
+
+    it.live("skips schemas for services disabled in config on a postgres-only stack", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[storage]\nenabled = false\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackPostgresOnly: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "realtime"]);
       });
     });
 

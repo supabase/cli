@@ -27,6 +27,35 @@ export const SavedInstance = Schema.Struct({
 });
 export interface SavedInstance extends Schema.Schema.Type<typeof SavedInstance> {}
 
+export const StackIdentityInput = Schema.Struct({
+  publishableKey: Schema.optionalKey(Schema.String),
+  secretKey: Schema.optionalKey(Schema.String),
+  anonKey: Schema.optionalKey(Schema.String),
+  anonKeyIsOverride: Schema.optionalKey(Schema.Boolean),
+  serviceRoleKey: Schema.optionalKey(Schema.String),
+  serviceRoleKeyIsOverride: Schema.optionalKey(Schema.Boolean),
+  gotrueJwtKeys: Schema.optionalKey(Schema.String),
+  publicSigningKeys: Schema.optionalKey(Schema.String),
+  remoteJwks: Schema.optionalKey(Schema.String),
+});
+export interface StackIdentityInput extends Schema.Schema.Type<typeof StackIdentityInput> {}
+
+export const StackCredentials = Schema.Struct({
+  jwtSecret: Schema.String,
+  postgresRootKey: Schema.String,
+  databasePassword: Schema.String,
+  publishableKey: Schema.String,
+  secretKey: Schema.String,
+  anonKey: Schema.String,
+  serviceRoleKey: Schema.String,
+  jwks: Schema.String,
+  gotrueJwtKeys: Schema.String,
+  remoteJwks: Schema.String,
+  anonKeyIsOverride: Schema.Boolean,
+  serviceRoleKeyIsOverride: Schema.Boolean,
+});
+export interface StackCredentials extends Schema.Schema.Type<typeof StackCredentials> {}
+
 export const SavedStack = Schema.Struct({
   id: SafeId,
   identity: Schema.Struct({
@@ -37,6 +66,7 @@ export const SavedStack = Schema.Struct({
   runtime: Schema.Literals(["native", "docker", "podman"]),
   instances: Schema.Array(SavedInstance),
   composition: Schema.Unknown,
+  credentials: Schema.optionalKey(StackCredentials),
   ports: Schema.Array(
     Schema.Struct({
       key: Schema.String,

@@ -28,7 +28,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   healthPath: "/",
   env: (creation, endpoints) => {
     const http = endpoints.get("http");
-    const jwtSecret = creation.config.jwtSecret ?? creation.config.jwks;
+    const jwtSecret = creation.config.jwks ?? creation.config.jwtSecret;
     return Effect.succeed({
       DATABASE_URL: creation.config.databaseUrl,
       PGRST_DB_URI: creation.config.databaseUrl,

@@ -3,7 +3,7 @@
  * endpoint; lazy Storage members may be woken by the first gateway request.
  */
 
-import { Data, Effect, Match, Option, Path, Redacted } from "effect";
+import { Data, Effect, Match, Option, Path } from "effect";
 import type { Observation, ServiceInstance, Stack } from "@supabase/stack/effect";
 import {
   actionability,
@@ -17,7 +17,6 @@ import { stackOpenProjectBy } from "./stack-local-database.ts";
 import { sanitizeInlineName } from "./http-errors.ts";
 import { StorageGatewayStatusError } from "./storage-gateway.errors.ts";
 import type { StorageCredentials } from "./storage-credentials.ts";
-import { generateGoJwt } from "./go-jwt.ts";
 
 const INSPECT_OR_RESTART_SUGGESTION =
   "Run supabase stack status to inspect the stack, or supabase stack restart.";
@@ -59,7 +58,7 @@ const capabilityState = (observation: Observation | undefined) => {
 /** Resolves bucket-seeding credentials from a configured Storage instance. */
 export const stackStorageCredentialsFor = (
   storage: ServiceInstance<"storage">,
-  jwtSecret: string,
+  serviceRoleKey: string,
 ): Effect.Effect<StorageCredentials, StackStorageUnavailableError | StackStorageCapabilityError> =>
   storage.status.pipe(
     Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
@@ -74,7 +73,7 @@ export const stackStorageCredentialsFor = (
           return Effect.fail(
             new StackStorageUnavailableError({ message: describeStorageCapability(observation) }),
           );
-        return storageCredentialsFrom(observation, jwtSecret);
+        return storageCredentialsFrom(observation, serviceRoleKey);
       },
     ),
   );
@@ -123,7 +122,7 @@ const notRunningSuggestion = (lifecycle: "starting" | "stopping" | "stopped"): s
 
 const storageCredentialsFrom = (
   observation: Observation,
-  jwtSecret: string,
+  serviceRoleKey: string,
 ): Effect.Effect<StorageCredentials, StackStorageCapabilityError> => {
   const endpoint = observation.endpoints.find(({ name }) => name === "http");
   return endpoint === undefined
@@ -132,7 +131,7 @@ const storageCredentialsFrom = (
       )
     : Effect.succeed({
         baseUrl: `http://${endpoint.host}:${endpoint.port}`,
-        apiKey: generateGoJwt(jwtSecret, "service_role"),
+        apiKey: serviceRoleKey,
         localKongCa: undefined,
       });
 };
@@ -189,15 +188,15 @@ export const stackStorageEndpointFor = (
         message: describeStorageCapability(storageObservation),
         suggestion: "Run supabase stack restart, then retry.",
       });
-    if (databaseObservation.config.service !== "database")
+    const identity = yield* stack.credentials.get.pipe(
+      Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
+    );
+    if (identity === undefined)
       return yield* new StackStorageUnavailableError({
-        message: "The primary database configuration is unavailable.",
+        message: "The stack has no saved credentials.",
         suggestion: INSPECT_OR_RESTART_SUGGESTION,
       });
-    return yield* storageCredentialsFrom(
-      storageObservation,
-      Redacted.value(databaseObservation.config.config.jwtSecret),
-    );
+    return yield* storageCredentialsFrom(storageObservation, identity.serviceRoleKey);
   });
 
 /** Storage credentials for the project stack, opening it without launching the owner. */

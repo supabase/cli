@@ -1,6 +1,11 @@
 import { endpointReports } from "../stack-endpoints.format.ts";
 import { Effect, Option, Path, Redacted } from "effect";
-import type { Observation, ServiceCreation, Stack } from "@supabase/stack/effect";
+import type {
+  Observation,
+  ServiceCreation,
+  ServiceCreationInput,
+  Stack,
+} from "@supabase/stack/effect";
 import type { StackError } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
@@ -309,7 +314,7 @@ const observe = (stack: Stack, owner: StackReport["owner"]) =>
   });
 
 const compareConfig = (
-  creations: ReadonlyArray<ServiceCreation>,
+  creations: ReadonlyArray<ServiceCreationInput>,
   observed: ReadonlyArray<ObservedService>,
   members: ReadonlyArray<{ readonly id: string }>,
 ): StackReport["config_drift"] => {
@@ -387,9 +392,7 @@ const configDrift = (
         message: "Configuration could not be compared without the saved database observation.",
       };
     const loaded = yield* loadStackConfig(projectRoot);
-    const creations = yield* loaded.creations(stackId, {
-      jwtSecret: databaseObservation.config.config.jwtSecret,
-    });
+    const creations = yield* loaded.creations(stackId);
     return compareConfig(creations, observed, members);
   }).pipe(
     Effect.catchTag("StackConfigError", (error) =>
@@ -468,7 +471,13 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
           message: "The primary database configuration is unavailable for environment export.",
           suggestion: "Run supabase stack start first.",
         });
-      const jwtSecret = Redacted.value(databaseConfig.config.jwtSecret);
+      const identity = yield* stack.credentials.get.pipe(Effect.mapError(mapStackError));
+      if (identity === undefined)
+        return yield* new StackCommandStatusError({
+          reason: "lifecycle",
+          message: "The stack's active credentials are unavailable for environment export.",
+          suggestion: "Run supabase stack start first.",
+        });
       const sql = databaseObservation.endpoints.find(({ name }) => name === "sql");
       const databaseUrl =
         sql === undefined
@@ -493,7 +502,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
           : { mailUi: endpointFor(services, observed.members, "mail", "http") }),
       };
       const values = stackEnvValues(
-        { endpoints, jwtSecret },
+        { endpoints, credentials: identity },
         databaseUrl === undefined ? {} : { databaseUrl },
         envNames,
       );

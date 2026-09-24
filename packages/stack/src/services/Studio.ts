@@ -12,6 +12,10 @@ export const Config = Schema.Struct({
   apiUrl: Schema.optionalKey(Schema.String),
   publicApiUrl: Schema.optionalKey(Schema.String),
   jwtSecret: Schema.optionalKey(Schema.String),
+  anonKey: Schema.optionalKey(Schema.String),
+  serviceRoleKey: Schema.optionalKey(Schema.String),
+  publishableKey: Schema.optionalKey(Schema.String),
+  secretKey: Schema.optionalKey(Schema.String),
   openaiApiKey: Schema.optionalKey(Schema.String),
 });
 
@@ -32,6 +36,11 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
     Effect.gen(function* () {
       const http = endpoints.get("http");
       const jwt = creation.config.jwtSecret;
+      const anonKey =
+        creation.config.anonKey ?? (jwt === undefined ? undefined : yield* serviceJwt("anon", jwt));
+      const serviceRoleKey =
+        creation.config.serviceRoleKey ??
+        (jwt === undefined ? undefined : yield* serviceJwt("service_role", jwt));
       const values: Record<string, string> = {
         ...(http === undefined ? {} : { PORT: String(http.port) }),
         HOSTNAME: container ? "0.0.0.0" : "127.0.0.1",
@@ -44,10 +53,12 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         values.LOGFLARE_PRIVATE_ACCESS_TOKEN = creation.config.analyticsApiKey;
         values.NEXT_PUBLIC_ENABLE_LOGS = "true";
       }
-      if (jwt !== undefined) {
-        values.SUPABASE_ANON_KEY = yield* serviceJwt("anon", jwt);
-        values.SUPABASE_SERVICE_KEY = yield* serviceJwt("service_role", jwt);
-      }
+      if (anonKey !== undefined) values.SUPABASE_ANON_KEY = anonKey;
+      if (serviceRoleKey !== undefined) values.SUPABASE_SERVICE_KEY = serviceRoleKey;
+      if (creation.config.publishableKey !== undefined)
+        values.SUPABASE_PUBLISHABLE_KEY = creation.config.publishableKey;
+      if (creation.config.secretKey !== undefined)
+        values.SUPABASE_SECRET_KEY = creation.config.secretKey;
       if (creation.config.apiUrl !== undefined) values.SUPABASE_URL = creation.config.apiUrl;
       if (creation.config.publicApiUrl !== undefined)
         values.SUPABASE_PUBLIC_URL = creation.config.publicApiUrl;
