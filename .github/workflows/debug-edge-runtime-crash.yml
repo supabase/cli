@@ -19,13 +19,15 @@ jobs:
       matrix:
         trace: ["off", "on"]
     env:
-      OUTPUT_DIR: ${{ runner.temp }}/edge-runtime-crash
       CRASH_TRACE: ${{ matrix.trace == 'on' && '1' || '0' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Configure crash output directory
+        run: echo "OUTPUT_DIR=$RUNNER_TEMP/edge-runtime-crash" >> "$GITHUB_ENV"
 
       - name: Setup
         uses: ./.github/actions/setup
