@@ -1,9 +1,11 @@
 import {
   Cause,
   Crypto,
+  Duration,
   Effect,
   Exit,
   FileSystem,
+  Option,
   Path,
   PubSub,
   Ref,
@@ -201,52 +203,99 @@ const publishLogs = Effect.fn("ProcessRecipe.publishLogs")((
   );
 });
 
+const startupTimeoutSeconds = 60;
+const startupOutputTailLines = 20;
+const startupOutputLineChars = 1_000;
+
+type StartupOutput = Readonly<Record<CatalogLog["stream"], ReadonlyArray<string>>>;
+
+const clipLine = (line: string) =>
+  line.length > startupOutputLineChars
+    ? `…${line.slice(-startupOutputLineChars).replace(/^[\uDC00-\uDFFF]/, "")}`
+    : line;
+
+const withRecentOutput = (summary: string, output: StartupOutput) =>
+  [
+    summary,
+    ...(["stdout", "stderr"] as const)
+      .filter((name) => output[name].length > 0)
+      .map((name) => `Recent ${name}:\n${output[name].join("\n")}`),
+  ].join("\n");
+
 const awaitStartup = Effect.fn("ProcessRecipe.awaitStartup")(
   (
+    service: ServiceKind,
     process: {
       readonly stdout: Stream.Stream<Uint8Array, NativeProcessError | ContainerError>;
       readonly stderr: Stream.Stream<Uint8Array, NativeProcessError | ContainerError>;
       readonly exitCode: Effect.Effect<number, NativeProcessError | ContainerError>;
     },
     logs: PubSub.PubSub<CatalogLog>,
-  ): Effect.Effect<Readonly<{ readonly code: number; readonly stderr: string }>, ServiceError> =>
+  ): Effect.Effect<
+    Readonly<{ readonly code: number; readonly output: StartupOutput }>,
+    ServiceError
+  > =>
     Effect.gen(function* () {
-      const [stdout, stderr, exitCode] = yield* Effect.all(
+      const collect = Effect.fnUntraced(function* (
+        stream: Stream.Stream<Uint8Array, NativeProcessError | ContainerError>,
+        name: CatalogLog["stream"],
+        tail: Ref.Ref<ReadonlyArray<string>>,
+      ) {
+        const appendLines = (lines: ReadonlyArray<string>) =>
+          Ref.update(tail, (current) =>
+            [...current, ...lines.filter((line) => line.trim().length > 0).map(clipLine)].slice(
+              -startupOutputTailLines,
+            ),
+          );
+        const partial = yield* Ref.make("");
+        // The unterminated last line is flushed on interruption so a timeout still reports it.
+        yield* stream.pipe(
+          Stream.tap((bytes) => PubSub.publish(logs, { stream: name, bytes })),
+          Stream.decodeText,
+          Stream.runForEach((text) =>
+            Ref.modify(partial, (rest): [ReadonlyArray<string>, string] => {
+              const lines = `${rest}${text}`.split(/\r?\n/);
+              const next = lines.pop() ?? "";
+              return [lines, next.slice(-(startupOutputLineChars + 1))];
+            }).pipe(Effect.flatMap(appendLines)),
+          ),
+          Effect.ensuring(Ref.get(partial).pipe(Effect.flatMap((rest) => appendLines([rest])))),
+        );
+      });
+      const stdout = yield* Ref.make<ReadonlyArray<string>>([]);
+      const stderr = yield* Ref.make<ReadonlyArray<string>>([]);
+      const completed = yield* Effect.all(
         [
-          process.stdout.pipe(
-            Stream.decodeText,
-            Stream.runFold(
-              () => "",
-              (text, chunk) => text + chunk,
-            ),
-          ),
-          process.stderr.pipe(
-            Stream.decodeText,
-            Stream.runFold(
-              () => "",
-              (text, chunk) => text + chunk,
-            ),
-          ),
+          collect(process.stdout, "stdout", stdout),
+          collect(process.stderr, "stderr", stderr),
           process.exitCode,
         ],
         { concurrency: "unbounded" },
-      ).pipe(Effect.mapError((cause) => serviceError("launch", cause)));
-      if (stdout.length > 0)
-        yield* PubSub.publish(logs, {
-          stream: "stdout",
-          bytes: new TextEncoder().encode(stdout),
-        });
-      if (stderr.length > 0)
-        yield* PubSub.publish(logs, {
-          stream: "stderr",
-          bytes: new TextEncoder().encode(stderr),
-        });
-      return { code: Number(exitCode), stderr };
-    }).pipe(
-      Effect.timeout("60 seconds"),
-      Effect.mapError((cause) => serviceError("launch", cause)),
-    ),
+      ).pipe(
+        Effect.mapError((cause) => serviceError("launch", cause)),
+        Effect.timeoutOption(Duration.seconds(startupTimeoutSeconds)),
+      );
+      const output = { stdout: yield* Ref.get(stdout), stderr: yield* Ref.get(stderr) };
+      if (Option.isNone(completed))
+        return yield* serviceError(
+          "launch",
+          withRecentOutput(
+            `${service} startup timed out after ${startupTimeoutSeconds} seconds`,
+            output,
+          ),
+        );
+      return { code: Number(completed.value[2]), output };
+    }),
 );
+
+const startupFailure = (
+  service: ServiceKind,
+  result: { readonly code: number; readonly output: StartupOutput },
+): ServiceError =>
+  serviceError(
+    "launch",
+    withRecentOutput(`${service} startup exited with ${result.code}`, result.output),
+  );
 
 const readiness = Effect.fn("ProcessRecipe.readiness")(
   (
@@ -355,12 +404,8 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
             Effect.mapError((cause) => serviceError("launch", cause)),
           );
-          const result = yield* awaitStartup(startupProcess, logs);
-          if (result.code !== 0)
-            return yield* serviceError(
-              "launch",
-              `${context.config.service} startup exited with ${result.code}: ${result.stderr.trim()}`,
-            );
+          const result = yield* awaitStartup(context.config.service, startupProcess, logs);
+          if (result.code !== 0) return yield* startupFailure(context.config.service, result);
         }
         const native: NativeProcess = yield* spawnNativeProcess(
           {
@@ -420,15 +465,11 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             Effect.mapError((cause) => serviceError("launch", cause)),
             Scope.provide(context.scope),
           );
-        const result = yield* awaitStartup(startupProcess, logs);
+        const result = yield* awaitStartup(context.config.service, startupProcess, logs);
         yield* startupProcess.remove.pipe(
           Effect.mapError((cause) => serviceError("launch", cause)),
         );
-        if (result.code !== 0)
-          return yield* serviceError(
-            "launch",
-            `${context.config.service} startup exited with ${result.code}: ${result.stderr.trim()}`,
-          );
+        if (result.code !== 0) return yield* startupFailure(context.config.service, result);
       }
       const launched = yield* deps.container
         .launch({
