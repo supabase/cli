@@ -84,11 +84,12 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
           fs.makeDirectory(root, { recursive: true, mode: 0o700 }),
         );
         yield* mapFs(root, "secure functions bootstrap directory", fs.chmod(root, 0o700));
-        // Stops Deno config discovery from adopting an ancestor package.json as its workspace.
+        // An empty workspace root stops Deno config discovery before any ancestor package.json or
+        // workspace; a plain `{}` still joins an ancestor Deno workspace and fails membership.
         yield* mapFs(
           configFile,
           "write functions bootstrap config",
-          fs.writeFileString(configFile, "{}\n", { mode: 0o600 }),
+          fs.writeFileString(configFile, '{"workspace":[]}\n', { mode: 0o600 }),
         );
         yield* Effect.scoped(
           Effect.gen(function* () {

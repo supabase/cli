@@ -93,80 +93,95 @@ describe("service catalog", () => {
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
 
-  it.live(
-    "boots below an ancestor package.json and keeps shared functions deno.json imports",
-    () =>
-      Effect.scoped(
+  const ancestors = [
+    {
+      name: "a package.json with an unreadable sibling",
+      setup: (fs: FileSystem.FileSystem, root: string) =>
         Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const client = yield* HttpClient.HttpClient;
-          const temporaryRoot = `${process.cwd()}/tmp`;
-          yield* fs.makeDirectory(temporaryRoot, { recursive: true });
-          const root = yield* fs.makeTempDirectoryScoped({
-            directory: temporaryRoot,
-            prefix: "functions-ancestor-",
-          });
           yield* fs.writeFileString(`${root}/package.json`, '{"name":"home","private":true}');
           yield* fs.makeDirectory(`${root}/unreadable`);
           yield* fs.chmod(`${root}/unreadable`, 0o000);
           yield* Effect.addFinalizer(() =>
             fs.chmod(`${root}/unreadable`, 0o755).pipe(Effect.ignore),
           );
-          const functionsRoot = `${root}/project/supabase/functions`;
-          yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
-          yield* fs.makeDirectory(`${functionsRoot}/_shared`, { recursive: true });
-          yield* fs.writeFileString(
-            `${functionsRoot}/deno.json`,
-            '{"imports":{"shared-message":"./_shared/message.ts"}}',
-          );
-          yield* fs.writeFileString(
-            `${functionsRoot}/_shared/message.ts`,
-            'export const message = "shared";',
-          );
-          yield* fs.writeFileString(
-            `${functionsRoot}/hello/index.ts`,
-            'import { message } from "shared-message"; Deno.serve(() => new Response(message));',
-          );
-          const recipe = yield* makeServiceRecipe(
-            {
-              service: "functions",
-              config: {
-                functionsRoot,
-                bootstrap: yield* bundleServeMainTemplate,
-                verifyJwt: false,
-              },
-            },
-            {
-              ...options(root),
-              stackId: "d".repeat(64),
-              instanceId: "ancestor",
-              cacheRoot: "/tmp/supabase-stack-artifacts",
-            },
-          );
-          const logs = yield* Ref.make("");
-          yield* recipe.logs.pipe(
-            Stream.runForEach(({ bytes }) =>
-              Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
-            ),
-            Effect.forkScoped({ startImmediately: true }),
-          );
-          const instance = yield* makeService(recipe.definition, {
-            id: "ancestor",
-            config: recipe.creation,
-          });
-          yield* instance.start;
-          yield* instance.ready.pipe(
-            Effect.tapError(() => Ref.get(logs).pipe(Effect.flatMap(Effect.logError))),
-          );
-          const endpoint = yield* recipe.endpoint("http");
-          const response = yield* client.get(`http://${endpoint.host}:${endpoint.port}/hello`);
-          expect(response.status, yield* Ref.get(logs)).toBe(200);
-          expect(yield* response.text).toBe("shared");
-          yield* instance.stop;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-    { timeout: 120_000 },
-  );
+    },
+    {
+      name: "a Deno workspace that includes the project functions",
+      setup: (fs: FileSystem.FileSystem, root: string) =>
+        fs.writeFileString(`${root}/deno.json`, '{"workspace":["./project/supabase/functions"]}'),
+    },
+  ];
+  for (const ancestor of ancestors)
+    it.live(
+      `boots below ${ancestor.name} and keeps shared functions deno.json imports`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const client = yield* HttpClient.HttpClient;
+            const temporaryRoot = `${process.cwd()}/tmp`;
+            yield* fs.makeDirectory(temporaryRoot, { recursive: true });
+            const root = yield* fs.makeTempDirectoryScoped({
+              directory: temporaryRoot,
+              prefix: "functions-ancestor-",
+            });
+            yield* ancestor.setup(fs, root);
+            const functionsRoot = `${root}/project/supabase/functions`;
+            yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
+            yield* fs.makeDirectory(`${functionsRoot}/_shared`, { recursive: true });
+            yield* fs.writeFileString(
+              `${functionsRoot}/deno.json`,
+              '{"imports":{"shared-message":"./_shared/message.ts"}}',
+            );
+            yield* fs.writeFileString(
+              `${functionsRoot}/_shared/message.ts`,
+              'export const message = "shared";',
+            );
+            yield* fs.writeFileString(
+              `${functionsRoot}/hello/index.ts`,
+              'import { message } from "shared-message"; Deno.serve(() => new Response(message));',
+            );
+            const recipe = yield* makeServiceRecipe(
+              {
+                service: "functions",
+                config: {
+                  functionsRoot,
+                  bootstrap: yield* bundleServeMainTemplate,
+                  verifyJwt: false,
+                },
+              },
+              {
+                ...options(root),
+                stackId: "d".repeat(64),
+                instanceId: "ancestor",
+                cacheRoot: "/tmp/supabase-stack-artifacts",
+              },
+            );
+            const logs = yield* Ref.make("");
+            yield* recipe.logs.pipe(
+              Stream.runForEach(({ bytes }) =>
+                Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
+              ),
+              Effect.forkScoped({ startImmediately: true }),
+            );
+            const instance = yield* makeService(recipe.definition, {
+              id: "ancestor",
+              config: recipe.creation,
+            });
+            yield* instance.start;
+            yield* instance.ready.pipe(
+              Effect.tapError(() => Ref.get(logs).pipe(Effect.flatMap(Effect.logError))),
+            );
+            const endpoint = yield* recipe.endpoint("http");
+            const response = yield* client.get(`http://${endpoint.host}:${endpoint.port}/hello`);
+            expect(response.status, yield* Ref.get(logs)).toBe(200);
+            expect(yield* response.text).toBe("shared");
+            yield* instance.stop;
+          }),
+        ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      { timeout: 120_000 },
+    );
 });
 
 for (const runtime of ["native", "docker"] as const) {
