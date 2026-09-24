@@ -92,6 +92,22 @@ it.effect("publishes the HMAC key for an empty signing-key file", () =>
   }),
 );
 
+it.effect("omits the HMAC key when asymmetric signing keys are configured", () =>
+  Effect.gen(function* () {
+    const resolved = yield* resolveStackIdentity(
+      DEFAULT_LOCAL_JWT_SECRET,
+      {
+        gotrueJwtKeys: '[{"kid":"private-key"}]',
+        publicSigningKeys: '[{"kid":"public-key"}]',
+      },
+      undefined,
+    );
+
+    expect(resolved.jwks).toContain("public-key");
+    expect(resolved.jwks).not.toContain('"kty":"oct"');
+  }),
+);
+
 it.effect("retains generated asymmetric tokens when the signing source is unchanged", () =>
   Effect.gen(function* () {
     const defaults = yield* savedDefaults;

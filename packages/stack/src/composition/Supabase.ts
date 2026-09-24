@@ -174,17 +174,14 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
       });
 
       const reusedByKind = new Map(reusedEntries.map((entry) => [entry.creation.service, entry]));
-      const targetCreations = normalized;
-      const byKind = new Map(targetCreations.map((creation) => [creation.service, creation]));
-      const apiSource = targetCreations.find(
+      const byKind = new Map(normalized.map((creation) => [creation.service, creation]));
+      const apiSource = normalized.find(
         (creation) =>
           apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http"),
       );
       if (
         apiSource === undefined &&
-        targetCreations.some((creation) =>
-          ["auth", "functions", "studio"].includes(creation.service),
-        )
+        normalized.some((creation) => ["auth", "functions", "studio"].includes(creation.service))
       )
         return yield* compositionError("API URL bindings require a configured HTTP endpoint");
 
@@ -307,7 +304,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
       const createdIds: Array<string> = [];
       const compose = Effect.gen(function* () {
         const replacedByKind = new Map<ServiceCreation["service"], SupabaseCompositionEntry>();
-        for (const creation of targetCreations) {
+        for (const creation of normalized) {
           const reused = reusedByKind.get(creation.service);
           if (reused === undefined) continue;
           const entry = yield* operations
@@ -316,7 +313,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           replacedByKind.set(entry.creation.service, entry);
         }
         const created = yield* Effect.forEach(
-          targetCreations.filter((creation) => !reusedByKind.has(creation.service)),
+          normalized.filter((creation) => !reusedByKind.has(creation.service)),
           (creation) =>
             Effect.uninterruptible(
               operations.create(creation).pipe(
@@ -326,7 +323,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
             ),
         );
         const createdByKind = new Map(created.map((entry) => [entry.creation.service, entry]));
-        const entries = targetCreations.map((creation) => {
+        const entries = normalized.map((creation) => {
           const reused = replacedByKind.get(creation.service);
           return reused ?? createdByKind.get(creation.service);
         });

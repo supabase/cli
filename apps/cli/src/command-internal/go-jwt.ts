@@ -32,13 +32,6 @@ export interface Jwk {
 }
 
 /**
- * The default ES256 signing key present on every resolved config unless overridden by a real
- * `auth.signing_keys_path` file. Always part of the published JWKS regardless of `auth.enabled`.
- * Shared by GoTrue's own env building (which signs tokens with it) and JWKS resolution (which
- * publishes its public form), so the two can never disagree on the default key.
- */
-
-/**
  * HS256 signer for the default local-dev `anon`/`service_role` keys. {@link
  * generateAsymmetricGoJwt} below covers the RS256/ES256 branch, taken when
  * `auth.signing_keys_path` is configured.

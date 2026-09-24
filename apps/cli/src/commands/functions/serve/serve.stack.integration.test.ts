@@ -76,6 +76,7 @@ const testJwkArray = Schema.Array(
 );
 const testJwksDocument = Schema.fromJsonString(Schema.Struct({ keys: testJwkArray }));
 const encodeTestJwkArray = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.Unknown)));
+const encodeTestJwks = Schema.encodeSync(testJwksDocument);
 
 const observation = (
   id: string,
@@ -113,6 +114,9 @@ const fixture = (
   options: {
     readonly failRestartOn?: number;
     readonly standaloneProjectRoot?: string;
+    readonly savedGotrueJwtKeys?: string;
+    readonly savedJwks?: string;
+    readonly savedRemoteJwks?: string;
     readonly restartGate?: {
       readonly entered: Deferred.Deferred<void>;
       readonly release: Deferred.Deferred<void>;
@@ -157,10 +161,14 @@ const fixture = (
       secretKey: "saved-secret-key",
       anonKey: "saved-anon-key",
       serviceRoleKey: "saved-service-role-key",
-      jwks: '{"keys":[]}',
-      gotrueJwtKeys: "[]",
+      jwks:
+        options.savedJwks ??
+        encodeTestJwks({
+          keys: [savedSigningKey, { kty: "oct", k: "c2F2ZWQtand0LXNlY3JldA" }],
+        }),
+      gotrueJwtKeys: options.savedGotrueJwtKeys ?? "[]",
       publicSigningKeys: encodeTestJwkArray([savedSigningKey]),
-      remoteJwks: "[]",
+      remoteJwks: options.savedRemoteJwks ?? "[]",
       anonKeyIsOverride: false,
       serviceRoleKeyIsOverride: false,
     };
@@ -403,7 +411,15 @@ describe("experimental Stack Functions serve", () => {
         `${root}/supabase/config.toml`,
         `project_id = "functions-remote-jwks"\n\n[edge_runtime]\nenabled = true\n\n[auth]\nsigning_keys_path = "./missing-keys.json"\n\n[auth.third_party.workos]\nenabled = true\nissuer_url = "http://127.0.0.1:${server.port}"\n`,
       );
-      const state = yield* fixture({ standaloneProjectRoot: root });
+      const oldRemoteKey = { kty: "RSA", kid: "old-remote-key", n: "Ag", e: "AQAB" };
+      const state = yield* fixture({
+        standaloneProjectRoot: root,
+        savedGotrueJwtKeys: encodeTestJwkArray([
+          { kty: "RSA", kid: "saved-signing-key", d: "private-material" },
+        ]),
+        savedRemoteJwks: encodeTestJwkArray([oldRemoteKey]),
+        savedJwks: encodeTestJwks({ keys: [oldRemoteKey, savedSigningKey] }),
+      });
       const run = yield* functionsServeStack(flags()).pipe(
         Effect.provide(state.layer),
         Effect.forkChild({ startImmediately: true }),
@@ -415,9 +431,8 @@ describe("experimental Stack Functions serve", () => {
       if (created?.service === "functions") {
         const jwks = yield* Schema.decodeEffect(testJwksDocument)(created.config.jwks ?? "");
         expect(jwks.keys).toContainEqual(remoteKey);
-        expect(
-          jwks.keys.some((key) => key.kty === "oct" && key.k === "c2F2ZWQtand0LXNlY3JldA"),
-        ).toBe(true);
+        expect(jwks.keys).not.toContainEqual(oldRemoteKey);
+        expect(jwks.keys.some((key) => key.kty === "oct")).toBe(false);
         expect(jwks.keys).toContainEqual(savedSigningKey);
       }
       expect(

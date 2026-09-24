@@ -1,16 +1,5 @@
 import type { ServiceCreation, Stack } from "@supabase/stack/effect";
-import {
-  DateTime,
-  Effect,
-  Encoding,
-  Equal,
-  Fiber,
-  Option,
-  Path,
-  Schema,
-  Stream,
-  type Scope,
-} from "effect";
+import { DateTime, Effect, Equal, Fiber, Option, Path, Schema, Stream, type Scope } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -234,16 +223,12 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
         .pipe(Effect.as(undefined)),
     ),
   );
-  const localKeys = yield* Schema.decodeEffect(JwkArray)(identity.publicSigningKeys);
+  const savedRemoteKeys = yield* Schema.decodeEffect(JwkArray)(identity.remoteJwks);
+  const savedJwks = yield* Schema.decodeEffect(JwksDocument)(identity.jwks);
+  const localKeys = savedJwks.keys.slice(savedRemoteKeys.length);
   const remoteKeys =
     refreshedJwks === undefined ? [] : yield* Schema.decodeEffect(JwkArray)(refreshedJwks);
-  const jwks = yield* Schema.encodeEffect(JwksDocument)({
-    keys: [
-      ...remoteKeys,
-      ...localKeys,
-      { kty: "oct", k: Encoding.encodeBase64Url(identity.jwtSecret) },
-    ],
-  });
+  const jwks = yield* Schema.encodeEffect(JwksDocument)({ keys: [...remoteKeys, ...localKeys] });
   const creations = yield* config.creations(stack.id);
   const source = creations.find(
     (creation): creation is FunctionsCreation => creation.service === "functions",

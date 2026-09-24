@@ -33,13 +33,14 @@ it.live("persists effective credentials across service creation, reopen, and res
         postgresRootKey: "b".repeat(64),
         databasePassword: "postgres",
       };
-      expect(yield* stack.credentials.get).toEqual(expected);
+      const credentials = yield* stack.credentials.get;
+      expect(credentials).toMatchObject(expected);
 
       const reopened = yield* open({ ...options, id: stack.id });
-      expect(yield* reopened.credentials.get).toEqual(expected);
+      expect(yield* reopened.credentials.get).toEqual(credentials);
       yield* database.restart();
       yield* database.ready;
-      expect(yield* stack.credentials.get).toEqual(expected);
+      expect(yield* stack.credentials.get).toEqual(credentials);
     }).pipe(Effect.provide(layer)),
   ),
 );
@@ -75,7 +76,7 @@ it.live("resolves composition credentials before creating services", () =>
         },
       ]);
 
-      expect(yield* stack.credentials.get).toEqual({
+      expect(yield* stack.credentials.get).toMatchObject({
         jwtSecret: "composition-jwt-override",
         postgresRootKey: "c".repeat(64),
         databasePassword: "postgres",

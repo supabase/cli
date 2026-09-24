@@ -80,6 +80,8 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       GOTRUE_SITE_URL: creation.config.siteUrl ?? "http://localhost:3000",
       GOTRUE_JWT_SECRET: creation.config.jwtSecret ?? localJwtSecret,
       GOTRUE_JWT_KEYS: creation.config.gotrueJwtKeys ?? JSON.stringify([DEFAULT_SIGNING_KEY]),
+      GOTRUE_JWT_VALIDMETHODS: "HS256,RS256,ES256",
+      GOTRUE_JWT_VALID_METHODS: "HS256,RS256,ES256",
       GOTRUE_JWT_AUD: "authenticated",
       GOTRUE_JWT_ADMIN_ROLES: "service_role",
       GOTRUE_JWT_DEFAULT_GROUP_NAME: "authenticated",

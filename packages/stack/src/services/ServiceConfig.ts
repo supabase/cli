@@ -81,16 +81,22 @@ export const resolveStackIdentity = Effect.fn("ServiceConfig.resolveStackIdentit
       const gotrueJwtKeys = input?.gotrueJwtKeys ?? defaults.gotrueJwtKeys;
       const publicSigningKeys = input?.publicSigningKeys ?? defaults.publicSigningKeys;
       const remoteJwks = input?.remoteJwks ?? "[]";
-      const normalizedGotrueJwtKeys = yield* stringify(
-        yield* jsonArray(gotrueJwtKeys, "gotrueJwtKeys"),
-      );
+      const privateKeys = yield* jsonArray(gotrueJwtKeys, "gotrueJwtKeys");
+      const normalizedGotrueJwtKeys = yield* stringify(privateKeys);
       const tokenSourceChanged =
         saved !== undefined &&
         (saved.jwtSecret !== jwtSecret || saved.gotrueJwtKeys !== normalizedGotrueJwtKeys);
       const localKeys = yield* jsonArray(publicSigningKeys, "publicSigningKeys");
       const remoteKeys = yield* jsonArray(remoteJwks, "remoteJwks");
+      const hasConfiguredSigningKeys = input?.gotrueJwtKeys !== undefined && privateKeys.length > 0;
       const jwks = yield* stringify({
-        keys: [...remoteKeys, ...localKeys, { kty: "oct", k: Encoding.encodeBase64Url(jwtSecret) }],
+        keys: [
+          ...remoteKeys,
+          ...localKeys,
+          ...(hasConfiguredSigningKeys
+            ? []
+            : [{ kty: "oct", k: Encoding.encodeBase64Url(jwtSecret) }]),
+        ],
       });
       const normalizedPublicSigningKeys = yield* stringify(localKeys);
       const normalizedRemoteJwks = yield* stringify(remoteKeys);

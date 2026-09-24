@@ -18,6 +18,8 @@ describe("Auth settings environment", () => {
     expect(env.API_EXTERNAL_URL).toBe("https://login.example/auth/v1/");
     expect(env.GOTRUE_JWT_ISSUER).toBe("https://login.example/auth/v1/");
     expect(env.GOTRUE_MAILER_URLPATHS_INVITE).toBe("https://login.example/auth/v1/verify");
+    expect(env.GOTRUE_JWT_VALIDMETHODS).toBe("HS256,RS256,ES256");
+    expect(env.GOTRUE_JWT_VALID_METHODS).toBe("HS256,RS256,ES256");
   });
 
   it("uses the default email rate limit without SMTP and configured limit with custom SMTP", () => {

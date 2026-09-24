@@ -675,7 +675,7 @@ const makeOwnerWithDependencies = (
                             {
                               prefix: route,
                               upstreamPrefix: "/",
-                              ...(initial.service === "rest"
+                              ...(initial.service === "rest" || initial.service === "auth"
                                 ? { keyRewrite: { policy: "bearer" as const, keys: routeKeys } }
                                 : initial.service === "functions"
                                   ? {
