@@ -1,8 +1,17 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Stream, Redacted } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schema,
+  Stream,
+  Redacted,
+} from "effect";
 
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
 import {
@@ -27,6 +36,7 @@ import {
   mockTelemetryStateTracked,
   useShadowCacheDisabled,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../../../shared/cli/cli-args.service.ts";
 import {
@@ -305,32 +315,42 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
           };
         }),
-      planDeclarativeSchema: () => {
-        planCalls += 1;
-        const planError = planErrors.shift();
-        if (planError !== undefined) return Effect.fail(planError);
-        const extensionPath = join(workdir, "supabase", "schemas", "extension.sql");
-        const extensionSql = existsSync(extensionPath) ? readFileSync(extensionPath, "utf8") : "";
-        const remainingExtensions = (opts.removals?.extensions ?? []).filter(
-          (extension) => !extensionSql.includes(`"${extension}"`),
-        );
-        const extensionsRepaired =
-          remainingExtensions.length < (opts.removals?.extensions.length ?? 0);
-        return Effect.succeed({
-          changes: nextFiles.length > 0,
-          sql:
-            extensionsRepaired && opts.replannedDiffSql !== undefined
-              ? opts.replannedDiffSql
-              : (opts.diffSql ?? nextFiles.map((file) => file.sql).join("\n")),
-          files: nextFiles,
-          sourceRef: "migrations",
-          targetRef: "declarative",
-          removals:
-            opts.removals === undefined
-              ? undefined
-              : { ...opts.removals, extensions: remainingExtensions },
-        });
-      },
+      planDeclarativeSchema: () =>
+        Effect.gen(function* () {
+          planCalls += 1;
+          const planError = planErrors.shift();
+          if (planError !== undefined) return yield* planError;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const extensionPath = path.join(workdir, "supabase", "schemas", "extension.sql");
+          const extensionSql = yield* fs.exists(extensionPath).pipe(
+            Effect.flatMap((exists) =>
+              exists ? fs.readFileString(extensionPath) : Effect.succeed(""),
+            ),
+            Effect.mapError(
+              (error) => new PgDeltaEngineError({ message: error.message, cause: error }),
+            ),
+          );
+          const remainingExtensions = (opts.removals?.extensions ?? []).filter(
+            (extension) => !extensionSql.includes(`"${extension}"`),
+          );
+          const extensionsRepaired =
+            remainingExtensions.length < (opts.removals?.extensions.length ?? 0);
+          return {
+            changes: nextFiles.length > 0,
+            sql:
+              extensionsRepaired && opts.replannedDiffSql !== undefined
+                ? opts.replannedDiffSql
+                : (opts.diffSql ?? nextFiles.map((file) => file.sql).join("\n")),
+            files: nextFiles,
+            sourceRef: "migrations",
+            targetRef: "declarative",
+            removals:
+              opts.removals === undefined
+                ? undefined
+                : { ...opts.removals, extensions: remainingExtensions },
+          };
+        }).pipe(Effect.provide(BunServices.layer)),
     }),
   );
   const layer = Layer.mergeAll(
@@ -399,30 +419,45 @@ const flags = (over: Partial<DbSchemaDeclarativeSyncFlags> = {}): DbSchemaDeclar
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
-const seedDeclarative = (workdir: string) => {
-  const dir = join(workdir, "supabase", "schemas");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "public.sql"), "create table a();");
-};
+const seedDeclarative = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = path.join(workdir, "supabase", "schemas");
+    yield* fs.makeDirectory(dir, { recursive: true });
+    yield* fs.writeFileString(path.join(dir, "public.sql"), "create table a();");
+  });
 
-const seedUuidDeclarative = (workdir: string, directory = "schemas") => {
-  const dir = join(workdir, "supabase", directory);
-  mkdirSync(join(dir, "schemas", "app", "tables"), { recursive: true });
-  mkdirSync(join(dir, "schemas", "public", "views"), { recursive: true });
-  writeFileSync(
-    join(dir, "schemas", "app", "tables", "members.sql"),
-    [
-      "create table app.members (",
-      "  email text not null,",
-      "  id uuid not null default extensions.uuid_generate_v4()",
-      ");",
-    ].join("\n"),
-  );
-  writeFileSync(
-    join(dir, "schemas", "public", "views", "members.sql"),
-    "create view public.members as select * from app.members;\n",
-  );
-};
+const seedMigration = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const migrationsDir = path.join(workdir, "supabase", "migrations");
+    yield* fs.makeDirectory(migrationsDir, { recursive: true });
+    yield* fs.writeFileString(path.join(migrationsDir, "0001_init.sql"), "select 1;");
+  });
+
+const seedUuidDeclarative = (workdir: string, directory = "schemas") =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = path.join(workdir, "supabase", directory);
+    yield* fs.makeDirectory(path.join(dir, "schemas", "app", "tables"), { recursive: true });
+    yield* fs.makeDirectory(path.join(dir, "schemas", "public", "views"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(dir, "schemas", "app", "tables", "members.sql"),
+      [
+        "create table app.members (",
+        "  email text not null,",
+        "  id uuid not null default extensions.uuid_generate_v4()",
+        ");",
+      ].join("\n"),
+    );
+    yield* fs.writeFileString(
+      path.join(dir, "schemas", "public", "views", "members.sql"),
+      "create view public.members as select * from app.members;\n",
+    );
+  });
 
 const uuidLoadError = () =>
   new PgDeltaEngineError({
@@ -449,9 +484,9 @@ describe("db schema declarative sync integration", () => {
   useShadowCacheDisabled();
 
   it.effect("gate: fails when pg-delta is not enabled", () => {
-    seedDeclarative(tmp.current);
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
+      yield* seedDeclarative(tmp.current);
       const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags()));
       expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
     }).pipe(Effect.provide(layer));
@@ -492,13 +527,15 @@ describe("db schema declarative sync integration", () => {
       const { layer } = setup(tmp.current, { experimental: false });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const saved = process.env[ENV];
-        process.env[ENV] = "1";
-        const exit = yield* Effect.exit(
-          dbSchemaDeclarativeSync(flags({ apply: Option.some(true), noApply: Option.some(true) })),
+        const exit = yield* withEnvVar(
+          ENV,
+          "1",
+          Effect.exit(
+            dbSchemaDeclarativeSync(
+              flags({ apply: Option.some(true), noApply: Option.some(true) }),
+            ),
+          ),
         );
-        if (saved === undefined) delete process.env[ENV];
-        else process.env[ENV] = saved;
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failError(exit)).toMatchObject({
           _tag: "DeclarativeMutuallyExclusiveFlagsError",
@@ -518,11 +555,7 @@ describe("db schema declarative sync integration", () => {
       });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const saved = process.env[ENV];
-        process.env[ENV] = "1";
-        const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags()));
-        if (saved === undefined) delete process.env[ENV];
-        else process.env[ENV] = saved;
+        const exit = yield* withEnvVar(ENV, "1", Effect.exit(dbSchemaDeclarativeSync(flags())));
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
       }).pipe(Effect.provide(layer));
@@ -532,29 +565,30 @@ describe("db schema declarative sync integration", () => {
   it.effect(
     "--apply and --no-apply together with SUPABASE_EXPERIMENTAL set only in the project .env fail with the mutex error",
     () => {
-      const saved = process.env["SUPABASE_EXPERIMENTAL"];
-      delete process.env["SUPABASE_EXPERIMENTAL"];
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_EXPERIMENTAL=true\n");
       const { layer } = setup(tmp.current, { experimental: false });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          dbSchemaDeclarativeSync(flags({ apply: Option.some(true), noApply: Option.some(true) })),
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)).toMatchObject({
-          _tag: "DeclarativeMutuallyExclusiveFlagsError",
-          message:
-            "if any flags in the group [apply no-apply] are set none of the others can be; [apply no-apply] were all set",
-        });
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (saved === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
-            else process.env["SUPABASE_EXPERIMENTAL"] = saved;
-          }),
-        ),
+      return withEnvVar(
+        "SUPABASE_EXPERIMENTAL",
+        undefined,
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(tmp.current, "supabase", ".env"),
+            "SUPABASE_EXPERIMENTAL=true\n",
+          );
+          const exit = yield* Effect.exit(
+            dbSchemaDeclarativeSync(
+              flags({ apply: Option.some(true), noApply: Option.some(true) }),
+            ),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(failError(exit)).toMatchObject({
+            _tag: "DeclarativeMutuallyExclusiveFlagsError",
+            message:
+              "if any flags in the group [apply no-apply] are set none of the others can be; [apply no-apply] were all set",
+          });
+        }).pipe(Effect.provide(layer)),
       );
     },
   );
@@ -586,11 +620,13 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("warns when the tree still lives under the former supabase/database default", () => {
-    const formerDir = join(tmp.current, "supabase", "database");
-    mkdirSync(formerDir, { recursive: true });
-    writeFileSync(join(formerDir, "public.sql"), "create table a();");
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const formerDir = path.join(tmp.current, "supabase", "database");
+      yield* fs.makeDirectory(formerDir, { recursive: true });
+      yield* fs.writeFileString(path.join(formerDir, "public.sql"), "create table a();");
       const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(stripAnsi(s.out.stderrText)).toContain(
@@ -601,15 +637,17 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("non-interactive default dry-run does not check the local Postgres image", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       experimental: true,
       staleLocalImage: true,
       diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
       yield* dbSchemaDeclarativeSync(flags());
-      const migrations = readdirSync(join(tmp.current, "supabase", "migrations"));
+      const migrations = yield* fs.readDirectory(path.join(tmp.current, "supabase", "migrations"));
       expect(migrations).toHaveLength(1);
       expect(s.localPostgresImageChecks).toEqual([]);
       expect(s.dbExec).toEqual([]);
@@ -617,13 +655,13 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("--apply checks the local Postgres image before applying", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       experimental: true,
       staleLocalImage: true,
       diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
     });
     return Effect.gen(function* () {
+      yield* seedDeclarative(tmp.current);
       const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
@@ -636,15 +674,17 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("--no-apply skips the local Postgres image check", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       experimental: true,
       staleLocalImage: true,
       diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      const migrations = readdirSync(join(tmp.current, "supabase", "migrations"));
+      const migrations = yield* fs.readDirectory(path.join(tmp.current, "supabase", "migrations"));
       expect(migrations).toHaveLength(1);
       expect(s.localPostgresImageChecks).toEqual([]);
       expect(s.dbExec).toEqual([]);
@@ -658,7 +698,8 @@ describe("db schema declarative sync integration", () => {
       const exit = yield* Effect.exit(
         dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
       );
-      expect(JSON.stringify(exit)).not.toContain("no declarative schema found");
+      const causeText = Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "";
+      expect(causeText).not.toContain("no declarative schema found");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -670,15 +711,19 @@ describe("db schema declarative sync integration", () => {
       promptConfirmResponses: [true], // generate a new one? yes (no migrations → no reset prompt)
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      const line = `Declarative schema written to ${join("supabase", "schemas")}\n`;
+      const line = `Declarative schema written to ${path.join("supabase", "schemas")}\n`;
       const written = s.out.rawChunks
         .map((c) => ({ text: stripAnsi(c.text), stream: c.stream }))
         .filter((c) => c.text === line);
       expect(written).toHaveLength(1);
       expect(written[0]?.stream).toBe("stderr");
       expect(
-        existsSync(join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql")),
+        yield* fs.exists(
+          path.join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql"),
+        ),
       ).toBe(true);
       expect(s.declarativeExportCalls).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
@@ -692,11 +737,12 @@ describe("db schema declarative sync integration", () => {
       diffSql: "",
     });
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
       expect(
         s.out.rawChunks.map((c) => ({ text: stripAnsi(c.text), stream: c.stream })),
       ).toContainEqual({
-        text: `Declarative schema written to ${join("supabase", "schemas")}\n`,
+        text: `Declarative schema written to ${path.join("supabase", "schemas")}\n`,
         stream: "stderr",
       });
     }).pipe(Effect.provide(s.layer));
@@ -704,8 +750,6 @@ describe("db schema declarative sync integration", () => {
 
   it.effect("bootstrap with migrations offers the smart target choice (not local-only)", () => {
     // `projectId: "test"` is an invalid ref, so the linked choice is hidden.
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -714,6 +758,7 @@ describe("db schema declarative sync integration", () => {
       promptSelectResponses: ["local"],
     });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
       yield* Effect.exit(dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })));
       const options = s.out.promptSelectCalls[0]?.options ?? [];
       expect(options.map((o) => o.value)).toEqual(["local", "custom"]);
@@ -721,8 +766,6 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("bootstrap linked target does not run the local Postgres image check", () => {
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -732,11 +775,13 @@ describe("db schema declarative sync integration", () => {
       promptSelectResponses: ["linked"],
     });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
       const exit = yield* Effect.exit(
         dbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) })),
       );
       expect(s.localPostgresImageChecks).toEqual([]);
-      expect(JSON.stringify(exit)).not.toContain("local Postgres container image is stale");
+      const causeText = Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "";
+      expect(causeText).not.toContain("local Postgres container image is stale");
       expect((s.out.promptSelectCalls[0]?.options ?? []).map((o) => o.value)).toEqual([
         "local",
         "linked",
@@ -746,8 +791,6 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("bootstrap linked target checks the local Postgres image before apply", () => {
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -758,6 +801,7 @@ describe("db schema declarative sync integration", () => {
       promptSelectResponses: ["linked"],
     });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
       const exit = yield* Effect.exit(
         dbSchemaDeclarativeSync(
           flags({
@@ -778,8 +822,6 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("bootstrap local target checks the local Postgres image", () => {
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -788,6 +830,7 @@ describe("db schema declarative sync integration", () => {
       promptSelectResponses: ["local"],
     });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
       const exit = yield* Effect.exit(
         dbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) })),
       );
@@ -802,8 +845,6 @@ describe("db schema declarative sync integration", () => {
 
   it.effect("bootstrap: an unreadable migrations path is treated as no migrations", () => {
     // Seeding `supabase/migrations` as a file makes the probe's list fail with ENOTDIR.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations"), "not a directory");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -811,22 +852,29 @@ describe("db schema declarative sync integration", () => {
       promptConfirmResponses: [true], // generate a new one? yes (no reset prompt: no migrations)
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "migrations"),
+        "not a directory",
+      );
       const exit = yield* Effect.exit(
         dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
       );
-      expect(JSON.stringify(exit)).not.toContain("failed to read directory");
+      const causeText = Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "";
+      expect(causeText).not.toContain("failed to read directory");
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(
-        existsSync(join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql")),
+        yield* fs.exists(
+          path.join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql"),
+        ),
       ).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("bootstrap: an unreadable ref file just omits the linked choice", () => {
     // Seeding `.temp/project-ref` as a directory makes the read fail.
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
-    mkdirSync(join(tmp.current, "supabase", ".temp", "project-ref"), { recursive: true });
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -836,6 +884,12 @@ describe("db schema declarative sync integration", () => {
       promptSelectResponses: ["local"],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedMigration(tmp.current);
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase", ".temp", "project-ref"), {
+        recursive: true,
+      });
       const exit = yield* Effect.exit(
         dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
       );
@@ -843,13 +897,12 @@ describe("db schema declarative sync integration", () => {
         "local",
         "custom",
       ]);
-      expect(JSON.stringify(exit)).not.toContain("failed to load project ref");
+      const causeText = Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "";
+      expect(causeText).not.toContain("failed to load project ref");
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("bootstrap caches the linked project after resolving the ref", () => {
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -859,14 +912,13 @@ describe("db schema declarative sync integration", () => {
       promptSelectResponses: ["local"],
     });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
       yield* Effect.exit(dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })));
       expect(s.cache.cached).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("does not cache when the workdir is not linked", () => {
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -876,32 +928,39 @@ describe("db schema declarative sync integration", () => {
       promptSelectResponses: ["local"],
     });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
       yield* Effect.exit(dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })));
       expect(s.cache.cached).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("empty diff prints 'No schema changes found' and writes nothing", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, { experimental: true, diffSql: "" });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
       expect(s.out.rawChunks.some((c) => c.text.includes("No schema changes found"))).toBe(true);
-      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect(
     "--no-apply: writes the timestamped migration, surfaces drop warnings, no apply",
     () => {
-      seedDeclarative(tmp.current);
       const s = setup(tmp.current, {
         experimental: true,
         diffSql: "ALTER TABLE a ADD COLUMN b int;\nDROP TABLE c;\n",
       });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* seedDeclarative(tmp.current);
         yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-        const migrations = readdirSync(join(tmp.current, "supabase", "migrations"));
+        const migrations = yield* fs.readDirectory(
+          path.join(tmp.current, "supabase", "migrations"),
+        );
         expect(migrations).toHaveLength(1);
         expect(migrations[0]).toMatch(/^\d{14}_declarative_sync\.sql$/);
         expect(
@@ -913,12 +972,12 @@ describe("db schema declarative sync integration", () => {
   );
 
   it.effect("--apply: batches the migration and history through the native session", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       experimental: true,
       diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
     });
     return Effect.gen(function* () {
+      yield* seedDeclarative(tmp.current);
       yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) }));
       expect(s.dbBatches).toContainEqual([
         "ALTER TABLE a ADD COLUMN b int",
@@ -932,13 +991,13 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("--apply on the stack backend uses stack credentials, not toml.port", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       experimental: true,
       diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
       stackBackend: true,
     });
     return Effect.gen(function* () {
+      yield* seedDeclarative(tmp.current);
       yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) }));
       expect(s.dbConnectPorts).toContain(STACK_APPLY_PORT);
       expect(s.dbConnectPorts).not.toContain(54322);
@@ -946,12 +1005,14 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("refuses a known implicit-extension load failure under --yes", () => {
-    seedUuidDeclarative(tmp.current);
     const s = setup(tmp.current, {
       yes: true,
       planErrors: [uuidLoadError()],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedUuidDeclarative(tmp.current);
       const exit = yield* dbSchemaDeclarativeSync(flags()).pipe(Effect.exit);
       expect(failError(exit)).toMatchObject({
         _tag: "DeclarativeCompatibilityError",
@@ -964,39 +1025,32 @@ describe("db schema declarative sync integration", () => {
           "supabase db schema declarative generate --local --overwrite",
         ),
       });
-      expect(JSON.stringify(error)).not.toContain("extension.sql");
-      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(
+        yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(error),
+      ).not.toContain("extension.sql");
+      expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("adds a missing load-time extension declaration and re-plans", () => {
-    seedUuidDeclarative(tmp.current);
     const s = setup(tmp.current, {
       stdinIsTty: true,
       planErrors: [uuidLoadError()],
       promptSelectResponses: ["repair"],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedUuidDeclarative(tmp.current);
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
       expect(s.planCalls).toBe(2);
-      expect(readFileSync(join(tmp.current, "supabase", "schemas", "extension.sql"), "utf8")).toBe(
-        'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";\n',
-      );
+      expect(
+        yield* fs.readFileString(path.join(tmp.current, "supabase", "schemas", "extension.sql")),
+      ).toBe('CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";\n');
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("stages a complete next export without changing the active tree", () => {
-    seedUuidDeclarative(tmp.current);
-    const activeMember = join(
-      tmp.current,
-      "supabase",
-      "schemas",
-      "schemas",
-      "app",
-      "tables",
-      "members.sql",
-    );
-    const before = readFileSync(activeMember, "utf8");
     const s = setup(tmp.current, {
       stdinIsTty: true,
       planErrors: [uuidLoadError()],
@@ -1004,41 +1058,35 @@ describe("db schema declarative sync integration", () => {
       promptConfirmResponses: [false], // decline the staged export's reset offer
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedUuidDeclarative(tmp.current);
+      const activeMember = path.join(
+        tmp.current,
+        "supabase",
+        "schemas",
+        "schemas",
+        "app",
+        "tables",
+        "members.sql",
+      );
+      const before = yield* fs.readFileString(activeMember);
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      expect(readFileSync(activeMember, "utf8")).toBe(before);
+      expect(yield* fs.readFileString(activeMember)).toBe(before);
       expect(
-        readFileSync(
-          join(tmp.current, "supabase", "schemas-next", "public", "tables", "players.sql"),
-          "utf8",
+        yield* fs.readFileString(
+          path.join(tmp.current, "supabase", "schemas-next", "public", "tables", "players.sql"),
         ),
       ).toBe("create table players ();");
       expect(
-        existsSync(join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json")),
+        yield* fs.exists(
+          path.join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json"),
+        ),
       ).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("stages beside a custom active path and preserves --schema for adoption", () => {
-    seedUuidDeclarative(tmp.current, "custom-declarative");
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[experimental.pgdelta]",
-        "enabled = true",
-        'declarative_schema_path = "./custom-declarative"',
-        "",
-      ].join("\n"),
-    );
-    const activeMember = join(
-      tmp.current,
-      "supabase",
-      "custom-declarative",
-      "schemas",
-      "app",
-      "tables",
-      "members.sql",
-    );
-    const before = readFileSync(activeMember, "utf8");
     const s = setup(tmp.current, {
       stdinIsTty: true,
       planErrors: [uuidLoadError()],
@@ -1047,12 +1095,34 @@ describe("db schema declarative sync integration", () => {
     });
 
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedUuidDeclarative(tmp.current, "custom-declarative");
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        [
+          "[experimental.pgdelta]",
+          "enabled = true",
+          'declarative_schema_path = "./custom-declarative"',
+          "",
+        ].join("\n"),
+      );
+      const activeMember = path.join(
+        tmp.current,
+        "supabase",
+        "custom-declarative",
+        "schemas",
+        "app",
+        "tables",
+        "members.sql",
+      );
+      const before = yield* fs.readFileString(activeMember);
       yield* dbSchemaDeclarativeSync(flags({ schema: ["app"], noApply: Option.some(true) }));
 
-      expect(readFileSync(activeMember, "utf8")).toBe(before);
+      expect(yield* fs.readFileString(activeMember)).toBe(before);
       expect(
-        existsSync(
-          join(tmp.current, "supabase", "custom-declarative-next", ".pgdelta-export.json"),
+        yield* fs.exists(
+          path.join(tmp.current, "supabase", "custom-declarative-next", ".pgdelta-export.json"),
         ),
       ).toBe(true);
       expect(s.declarativeExportCalls).toEqual([["app"]]);
@@ -1066,7 +1136,6 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("refuses extension-managed legacy gaps under --yes instead of writing drops", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       experimental: true,
       yes: true,
@@ -1080,6 +1149,9 @@ describe("db schema declarative sync integration", () => {
       },
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
       const exit = yield* dbSchemaDeclarativeSync(flags()).pipe(Effect.exit);
       expect(failError(exit)).toMatchObject({
         _tag: "DeclarativeCompatibilityError",
@@ -1093,12 +1165,11 @@ describe("db schema declarative sync integration", () => {
       expect(failError(exit)).toMatchObject({
         message: expect.stringContaining("  Extension-managed objects: pg_cron job refresh"),
       });
-      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("writes cron job and pgmq queue removals without a legacy-export refusal", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       yes: true,
       diffSql: "select cron.unschedule('refresh metrics');\nselect pgmq.drop_queue('emails');\n",
@@ -1111,10 +1182,13 @@ describe("db schema declarative sync integration", () => {
       },
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      const migrationsDir = join(tmp.current, "supabase", "migrations");
-      const [migration] = readdirSync(migrationsDir);
-      const sql = readFileSync(join(migrationsDir, migration ?? ""), "utf8");
+      const migrationsDir = path.join(tmp.current, "supabase", "migrations");
+      const [migration] = yield* fs.readDirectory(migrationsDir);
+      const sql = yield* fs.readFileString(path.join(migrationsDir, migration ?? ""));
       expect(sql).toContain("cron.unschedule('refresh metrics')");
       expect(sql).toContain("pgmq.drop_queue('emails')");
       expect(stripAnsi(s.out.stderrText)).not.toContain("legacy pg-delta export");
@@ -1122,13 +1196,15 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("directs pg_net users to enable Database Webhooks before writing", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       stdinIsTty: true,
       diffSql: 'DROP EXTENSION "pg_net";\n',
       removals: { extensions: ["pg_net"], extensionIntents: [] },
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
       const exit = yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })).pipe(
         Effect.exit,
       );
@@ -1136,14 +1212,13 @@ describe("db schema declarative sync integration", () => {
         _tag: "DeclarativeCompatibilityError",
         message: expect.stringContaining("[experimental.webhooks]\nenabled = true"),
       });
-      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect(
     "continues with intentional legacy extension removals only after explicit choice",
     () => {
-      seedDeclarative(tmp.current);
       const s = setup(tmp.current, {
         stdinIsTty: true,
         diffSql: 'DROP EXTENSION "pgcrypto";\n',
@@ -1151,14 +1226,18 @@ describe("db schema declarative sync integration", () => {
         promptSelectResponses: ["continue"],
       });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* seedDeclarative(tmp.current);
         yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-        expect(readdirSync(join(tmp.current, "supabase", "migrations"))).toHaveLength(1);
+        expect(
+          yield* fs.readDirectory(path.join(tmp.current, "supabase", "migrations")),
+        ).toHaveLength(1);
       }).pipe(Effect.provide(s.layer));
     },
   );
 
   it.effect("repairs the active tree in place when the user picks the advanced choice", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       stdinIsTty: true,
       diffSql: 'DROP EXTENSION "pgcrypto";\n',
@@ -1167,17 +1246,21 @@ describe("db schema declarative sync integration", () => {
       promptSelectResponses: ["repair"],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      expect(readFileSync(join(tmp.current, "supabase", "schemas", "extension.sql"), "utf8")).toBe(
-        'CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";\n',
-      );
+      expect(
+        yield* fs.readFileString(path.join(tmp.current, "supabase", "schemas", "extension.sql")),
+      ).toBe('CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";\n');
       expect(s.planCalls).toBe(2);
-      expect(readdirSync(join(tmp.current, "supabase", "migrations"))).toHaveLength(1);
+      expect(
+        yield* fs.readDirectory(path.join(tmp.current, "supabase", "migrations")),
+      ).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("stages a next export from the repair prompt without touching the tree", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       stdinIsTty: true,
       diffSql: 'DROP EXTENSION "pgcrypto";\n',
@@ -1186,12 +1269,19 @@ describe("db schema declarative sync integration", () => {
       promptConfirmResponses: [false], // decline the staged export's reset offer
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
       expect(
-        existsSync(join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json")),
+        yield* fs.exists(
+          path.join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json"),
+        ),
       ).toBe(true);
-      expect(existsSync(join(tmp.current, "supabase", "schemas", "extension.sql"))).toBe(false);
-      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(yield* fs.exists(path.join(tmp.current, "supabase", "schemas", "extension.sql"))).toBe(
+        false,
+      );
+      expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
       expect(stripAnsi(s.out.stderrText)).toContain(
         "rm -rf supabase/schemas && mv supabase/schemas-next supabase/schemas",
       );
@@ -1199,10 +1289,8 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("staged export names its live-database source and honors the reset offer", () => {
-    seedDeclarative(tmp.current);
     // `resetLocalDatabase` resolves its own project id from `@supabase/config`; pin it so the
     // recreated container name matches the spawner route's assumption.
-    writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "test"\n');
     const s = setup(tmp.current, {
       stdinIsTty: true,
       diffSql: 'DROP EXTENSION "pgcrypto";\n',
@@ -1211,19 +1299,27 @@ describe("db schema declarative sync integration", () => {
       promptConfirmResponses: [true], // accept the staged export's reset offer
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        'project_id = "test"\n',
+      );
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
       expect(stripAnsi(s.out.stderrText)).toContain(
         "Exporting from the running local database (not the migrations state).",
       );
       expect(localResetRemovedContainers(s.child.spawned)).toContain("supabase_db_test");
       expect(
-        existsSync(join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json")),
+        yield* fs.exists(
+          path.join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json"),
+        ),
       ).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("cancels compatibility resolution without schema or migration writes", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       stdinIsTty: true,
       diffSql: 'DROP EXTENSION "uuid-ossp";\n',
@@ -1231,24 +1327,31 @@ describe("db schema declarative sync integration", () => {
       promptSelectResponses: ["cancel"],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
-      expect(existsSync(join(tmp.current, "supabase", "schemas", "extension.sql"))).toBe(false);
+      expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(yield* fs.exists(path.join(tmp.current, "supabase", "schemas", "extension.sql"))).toBe(
+        false,
+      );
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("suppresses the compatibility warning when a next export manifest is present", () => {
-    seedDeclarative(tmp.current);
-    writeFileSync(
-      join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"),
-      JSON.stringify({ formatVersion: 1, redactSecrets: true, scope: "database" }),
-    );
     const s = setup(tmp.current, {
       experimental: true,
       diffSql: 'DROP EXTENSION "pgcrypto";\n',
       removals: { extensions: ["pgcrypto"], extensionIntents: [] },
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"),
+        '{"formatVersion":1,"redactSecrets":true,"scope":"database"}',
+      );
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
       const output = stripAnsi(s.out.rawChunks.map((chunk) => chunk.text).join(""));
       expect(output).not.toContain("looks like a legacy pg-delta export");
@@ -1257,16 +1360,18 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("--name overrides the migration filename stem", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       experimental: true,
       diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
       yield* dbSchemaDeclarativeSync(
         flags({ noApply: Option.some(true), name: Option.some("add_b") }),
       );
-      const migrations = readdirSync(join(tmp.current, "supabase", "migrations"));
+      const migrations = yield* fs.readDirectory(path.join(tmp.current, "supabase", "migrations"));
       expect(migrations[0]).toMatch(/^\d{14}_add_b\.sql$/);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1274,11 +1379,9 @@ describe("db schema declarative sync integration", () => {
   it.effect(
     "apply failure in a TTY offers reset+reapply and runs the reset natively in-process",
     () => {
-      seedDeclarative(tmp.current);
       // `resetLocalDatabase` resolves its own project id from `@supabase/config`, independently
       // of the mocked `CommandSettings.projectId`; pin it so the recreated container name
       // matches the spawner route's assumption.
-      writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "test"\n');
       const s = setup(tmp.current, {
         experimental: true,
         diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
@@ -1287,6 +1390,13 @@ describe("db schema declarative sync integration", () => {
         promptConfirmResponses: [true], // accept the reset offer
       });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* seedDeclarative(tmp.current);
+        yield* fs.writeFileString(
+          path.join(tmp.current, "supabase", "config.toml"),
+          'project_id = "test"\n',
+        );
         yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) }));
         expect(s.out.rawChunks.some((c) => c.text.includes("Migration failed to apply"))).toBe(
           true,
@@ -1299,7 +1409,9 @@ describe("db schema declarative sync integration", () => {
             c.text.includes("Database reset and all migrations applied successfully"),
           ),
         ).toBe(true);
-        expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta", "debug"))).toBe(true);
+        expect(
+          yield* fs.exists(path.join(tmp.current, "supabase", ".temp", "pgdelta", "debug")),
+        ).toBe(true);
         // `resetLocalDatabase`'s own body never touches telemetry, so the outer command's single
         // `Effect.ensuring` finalizer must still fire exactly once, not twice.
         expect(s.telemetry.flushCount).toBe(1);
@@ -1308,7 +1420,6 @@ describe("db schema declarative sync integration", () => {
   );
 
   it.effect("surfaces the reset failure (not the apply error) when reset also fails", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       experimental: true,
       diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
@@ -1318,6 +1429,7 @@ describe("db schema declarative sync integration", () => {
       resetShouldFail: true, // …and the reset itself fails (local db not running)
     });
     return Effect.gen(function* () {
+      yield* seedDeclarative(tmp.current);
       const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
@@ -1333,8 +1445,6 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("forwards --network-id to the recovery reset", () => {
-    seedDeclarative(tmp.current);
-    writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "test"\n');
     const s = setup(tmp.current, {
       experimental: true,
       diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
@@ -1344,6 +1454,13 @@ describe("db schema declarative sync integration", () => {
       networkId: "my_net",
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        'project_id = "test"\n',
+      );
       yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) }));
       const createArgs = localResetCreateArgs(s.child.spawned);
       const networkIndex = createArgs?.indexOf("--network") ?? -1;
@@ -1353,7 +1470,6 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("preserves ordered migration segments as separate files", () => {
-    seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       experimental: true,
       renderedFiles: [
@@ -1374,11 +1490,48 @@ describe("db schema declarative sync integration", () => {
       ],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      const migrations = readdirSync(join(tmp.current, "supabase", "migrations")).sort();
+      const migrations = (yield* fs.readDirectory(
+        path.join(tmp.current, "supabase", "migrations"),
+      )).sort();
       expect(migrations).toHaveLength(2);
       expect(migrations[0]).toMatch(/^\d{14}_declarative_sync_1\.sql$/);
       expect(migrations[1]).toMatch(/^\d{14}_declarative_sync_2\.sql$/);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("rejects an unknown pg-delta transaction mode with its JSON-quoted value", () => {
+    const transactionMode: string = "batched";
+    const s = setup(tmp.current, {
+      experimental: true,
+      renderedFiles: [
+        {
+          sequence: 1,
+          name: "transactional",
+          suffix: "_1",
+          sql: "ALTER TABLE a ADD COLUMN b int;",
+          transactionMode: "transactional",
+        },
+        {
+          sequence: 2,
+          name: "batched",
+          suffix: "_2",
+          sql: "ALTER TYPE mood ADD VALUE 'fine';",
+          transactionMode: transactionMode as PgDeltaRenderedFile["transactionMode"],
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* seedDeclarative(tmp.current);
+      const exit = yield* Effect.exit(
+        dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
+      );
+      expect(failError(exit)).toMatchObject({
+        message: 'unknown pg-delta transaction mode "batched"',
+      });
     }).pipe(Effect.provide(s.layer));
   });
 });
