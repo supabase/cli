@@ -4,6 +4,7 @@ import {
   Effect,
   Exit,
   FileSystem,
+  Option,
   Path,
   PubSub,
   Ref,
@@ -197,52 +198,76 @@ const publishLogs = Effect.fn("ProcessRecipe.publishLogs")((
   );
 });
 
+const startupOutputTailLines = 20;
+
+const withRecentOutput = (summary: string, outputTail: ReadonlyArray<string>) =>
+  outputTail.length === 0 ? summary : `${summary}. Recent output:\n${outputTail.join("\n")}`;
+
 const awaitStartup = Effect.fn("ProcessRecipe.awaitStartup")(
   (
+    service: ServiceKind,
     process: {
       readonly stdout: Stream.Stream<Uint8Array, NativeProcessError | ContainerError>;
       readonly stderr: Stream.Stream<Uint8Array, NativeProcessError | ContainerError>;
       readonly exitCode: Effect.Effect<number, NativeProcessError | ContainerError>;
     },
     logs: PubSub.PubSub<CatalogLog>,
-  ): Effect.Effect<Readonly<{ readonly code: number; readonly stderr: string }>, ServiceError> =>
+  ): Effect.Effect<
+    Readonly<{ readonly code: number; readonly outputTail: ReadonlyArray<string> }>,
+    ServiceError
+  > =>
     Effect.gen(function* () {
-      const [stdout, stderr, exitCode] = yield* Effect.all(
-        [
-          process.stdout.pipe(
-            Stream.decodeText,
-            Stream.runFold(
-              () => "",
-              (text, chunk) => text + chunk,
-            ),
+      const tail = yield* Ref.make<ReadonlyArray<string>>([]);
+      const appendLines = (lines: ReadonlyArray<string>) =>
+        Ref.update(tail, (current) =>
+          [...current, ...lines.filter((line) => line.trim().length > 0)].slice(
+            -startupOutputTailLines,
           ),
-          process.stderr.pipe(
-            Stream.decodeText,
-            Stream.runFold(
-              () => "",
-              (text, chunk) => text + chunk,
-            ),
+        );
+      const collect = Effect.fnUntraced(function* (
+        stream: Stream.Stream<Uint8Array, NativeProcessError | ContainerError>,
+        name: CatalogLog["stream"],
+      ) {
+        const partial = yield* Ref.make("");
+        // The unterminated last line is flushed on interruption so a timeout still reports it.
+        yield* stream.pipe(
+          Stream.tap((bytes) => PubSub.publish(logs, { stream: name, bytes })),
+          Stream.decodeText,
+          Stream.runForEach((text) =>
+            Ref.modify(partial, (rest): [ReadonlyArray<string>, string] => {
+              const lines = `${rest}${text}`.split(/\r?\n/);
+              const next = lines.pop() ?? "";
+              return [lines, next];
+            }).pipe(Effect.flatMap(appendLines)),
           ),
-          process.exitCode,
-        ],
+          Effect.ensuring(Ref.get(partial).pipe(Effect.flatMap((rest) => appendLines([rest])))),
+        );
+      });
+      const completed = yield* Effect.all(
+        [collect(process.stdout, "stdout"), collect(process.stderr, "stderr"), process.exitCode],
         { concurrency: "unbounded" },
-      ).pipe(Effect.mapError((cause) => serviceError("launch", cause)));
-      if (stdout.length > 0)
-        yield* PubSub.publish(logs, {
-          stream: "stdout",
-          bytes: new TextEncoder().encode(stdout),
-        });
-      if (stderr.length > 0)
-        yield* PubSub.publish(logs, {
-          stream: "stderr",
-          bytes: new TextEncoder().encode(stderr),
-        });
-      return { code: Number(exitCode), stderr };
-    }).pipe(
-      Effect.timeout("60 seconds"),
-      Effect.mapError((cause) => serviceError("launch", cause)),
-    ),
+      ).pipe(
+        Effect.mapError((cause) => serviceError("launch", cause)),
+        Effect.timeoutOption("60 seconds"),
+      );
+      const outputTail = yield* Ref.get(tail);
+      if (Option.isNone(completed))
+        return yield* serviceError(
+          "launch",
+          withRecentOutput(`${service} startup timed out after 60 seconds`, outputTail),
+        );
+      return { code: Number(completed.value[2]), outputTail };
+    }),
 );
+
+const startupFailure = (
+  service: ServiceKind,
+  result: { readonly code: number; readonly outputTail: ReadonlyArray<string> },
+): ServiceError =>
+  serviceError(
+    "launch",
+    withRecentOutput(`${service} startup exited with ${result.code}`, result.outputTail),
+  );
 
 const readiness = Effect.fn("ProcessRecipe.readiness")(
   (
@@ -351,12 +376,8 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
             Effect.mapError((cause) => serviceError("launch", cause)),
           );
-          const result = yield* awaitStartup(startupProcess, logs);
-          if (result.code !== 0)
-            return yield* serviceError(
-              "launch",
-              `${context.config.service} startup exited with ${result.code}: ${result.stderr.trim()}`,
-            );
+          const result = yield* awaitStartup(context.config.service, startupProcess, logs);
+          if (result.code !== 0) return yield* startupFailure(context.config.service, result);
         }
         const native: NativeProcess = yield* spawnNativeProcess(
           {
@@ -416,15 +437,11 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             Effect.mapError((cause) => serviceError("launch", cause)),
             Scope.provide(context.scope),
           );
-        const result = yield* awaitStartup(startupProcess, logs);
+        const result = yield* awaitStartup(context.config.service, startupProcess, logs);
         yield* startupProcess.remove.pipe(
           Effect.mapError((cause) => serviceError("launch", cause)),
         );
-        if (result.code !== 0)
-          return yield* serviceError(
-            "launch",
-            `${context.config.service} startup exited with ${result.code}: ${result.stderr.trim()}`,
-          );
+        if (result.code !== 0) return yield* startupFailure(context.config.service, result);
       }
       const launched = yield* deps.container
         .launch({
