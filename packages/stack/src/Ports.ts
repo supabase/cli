@@ -1,5 +1,11 @@
-import { Cause, Crypto, Data, Effect, Exit, Option, Scope } from "effect";
+import { Cause, Data, Effect, Exit, Hash, Option, Scope } from "effect";
 import type * as State from "./State.ts";
+
+const portBase = 20000;
+/** Stays below the Linux ephemeral range, per the [architecture ADR](../../../docs/adr/0017-simplified-managed-stack-architecture.md). */
+const portSpan = 12768;
+/** Co-prime with the span, so the scan visits every port once and steps past reserved ranges. */
+const portStride = 257;
 
 export class PortError extends Data.TaggedError("PortError")<{
   readonly key: string;
@@ -14,11 +20,13 @@ export interface PortRequest {
   readonly port: number | "auto";
 }
 
+/** Spreads the scan across the span so separate checkouts, stacks, and keys start apart. */
+const scanStart = (stack: State.SavedStack, key: string) =>
+  Math.abs(Hash.string(`${stack.identity.projectRoot}:${stack.id}:${key}`)) % portSpan;
+
 /** Coordinates durable public claims while retaining each successfully bound listener. */
 export const makePorts = (state: State.Interface) =>
-  Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-
+  Effect.sync(() => {
     const acquire = Effect.fn("Ports.acquire")(
       <A, R>(
         request: PortRequest,
@@ -58,10 +66,14 @@ export const makePorts = (state: State.Interface) =>
               });
 
             const owner = yield* Scope.Scope;
-            const first = yield* crypto.randomIntBetween(0, 29999);
+            const start = scanStart(stack, request.key);
             let failures = 0;
-            for (let attempt = 0; attempt < 30000 && failures < 64; attempt++) {
-              const port = requested === "auto" ? 20000 + ((first + attempt) % 30000) : requested;
+            let lastFailure: PortError | undefined;
+            for (let attempt = 0; attempt < portSpan && failures < 64; attempt++) {
+              const port =
+                requested === "auto"
+                  ? portBase + ((start + attempt * portStride) % portSpan)
+                  : requested;
               if (claimed.has(port)) continue;
               const result = yield* Effect.uninterruptibleMask((restore) =>
                 Effect.gen(function* () {
@@ -105,10 +117,15 @@ export const makePorts = (state: State.Interface) =>
               )
                 return yield* Effect.failCause(result.cause);
               failures++;
+              lastFailure = error.value;
             }
             return yield* new PortError({
               key: request.key,
-              message: "No public port is available",
+              message:
+                lastFailure === undefined
+                  ? "No public port is available"
+                  : `No public port is available: ${lastFailure.message}`,
+              cause: lastFailure,
             });
           }),
         ),

@@ -1,7 +1,10 @@
 import { NodeServices } from "@effect/platform-node";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Windows junctions need Node's junction option.
+import { symlink as nativeSymlink } from "node:fs/promises";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Data,
   Deferred,
   Effect,
   Exit,
@@ -22,6 +25,11 @@ const run = <A, E>(
     ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Scope.Scope
   >,
 ) => Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
+
+class JunctionTestError extends Data.TaggedError("JunctionTestError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
 
 describe("copyDirectory", () => {
   it.live("copies nested files and preserves modes", () =>
@@ -91,6 +99,33 @@ describe("copyDirectory", () => {
 
         expect(Exit.isFailure(result)).toBe(true);
         expect(yield* fs.exists(destination)).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("rejects Windows directory junctions without copying their targets", () =>
+    run(
+      Effect.gen(function* () {
+        if (process.platform !== "win32") return;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "directory-copy-junction-" });
+        const source = path.join(root, "source");
+        const outside = path.join(root, "outside");
+        const destination = path.join(root, "destination");
+        yield* fs.makeDirectory(source);
+        yield* fs.makeDirectory(outside);
+        yield* fs.writeFileString(path.join(outside, "secret.txt"), "outside\n");
+        yield* Effect.tryPromise({
+          try: () => nativeSymlink(outside, path.join(source, "junction"), "junction"),
+          catch: (cause) => new JunctionTestError({ message: "create directory junction", cause }),
+        });
+
+        const result = yield* copyDirectory(source, destination).pipe(Effect.exit);
+
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(yield* fs.exists(destination)).toBe(false);
+        expect(yield* fs.readFileString(path.join(outside, "secret.txt"))).toBe("outside\n");
       }),
     ),
   );
@@ -171,7 +206,7 @@ describe("copyDirectory", () => {
         yield* copyDirectory(source, destination).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
-            failedHostCopy(destination, fs, path),
+            failedHostCopy(fs, path, destination),
           ),
         );
 
@@ -196,7 +231,7 @@ describe("copyDirectory", () => {
         const fiber = yield* copyDirectory(source, destination).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
-            hangingCopy(started, destination, fs, path),
+            hangingCopy(fs, path, started, destination),
           ),
           Effect.forkChild,
         );
@@ -236,7 +271,7 @@ describe("copyDirectory", () => {
           Effect.provideService(FileSystem.FileSystem, pausing),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
-            failedHostCopy(destination, fs, path),
+            failedHostCopy(fs, path, destination),
           ),
           Effect.forkChild,
         );
@@ -270,13 +305,13 @@ const processHandle = (exitCode: Effect.Effect<ChildProcessSpawner.ExitCode>) =>
     unref: Effect.succeed(Effect.void),
   });
 
-const writePartial = (destination: string, fs: FileSystem.FileSystem, path: Path.Path) =>
+const writePartial = (fs: FileSystem.FileSystem, path: Path.Path, destination: string) =>
   Effect.gen(function* () {
     const nested = path.join(destination, "nested");
     yield* fs.makeDirectory(nested, { recursive: true });
     yield* fs.writeFileString(path.join(nested, "child.txt"), "partial\n");
     if (process.platform !== "win32") yield* fs.chmod(nested, 0o555);
-  }).pipe(Effect.orDie);
+  });
 
 const hostCommand = (command: ChildProcess.Command) => {
   if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
@@ -287,26 +322,26 @@ const hostCommand = (command: ChildProcess.Command) => {
 };
 
 const hangingCopy = (
-  started: Deferred.Deferred<void>,
-  destination: string,
   fs: FileSystem.FileSystem,
   path: Path.Path,
+  started: Deferred.Deferred<void>,
+  destination: string,
 ) =>
   ChildProcessSpawner.make((command) => {
     const find = hostCommand(command);
     if (find !== undefined) return find;
-    return writePartial(destination, fs, path).pipe(
+    return writePartial(fs, path, destination).pipe(
       Effect.as(processHandle(Effect.never)),
       Effect.tap(() => Deferred.succeed(started, undefined)),
     );
   });
 
 // Exit 8 is a real robocopy failure and a non-zero cp status, not a usage error.
-const failedHostCopy = (destination: string, fs: FileSystem.FileSystem, path: Path.Path) =>
+const failedHostCopy = (fs: FileSystem.FileSystem, path: Path.Path, destination: string) =>
   ChildProcessSpawner.make((command) => {
     const find = hostCommand(command);
     if (find !== undefined) return find;
-    return writePartial(destination, fs, path).pipe(
+    return writePartial(fs, path, destination).pipe(
       Effect.as(processHandle(Effect.succeed(ChildProcessSpawner.ExitCode(8)))),
     );
   });

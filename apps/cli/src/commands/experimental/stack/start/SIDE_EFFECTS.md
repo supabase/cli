@@ -12,7 +12,8 @@ Auth policies, OAuth providers, hooks, MFA, SMTP, email subjects and notificatio
 forwarded to Auth. REST search paths, pooler limits, Realtime settings, Studio settings, Storage
 S3 protocol/vector controls, and configured Vector ports are forwarded to their services.
 Encrypted JWT secrets are decrypted before shared credentials are derived. `db.health_timeout`
-controls database readiness; an explicit `db.root_key` is supplied through a stack-owned key file.
+controls database readiness; package JWT and PostgreSQL root-key defaults apply when omitted, and
+the effective root key is supplied through a stack-owned key file.
 Studio receives the Functions management directory/URL and Analytics credentials when present.
 Email template `content_path` values and third-party identity providers remain unsupported: they
 require template serving and shared external JWKS verification respectively.

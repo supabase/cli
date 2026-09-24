@@ -15,6 +15,9 @@ class HttpProxyError extends Data.TaggedError("HttpProxyError")<{
   readonly cause?: unknown;
 }> {}
 
+/** Distinguishes a client that went away first from a genuine proxy failure. */
+class HttpProxyDisconnected extends Data.TaggedError("HttpProxyDisconnected") {}
+
 export interface HttpRoute {
   readonly id: string;
   readonly prefix: string;
@@ -85,8 +88,8 @@ const setCors = (response: ServerResponse, request: IncomingMessage) => {
 };
 
 const disconnected = (request: IncomingMessage, response: ServerResponse) =>
-  Effect.callback<never, HttpProxyError>((resume) => {
-    const onAbort = () => resume(Effect.fail(errorFor("client disconnected")));
+  Effect.callback<never, HttpProxyDisconnected>((resume) => {
+    const onAbort = () => resume(Effect.fail(new HttpProxyDisconnected()));
     const onRequestClose = () => {
       if (!request.complete) onAbort();
     };
@@ -131,33 +134,37 @@ const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
   (request: IncomingMessage, response: ServerResponse, route: HttpRoute) =>
     Effect.gen(function* () {
       const backend = yield* Effect.raceFirst(route.target, disconnected(request, response));
-      yield* Effect.callback<void, HttpProxyError>((resume) => {
+      yield* Effect.callback<void, HttpProxyError | HttpProxyDisconnected>((resume) => {
         let outgoing: ReturnType<typeof upstreamRequest> | undefined;
         let incoming: IncomingMessage | undefined;
         let settled = false;
         // Error listeners remain until collection because destroy may emit errors asynchronously.
         const cleanup = () => {
-          request.off("aborted", onError);
+          request.off("aborted", onClientGone);
           response.off("close", onResponseClose);
           response.off("finish", onFinish);
 
           incoming?.off("aborted", onError);
         };
-        const finish = (result: Effect.Effect<void, HttpProxyError>) => {
+        const finish = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
           if (settled) return;
           settled = true;
           cleanup();
           resume(result);
         };
-        const onError = (cause: Error) => {
+        // Settling first keeps the outcome: destroying a partial upstream response emits
+        // `aborted` synchronously, which would otherwise resettle as a proxy failure.
+        const abandon = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
           if (settled) return;
+          finish(result);
           outgoing?.destroy();
           incoming?.destroy();
-          finish(Effect.fail(errorFor(cause)));
         };
+        const onError = (cause: Error) => abandon(Effect.fail(errorFor(cause)));
+        const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
         const onFinish = () => finish(Effect.void);
         const onResponseClose = () => {
-          if (!response.writableEnded) onError(new Error("client response closed"));
+          if (!response.writableEnded) onClientGone();
         };
         outgoing = upstreamRequest(
           {
@@ -183,7 +190,7 @@ const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
           },
         );
         outgoing.on("error", onError);
-        request.once("aborted", onError);
+        request.once("aborted", onClientGone);
         response.once("close", onResponseClose);
         request.pipe(outgoing);
         return Effect.sync(() => {
@@ -201,15 +208,15 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
     Effect.gen(function* () {
       const backend = yield* Effect.raceFirst(
         route.target,
-        Effect.callback<never, HttpProxyError>((resume) => {
-          const onClose = () => resume(Effect.fail(errorFor("client disconnected")));
+        Effect.callback<never, HttpProxyDisconnected>((resume) => {
+          const onClose = () => resume(Effect.fail(new HttpProxyDisconnected()));
           client.once("close", onClose);
           if (client.destroyed) onClose();
           return Effect.sync(() => client.off("close", onClose));
         }),
       );
       const upstream = yield* connectInterruptibly(backend);
-      yield* Effect.callback<void, HttpProxyError>((resume) => {
+      yield* Effect.callback<void, HttpProxyError | HttpProxyDisconnected>((resume) => {
         let settled = false;
         const cleanup = () => {
           client.off("close", onClose);
@@ -218,25 +225,23 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
           client.off("end", onClientEnd);
           upstream.off("end", onUpstreamEnd);
         };
-        const finish = (result: Effect.Effect<void, HttpProxyError>) => {
+        const finish = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
           if (settled) return;
           settled = true;
           cleanup();
           resume(result);
         };
-        const onError = (cause: Error) => {
+        const abandon = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
+          finish(result);
           client.destroy();
           upstream.destroy();
-          finish(Effect.fail(errorFor(cause)));
         };
-        const onClose = () => {
-          client.destroy();
-          upstream.destroy();
-          finish(Effect.void);
-        };
+        const onError = (cause: Error) => abandon(Effect.fail(errorFor(cause)));
+        const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
+        const onClose = () => abandon(Effect.void);
         const onClientEnd = () => upstream.end();
         const onUpstreamEnd = () => client.end();
-        client.on("error", onError);
+        client.on("error", onClientGone);
         client.once("close", onClose);
         upstream.on("error", onError);
         upstream.once("close", onClose);
@@ -286,6 +291,11 @@ export const makeHttpProxy = (options: {
               response.end("Not Found");
             } else {
               yield* proxyRequest(request, response, route).pipe(
+                Effect.tapError((cause) =>
+                  cause._tag === "HttpProxyDisconnected"
+                    ? Effect.void
+                    : Effect.logError(`Route ${route.id} request failed`, cause),
+                ),
                 Effect.catch(() =>
                   Effect.sync(() => {
                     if (response.destroyed) return;
@@ -318,6 +328,11 @@ export const makeHttpProxy = (options: {
             if (route === undefined) socket.destroy();
             else
               yield* upgrade(request, socket, head, route).pipe(
+                Effect.tapError((cause) =>
+                  cause._tag === "HttpProxyDisconnected"
+                    ? Effect.void
+                    : Effect.logError(`Route ${route.id} upgrade failed`, cause),
+                ),
                 Effect.catch(() => Effect.sync(() => socket.destroy())),
               );
           }),

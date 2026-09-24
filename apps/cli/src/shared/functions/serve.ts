@@ -129,7 +129,8 @@ const dockerLogDiagnosticTailLength = 4_096;
 // signal and a child spawn/stream failure can land microseconds apart — this is their tie-break.
 const shutdownSignalGracePeriod = Duration.millis(50);
 // Exit codes a supervisor uses to tear a container down (`supabase stop`, CI cancellation),
-// not a self-raised crash signal; 137 is excluded because it gets its own OOM-kill retry.
+// not a self-raised crash signal; 137 is excluded because it needs `OOMKilled` to tell a
+// memory-limit kill from a kill the CLI cannot attribute.
 const externalTerminationExitCodes = new Set([
   129, // SIGHUP
   130, // SIGINT
@@ -1428,14 +1429,21 @@ const streamContainerLogs = Effect.fnUntraced(function* (
       if (state.exitCode === 0) {
         return { _tag: "containerExited" } satisfies ContainerLogsEndReason;
       }
-      if (state.exitCode === 137) {
-        yield* reattach;
-        continue;
+      // `supabase stop` force-kills a runtime that ignored SIGTERM and prunes it immediately
+      // after, so a second inspect separates that teardown from a kill that leaves the
+      // container in place.
+      if (state.exitCode === 137 && !state.oomKilled) {
+        yield* Effect.sleep(retryDelay);
+        const recheck = yield* inspectContainerState(spawner, containerId).pipe(Effect.result);
+        if (Result.isFailure(recheck) && isContainerNotFoundMessage(recheck.failure.message)) {
+          return { _tag: "containerGone" } satisfies ContainerLogsEndReason;
+        }
       }
       return yield* new EdgeRuntimeContainerCrashedError({
         message: `error running container ${containerId}: exit ${state.exitCode}`,
         containerId,
         exitCode: state.exitCode,
+        oomKilled: state.oomKilled,
       });
     }
 
@@ -1456,6 +1464,7 @@ const streamContainerLogs = Effect.fnUntraced(function* (
         exitCode: attempt.exitCode,
         stderr: trimmedStderr,
         daemonDown: inspected.failure.daemonDown === true,
+        oomKilled: false,
       });
     }
     if (inspected.success.running) {
@@ -1469,6 +1478,7 @@ const streamContainerLogs = Effect.fnUntraced(function* (
       exitCode: attempt.exitCode,
       stderr: trimmedStderr,
       daemonDown: false,
+      oomKilled: inspected.success.oomKilled,
     });
   }
 });

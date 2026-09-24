@@ -13,6 +13,7 @@ class InvalidWorkerCreation extends Error {}
 class InvalidWorkerResponse extends Error {}
 class WorkerRequestCancelled extends Error {}
 class NotFoundError extends Error {}
+class WorkerAlreadyRetired extends Error {}
 
 type LoadOptions = {
   readonly errors?: Record<string, abstract new (...args: never[]) => Error>;
@@ -20,6 +21,7 @@ type LoadOptions = {
   readonly creationError?: unknown;
   readonly onCreate?: () => void;
   readonly creation?: Promise<{ fetch(request: Request): Promise<Response> }>;
+  readonly createWorker?: () => { fetch(request: Request): Promise<Response> };
   readonly lstatError?: unknown;
   readonly metricError?: unknown;
 };
@@ -34,6 +36,7 @@ const load = async (
     creationError,
     onCreate = () => undefined,
     creation,
+    createWorker,
     lstatError,
     metricError,
   }: LoadOptions = {},
@@ -66,6 +69,7 @@ const load = async (
           state.createOptions = value;
           onCreate();
           if (creation !== undefined) return creation;
+          if (createWorker !== undefined) return Promise.resolve(createWorker());
           return creationError === undefined
             ? Promise.resolve(worker as { fetch(request: Request): Promise<Response> })
             : Promise.reject(creationError);
@@ -251,6 +255,79 @@ describe("CLI functions bootstrap bundle", () => {
     const response = await loaded.options.handler(new Request("http://localhost/hello"));
     expect(response.status).toBe(status);
     expect(await response.json()).toMatchObject({ code });
+  });
+
+  describe("retired worker dispatch", () => {
+    const config = JSON.stringify({
+      hello: {
+        entrypointPath: "hello/index.ts",
+        importMapPath: "",
+        staticFiles: [],
+        verifyJWT: false,
+      },
+    });
+    // Every create() hands out a distinct worker: worker n always rejects with failures[n - 1] when
+    // one is given, otherwise it answers with its own number so the response names the worker.
+    const serve = async (failures: ReadonlyArray<Error>) => {
+      let creates = 0;
+      const loaded = await load(
+        await bundleServeMainTemplate(),
+        baseEnv(config),
+        {},
+        {
+          errors: { WorkerAlreadyRetired, InvalidWorkerResponse },
+          createWorker: () => {
+            const worker = ++creates;
+            const failure = failures[worker - 1];
+            return {
+              fetch: async (request: Request) => {
+                if (failure !== undefined) throw failure;
+                return new Response(
+                  `fn-ok worker-${worker} ${request.method} ${await request.text()}`,
+                );
+              },
+            };
+          },
+        },
+      );
+      return { loaded, creates: () => creates };
+    };
+
+    it("serves a bodyless request with a fresh worker after WorkerAlreadyRetired", async () => {
+      const { loaded, creates } = await serve([new WorkerAlreadyRetired()]);
+      const response = await loaded.options.handler(new Request("http://localhost/hello"));
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("fn-ok worker-2 GET ");
+      expect(creates()).toBe(2);
+    });
+
+    it("does not retry a second consecutive WorkerAlreadyRetired", async () => {
+      const { loaded, creates } = await serve([
+        new WorkerAlreadyRetired(),
+        new WorkerAlreadyRetired(),
+      ]);
+      const response = await loaded.options.handler(new Request("http://localhost/hello"));
+      expect(response.status).toBe(500);
+      expect(creates()).toBe(2);
+    });
+
+    it("does not retry other worker failures", async () => {
+      const { loaded, creates } = await serve([new InvalidWorkerResponse()]);
+      const response = await loaded.options.handler(new Request("http://localhost/hello"));
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ code: "WORKER_ERROR" });
+      expect(creates()).toBe(1);
+    });
+
+    it("does not replay a request whose body was already forwarded", async () => {
+      const { loaded, creates } = await serve([new WorkerAlreadyRetired()]);
+      const response = await loaded.options.handler(
+        new Request("http://localhost/hello", { method: "POST", body: "payload" }),
+      );
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ code: "Internal Server Error" });
+      expect(creates()).toBe(1);
+    });
   });
 
   it("does not fetch after an aborted pending worker creation", async () => {

@@ -206,6 +206,7 @@ function applySupabaseRetryPolicy(
   const timeoutMs = options?.requestTimeoutMs ?? 60_000;
 
   return HttpClient.transform(client, (requestEffect, request) => {
+    const retriesTransportErrors = isIdempotentMethod(request.method);
     const attempt = (
       retries: number,
     ): Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError> =>
@@ -223,7 +224,9 @@ function applySupabaseRetryPolicy(
           ),
         ),
         Effect.catchIf(isRetryableTransportError, (error) =>
-          retries < maxRetries ? attempt(retries + 1) : Effect.fail(error),
+          retries < maxRetries && retriesTransportErrors
+            ? attempt(retries + 1)
+            : Effect.fail(error),
         ),
         Effect.flatMap((response) =>
           isRetryableResponse(response) && retries < maxRetries
@@ -267,6 +270,15 @@ function prepareClient(
 
   const retried = applySupabaseRetryPolicy(prefixed, options?.retry);
   return options?.transformClient ? options.transformClient(retried) : Effect.succeed(retried);
+}
+
+/**
+ * Whether a query-parameter value is the object form OpenAPI serializes as
+ * `style: deepObject`. Arrays are excluded — they are the repeated-key form
+ * `normalizeUrlValue` already handles.
+ */
+function isDeepObjectValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeUrlValue(value: unknown): string | ReadonlyArray<string> {
@@ -448,9 +460,22 @@ function buildRequest(
   const query: Record<string, string | ReadonlyArray<string>> = {};
   for (const param of definition.queryParams) {
     const value = revealRedactedValue(Reflect.get(input, param));
-    if (value !== undefined) {
-      query[param] = normalizeUrlValue(value);
+    if (value === undefined) {
+      continue;
     }
+    // `style: deepObject` — every object-valued query parameter this spec
+    // declares (the v2 `page` / `filter` pairs) — is one `param[key]=value` on
+    // the wire, not a JSON blob: `page: { size: 100 }` must arrive as
+    // `page[size]=100` or the server reads no page size at all.
+    if (isDeepObjectValue(value)) {
+      for (const [key, entry] of Object.entries(value)) {
+        if (entry !== undefined) {
+          query[`${param}[${key}]`] = normalizeUrlValue(entry);
+        }
+      }
+      continue;
+    }
+    query[param] = normalizeUrlValue(value);
   }
   if (Object.keys(query).length > 0) {
     request = HttpClientRequest.setUrlParams(request, query);

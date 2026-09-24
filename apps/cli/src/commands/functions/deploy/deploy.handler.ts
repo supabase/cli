@@ -1,5 +1,4 @@
-import { join } from "node:path";
-import { Effect, Option, Stdio } from "effect";
+import { Effect, Option, Path, Stdio } from "effect";
 import { deployFunctions } from "../../../shared/functions/deploy.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../shared/functions/functions.shared.ts";
 import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
@@ -26,9 +25,10 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
   const telemetryState = yield* TelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
   const stdio = yield* Stdio.Stdio;
+  const path = yield* Path.Path;
   const rawArgs = yield* stdio.args;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
-    join(cliSettings.workdir, "supabase"),
+    path.join(cliSettings.workdir, "supabase"),
   );
   let resolvedProjectRef = Option.none<string>();
 
@@ -37,7 +37,7 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
     cwd: cliSettings.workdir,
     flagCwd: runtimeInfo.cwd,
     projectRoot: cliSettings.workdir,
-    supabaseDir: join(cliSettings.workdir, "supabase"),
+    supabaseDir: path.join(cliSettings.workdir, "supabase"),
     dashboardUrl: dashboardUrl(cliSettings.profile),
     goConfigCompat: functionsGoConfigCompat,
     yes,
