@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Redacted, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted, Schema } from "effect";
 import { tmpdir } from "node:os";
 import {
   create,
@@ -98,10 +98,20 @@ it.live(
 
         const destroyExit = yield* stack.destroy.pipe(Effect.exit);
         expect(Exit.isFailure(destroyExit)).toBe(true);
-        if (Exit.isFailure(destroyExit))
-          expect(Cause.pretty(destroyExit.cause)).toContain(
-            "Database root belongs to another instance",
-          );
+        if (Exit.isFailure(destroyExit)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(destroyExit.cause));
+          expect(error).toMatchObject({
+            operation: "shutdown",
+            message: "Composition destroy had failures",
+            outcomes: [
+              {
+                id: instance.id,
+                succeeded: false,
+                error: expect.stringContaining("Database root belongs to another instance"),
+              },
+            ],
+          });
+        }
         expect(yield* fs.readFileString(marker)).toContain("another-stack");
         const retained = yield* discover(options);
         expect(retained).toHaveLength(1);
