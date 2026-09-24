@@ -37,13 +37,14 @@ const defaultPipelineConfig = [
 
 const containerPipelinePath = "/etc/vector/vector.yaml";
 const containerApiPath = "/etc/supabase/vector-api.yaml";
+const temporaryPrefix = ".vector-write-";
 
 const writeAtomically = Effect.fn("Vector.writeAtomically")(
   function* (fs: FileSystem.FileSystem, path: Path.Path, target: string, content: string) {
     const directory = path.dirname(target);
     yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
     yield* Effect.acquireUseRelease(
-      fs.makeTempDirectory({ directory, prefix: ".vector-write-" }),
+      fs.makeTempDirectory({ directory, prefix: temporaryPrefix }),
       (temporaryDirectory) =>
         Effect.gen(function* () {
           const temporary = path.join(temporaryDirectory, path.basename(target));
@@ -61,18 +62,6 @@ const writeAtomically = Effect.fn("Vector.writeAtomically")(
       new ServiceError({ operation: "prepare", message: "Unable to write Vector config", cause }),
   ),
 );
-
-const definesApi = (file: string, content: string): Effect.Effect<boolean> => {
-  if (file.endsWith(".json"))
-    return Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(content).pipe(
-      Effect.map(
-        (parsed) => typeof parsed === "object" && parsed !== null && Object.hasOwn(parsed, "api"),
-      ),
-      Effect.orElseSucceed(() => false),
-    );
-  if (file.endsWith(".toml")) return Effect.succeed(/^\s*(\[api[.\]]|api\s*[.=])/mu.test(content));
-  return Effect.succeed(/^["']?api["']?\s*:/mu.test(content));
-};
 
 const makeSpec = (
   instanceId: string,
@@ -122,16 +111,15 @@ const makeSpec = (
         yield* ownedInstance("prepare");
         const callerPath = creation.config.configPath;
         if (callerPath !== undefined) {
-          const resolved = path.resolve(callerPath);
-          if (
-            resolved === path.resolve(apiConfigPath) ||
-            resolved === path.resolve(defaultPipelinePath)
-          )
-            return yield* new ServiceError({
-              operation: "prepare",
-              message: "Vector configPath must not point at a stack-owned Vector config file",
-            });
-          const content = yield* fs.readFileString(callerPath).pipe(
+          const canonical = (file: string) =>
+            fs
+              .exists(file)
+              .pipe(
+                Effect.flatMap((exists) =>
+                  exists ? fs.realPath(file) : Effect.succeed(path.resolve(file)),
+                ),
+              );
+          const caller = yield* fs.realPath(callerPath).pipe(
             Effect.mapError(
               (cause) =>
                 new ServiceError({
@@ -141,11 +129,23 @@ const makeSpec = (
                 }),
             ),
           );
-          if (yield* definesApi(callerPath, content))
+          const owned = yield* Effect.all([
+            canonical(apiConfigPath),
+            canonical(defaultPipelinePath),
+          ]).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServiceError({
+                  operation: "prepare",
+                  message: "Unable to resolve Vector config paths",
+                  cause,
+                }),
+            ),
+          );
+          if (owned.includes(caller))
             return yield* new ServiceError({
               operation: "prepare",
-              message:
-                "Vector configPath must not define `api`; the stack configures the Vector API",
+              message: "Vector configPath must not point at a stack-owned Vector config file",
             });
         }
         yield* writeAtomically(fs, path, apiConfigPath, apiConfig);
@@ -158,6 +158,10 @@ const makeSpec = (
         yield* ownedInstance("destroy");
         yield* fs.remove(apiConfigPath, { force: true });
         yield* fs.remove(defaultPipelinePath, { force: true });
+        if (yield* fs.exists(configRoot))
+          for (const entry of yield* fs.readDirectory(configRoot))
+            if (entry.startsWith(temporaryPrefix))
+              yield* fs.remove(path.join(configRoot, entry), { recursive: true, force: true });
         for (const directory of [configRoot, path.dirname(configRoot), instanceRoot]) {
           if (!(yield* fs.exists(directory))) continue;
           if ((yield* fs.readDirectory(directory)).length > 0) return;

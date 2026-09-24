@@ -17,7 +17,7 @@ const options = (root: string, runtime: "docker" | "native") => ({
 describe("vector recipe", () => {
   for (const runtime of ["docker", "native"] as const) {
     it.live(
-      `serves health without a custom config and cleans up on destroy (${runtime})`,
+      `serves health without a custom config and cleans up on destroy, including interrupted writes (${runtime})`,
       () =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -45,6 +45,7 @@ describe("vector recipe", () => {
               HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}/health`),
             );
             expect(response.status).toBe(200);
+            yield* fs.makeDirectory(`${root}/vector/runtime/vector/.vector-write-interrupted`);
             yield* vector.destroy;
             expect(yield* fs.exists(`${root}/vector`)).toBe(false);
           }),
@@ -88,11 +89,15 @@ describe("vector recipe", () => {
     { timeout: 120_000 },
   );
 
-  it.live("rejects a caller pipeline that defines the API or reuses a stack-owned path", () =>
+  it.live("rejects a caller pipeline that resolves to a stack-owned config file", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-vector-reject-" });
+        const owned = `${root}/vector/runtime/vector/vector-api.yaml`;
+        yield* fs.makeDirectory(`${root}/vector/runtime/vector`, { recursive: true });
+        yield* fs.writeFileString(owned, "api:\n  enabled: true\n");
+        yield* fs.symlink(owned, `${root}/alias.yaml`);
         const start = (configPath: string) =>
           Effect.gen(function* () {
             const recipe = yield* makeServiceRecipe(
@@ -109,12 +114,8 @@ describe("vector recipe", () => {
             });
             return yield* vector.start.pipe(Effect.flip);
           });
-        const withApi = `${root}/with-api.yaml`;
-        yield* fs.writeFileString(withApi, "api:\n  enabled: true\n  address: 0.0.0.0:8686\n");
-        expect((yield* start(withApi)).message).toContain("must not define `api`");
-        expect((yield* start(`${root}/vector/runtime/vector/vector-api.yaml`)).message).toContain(
-          "stack-owned Vector config file",
-        );
+        for (const configPath of [owned, `${root}/alias.yaml`])
+          expect((yield* start(configPath)).message).toContain("stack-owned Vector config file");
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
