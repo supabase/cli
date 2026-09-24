@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { Effect } from "effect";
 import {
   generateGo,
   generatePython,
@@ -38,14 +39,18 @@ describe("postgrest-typegen runtime contract", () => {
     expect(typeof generateSwift).toBe("function");
   });
 
-  it("renders every supported language from metadata alone", async () => {
-    const metadata = sortGeneratorMetadata(emptyMetadata);
+  it.effect("renders every supported language from metadata alone", () =>
+    Effect.gen(function* () {
+      const metadata = sortGeneratorMetadata(emptyMetadata);
 
-    await expect(
-      generateTypescript(metadata, { format: (code) => Promise.resolve(code) }),
-    ).resolves.toContain("public");
-    expect(generateGo(metadata)).toContain("package");
-    expect(generatePython(metadata)).toContain("import");
-    expect(generateSwift(metadata, { accessControl: "internal" })).toContain("import Supabase");
-  });
+      expect(
+        yield* Effect.promise(() =>
+          generateTypescript(metadata, { format: (code) => Promise.resolve(code) }),
+        ),
+      ).toContain("public");
+      expect(generateGo(metadata)).toContain("package");
+      expect(generatePython(metadata)).toContain("import");
+      expect(generateSwift(metadata, { accessControl: "internal" })).toContain("import Supabase");
+    }),
+  );
 });

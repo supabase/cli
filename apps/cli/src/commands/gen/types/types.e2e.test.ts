@@ -1,8 +1,12 @@
-import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { describe, expect, test } from "vitest";
-import { makeTempHome, makeTempStackProject, runSupabase } from "../../../../tests/helpers/cli.ts";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Clock, Config, Data, Effect, FileSystem, Option, Path, Schedule } from "effect";
+import {
+  makeTempStackProject,
+  runDockerEffect,
+  runSupabaseEffect,
+  withTempHome,
+} from "../../../../tests/helpers/cli.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { localDbContainerId } from "../../../command-internal/docker-ids.ts";
 import {
@@ -30,6 +34,11 @@ interface CommandResult {
   readonly exitCode: number;
 }
 
+class TypegenE2eSetupError extends Data.TaggedError("TypegenE2eSetupError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
 function tokenlessEnv(profilePath: string, projectDir: string) {
   return {
     SUPABASE_ACCESS_TOKEN: "",
@@ -47,9 +56,18 @@ function remoteEnv(accessToken: string, projectDir: string) {
   };
 }
 
-async function writeOfflineProfile(projectDir: string): Promise<string> {
-  const profilePath = join(projectDir, "offline-profile.yaml");
-  await writeFile(
+const makeStackProject = (prefix: string) =>
+  Effect.tryPromise({
+    try: () => makeTempStackProject(prefix),
+    catch: (cause) =>
+      new TypegenE2eSetupError({ message: "failed to create the temp stack project", cause }),
+  });
+
+const writeOfflineProfile = Effect.fnUntraced(function* (projectDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const profilePath = path.join(projectDir, "offline-profile.yaml");
+  yield* fs.writeFileString(
     profilePath,
     [
       "name: cli-typegen-e2e",
@@ -62,13 +80,19 @@ async function writeOfflineProfile(projectDir: string): Promise<string> {
     ].join("\n"),
   );
   return profilePath;
-}
+});
 
-async function writeLocalConfig(projectDir: string, projectId: string, dbPort: number) {
-  const supabaseDir = join(projectDir, "supabase");
-  await mkdir(supabaseDir, { recursive: true });
-  await writeFile(
-    join(supabaseDir, "config.toml"),
+const writeLocalConfig = Effect.fnUntraced(function* (
+  projectDir: string,
+  projectId: string,
+  dbPort: number,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const supabaseDir = path.join(projectDir, "supabase");
+  yield* fs.makeDirectory(supabaseDir, { recursive: true });
+  yield* fs.writeFileString(
+    path.join(supabaseDir, "config.toml"),
     [
       `project_id = "${projectId}"`,
       "",
@@ -81,7 +105,7 @@ async function writeLocalConfig(projectDir: string, projectId: string, dbPort: n
       "",
     ].join("\n"),
   );
-}
+});
 
 function combinedOutput(result: { stdout: string; stderr: string }) {
   return `${result.stdout}\n${result.stderr}`;
@@ -100,72 +124,40 @@ function outputTail(output: string) {
     : output;
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+/** Runs a Docker CLI command to completion, reporting a failure as a non-zero result. */
+const runDocker = (args: ReadonlyArray<string>, options: { readonly timeoutMs?: number } = {}) =>
+  runDockerEffect(args, options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }).pipe(
+    Effect.map(({ stdout, stderr }): CommandResult => ({ stdout, stderr, exitCode: 0 })),
+    Effect.catchTag("DockerCommandError", (error): Effect.Effect<CommandResult> =>
+      Effect.succeed({
+        stdout: error.stdout,
+        stderr: error.message,
+        exitCode: 1,
+      }),
+    ),
+    Effect.catch((error): Effect.Effect<CommandResult> =>
+      Effect.succeed({ stdout: "", stderr: String(error), exitCode: 1 }),
+    ),
+  );
 
-function runCommand(
-  command: string,
+const expectDockerSucceeded = Effect.fnUntraced(function* (
   args: ReadonlyArray<string>,
-  options: { readonly timeoutMs?: number } = {},
-): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timedOut = false;
-    const timer =
-      options.timeoutMs === undefined
-        ? undefined
-        : setTimeout(() => {
-            timedOut = true;
-            child.kill("SIGKILL");
-          }, options.timeoutMs);
-
-    child.stdout?.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-    child.stderr?.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-    child.once("error", (error) => {
-      if (settled) return;
-      settled = true;
-      if (timer !== undefined) clearTimeout(timer);
-      resolve({ stdout, stderr: `${stderr}${String(error)}`, exitCode: 1 });
-    });
-    child.once("close", (code) => {
-      if (settled) return;
-      settled = true;
-      if (timer !== undefined) clearTimeout(timer);
-      resolve({
-        stdout,
-        stderr: timedOut ? `${stderr}\nTimed out after ${options.timeoutMs}ms` : stderr,
-        exitCode: code ?? 1,
-      });
-    });
-  });
-}
-
-function runDocker(args: ReadonlyArray<string>, options?: { readonly timeoutMs?: number }) {
-  return runCommand("docker", args, options);
-}
-
-async function expectDockerSucceeded(args: ReadonlyArray<string>, timeoutMs?: number) {
-  const result = await runDocker(args, { timeoutMs });
+  timeoutMs?: number,
+) {
+  const result = yield* runDocker(args, timeoutMs === undefined ? {} : { timeoutMs });
   expectSucceeded(`docker ${args.join(" ")}`, result);
   return result;
-}
+});
 
-async function waitForLocalPostgres(containerName: string) {
-  const startedAt = Date.now();
+const waitForLocalPostgres = Effect.fnUntraced(function* (containerName: string) {
+  const startedAt = yield* Clock.currentTimeMillis;
   let lastResult: CommandResult = { stdout: "", stderr: "", exitCode: 1 };
   let consecutiveReadyChecks = 0;
-  while (Date.now() - startedAt < LOCAL_POSTGRES_TIMEOUT_MS) {
-    lastResult = await runDocker(
+  const probe = Effect.gen(function* () {
+    if ((yield* Clock.currentTimeMillis) - startedAt >= LOCAL_POSTGRES_TIMEOUT_MS) {
+      return "timed-out" as const;
+    }
+    lastResult = yield* runDocker(
       [
         "exec",
         "-e",
@@ -186,33 +178,45 @@ async function waitForLocalPostgres(containerName: string) {
     } else {
       consecutiveReadyChecks = 0;
     }
-    if (consecutiveReadyChecks >= 2) {
-      return;
-    }
-    await sleep(1_000);
+    return consecutiveReadyChecks >= 2 ? ("ready" as const) : ("pending" as const);
+  });
+  const outcome = yield* probe.pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced("1 second"),
+      until: (state) => state !== "pending",
+    }),
+  );
+  if (outcome === "ready") {
+    return;
   }
 
-  const logs = await runDocker(["logs", containerName], { timeoutMs: 10_000 });
-  throw new Error(
-    [
+  const logs = yield* runDocker(["logs", containerName], { timeoutMs: 10_000 });
+  return yield* new TypegenE2eSetupError({
+    message: [
       `Timed out waiting for ${containerName}`,
       outputTail(combinedOutput(lastResult)),
       outputTail(combinedOutput(logs)),
     ].join("\n"),
-  );
-}
+  });
+});
 
 /**
  * Starts a bare Postgres container named for `assertLocalDbRunning`'s `container inspect` check.
  * Generation itself runs in-process against the host-mapped port, so — unlike the pg-meta-era
  * setup this replaces — no Docker network or network alias is needed here.
  */
-async function startLocalPostgres(input: { readonly projectId: string; readonly dbPort: number }) {
+const startLocalPostgres = Effect.fnUntraced(function* (input: {
+  readonly projectId: string;
+  readonly dbPort: number;
+}) {
   const containerName = localDbContainerId(input.projectId);
   const imageDeadline = resolveDeadline(LOCAL_IMAGE_BUDGET_MS);
-  const postgresImage = await ensureImage(LOCAL_POSTGRES_IMAGE, imageDeadline - RESOLVE_BUDGET_MS);
+  const postgresImage = yield* Effect.tryPromise({
+    try: () => ensureImage(LOCAL_POSTGRES_IMAGE, imageDeadline - RESOLVE_BUDGET_MS),
+    catch: (cause) => new TypegenE2eSetupError({ message: "failed to ensure Docker image", cause }),
+  });
 
-  await expectDockerSucceeded(
+  yield* expectDockerSucceeded(
     [
       "run",
       "--detach",
@@ -236,13 +240,13 @@ async function startLocalPostgres(input: { readonly projectId: string; readonly 
     ],
     LOCAL_POSTGRES_TIMEOUT_MS,
   );
-  await waitForLocalPostgres(containerName);
+  yield* waitForLocalPostgres(containerName);
 
   return { containerName };
-}
+});
 
-async function seedSmokeTable(containerName: string) {
-  await expectDockerSucceeded(
+const seedSmokeTable = (containerName: string) =>
+  expectDockerSucceeded(
     [
       "exec",
       "-e",
@@ -267,11 +271,9 @@ async function seedSmokeTable(containerName: string) {
     ],
     30_000,
   );
-}
 
-async function cleanupLocalPostgres(input: { readonly containerName: string }) {
-  await runDocker(["rm", "-f", input.containerName], { timeoutMs: 30_000 });
-}
+const cleanupLocalPostgres = (input: { readonly containerName: string }) =>
+  runDocker(["rm", "-f", input.containerName], { timeoutMs: 30_000 }).pipe(Effect.asVoid);
 
 function expectNoRemoteAuthPath(result: { stdout: string; stderr: string }) {
   const output = combinedOutput(result);
@@ -307,85 +309,97 @@ function expectLocalSmokeTable(lang: TypegenLang, stdout: string) {
 }
 
 describe("gen types e2e", () => {
-  test(
+  it.live(
     "generates all supported languages from a tokenless local stack",
+    () =>
+      withTempHome((home) =>
+        Effect.gen(function* () {
+          const project = yield* makeStackProject("supabase-typegen-local-e2e-");
+          const projectId = `typegen${project.ports.dbPort}`;
+          const profilePath = yield* writeOfflineProfile(project.dir);
+          const env = tokenlessEnv(profilePath, project.dir);
+          const localPostgres = { containerName: localDbContainerId(projectId) };
+
+          yield* Effect.gen(function* () {
+            yield* writeLocalConfig(project.dir, projectId, project.ports.dbPort);
+            yield* cleanupLocalPostgres(localPostgres);
+            yield* startLocalPostgres({ projectId, dbPort: project.ports.dbPort });
+            yield* seedSmokeTable(localPostgres.containerName);
+
+            for (const lang of TYPEGEN_LANGS) {
+              const result = yield* runSupabaseEffect(
+                ["gen", "types", "--local", "--lang", lang, "--schema", "public"],
+                {
+                  cwd: project.dir,
+                  home: home.dir,
+                  env,
+                  exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
+                },
+              );
+              expectSucceeded(`supabase gen types --local --lang ${lang}`, result);
+              expectNoRemoteAuthPath(result);
+              expectLanguageShape(lang, result.stdout);
+              expectLocalSmokeTable(lang, result.stdout);
+            }
+          }).pipe(Effect.ensuring(cleanupLocalPostgres(localPostgres)));
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
     {
       timeout:
         LOCAL_IMAGE_BUDGET_MS +
         LOCAL_POSTGRES_TIMEOUT_MS +
         TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length,
     },
-    async () => {
-      const home = makeTempHome();
-      const project = await makeTempStackProject("supabase-typegen-local-e2e-");
-      const projectId = `typegen${project.ports.dbPort}`;
-      const profilePath = await writeOfflineProfile(project.dir);
-      const env = tokenlessEnv(profilePath, project.dir);
-      const localPostgres = { containerName: localDbContainerId(projectId) };
-
-      try {
-        await writeLocalConfig(project.dir, projectId, project.ports.dbPort);
-        await cleanupLocalPostgres(localPostgres);
-        await startLocalPostgres({ projectId, dbPort: project.ports.dbPort });
-        await seedSmokeTable(localPostgres.containerName);
-
-        for (const lang of TYPEGEN_LANGS) {
-          const result = await runSupabase(
-            ["gen", "types", "--local", "--lang", lang, "--schema", "public"],
-            {
-              cwd: project.dir,
-              home: home.dir,
-              env,
-              exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
-            },
-          );
-          expectSucceeded(`supabase gen types --local --lang ${lang}`, result);
-          expectNoRemoteAuthPath(result);
-          expectLanguageShape(lang, result.stdout);
-          expectLocalSmokeTable(lang, result.stdout);
-        }
-      } finally {
-        await cleanupLocalPostgres(localPostgres);
-      }
-    },
   );
 
-  const remoteProjectRef = process.env[REMOTE_PROJECT_REF_ENV];
-  const remoteAccessToken = process.env["SUPABASE_ACCESS_TOKEN"];
-  const remoteEnabled = process.env[REMOTE_E2E_FLAG] === "1";
+  // An unset or empty variable reads as `Option.none()`.
+  const remote = Effect.runSync(
+    Effect.all({
+      projectRef: Config.option(Config.string(REMOTE_PROJECT_REF_ENV)),
+      accessToken: Config.option(Config.string("SUPABASE_ACCESS_TOKEN")),
+      enabled: Config.option(Config.string(REMOTE_E2E_FLAG)),
+    }),
+  );
+  const remoteEnabled = Option.getOrElse(remote.enabled, () => "") === "1";
 
-  const remoteTest = remoteEnabled ? test : test.skip;
-
-  remoteTest(
+  it.live.skipIf(!remoteEnabled)(
     "generates all supported languages from a remote project",
-    { timeout: RESOLVE_BUDGET_MS + TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length },
-    async () => {
-      const home = makeTempHome();
-      const project = await makeTempStackProject("supabase-typegen-remote-e2e-");
-      if (
-        remoteProjectRef === undefined ||
-        remoteProjectRef.length === 0 ||
-        remoteAccessToken === undefined ||
-        remoteAccessToken.length === 0
-      ) {
-        throw new Error(
-          `Set ${REMOTE_E2E_FLAG}=1, ${REMOTE_PROJECT_REF_ENV}, and SUPABASE_ACCESS_TOKEN to run remote typegen e2e.`,
-        );
-      }
+    () =>
+      withTempHome((home) =>
+        Effect.gen(function* () {
+          const project = yield* makeStackProject("supabase-typegen-remote-e2e-");
+          if (Option.isNone(remote.projectRef) || Option.isNone(remote.accessToken)) {
+            return yield* new TypegenE2eSetupError({
+              message: `Set ${REMOTE_E2E_FLAG}=1, ${REMOTE_PROJECT_REF_ENV}, and SUPABASE_ACCESS_TOKEN to run remote typegen e2e.`,
+            });
+          }
+          const remoteProjectRef = remote.projectRef.value;
+          const remoteAccessToken = remote.accessToken.value;
 
-      for (const lang of TYPEGEN_LANGS) {
-        const result = await runSupabase(
-          ["gen", "types", "--project-id", remoteProjectRef, "--lang", lang, "--schema", "public"],
-          {
-            cwd: project.dir,
-            home: home.dir,
-            env: remoteEnv(remoteAccessToken, project.dir),
-            exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
-          },
-        );
-        expectSucceeded(`supabase gen types --project-id <ref> --lang ${lang}`, result);
-        expectLanguageShape(lang, result.stdout);
-      }
-    },
+          for (const lang of TYPEGEN_LANGS) {
+            const result = yield* runSupabaseEffect(
+              [
+                "gen",
+                "types",
+                "--project-id",
+                remoteProjectRef,
+                "--lang",
+                lang,
+                "--schema",
+                "public",
+              ],
+              {
+                cwd: project.dir,
+                home: home.dir,
+                env: remoteEnv(remoteAccessToken, project.dir),
+                exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
+              },
+            );
+            expectSucceeded(`supabase gen types --project-id <ref> --lang ${lang}`, result);
+            expectLanguageShape(lang, result.stdout);
+          }
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    { timeout: RESOLVE_BUDGET_MS + TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length },
   );
 });
