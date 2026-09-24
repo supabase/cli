@@ -130,7 +130,7 @@ describe("process recipe startup", () => {
               stdout: Stream.make(
                 `${postgrexFailure}\n`,
                 "[info] ",
-                "x".repeat(5_000),
+                "😀".repeat(2_500),
                 " Retrying database connection",
               ).pipe(
                 Stream.concat(Stream.fromEffectDrain(Deferred.succeed(running, undefined))),
@@ -149,8 +149,9 @@ describe("process recipe startup", () => {
 
           expect(error.message).toContain("realtime startup timed out after 60 seconds");
           expect(error.message).toContain(postgrexFailure);
-          expect(error.message).toContain("x Retrying database connection");
-          expect(error.message).not.toContain("[info] x");
+          expect(error.message).toContain("😀 Retrying database connection");
+          expect(error.message).not.toContain("[info] 😀");
+          expect(error.message).not.toMatch(/…[\uDC00-\uDFFF]/);
           expect(error.message.length).toBeLessThan(2_000);
         }),
       ).pipe(Effect.provide(platform)),

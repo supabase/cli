@@ -210,7 +210,9 @@ const startupOutputLineChars = 1_000;
 type StartupOutput = Readonly<Record<CatalogLog["stream"], ReadonlyArray<string>>>;
 
 const clipLine = (line: string) =>
-  line.length > startupOutputLineChars ? `…${line.slice(-startupOutputLineChars)}` : line;
+  line.length > startupOutputLineChars
+    ? `…${line.slice(-startupOutputLineChars).replace(/^[\uDC00-\uDFFF]/, "")}`
+    : line;
 
 const withRecentOutput = (summary: string, output: StartupOutput) =>
   [
