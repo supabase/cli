@@ -311,7 +311,14 @@ const scanUnsupported = (
       });
       for (const entry of entries) {
         if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) return true;
-        if (entry.isDirectory()) pending.push(path.join(directory, entry.name));
+        if (entry.isDirectory()) {
+          const entryPath = path.join(directory, entry.name);
+          const stats = yield* nativeLstat(entryPath).pipe(
+            Effect.mapError((cause) => errorFor("validate", source, destination, cause)),
+          );
+          if (stats.isSymbolicLink()) return true;
+          pending.push(entryPath);
+        }
       }
       current = pending.pop();
     }
@@ -416,6 +423,7 @@ const hostCopies = (source: string, destination: string): ReadonlyArray<HostCopy
             "/COPY:DAT",
             "/DCOPY:DAT",
             "/MT:8",
+            "/XJD",
             "/R:0",
             "/W:0",
             "/NFL",
