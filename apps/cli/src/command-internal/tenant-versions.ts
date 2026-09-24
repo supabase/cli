@@ -21,9 +21,8 @@ interface TenantVersionOptions {
 }
 
 /**
- * PostgREST advertises its version in the OpenAPI/Swagger `info.version`
- * field at `GET /rest/v1/`. Returns the first whitespace-delimited token,
- * prefixed with `v`.
+ * PostgREST's OpenAPI `info.version` at `GET /rest/v1/`. The first
+ * whitespace-delimited token becomes the image tag. Empty means not found.
  */
 export function parsePostgrestVersion(body: unknown): Option.Option<string> {
   if (typeof body !== "object" || body === null) return Option.none();
@@ -33,7 +32,7 @@ export function parsePostgrestVersion(body: unknown): Option.Option<string> {
   if (typeof version !== "string" || version.trim().length === 0) return Option.none();
   const first = version.trim().split(/\s+/)[0];
   if (first === undefined || first.length === 0) return Option.none();
-  return Option.some(`v${first}`);
+  return Option.some(tagForServiceVersion("postgrest", first));
 }
 
 /**

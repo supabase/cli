@@ -150,6 +150,21 @@ export function tagForServiceVersion(service: LocalServiceVersionName, version: 
   return trimmed;
 }
 
+const DOCKER_TAG_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
+
+/**
+ * A pin can be used as an image tag. A doubled `v` (`vv1.2.3`) is rejected:
+ * that pin is left on disk and the caller fails instead of rewriting it.
+ */
+export function isUsableServiceVersionTag(
+  service: LocalServiceVersionName,
+  version: string,
+): boolean {
+  const tag = tagForServiceVersion(service, version);
+  if (!DOCKER_TAG_PATTERN.test(tag)) return false;
+  return !(SERVICE_VERSION_TAG_PREFIX[service] === "v" && /^vv/i.test(tag));
+}
+
 function localServiceImagesForOptions(
   options: LocalServiceImageOptions = {},
 ): ReadonlyArray<ServiceImageSpec> {

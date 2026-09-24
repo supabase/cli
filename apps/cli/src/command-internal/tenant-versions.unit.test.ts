@@ -18,6 +18,13 @@ describe("parsePostgrestVersion", () => {
     );
   });
 
+  it("keeps a token that already starts with v", () => {
+    expect(parsePostgrestVersion({ info: { version: "v12.2.0 (abc123)" } })).toEqual(
+      Option.some("v12.2.0"),
+    );
+    expect(parsePostgrestVersion({ info: { version: "V14.13" } })).toEqual(Option.some("V14.13"));
+  });
+
   it("returns None when info.version is empty or missing", () => {
     expect(Option.isNone(parsePostgrestVersion({ info: { version: "" } }))).toBe(true);
     expect(Option.isNone(parsePostgrestVersion({ info: {} }))).toBe(true);
