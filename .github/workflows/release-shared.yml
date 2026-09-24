@@ -384,77 +384,17 @@ jobs:
           draft: true
           prerelease: ${{ inputs.prerelease }}
 
-      # `gh release upload` retries an asset three times within a second on 5xx or a dropped
-      # connection. That is too short for the longer stalls uploads.github.com produces and skips
-      # the `--clobber` delete, so each attempt is bounded and retried again with a longer pause.
-      # Background: apps/cli/docs/release-process.md.
+      # One asset at a time with per-asset retries; see apps/cli/scripts/upload-release-assets.ts.
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag="v${VERSION}"
-          assets=(
-            "dist/supabase_${VERSION}_darwin_arm64.tar.gz"
-            "dist/supabase_${VERSION}_darwin_amd64.tar.gz"
-            "dist/supabase_${VERSION}_linux_arm64.tar.gz"
-            "dist/supabase_${VERSION}_linux_amd64.tar.gz"
-            "dist/supabase_${VERSION}_linux_arm64.deb"
-            "dist/supabase_${VERSION}_linux_amd64.deb"
-            "dist/supabase_${VERSION}_linux_arm64.rpm"
-            "dist/supabase_${VERSION}_linux_amd64.rpm"
-            "dist/supabase_${VERSION}_linux_arm64.apk"
-            "dist/supabase_${VERSION}_linux_amd64.apk"
-            "dist/supabase_${VERSION}_windows_amd64.zip"
-            "dist/supabase_${VERSION}_windows_arm64.zip"
-            "dist/supabase_${VERSION}_windows_amd64.tar.gz"
-            "dist/supabase_${VERSION}_windows_arm64.tar.gz"
-            "dist/checksums.txt"
-            "dist/supabase_darwin_arm64.tar.gz"
-            "dist/supabase_darwin_amd64.tar.gz"
-            "dist/supabase_linux_arm64.tar.gz"
-            "dist/supabase_linux_amd64.tar.gz"
-            "dist/supabase_windows_arm64.tar.gz"
-            "dist/supabase_windows_amd64.tar.gz"
-            "install"
-          )
-          manifest="${RUNNER_TEMP}/release-assets.txt"
-          : > "${manifest}"
-          max_attempts=3
-          for asset in "${assets[@]}"; do
-            basename "${asset}" >> "${manifest}"
-            attempts=0
-            while :; do
-              attempts=$((attempts + 1))
-              if timeout 300 gh release upload "${tag}" "${asset}" --clobber; then
-                echo "Uploaded ${asset} (attempt ${attempts})."
-                break
-              fi
-              if [ "${attempts}" -ge "${max_attempts}" ]; then
-                echo "::error::Upload of ${asset} to ${tag} failed after ${attempts} attempts." >&2
-                exit 1
-              fi
-              echo "Upload of ${asset} failed on attempt ${attempts}; retrying in $((attempts * 10))s..." >&2
-              sleep "$((attempts * 10))"
-            done
-          done
+        run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts upload --version "${VERSION}"
 
       # Publishing makes the release immutable, so require every expected asset to be uploaded first.
       - name: Verify release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag="v${VERSION}"
-          manifest="${RUNNER_TEMP}/release-assets.txt"
-          uploaded="$(gh release view "${tag}" --json assets --jq '.assets[] | select(.state == "uploaded") | .name' | sort)"
-          missing="$(comm -23 <(sort "${manifest}") <(printf '%s\n' "${uploaded}"))"
-          if [ -n "${missing}" ]; then
-            echo "::error::Release ${tag} is missing assets or has incomplete uploads:" >&2
-            printf '%s\n' "${missing}" >&2
-            exit 1
-          fi
-          echo "All $(wc -l < "${manifest}" | tr -d ' ') expected assets are present on ${tag}."
+        run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts verify --version "${VERSION}"
 
       - name: Publish GitHub Release (immutable)
         env:
