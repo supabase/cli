@@ -46,6 +46,38 @@ never silently replace failed or slow samples.
 These scripts operate on disposable CI resources. They must not be used against
 an existing developer project or a shared Docker engine.
 
+## Repeated macOS cached eager starts
+
+`macos-repeat.py` measures one full warmup, an unmonitored cached control, five
+instrumented fresh-project starts, and a second unmonitored cached control. It
+uses one isolated `SUPABASE_HOME`, keeps the native artifact cache across owned
+project destruction, disables telemetry and keyring access, and points Docker
+at an unavailable socket. Each measured start must report all 11 selected
+members running. Each repetition then stops with data retained, eagerly restarts
+the same project, checks readiness, and destroys only that invocation's stack.
+Failures and command output remain in the result JSON; sampler logs and
+per-phase trace slices are kept beside it under a unique resources directory.
+
+Run this only with the compiled CLI from the same pinned source revision as the
+campaign, on an otherwise idle macOS runner:
+
+```sh
+python3 scripts/benchmarks/macos-repeat.py \
+  --cli ./supabase \
+  --output ./results/macos-repeat.json \
+  --sample macos-arm64-runner-1 \
+  --repetitions 5 \
+  --trace-file ./results/macos-repeat-trace.jsonl
+```
+
+The optional trace path is passed to the CLI's source instrumentation through
+`SUPABASE_STACK_TRACE_FILE`. Top, `vm_stat`, `iostat`, swap usage, and two-second
+process snapshots are recorded for each initial start and retained-data restart
+in the five repetitions. Controls keep source tracing enabled but omit the OS
+resource samplers, so they estimate sampler overhead. They are tagged separately
+and do not enter the five-repetition series. Do not run a local stack benchmark
+on a busy development host.
+
 ## Captured cases
 
 Linux runs the released CLI with its default services and with the pooler enabled;

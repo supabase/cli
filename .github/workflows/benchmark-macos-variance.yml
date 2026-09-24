@@ -1,0 +1,203 @@
+name: Benchmark macOS eager variance
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Immutable CLI source commit to instrument and benchmark
+        required: true
+        type: string
+        default: e5bd7156a11d065ae55a760aa98e007e1e93eb5c
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-variance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build instrumented CLI
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Check out pinned CLI source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha || 'e5bd7156a11d065ae55a760aa98e007e1e93eb5c' }}
+          persist-credentials: false
+          submodules: false
+
+      - name: Check out benchmark harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: benchmark-harness
+          persist-credentials: false
+          submodules: false
+
+      - name: Set up toolchains and dependencies
+        uses: ./.github/actions/setup
+        with:
+          dependency-cache: "false"
+
+      - name: Apply startup tracing patch
+        env:
+          TRACE_PATCH: ${{ github.workspace }}/benchmark-harness/scripts/benchmarks/trace-startup.patch
+        run: |
+          test -f "$TRACE_PATCH"
+          git apply --check "$TRACE_PATCH"
+          git apply "$TRACE_PATCH"
+
+      - name: Type check instrumented CLI
+        run: pnpm exec turbo run supabase#types:check --only
+
+      - name: Build standalone CLI
+        run: pnpm exec turbo run supabase#build
+
+      - name: Record build metadata
+        env:
+          TRACE_PATCH: ${{ github.workspace }}/benchmark-harness/scripts/benchmarks/trace-startup.patch
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, platform, subprocess
+          from pathlib import Path
+
+          binary = Path("apps/cli/dist/supabase")
+          binary.chmod(0o755)
+          cpu = subprocess.run(
+              ["sysctl", "-n", "machdep.cpu.brand_string"],
+              text=True,
+              capture_output=True,
+          ).stdout.strip() or platform.processor() or "unknown"
+          memory = subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True).strip()
+          metadata = {
+              "platform": "macos-arm64",
+              "runner_label": "macos-15",
+              "image_os": os.environ.get("ImageOS", "unknown"),
+              "image_version": os.environ.get("ImageVersion", "unknown"),
+              "source_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "harness_sha": subprocess.check_output(["git", "-C", "benchmark-harness", "rev-parse", "HEAD"], text=True).strip(),
+              "trace_patch_sha256": hashlib.sha256(Path(os.environ["TRACE_PATCH"]).read_bytes()).hexdigest(),
+              "cli_version": subprocess.check_output([str(binary), "--version"], text=True).strip(),
+              "architecture": platform.machine(),
+              "cpu_model": cpu,
+              "cpu_count": os.cpu_count(),
+              "memory_bytes": int(memory),
+              "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+          }
+          Path("benchmark-runner.json").write_text(json.dumps(metadata, indent=2) + "\n")
+          PY
+
+      - name: Package compiled CLI and metadata
+        run: |
+          mkdir -p "$RUNNER_TEMP/compiled-cli-artifact"
+          tar -czf "$RUNNER_TEMP/compiled-cli-artifact/compiled-cli.tar.gz" -C apps/cli/dist supabase supabase-go
+          cp benchmark-runner.json "$RUNNER_TEMP/compiled-cli-artifact/"
+
+      - name: Upload compiled CLI and metadata
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compiled-cli-macos-variance
+          path: ${{ runner.temp }}/compiled-cli-artifact/*
+          if-no-files-found: error
+          retention-days: 14
+
+  measure:
+    name: macOS eager variance sample ${{ matrix.sample }}
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        sample: [1, 2, 3]
+    steps:
+      - name: Check out benchmark harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: benchmark-harness
+          persist-credentials: false
+          submodules: false
+
+      - name: Download compiled CLI and metadata
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: compiled-cli-macos-variance
+          path: ${{ runner.temp }}/compiled-cli
+
+      - name: Install CLI binary and record runner metadata
+        env:
+          TRACE_PATCH: ${{ github.workspace }}/benchmark-harness/scripts/benchmarks/trace-startup.patch
+          SAMPLE: ${{ matrix.sample }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/benchmark-bin" benchmark-results
+          tar -xzf "$RUNNER_TEMP/compiled-cli/compiled-cli.tar.gz" -C "$RUNNER_TEMP/benchmark-bin"
+          chmod +x "$RUNNER_TEMP/benchmark-bin/supabase"
+          cp "$RUNNER_TEMP/compiled-cli/benchmark-runner.json" benchmark-results/build-runner.json
+          python3 - <<'PY'
+          import hashlib, json, os, platform, subprocess
+          from pathlib import Path
+
+          cpu = subprocess.run(
+              ["sysctl", "-n", "machdep.cpu.brand_string"],
+              text=True,
+              capture_output=True,
+          ).stdout.strip() or platform.processor() or "unknown"
+          memory = subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True).strip()
+          build_metadata = json.loads(Path("benchmark-results/build-runner.json").read_text())
+          patch_sha256 = hashlib.sha256(Path(os.environ["TRACE_PATCH"]).read_bytes()).hexdigest()
+          if patch_sha256 != build_metadata["trace_patch_sha256"]:
+              raise RuntimeError("The checked out trace patch differs from the build patch")
+          metadata = {
+              "platform": "macos-arm64",
+              "sample": int(os.environ["SAMPLE"]),
+              "repetitions": 5,
+              "runner_label": "macos-15",
+              "image_os": os.environ.get("ImageOS", "unknown"),
+              "image_version": os.environ.get("ImageVersion", "unknown"),
+              "architecture": platform.machine(),
+              "cpu_model": cpu,
+              "cpu_count": os.cpu_count(),
+              "memory_bytes": int(memory),
+              "source_sha": build_metadata["source_sha"],
+              "harness_sha": build_metadata["harness_sha"],
+              "binary_sha256": build_metadata["binary_sha256"],
+              "trace_patch_sha256": patch_sha256,
+          }
+          Path("benchmark-results/runner.json").write_text(json.dumps(metadata, indent=2) + "\n")
+          PY
+
+      - name: Install PostgreSQL client
+        run: |
+          brew install libpq
+          echo "$(brew --prefix libpq)/bin" >> "$GITHUB_PATH"
+
+      - name: Set an unavailable Docker endpoint for native run
+        run: echo "DOCKER_HOST=unix://$RUNNER_TEMP/benchmark-no-docker.sock" >> "$GITHUB_ENV"
+
+      - name: Capture repeated eager startup
+        working-directory: benchmark-harness
+        env:
+          COMPILED_CLI: ${{ runner.temp }}/benchmark-bin/supabase
+          SAMPLE: ${{ matrix.sample }}
+          SUPABASE_STACK_TRACE_FILE: ${{ github.workspace }}/benchmark-results/startup-trace.jsonl
+        run: |
+          python3 scripts/benchmarks/macos-repeat.py \
+            --cli "$COMPILED_CLI" \
+            --output "$GITHUB_WORKSPACE/benchmark-results/macos-repeat-results.json" \
+            --repetitions 5 \
+            --sample "$SAMPLE" \
+            --trace-file "$SUPABASE_STACK_TRACE_FILE"
+
+      - name: Upload measurements and startup trace
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-eager-variance-sample-${{ matrix.sample }}
+          path: benchmark-results/
+          if-no-files-found: warn
+          retention-days: 30

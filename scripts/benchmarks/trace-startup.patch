@@ -1,0 +1,234 @@
+diff --git a/apps/cli/src/commands/experimental/stack/start/start.handler.ts b/apps/cli/src/commands/experimental/stack/start/start.handler.ts
+index bb3d59276..aa13c8350 100644
+--- a/apps/cli/src/commands/experimental/stack/start/start.handler.ts
++++ b/apps/cli/src/commands/experimental/stack/start/start.handler.ts
+@@ -1,7 +1,20 @@
+ import { endpointReports } from "../stack-endpoints.format.ts";
+ import { readStackFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
+ import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
+-import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
++import {
++  Clock,
++  Config,
++  Deferred,
++  Effect,
++  Equal,
++  FileSystem,
++  Fiber,
++  Option,
++  Path,
++  Redacted,
++  Ref,
++  Stream,
++} from "effect";
+ import {
+   nativePostgresRootError,
+   type ServiceCreationInput,
+@@ -141,6 +154,33 @@ const sameBinding = (
+     comparableConfig(requested.service, requested.config),
+   );
+ 
++const appendStartupTrace = (
++  fs: FileSystem.FileSystem,
++  traceFile: string,
++  event: Readonly<Record<string, unknown>>,
++) =>
++  Effect.uninterruptible(
++    Effect.gen(function* () {
++      const epochMillis = yield* Clock.currentTimeMillis;
++      yield* fs
++        .writeFileString(
++          traceFile,
++          `${JSON.stringify({ epoch_ms: epochMillis, ...event })}\n`,
++          { flag: "a" },
++        )
++        .pipe(
++          Effect.mapError(
++            (cause) =>
++              new StackCommandStartError({
++                reason: "unknown",
++                message: `Unable to write startup trace: ${cause.message}`,
++                cause,
++              }),
++          ),
++        );
++    }),
++  );
++
+ const compositionManagedConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
+   database: new Set(["databasePassword", "jwtSecret", "rootKey"]),
+   rest: new Set(["databaseUrl", "jwtSecret", "jwks"]),
+@@ -238,6 +278,22 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
+     const outputFlag = yield* Effect.serviceOption(OutputFlag);
+     const fs = yield* FileSystem.FileSystem;
+     const path = yield* Path.Path;
++    const traceFileOption = yield* Config.option(Config.string("SUPABASE_STACK_TRACE_FILE")).pipe(
++      Effect.mapError(
++        (cause) =>
++          new StackCommandStartError({
++            reason: "unknown",
++            message: `Unable to read startup trace configuration: ${cause.message}`,
++            cause,
++          }),
++      ),
++    );
++    const traceFile = Option.getOrUndefined(traceFileOption);
++    const traceMarker = (event: string, fields: Readonly<Record<string, unknown>> = {}) =>
++      traceFile === undefined
++        ? Effect.void
++        : appendStartupTrace(fs, traceFile, { event, pid: process.pid, ...fields });
++    yield* traceMarker("handler.begin", { project_root: settings.workdir });
+     yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
+     const exclusions = yield* validateExclusions(flags.exclude);
+     yield* validateStackTarget({
+@@ -470,6 +526,97 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
+       Effect.tapError((error) => starting.fail(error.message)),
+       Effect.mapError(stackError),
+     );
++    yield* traceMarker("composition.members.created", {
++      stack_id: stack.id,
++      members: members.map(({ id, service }) => ({ id, service })),
++    });
++    const traceFibers =
++      traceFile === undefined
++        ? []
++        : yield* Effect.forEach(
++            members,
++            (member) =>
++              Effect.gen(function* () {
++                const firstEvent = yield* Deferred.make<void, StackCommandStartError>();
++                const fiber = yield* member.followStatus.pipe(
++                  Stream.mapError(
++                    (cause) =>
++                      new StackCommandStartError({
++                        reason: "unknown",
++                        message: `Unable to follow ${member.service} status: ${cause.message}`,
++                        cause,
++                      }),
++                  ),
++                  Stream.runForEach((observation) =>
++                    Effect.gen(function* () {
++                      yield* appendStartupTrace(fs, traceFile, {
++                        event: "service.status",
++                        pid: process.pid,
++                        stack_id: stack.id,
++                        member_id: member.id,
++                        service: member.service,
++                        state: observation.lifecycle,
++                        health: observation.health,
++                        launch_id: observation.launchId,
++                        current_operation: observation.currentOperation,
++                      });
++                      yield* Deferred.succeed(firstEvent, undefined);
++                    }),
++                  ),
++                  Effect.tapError((error) =>
++                    appendStartupTrace(fs, traceFile, {
++                      event: "status.collector.error",
++                      pid: process.pid,
++                      stack_id: stack.id,
++                      member_id: member.id,
++                      service: member.service,
++                      message: error.message,
++                    }).pipe(Effect.andThen(Deferred.fail(firstEvent, error).pipe(Effect.asVoid))),
++                  ),
++                  Effect.tap(() =>
++                    appendStartupTrace(fs, traceFile, {
++                      event: "status.collector.end",
++                      pid: process.pid,
++                      stack_id: stack.id,
++                      member_id: member.id,
++                      service: member.service,
++                    }),
++                  ),
++                  Effect.ensuring(
++                    Deferred.fail(
++                      firstEvent,
++                      new StackCommandStartError({
++                        reason: "unknown",
++                        message: `The ${member.service} status stream ended before its initial event`,
++                      }),
++                    ).pipe(Effect.asVoid),
++                  ),
++                  Effect.forkScoped,
++                );
++                yield* Effect.timeoutOrElse(Deferred.await(firstEvent), {
++                  duration: "10 seconds",
++                  orElse: () =>
++                    Effect.fail(
++                      new StackCommandStartError({
++                        reason: "unknown",
++                        message: `Timed out waiting for the ${member.service} initial status event`,
++                      }),
++                    ),
++                });
++                return fiber;
++              }),
++            { concurrency: "unbounded" },
++          );
++    yield* traceMarker("status.collectors.ready", {
++      stack_id: stack.id,
++      member_count: traceFibers.length,
++    });
++    yield* Effect.addFinalizer(() =>
++      Effect.gen(function* () {
++        yield* Fiber.interruptAll(traceFibers);
++        yield* traceMarker("handler.end", { stack_id: stack.id }).pipe(Effect.orDie);
++      }),
++    );
+     const initialCleanupComplete = yield* Ref.make(!initialComposition);
+     if (initialComposition) {
+       const existingIds = new Set(existingServices.map(({ id }) => id));
+@@ -539,6 +686,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
+             { concurrency: "unbounded" },
+           )
+         : [];
++    yield* traceMarker("database.start.begin", { stack_id: stack.id, member_id: database.id });
+     yield* database.start.pipe(
+       Effect.tapError((error) => starting.fail(error.message)),
+       Effect.mapError(stackError),
+@@ -547,6 +695,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
+       Effect.tapError((error) => starting.fail(error.message)),
+       Effect.mapError(stackError),
+     );
++    yield* traceMarker("database.ready", { stack_id: stack.id, member_id: database.id });
+     const stackCredentials = yield* stack.credentials.get.pipe(Effect.mapError(stackError));
+     if (stackCredentials === undefined)
+       return yield* new StackCommandStartError({
+@@ -562,6 +711,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
+       )
+       .map((creation) => creation.service);
+     const catalog = yield* Effect.service(StackCatalogSetup);
++    yield* traceMarker("catalog.migrations.begin", { stack_id: stack.id });
+     if (initialComposition) {
+       yield* catalog
+         .apply({
+@@ -617,6 +767,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
+         Effect.mapError(stackError),
+       );
+     }
++    yield* traceMarker("catalog.migrations.end", { stack_id: stack.id });
+     if (initialComposition) {
+       const storage = members.find((instance) => instance.service === "storage");
+       if (storage !== undefined) {
+@@ -650,10 +801,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
+         }
+       }
+     }
++    yield* traceMarker("composition.start.begin", { stack_id: stack.id });
+     yield* stack.composition.start.pipe(
+       Effect.tapError((error) => starting.fail(error.message)),
+       Effect.mapError((error) => stackError(error, members)),
+     );
++    yield* traceMarker("composition.start.end", { stack_id: stack.id });
+     yield* Effect.forEach(preparation, (fiber) => Fiber.join(fiber));
+     yield* Ref.set(initialCleanupComplete, true);
+     const endpoints = Object.fromEntries(
+@@ -669,6 +822,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
+         ),
+       )).flat(),
+     );
++    yield* traceMarker("members.status.read.end", { stack_id: stack.id });
+     yield* starting.succeed("Stack is ready.");
+     yield* output.success("", { id: stack.id, endpoints });
+     return stack.id;
