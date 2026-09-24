@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Redacted, Stream } from "effect";
@@ -43,6 +44,12 @@ const flags = (exclude: ReadonlyArray<string> = []) => ({
   eager: false,
 });
 
+const signingKey = () => ({
+  ...generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ format: "jwk" }),
+  alg: "RS256",
+  kid: "stack-start-rotation-test",
+});
+
 const session: DbSession = {
   exec: () => Effect.void,
   execBatch: () => Effect.void,
@@ -55,6 +62,8 @@ const session: DbSession = {
 const instance = (
   creation: ServiceCreation,
   id: string,
+  lifecycle: () => "stopped" | "running",
+  wakeEnabled: () => boolean,
 ): ServiceInstances[ServiceCreation["service"]] => {
   const status = (config: ServiceCreation) => ({
     id,
@@ -63,7 +72,7 @@ const instance = (
         ? [{ name: "sql", protocol: "tcp" as const, host: "127.0.0.1", port: 23456 }]
         : [],
     config,
-    lifecycle: "stopped" as const,
+    lifecycle: lifecycle(),
     health: undefined,
     error: undefined,
     cleanupError: undefined,
@@ -71,7 +80,7 @@ const instance = (
     currentOperation: undefined,
     launchId: undefined,
     intentRevision: 0,
-    wakeEnabled: false,
+    wakeEnabled: wakeEnabled(),
     registered: true,
   });
   const base = {
@@ -82,7 +91,7 @@ const instance = (
     restart: () => Effect.void,
     destroy: Effect.void,
     prepare: Effect.void,
-    status: Effect.succeed(status(creation)),
+    status: Effect.sync(() => status(creation)),
     followStatus: Stream.empty,
     logs: Stream.empty,
     credentials: () => Effect.succeed({}),
@@ -222,6 +231,11 @@ const fakeStack = () => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   let stopped = 0;
   let composed = 0;
+  let lifecycle: "stopped" | "running" = "stopped";
+  const memberStatuses = new Map<
+    string,
+    { readonly lifecycle?: "stopped" | "running"; readonly wakeEnabled?: boolean }
+  >();
   let savedCredentials: StackCredentials = {
     jwtSecret: DEFAULT_LOCAL_JWT_SECRET,
     postgresRootKey: DEFAULT_POSTGRES_ROOT_KEY,
@@ -248,7 +262,7 @@ const fakeStack = () => {
       },
     },
     credentials: {
-      get: Effect.succeed(savedCredentials),
+      get: Effect.sync(() => savedCredentials),
     },
     composition: {
       describe: Effect.sync(() => ({
@@ -258,6 +272,7 @@ const fakeStack = () => {
       supabase: (creations: ReadonlyArray<ServiceCreationInput>, options) =>
         Effect.sync(() => {
           composed += 1;
+          const publicSigningKeys = options?.identity?.publicSigningKeys;
           const database = creations.find((creation) => creation.service === "database");
           const jwtSecret =
             database?.service === "database" && database.config.jwtSecret !== undefined
@@ -277,23 +292,30 @@ const fakeStack = () => {
             secretKey: options?.identity?.secretKey ?? "sb_secret_test",
             anonKey: options?.identity?.anonKey ?? "anon-token",
             serviceRoleKey: options?.identity?.serviceRoleKey ?? "service-token",
-            jwks: '{"keys":[]}',
+            jwks: publicSigningKeys === undefined ? '{"keys":[]}' : `{"keys":${publicSigningKeys}}`,
             gotrueJwtKeys: options?.identity?.gotrueJwtKeys ?? "[]",
             publicSigningKeys: "[]",
             remoteJwks: options?.identity?.remoteJwks ?? "[]",
             ...options?.identity,
           };
-          members = creations.map((creation) =>
-            instance(
+          members = creations.map((creation) => {
+            const id = `${creation.service}-member`;
+            return instance(
               withIdentity(requireConcreteCreation(creation), savedCredentials),
-              `${creation.service}-member`,
-            ),
-          );
+              id,
+              () => memberStatuses.get(id)?.lifecycle ?? lifecycle,
+              () => memberStatuses.get(id)?.wakeEnabled ?? false,
+            );
+          });
           return members;
         }),
       configure: () => Effect.void,
-      start: Effect.succeed([]),
+      start: Effect.sync(() => {
+        lifecycle = "running";
+        return [];
+      }),
       stop: Effect.sync(() => {
+        lifecycle = "stopped";
         stopped += 1;
         return [];
       }),
@@ -314,13 +336,32 @@ const fakeStack = () => {
     get composed() {
       return composed;
     },
+    get savedCredentials() {
+      return savedCredentials;
+    },
+    setMemberStatus(
+      id: string,
+      status: { readonly lifecycle?: "stopped" | "running"; readonly wakeEnabled?: boolean },
+    ) {
+      memberStatuses.set(id, status);
+    },
   };
 };
 
-const layers = (root: string, fixture: ReturnType<typeof fakeStack>, output = mockOutput()) => {
+const layers = (
+  root: string,
+  fixture: ReturnType<typeof fakeStack>,
+  output = mockOutput(),
+  existing = true,
+) => {
   const telemetry = mockTelemetryStateTracked();
   const target = Layer.succeed(StackTargetResolver, {
-    resolve: () => Effect.succeed({ projectRoot: root, runtime: "native" as const }),
+    resolve: () =>
+      Effect.succeed({
+        projectRoot: root,
+        ...(existing ? { id: fixture.stack.id } : {}),
+        runtime: "native" as const,
+      }),
   });
   const api = Layer.succeed(StackApi, {
     create: () => Effect.succeed(fixture.stack),
@@ -383,7 +424,7 @@ describe("experimental stack start", () => {
       yield* fs.writeFileString(`${root}/supabase/config.toml`, "[db]\nmajor_version = 14\n");
       let created = false;
       const fixture = fakeStack();
-      const base = layers(root, fixture);
+      const base = layers(root, fixture, mockOutput(), false);
       const api = Layer.succeed(StackApi, {
         create: () =>
           Effect.sync(() => {
@@ -443,15 +484,21 @@ describe("experimental stack start", () => {
       );
       expect(fixture.members.map(({ service }) => service)).toEqual(["database"]);
       expect(fixture.composed).toBe(1);
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(1);
+      expect(fixture.stopped).toBe(0);
+      yield* fixture.stack.composition.stop;
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.some(({ service }) => service === "rest")).toBe(true);
       expect(fixture.composed).toBe(2);
+      yield* fixture.stack.composition.stop;
       yield* stackStart(flags(["studio"])).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.some(({ service }) => service === "studio")).toBe(false);
-      expect(fixture.stopped).toBe(2);
+      expect(fixture.composed).toBe(3);
+      yield* fixture.stack.composition.stop;
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.some(({ service }) => service === "studio")).toBe(true);
-      expect(fixture.stopped).toBe(3);
+      yield* fixture.stack.composition.stop;
       yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(5);
     }).pipe(Effect.provide(BunServices.layer)),
@@ -471,6 +518,7 @@ describe("experimental stack start", () => {
 
       yield* stackStart(flags(["functions"])).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.some(({ service }) => service === "functions")).toBe(false);
+      yield* fixture.stack.composition.stop;
 
       yield* fs.writeFileString(
         `${root}/supabase/functions/.env`,
@@ -506,6 +554,9 @@ describe("experimental stack start", () => {
         `${root}/supabase/functions/.env`,
         "CUSTOM_VALUE=changed\nSUPABASE_SERVICE_ROLE_KEY=ignored-again\n",
       );
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(composedBeforeRepeat);
+      yield* fixture.stack.composition.stop;
       const changedEnv = yield* stackStart(flags()).pipe(
         Effect.provide(layers(root, fixture)),
         Effect.flip,
@@ -542,55 +593,137 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("restarts services when the configured JWT secret changes", () =>
+  it.live("applies signing-key file changes only after the stack is stopped", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-jwt-rotation-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-key-rotation-" });
       yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "jwt-rotation"\n');
+      const firstKey = signingKey();
+      const secondKey = signingKey();
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "key-rotation"\n[auth]\nsigning_keys_path = "keys.json"\n',
+      );
+      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- The stack parser consumes JWK files as JSON.
+      yield* fs.writeFileString(`${root}/supabase/keys.json`, JSON.stringify([firstKey]));
       const fixture = fakeStack();
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(1);
+      const savedKeys = fixture.savedCredentials.configuredSigningKeys;
+      const savedJwks = fixture.savedCredentials.jwks;
+      const savedAnonKey = fixture.savedCredentials.anonKey;
 
-      yield* fs.writeFileString(
-        `${root}/supabase/config.toml`,
-        'project_id = "jwt-rotation"\n[auth]\njwt_secret = "a-new-jwt-secret-with-at-least-32-characters"\n',
-      );
+      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- The stack parser consumes JWK files as JSON.
+      yield* fs.writeFileString(`${root}/supabase/keys.json`, JSON.stringify([secondKey]));
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-      expect(fixture.stopped).toBe(1);
+      expect(fixture.stopped).toBe(0);
+      expect(fixture.composed).toBe(1);
+      expect(fixture.savedCredentials.configuredSigningKeys).toBe(savedKeys);
+      expect(fixture.savedCredentials.jwks).toBe(savedJwks);
+      expect(fixture.savedCredentials.anonKey).toBe(savedAnonKey);
+
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(2);
+      expect(fixture.savedCredentials.configuredSigningKeys).not.toBe(savedKeys);
+      expect(fixture.savedCredentials.jwks).not.toBe(savedJwks);
+      expect(fixture.savedCredentials.anonKey).not.toBe(savedAnonKey);
       expect(fixture.members.find(({ service }) => service === "auth")?.service).toBe("auth");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
-    "rejects changed Postgres root keys and database versions before stopping the stack",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        for (const [name, changed] of [
-          ["root-key", '[db]\nroot_key = "a-different-postgres-root-key"\n'],
-          ["version", "[db]\nmajor_version = 15\n"],
-        ] as const) {
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-start-${name}-` });
-          yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-          yield* fs.writeFileString(`${root}/supabase/config.toml`, `project_id = "${name}"\n`);
-          const fixture = fakeStack();
-          yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-          expect(fixture.composed).toBe(1);
+  it.live("skips invalid config while running and reports it after stop", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-start-invalid-key-rotation-",
+      });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "invalid-key-rotation"\n',
+      );
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
 
-          yield* fs.writeFileString(
-            `${root}/supabase/config.toml`,
-            `project_id = "${name}"\n${changed}`,
-          );
-          const error = yield* stackStart(flags(["studio"])).pipe(
-            Effect.provide(layers(root, fixture)),
-            Effect.flip,
-          );
-          expect(error).toMatchObject({ reason: "invalid-config" });
-          expect(fixture.stopped).toBe(0);
-          expect(fixture.composed).toBe(1);
-        }
-      }).pipe(Effect.provide(BunServices.layer)),
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "invalid-key-rotation"\n[auth]\nsigning_keys_path = "missing-keys.json"\n',
+      );
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(1);
+      expect(fixture.stopped).toBe(0);
+
+      yield* fixture.stack.composition.stop;
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({ reason: "invalid-config" });
+      expect(fixture.composed).toBe(1);
+      expect(fixture.stopped).toBe(1);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects a partially active stack before reading changed config", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-partial-state-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "partial-state"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const database = fixture.members.find(({ service }) => service === "database");
+      const auth = fixture.members.find(({ service }) => service === "auth");
+      if (database === undefined || auth === undefined)
+        return yield* Effect.die("Expected database and Auth members");
+      fixture.setMemberStatus(database.id, { lifecycle: "stopped", wakeEnabled: false });
+      fixture.setMemberStatus(auth.id, { lifecycle: "stopped", wakeEnabled: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "partial-state"\n[auth]\nsigning_keys_path = "missing-keys.json"\n',
+      );
+
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        reason: "lifecycle",
+        suggestion: "Run supabase stack stop, then supabase stack start to recover the stack.",
+      });
+      expect(fixture.stopped).toBe(0);
+      expect(fixture.composed).toBe(1);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects changed Postgres root keys and database versions after stopping the stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      for (const [name, changed] of [
+        ["root-key", '[db]\nroot_key = "a-different-postgres-root-key"\n'],
+        ["version", "[db]\nmajor_version = 15\n"],
+      ] as const) {
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-start-${name}-` });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, `project_id = "${name}"\n`);
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        expect(fixture.composed).toBe(1);
+
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          `project_id = "${name}"\n${changed}`,
+        );
+        yield* fixture.stack.composition.stop;
+        const error = yield* stackStart(flags(["studio"])).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+        expect(error).toMatchObject({ reason: "invalid-config" });
+        expect(fixture.stopped).toBe(1);
+        expect(fixture.composed).toBe(1);
+      }
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 });

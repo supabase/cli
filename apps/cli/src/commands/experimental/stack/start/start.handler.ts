@@ -82,6 +82,23 @@ const stackError = (cause: { readonly message: string }) =>
     cause,
   });
 
+const loadStartConfig = (projectRoot: string, fs: FileSystem.FileSystem, path: Path.Path) =>
+  Effect.gen(function* () {
+    const config = yield* loadStackConfig(projectRoot);
+    const identity = yield* config.identity;
+    const toml = yield* readDbToml(fs, path, projectRoot);
+    return { config, identity, toml };
+  }).pipe(
+    Effect.mapError(
+      (error) =>
+        new StackCommandStartError({
+          reason: "invalid-config",
+          message: error.message,
+          cause: error,
+        }),
+    ),
+  );
+
 const sameKinds = (
   left: ReadonlyArray<{ readonly service: string }>,
   right: ReadonlyArray<{ readonly service: string }>,
@@ -255,36 +272,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         runtime: flags.runtime,
       })
       .pipe(Effect.mapError(mapTargetError));
-    const config = yield* loadStackConfig(target.projectRoot).pipe(
-      Effect.mapError(
-        (error) =>
-          new StackCommandStartError({
-            reason: "invalid-config",
-            message: error.message,
-            cause: error,
-          }),
-      ),
-    );
-    const identity = yield* config.identity.pipe(
-      Effect.mapError(
-        (error) =>
-          new StackCommandStartError({
-            reason: "invalid-config",
-            message: error.message,
-            cause: error,
-          }),
-      ),
-    );
-    const toml = yield* readDbToml(fs, path, target.projectRoot).pipe(
-      Effect.mapError(
-        (error) =>
-          new StackCommandStartError({
-            reason: "invalid-config",
-            message: error.message,
-            cause: error,
-          }),
-      ),
-    );
+    const configBeforeCreate =
+      target.id === undefined ? yield* loadStartConfig(target.projectRoot, fs, path) : undefined;
     const stateRoot = path.join(settings.supabaseHome, "stacks");
     const cacheRoot = path.join(settings.supabaseHome, "cache", "stack");
     const stack =
@@ -306,7 +295,37 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const currentInstances = yield* Effect.forEach(composition.members, ({ id }) =>
       stack.services.get(id).pipe(Effect.mapError(stackError)),
     );
+    const currentStatuses = yield* Effect.forEach(currentInstances, (instance) =>
+      instance.status.pipe(Effect.mapError(stackError)),
+    );
     const primaryDatabase = currentInstances.find((instance) => instance.service === "database");
+    const databaseStatus = currentStatuses.find(({ id }) => id === primaryDatabase?.id);
+    const fullyStarted =
+      databaseStatus?.lifecycle === "running" &&
+      currentStatuses.every(({ lifecycle, wakeEnabled }) => lifecycle === "running" || wakeEnabled);
+    if (fullyStarted) {
+      const endpoints = Object.fromEntries(
+        currentStatuses.flatMap((observation, index) => {
+          const instance = currentInstances[index];
+          return instance === undefined
+            ? []
+            : Object.entries(endpointReports(observation)).map(
+                ([name, endpoint]) => [`${instance.service}.${name}`, endpoint] as const,
+              );
+        }),
+      );
+      yield* output.success("Stack is already running.", { id: stack.id, endpoints });
+      return stack.id;
+    }
+    const fullyStopped = currentStatuses.every(
+      ({ lifecycle, wakeEnabled }) => lifecycle === "stopped" && !wakeEnabled,
+    );
+    if (!fullyStopped)
+      return yield* new StackCommandStartError({
+        reason: "lifecycle",
+        message: "The stack is in a partial lifecycle state",
+        suggestion: "Run supabase stack stop, then supabase stack start to recover the stack.",
+      });
     const shadowDatabase =
       composition.members.length === 0
         ? existingServices.find((instance) => instance.service === "database")
@@ -317,6 +336,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "A standalone database exists outside the saved stack composition",
         suggestion: "Destroy the standalone database before starting this stack.",
       });
+    const { config, identity, toml } =
+      configBeforeCreate ?? (yield* loadStartConfig(target.projectRoot, fs, path));
     const creations = yield* config.creations(stack.id).pipe(
       Effect.mapError(
         (error) =>
@@ -375,9 +396,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         savedCredentials.remoteJwks !== (identity.remoteJwks ?? "[]"));
     const staleIdentity =
       savedCredentials !== undefined &&
-      (yield* Effect.forEach(currentInstances, (instance) =>
-        instance.status.pipe(Effect.mapError(stackError)),
-      )).some((status) => !identityBindingMatches(status.config, savedCredentials));
+      currentStatuses.some((status) => !identityBindingMatches(status.config, savedCredentials));
     if (requested.some(({ service }) => service === "storage"))
       yield* fs
         .makeDirectory(
@@ -468,25 +487,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       }
     }
     const starting = yield* output.task("Starting local Supabase stack...");
-    if (compositionChanged && composition.members.length > 0) {
-      const stopping = yield* output.task(
-        "Stopping local Supabase stack before applying changes...",
-      );
-      yield* stack.composition.stop.pipe(
-        Effect.tapError((error) => stopping.fail(error.message)),
-        Effect.mapError(stackError),
-      );
-      yield* stopping.succeed();
-    } else if (compositionChanged && primaryDatabase !== undefined) {
-      const stopping = yield* output.task(
-        "Stopping local Supabase stack before applying changes...",
-      );
-      yield* primaryDatabase.stop.pipe(
-        Effect.tapError((error) => stopping.fail(error.message)),
-        Effect.mapError(stackError),
-      );
-      yield* stopping.succeed();
-    }
     const members = compositionChanged
       ? yield* compose(stack, requested, reuseIds, identity).pipe(
           Effect.tapError((error) => starting.fail(error.message)),
@@ -544,16 +544,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       );
     });
     if (activationChanged) {
-      if (!compositionChanged && composition.members.length > 0) {
-        const stopping = yield* output.task(
-          "Stopping local Supabase stack before applying changes...",
-        );
-        yield* stack.composition.stop.pipe(
-          Effect.tapError((error) => stopping.fail(error.message)),
-          Effect.mapError(stackError),
-        );
-        yield* stopping.succeed();
-      }
       yield* stack.composition
         .configure({ ...configured, members: desiredMembers })
         .pipe(Effect.mapError(stackError));
