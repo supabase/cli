@@ -129,7 +129,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
       const result = yield* stackServiceVersions(cliSettings.workdir, remote);
       if (result.configError !== undefined) {
         yield* output.raw(
-          `failed to resolve stack config: ${result.configError}; using default stack catalog versions\n`,
+          `${result.configError}; using default stack catalog versions\n`,
           "stderr",
         );
       }

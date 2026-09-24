@@ -398,7 +398,7 @@ describe("services", () => {
       expect(rows).toContainEqual(
         expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "17.6.1.173" }),
       );
-      expect(out.stderrText).toContain("failed to read config:");
+      expect(out.stderrText).toMatch(/^failed to read config:/);
       expect(out.stderrText).toContain("using default stack catalog versions");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
