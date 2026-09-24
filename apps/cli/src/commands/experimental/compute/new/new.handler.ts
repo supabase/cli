@@ -341,13 +341,15 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     // Everything below this line changes the user's disk, and nothing below it
     // can fail for a reason the plan above could have caught.
     const starters = Object.entries(COMPUTE_STACKS[runtime]);
-    const removeScaffold = (yield* fs.exists(destination))
-      ? Effect.forEach(
-          starters,
-          ([filename]) => fs.remove(path.join(destination, filename)).pipe(Effect.ignore),
-          { discard: true },
-        )
-      : fs.remove(destination, { recursive: true }).pipe(Effect.ignore);
+    const destinationExisted = yield* fs.exists(destination);
+    const removeScaffold = Effect.gen(function* () {
+      for (const [filename] of starters) {
+        yield* fs.remove(path.join(destination, filename)).pipe(Effect.ignore);
+      }
+      if (!destinationExisted && (yield* destinationIsFree(destination))) {
+        yield* fs.remove(destination, { recursive: true }).pipe(Effect.ignore);
+      }
+    });
 
     yield* fs.makeDirectory(destination, { recursive: true });
 
