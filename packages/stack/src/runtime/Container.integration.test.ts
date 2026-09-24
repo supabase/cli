@@ -123,6 +123,32 @@ describe("container process adapter", () => {
       ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("waits until a discarded container stops before returning", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeContainerRuntime({ engine: "docker" });
+      yield* runtime.prepare(image);
+      const process = yield* runtime.launch({
+        image,
+        stackId: "f".repeat(64),
+        instanceId: "discard-waits-for-stop",
+        env: {},
+        args: [
+          "-e",
+          "process.on('SIGTERM', () => setTimeout(() => process.exit(0), 2000)); setInterval(() => {}, 1000); console.log('ready')",
+        ],
+      });
+      const logs = yield* ready(process);
+
+      yield* process.discard;
+      expect(yield* running(process.id)).toBe(false);
+      expect(yield* exists(process.id)).toBe(true);
+
+      yield* process.remove;
+      expect(yield* exists(process.id)).toBe(false);
+      yield* Fiber.interrupt(logs);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("returns cleanup authority when container start fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -204,6 +230,22 @@ const exists = (id: string) =>
       }),
     );
     return Number(yield* child.exitCode) === 0;
+  });
+
+const running = (id: string) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make("docker", ["inspect", "--format={{.State.Running}}", id], {
+        stdin: "ignore",
+      }),
+    );
+    const [output, exitCode] = yield* Effect.all(
+      [child.stdout.pipe(Stream.decodeText, Stream.mkString), child.exitCode],
+      { concurrency: "unbounded" },
+    );
+    expect(Number(exitCode)).toBe(0);
+    return output.trim() === "true";
   });
 
 const get = (port: number | undefined, path = "/") => {

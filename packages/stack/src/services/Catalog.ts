@@ -299,6 +299,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
           root: options.root,
           cacheRoot: options.cacheRoot,
           runtime: options.runtime,
+          ...(options.helpers === undefined ? {} : { helpers: options.helpers }),
         }).pipe(
           Effect.mapError(
             (cause) =>

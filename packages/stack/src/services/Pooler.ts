@@ -24,52 +24,68 @@ export interface Endpoints extends Schema.Schema.Type<typeof Endpoints> {}
 export const Creation = serviceCreation("pooler", Config, Endpoints);
 export interface Creation extends Schema.Schema.Type<typeof Creation> {}
 
+const environment: ProcessRecipeSpec<Creation>["env"] = (creation, endpoints, container) =>
+  Effect.gen(function* () {
+    const http = endpoints.get("http");
+    const sql = endpoints.get("sql");
+    const db = yield* databaseConnection(creation.config.databaseUrl);
+    const mode = creation.config.poolMode ?? "transaction";
+    return {
+      DATABASE_URL: creation.config.databaseUrl,
+      ...(http === undefined ? {} : { PORT: String(http.port) }),
+      ...(creation.config.tenant === undefined ? {} : { TENANT_ID: creation.config.tenant }),
+      POSTGRES_HOST: db.host,
+      POSTGRES_PORT: db.port,
+      POSTGRES_USER: db.username ?? "supabase_admin",
+      POSTGRES_PASSWORD: db.password ?? "postgres",
+      API_JWT_SECRET: creation.config.jwtSecret ?? localJwtSecret,
+      METRICS_JWT_SECRET: creation.config.jwtSecret ?? localJwtSecret,
+      REGION: "local",
+      CLUSTER_POSTGRES: "true",
+      SECRET_KEY_BASE: DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
+      VAULT_ENC_KEY: DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
+      DEFAULT_POOL_SIZE: String(creation.config.defaultPoolSize ?? 20),
+      MAX_CLIENT_CONN: String(creation.config.maxClientConnections ?? 100),
+      POOL_MODE: mode,
+      // Supavisor advertises Ranch-bound ports, so native instances can use ephemeral internal listeners.
+      ...(container
+        ? {}
+        : {
+            PROXY_PORT: "0",
+            SESSION_PROXY_PORTS: "0",
+            TRANSACTION_PROXY_PORTS: "0",
+          }),
+      ...(sql === undefined
+        ? {}
+        : {
+            PROXY_PORT_SESSION: String(container ? 5432 : mode === "session" ? sql.port : 0),
+            PROXY_PORT_TRANSACTION: String(
+              container ? 6543 : mode === "transaction" ? sql.port : 0,
+            ),
+          }),
+    };
+  });
+
+const nativeStartupEnvironment: NonNullable<ProcessRecipeSpec<Creation>["nativeStartupEnv"]> = (
+  creation,
+  endpoints,
+) =>
+  environment(creation, endpoints, false).pipe(
+    Effect.map((env) => ({
+      ...env,
+      PORT: "0",
+      PROXY_PORT_SESSION: "0",
+      PROXY_PORT_TRANSACTION: "0",
+    })),
+  );
+
 export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   service: "pooler",
   executable: "bin/server",
   ports: { http: 4000, sql: 6543 },
   healthPath: "/api/health",
-  env: (creation, endpoints, container) =>
-    Effect.gen(function* () {
-      const http = endpoints.get("http");
-      const sql = endpoints.get("sql");
-      const db = yield* databaseConnection(creation.config.databaseUrl);
-      const mode = creation.config.poolMode ?? "transaction";
-      return {
-        DATABASE_URL: creation.config.databaseUrl,
-        ...(http === undefined ? {} : { PORT: String(http.port) }),
-        ...(creation.config.tenant === undefined ? {} : { TENANT_ID: creation.config.tenant }),
-        POSTGRES_HOST: db.host,
-        POSTGRES_PORT: db.port,
-        POSTGRES_USER: db.username ?? "supabase_admin",
-        POSTGRES_PASSWORD: db.password ?? "postgres",
-        API_JWT_SECRET: creation.config.jwtSecret ?? localJwtSecret,
-        METRICS_JWT_SECRET: creation.config.jwtSecret ?? localJwtSecret,
-        REGION: "local",
-        CLUSTER_POSTGRES: "true",
-        SECRET_KEY_BASE: DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
-        VAULT_ENC_KEY: DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
-        DEFAULT_POOL_SIZE: String(creation.config.defaultPoolSize ?? 20),
-        MAX_CLIENT_CONN: String(creation.config.maxClientConnections ?? 100),
-        POOL_MODE: mode,
-        // Supavisor advertises Ranch-bound ports, so native instances can use ephemeral internal listeners.
-        ...(container
-          ? {}
-          : {
-              PROXY_PORT: "0",
-              SESSION_PROXY_PORTS: "0",
-              TRANSACTION_PROXY_PORTS: "0",
-            }),
-        ...(sql === undefined
-          ? {}
-          : {
-              PROXY_PORT_SESSION: String(container ? 5432 : mode === "session" ? sql.port : 0),
-              PROXY_PORT_TRANSACTION: String(
-                container ? 6543 : mode === "transaction" ? sql.port : 0,
-              ),
-            }),
-      };
-    }),
+  env: environment,
+  nativeStartupEnv: nativeStartupEnvironment,
   args: (_creation, _endpoints, context) =>
     Effect.succeed(context.container ? ["-s", "-g", "--", "/app/bin/server"] : ["start"]),
   mounts: () => Effect.succeed([]),
@@ -77,7 +93,11 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
     name === "sql" && creation.config.poolMode === "session" ? 5432 : port,
   containerEntrypoint: () => "/usr/bin/tini",
   startup: [
-    { args: [], nativeExecutable: "prepare", containerEntrypoint: "/app/bin/prepare" },
+    {
+      args: [],
+      nativeExecutable: "prepare",
+      containerEntrypoint: "/app/bin/prepare",
+    },
     {
       args: [],
       nativeExecutable: "provision-tenant",

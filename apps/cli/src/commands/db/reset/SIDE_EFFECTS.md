@@ -33,7 +33,10 @@ precedence, same rules as [`docs/stack-commands.md`](../../../../docs/stack-comm
 local path stops the saved composition, resets the registered database instance's data, starts
 and readies that instance, reapplies the catalog overlay and migrations, then starts the saved
 composition again instead of recreating containers. The reset retains the saved database
-configuration and composition members; it does not rebuild the stack from current config. After
+configuration and composition members; it does not rebuild the stack from current config. The
+catalog overlay provisions the Auth, Storage, and Realtime schemas for the saved composition's
+members, so services excluded at `stack start` stay excluded; for the database-only composition
+that `db start` creates, it provisions the services enabled in current config instead. After
 the reset, buckets are seeded — reusing the `seed buckets` local path — when Storage is running
 (healthy or still starting), starting, or stopping/stopped with wake enabled; an unhealthy or
 errored Storage is skipped. The gateway handles lazy activation. The command never fails the

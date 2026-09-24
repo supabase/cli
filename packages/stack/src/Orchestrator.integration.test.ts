@@ -1,5 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Ref, Schema, Scope, Stream } from "effect";
+import {
+  Cause,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Ref,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { RegisteredInstance } from "./Orchestrator.ts";
@@ -19,6 +32,7 @@ const makeInstance = (
     readonly prepare?: Effect.Effect<void, ServiceError>;
     readonly launch?: Effect.Effect<void, ServiceError>;
     readonly stop?: Effect.Effect<void, ServiceError>;
+    readonly removeData?: Effect.Effect<void, ServiceError>;
     readonly exit?: Deferred.Deferred<Exit.Exit<void, ServiceError>>;
     readonly events?: Ref.Ref<ReadonlyArray<string>>;
   } = {},
@@ -50,7 +64,7 @@ const makeInstance = (
               remove: Effect.void,
             };
           }),
-        removeData: () => Effect.void,
+        removeData: () => event("destroy").pipe(Effect.andThen(options.removeData ?? Effect.void)),
       },
       { id, config: {}, coordinate: orchestrator.admissionFor(id) },
     );
@@ -321,6 +335,53 @@ describe("service composition", () => {
         yield* orchestrator.stopNamespace;
       }),
     ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.live("continues namespace destruction after a service data removal fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const orchestrator = yield* makeTestOrchestrator();
+        const events = yield* Ref.make<ReadonlyArray<string>>([]);
+        const failRemoval = yield* Ref.make(true);
+        const next = yield* makeInstance(orchestrator, "next", { events });
+        const failing = yield* makeInstance(orchestrator, "failing", {
+          events,
+          removeData: Ref.get(failRemoval).pipe(
+            Effect.flatMap((fail) =>
+              fail ? Effect.fail(failure("cannot remove data")) : Effect.void,
+            ),
+          ),
+        });
+        yield* orchestrator.start("failing");
+        yield* orchestrator.start("next");
+
+        const result = yield* Effect.exit(orchestrator.destroyNamespace);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isSuccess(result))
+          return yield* Effect.die("namespace destroy unexpectedly passed");
+        const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+        expect(error).toBeInstanceOf(Orchestrator.OrchestratorError);
+        if (!(error instanceof Orchestrator.OrchestratorError))
+          return yield* Effect.die("namespace destroy did not return a combined error");
+        expect(error.operation).toBe("destroy");
+        expect(
+          error.outcomes?.map(({ id, result: outcome }) => [id, Exit.isSuccess(outcome)]),
+        ).toEqual([
+          ["failing", false],
+          ["next", true],
+        ]);
+        expect((yield* Ref.get(events)).filter((event) => event.startsWith("destroy:"))).toEqual([
+          "destroy:failing",
+          "destroy:next",
+        ]);
+        expect((yield* failing.core.get).registered).toBe(true);
+        expect((yield* next.core.get).registered).toBe(false);
+
+        yield* Ref.set(failRemoval, false);
+        yield* orchestrator.destroyNamespace;
+        expect((yield* failing.core.get).registered).toBe(false);
+      }),
+    ),
   );
 });
 
