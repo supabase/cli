@@ -120,7 +120,7 @@ describe("dbLintRuntimeLayer — IdentityStitch exposure", () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(dbLintRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(dbLintRuntimeLayer.pipe(Layer.provide(ambientStubs()))));
     },
   );
 });
@@ -132,7 +132,7 @@ describe("dbAdvisorsRuntimeLayer — IdentityStitch exposure (regression guard)"
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(dbAdvisorsRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(dbAdvisorsRuntimeLayer.pipe(Layer.provide(ambientStubs()))));
     },
   );
 });
