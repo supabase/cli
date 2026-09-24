@@ -143,7 +143,7 @@ function contextualRenameError(
     method: reason?.method ?? "rename",
     syscall: reason?.syscall,
     pathOrDescriptor: configPath,
-    description: `Unable to publish telemetry config${code ? ` (${code})` : ""}: ${cause instanceof Error ? cause.message : String(cause)}`,
+    description: `${reason?.description ? `${reason.description}; ` : ""}Unable to publish telemetry config${code ? ` (${code})` : ""}`,
     cause,
   });
 }

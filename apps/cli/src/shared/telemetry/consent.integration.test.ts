@@ -153,6 +153,11 @@ describe("writeTelemetryConfig", () => {
         if (Result.isSuccess(defect)) {
           expect(defect.success).toBeInstanceOf(PlatformError.PlatformError);
           const platformError = defect.success;
+          if (platformError instanceof PlatformError.PlatformError) {
+            expect(platformError.reason.description).toContain("injected replacement failure");
+            expect(platformError.reason.description).toContain("EACCES");
+            expect(platformError.reason.description).not.toContain("FileSystem.rename");
+          }
           expect(
             platformError instanceof PlatformError.PlatformError &&
               platformError.reason._tag === "PermissionDenied" &&

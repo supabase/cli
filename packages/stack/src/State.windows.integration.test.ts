@@ -46,27 +46,30 @@ const testSharingViolation = () =>
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const target = path.join(root, saved.id, "state.json");
       const failures = yield* Ref.make<ReadonlyArray<string>>([]);
+      const armed = yield* Ref.make(false);
       const firstFailure = yield* Deferred.make<string>();
+      const holderReleased = yield* Deferred.make<void>();
       const injectedFs = Layer.effect(
         FileSystem.FileSystem,
         Effect.succeed({
           ...fs,
           rename: (from: string, to: string) =>
             fs.rename(from, to).pipe(
-              Effect.tapError((error) => {
-                const code =
-                  typeof error.cause === "object" && error.cause !== null && "code" in error.cause
-                    ? String(error.cause.code)
-                    : "";
-                return to === target
-                  ? Ref.update(failures, (previous) => [
-                      ...previous,
-                      code || "<missing errno>",
-                    ]).pipe(
-                      Effect.andThen(Deferred.succeed(firstFailure, code || "<missing errno>")),
-                    )
-                  : Effect.void;
-              }),
+              Effect.tapError((error) =>
+                Effect.gen(function* () {
+                  const code =
+                    typeof error.cause === "object" && error.cause !== null && "code" in error.cause
+                      ? String(error.cause.code)
+                      : "";
+                  if (to !== target || !(yield* Ref.get(armed))) return;
+                  yield* Ref.update(failures, (previous) => [
+                    ...previous,
+                    code || "<missing errno>",
+                  ]);
+                  yield* Deferred.succeed(firstFailure, code || "<missing errno>");
+                  yield* Deferred.await(holderReleased);
+                }),
+              ),
             ),
         }),
       );
@@ -117,12 +120,17 @@ const testSharingViolation = () =>
             ),
         }),
       );
+      yield* Ref.set(armed, true);
       const saving = yield* state
         .save({ ...saved, identity: { ...saved.identity, stackName: "recovered" } })
         .pipe(Effect.forkScoped);
       const rawCode = yield* Deferred.await(firstFailure).pipe(Effect.timeout("10 seconds"));
       expect(["EPERM", "EACCES", "EBUSY"]).toContain(rawCode);
       yield* Stream.make(new TextEncoder().encode("release\n")).pipe(Stream.run(holder.stdin));
+      const exitCode = yield* holder.exitCode.pipe(Effect.timeout("10 seconds"));
+      const holderError = yield* Ref.get(stderr);
+      expect(exitCode, holderError).toBe(0);
+      yield* Deferred.succeed(holderReleased, undefined);
       yield* Fiber.join(saving).pipe(
         Effect.timeoutOrElse({
           duration: "10 seconds",
@@ -132,9 +140,6 @@ const testSharingViolation = () =>
             ),
         }),
       );
-      const exitCode = yield* holder.exitCode.pipe(Effect.timeout("10 seconds"));
-      const holderError = yield* Ref.get(stderr);
-      expect(exitCode, holderError).toBe(0);
       expect((yield* state.read(saved.id))?.identity.stackName).toBe("recovered");
       expect(yield* Ref.get(failures).pipe(Effect.map((seen) => seen.length))).toBeGreaterThan(0);
       expect(
