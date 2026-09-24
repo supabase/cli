@@ -120,7 +120,7 @@ export interface StackHostRuntime {
   readonly shutdown: (
     destroy: boolean,
     response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
-  ) => Effect.Effect<void, StackError, ChildProcessSpawner.ChildProcessSpawner>;
+  ) => Effect.Effect<void, StackError>;
   readonly exit: Deferred.Deferred<void>;
 }
 
