@@ -1,16 +1,18 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Crypto, Effect, Exit, FileSystem, Layer, Path, Ref, Sink, Stream } from "effect";
+import { Crypto, Effect, Exit, FileSystem, Layer, Path, Ref, Scope, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import { systemError } from "effect/PlatformError";
+import * as Net from "node:net";
+import { prepareNativeArtifact } from "../Artifacts.ts";
 import {
   ContainerError,
   ContainerLaunchError,
   type ContainerProcess,
   type ContainerRuntime,
 } from "../runtime/Container.ts";
-import { makeService } from "../Service.ts";
+import { makeService, ServiceError } from "../Service.ts";
 import {
   makeProcessRecipe,
   type ProcessDependencies,
@@ -236,6 +238,123 @@ describe("ProcessRecipe launch cleanup", () => {
         yield* service.stop;
         expect((yield* service.get).lifecycle).toBe("stopped");
         expect((yield* service.get).cleanupError).toBeUndefined();
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ),
+  );
+
+  it.live("lets startup helpers bind ephemeral ports before reserving serving ports", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const client = yield* HttpClient.HttpClient;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const testScope = yield* Scope.Scope;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-port-order-" });
+        const cacheRoot = "/tmp/supabase-stack-artifacts";
+        const artifact = yield* prepareNativeArtifact(
+          { service: "rest", version: "v16.2" },
+          cacheRoot,
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(HttpClient.HttpClient, client),
+        );
+        const nativeOptions: CatalogOptions = {
+          ...options,
+          root,
+          cacheRoot,
+          runtime: "native",
+        };
+        const blocked = yield* Ref.make<Net.Server | undefined>(undefined);
+        const helperPort = yield* Ref.make<number | undefined>(undefined);
+        const servingPort = yield* Ref.make<number | undefined>(undefined);
+        const nativeSpec: ProcessRecipeSpec<TestCreation> = {
+          ...spec,
+          args: () => Effect.succeed(["--version"]),
+          env: (_creation, endpoints) =>
+            Effect.gen(function* () {
+              const port = endpoints.get("http")?.port;
+              if (port === undefined)
+                return yield* new ServiceError({
+                  operation: "launch",
+                  message: "Native recipe did not provide an HTTP port",
+                });
+              if ((yield* Ref.get(blocked)) === undefined) {
+                yield* Ref.set(helperPort, port);
+                const server = yield* Effect.acquireRelease(
+                  Effect.callback<Net.Server, Error>((resume) => {
+                    const candidate = Net.createServer();
+                    const onError = (error: Error) => resume(Effect.fail(error));
+                    candidate.once("error", onError);
+                    candidate.listen(port, "127.0.0.1", () => resume(Effect.succeed(candidate)));
+                    return Effect.sync(() => {
+                      candidate.off("error", onError);
+                      if (candidate.listening) candidate.close();
+                    });
+                  }).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ServiceError({
+                          operation: "launch",
+                          message: "Unable to occupy the startup helper port",
+                          cause,
+                        }),
+                    ),
+                  ),
+                  (server) =>
+                    Effect.callback<void, never>((resume) => {
+                      server.close(() => resume(Effect.void));
+                      return Effect.void;
+                    }),
+                ).pipe(Effect.provideService(Scope.Scope, testScope));
+                yield* Ref.set(blocked, server);
+              } else {
+                yield* Ref.set(servingPort, port);
+              }
+              return { PORT: String(port) };
+            }),
+          startup: [
+            {
+              nativeExecutable: path.relative(path.join(artifact.root, "bin"), process.execPath),
+              args: [
+                "-e",
+                `import net from "node:net"; const server = net.createServer(); server.once("error", () => process.exit(17)); server.listen(Number(process.env.PORT), "127.0.0.1", () => server.close((error) => process.exit(error ? 18 : 0)));`,
+              ],
+            },
+          ],
+        };
+        const dependencies = {
+          fs,
+          path,
+          crypto,
+          client,
+          spawner,
+          container: undefined,
+        } satisfies ProcessDependencies;
+        const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
+        const service = yield* makeService(recipe.definition, {
+          id: "rest-process-recipe-port-order",
+          config: creation,
+        });
+
+        yield* service.start;
+        const helper = yield* Ref.get(helperPort);
+        const blocker = yield* Ref.get(blocked);
+        const endpointPort = yield* Ref.get(servingPort);
+        expect(helper).toBe(0);
+        expect(blocker?.listening).toBe(true);
+        expect(endpointPort).toBeGreaterThan(0);
+        const blockedAddress = blocker?.address();
+        expect(endpointPort).not.toBe(
+          typeof blockedAddress === "object" && blockedAddress !== null
+            ? blockedAddress.port
+            : undefined,
+        );
+        yield* service.stop;
       }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     ),
   );

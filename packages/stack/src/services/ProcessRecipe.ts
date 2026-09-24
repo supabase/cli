@@ -325,12 +325,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         desired.set(name, {
           kind: "tcp",
           host: "127.0.0.1",
-          port:
-            options.runtime === "native"
-              ? yield* reserveNativePort(0).pipe(
-                  Effect.mapError((cause) => serviceError("launch", cause)),
-                )
-              : port,
+          port: options.runtime === "native" ? 0 : port,
         });
       }
       if (options.runtime === "native") {
@@ -376,11 +371,20 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               runtime: runtimeFromNative(startupProcess),
             });
         }
+        const serving = new Map<string, ServiceEndpoint>();
+        for (const [name, endpoint] of desired) {
+          serving.set(name, {
+            ...endpoint,
+            port: yield* reserveNativePort(0).pipe(
+              Effect.mapError((cause) => serviceError("launch", cause)),
+            ),
+          });
+        }
         const native: NativeProcess = yield* spawnNativeProcess(
           {
             executable,
-            args: yield* spec.args(context.config, desired, { container: false, artifactRoot }),
-            env: yield* spec.env(context.config, desired, false),
+            args: yield* spec.args(context.config, serving, { container: false, artifactRoot }),
+            env: yield* spec.env(context.config, serving, false),
             gracefulStopSignal: "SIGTERM",
             gracefulStopTimeout: "5 seconds",
           },
@@ -391,9 +395,9 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
           Effect.mapError((cause) => serviceError("launch", cause)),
         );
-        yield* Ref.set(endpoints, desired);
+        yield* Ref.set(endpoints, serving);
         yield* publishLogs(native, logs, context.scope);
-        const ready = desired.get("http");
+        const ready = serving.get("http");
         const runtime = runtimeFromNative(native);
         return {
           health:
