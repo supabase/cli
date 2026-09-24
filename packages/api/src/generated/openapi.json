@@ -6887,7 +6887,7 @@
     "/v1/projects/{ref}/analytics/endpoints/logs.all": {
       "get": {
         "deprecated": true,
-        "description": "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#logs-explorer) for all available sources.\n",
+        "description": "This endpoint has been removed and always responds with `410 Gone`. Use `GET /v1/projects/{ref}/analytics/endpoints/logs` instead. See the [migration guide](https://supabase.com/changelog/48235-migration-of-supabase-management-api-logs-all-analytics-endpoint-to-logs-endpoint).",
         "operationId": "v1-get-project-logs-all",
         "parameters": [
           {
@@ -6902,59 +6902,17 @@
               "example": "abcdefghijklmnopqrst",
               "type": "string"
             }
-          },
-          {
-            "name": "sql",
-            "required": false,
-            "in": "query",
-            "description": "Custom SQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.",
-            "schema": {
-              "example": "select event_message from edge_logs limit 10",
-              "type": "string"
-            }
-          },
-          {
-            "name": "iso_timestamp_start",
-            "required": false,
-            "in": "query",
-            "schema": {
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-              "example": "2025-03-01T00:00:00Z",
-              "type": "string"
-            }
-          },
-          {
-            "name": "iso_timestamp_end",
-            "required": false,
-            "in": "query",
-            "schema": {
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-              "example": "2025-03-01T23:59:59Z",
-              "type": "string"
-            }
           }
         ],
         "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnalyticsResponse_Output"
-                }
-              }
-            }
-          },
           "401": {
             "description": "Unauthorized"
           },
-          "402": {
-            "description": "Usage exceeded. Enable additional usage to continue querying"
-          },
           "403": {
             "description": "Forbidden action"
+          },
+          "410": {
+            "description": "This endpoint has been removed"
           },
           "429": {
             "description": "Rate limit exceeded"
