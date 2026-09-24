@@ -262,6 +262,7 @@ export const readNotebookFile = Effect.fnUntraced(function* (workdir: string, na
   );
 });
 
+// Native `JSON.parse` keeps the runtime's syntax-error text in the `is not valid JSON` message.
 function parseNotebookJson(text: string): unknown {
   return JSON.parse(text);
 }

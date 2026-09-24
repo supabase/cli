@@ -63,10 +63,9 @@ describe("notebooks pull", () => {
       expect(yield* repo.read("sales-dashboard")).toBe(localSales);
       // A newly downloaded file is the notebook's attributes minus its name and
       // the server-owned `schema_version`.
-      expect(yield* jsonValue(yield* repo.read("error-rates"))).toEqual({
-        favorite: false,
-        content: { cells: [{ id: "cell-1", type: "database", sql: "select 1", row_limit: 100 }] },
-      });
+      expect(yield* repo.read("error-rates")).toBe(
+        '{\n  "favorite": false,\n  "content": {\n    "cells": [\n      {\n        "id": "cell-1",\n        "type": "database",\n        "sql": "select 1",\n        "row_limit": 100\n      }\n    ]\n  }\n}\n',
+      );
       expect(http.routeKeys).toEqual([
         `GET ${notebooksRoute()}`,
         `GET ${notebooksRoute(`/${ERRORS_ID}`)}`,
