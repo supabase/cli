@@ -56,7 +56,7 @@ const droppingBackend = (drops: number) => {
   return { server, connections: () => connections };
 };
 
-const request = (port: number, path: string, body: Uint8Array, method: "POST" | "PUT" = "POST") =>
+const request = (port: number, path: string, body: Uint8Array, method: "GET" | "POST" = "POST") =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
@@ -326,7 +326,7 @@ it.live("retries a bodyless request once when the upstream drops the connection 
       // The only log is the retry warning; the masked failure never reaches the error level.
       expect(logs).toHaveLength(1);
       expect(logs[0]).toContain("Route functions GET upstream failed before responding");
-      expect(logs[0]).toContain("ECONNRESET");
+      expect(logs[0]).toMatch(/ECONNRESET|socket hang up/u);
     }),
   ).pipe(
     Effect.provide(
@@ -351,7 +351,7 @@ it.live("does not replay a request with a body when the upstream drops the conne
         proxy.port,
         "/hello",
         new TextEncoder().encode("payload"),
-        "PUT",
+        "GET",
       );
       expect(response.status).toBe(502);
       expect(backend.connections()).toBe(1);

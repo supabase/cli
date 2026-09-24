@@ -1,7 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Ref, Schema, Stream } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { Effect, FileSystem, Layer, Ref, Schedule, Schema, Stream } from "effect";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { makeService } from "../Service.ts";
 import { bundleServeMainTemplate } from "../../tests/serve-main-bundler.ts";
@@ -24,10 +24,15 @@ const dockerOptions = (root: string) => ({
 // goes to stderr because vitest hides console output from passing tests.
 const getFunction = (client: HttpClient.HttpClient, url: string) =>
   client.execute(HttpClientRequest.get(url)).pipe(
-    Effect.tapError((error) =>
-      Effect.sync(() => process.stderr.write(`Retrying ${url} after ${error.message}\n`)),
+    Effect.retry(
+      Schedule.recurs(1).pipe(
+        Schedule.setInputType<HttpClientError.HttpClientError>(),
+        Schedule.while(({ input }) => input.reason._tag === "TransportError"),
+        Schedule.tap(({ input }) =>
+          Effect.sync(() => process.stderr.write(`Retrying ${url} after ${input.message}\n`)),
+        ),
+      ),
     ),
-    Effect.retry({ times: 1, while: (error) => error.reason._tag === "TransportError" }),
   );
 
 const dockerInfo = Effect.scoped(
