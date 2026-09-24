@@ -8,11 +8,12 @@
 
 ## Files Written
 
-| Path                                       | Format | When                                   |
-| ------------------------------------------ | ------ | -------------------------------------- |
-| `<workdir>/supabase/tests/<name>_test.sql` | SQL    | always, unless the file already exists |
+| Path                                       | Format | When                                                                           |
+| ------------------------------------------ | ------ | ------------------------------------------------------------------------------ |
+| `<workdir>/supabase/tests/<name>_test.sql` | SQL    | always, unless the file already exists or the name escapes the tests directory |
 
-The parent directory `<workdir>/supabase/tests/` is created if missing.
+The parent directory `<workdir>/supabase/tests/` is created if missing. A name that
+resolves outside that directory is rejected before any directory or file is created.
 
 ## API Routes
 
@@ -28,11 +29,12 @@ The parent directory `<workdir>/supabase/tests/` is created if missing.
 
 ## Exit Codes
 
-| Code | Condition                              |
-| ---- | -------------------------------------- |
-| `0`  | success                                |
-| `1`  | test file already exists               |
-| `1`  | write failure (e.g. permission denied) |
+| Code | Condition                                             |
+| ---- | ----------------------------------------------------- |
+| `0`  | success                                               |
+| `1`  | invalid test name (resolves outside `supabase/tests`) |
+| `1`  | test file already exists                              |
+| `1`  | write failure (e.g. permission denied)                |
 
 ## Output
 
@@ -55,3 +57,9 @@ Emits the same success payload as a final NDJSON `result` event.
   byte-identical to the original Go template).
 - `--template` / `-t` selects the template framework (only `pgtap` is supported; default `pgtap`).
 - Native TypeScript port (Phase 1+); no Go proxy.
+- **Path-traversal hardening (TS-only):** the name is rejected before any write if
+  `<workdir>/supabase/tests/<name>_test.sql` resolves outside the tests directory
+  (e.g. a `..`-laden name). Nothing is created — no file and no parent directory.
+  This has no effect on legitimate names (names, optionally with subdirectories, that
+  resolve inside `supabase/tests`) and only closes the
+  arbitrary-write vector (CWE-22) when the name is attacker/template-controlled.

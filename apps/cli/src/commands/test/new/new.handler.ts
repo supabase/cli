@@ -27,6 +27,16 @@ export const testNew = Effect.fn("test.new")(function* (flags: TestNewFlags) {
     const relPath = path.join("supabase", "tests", `${flags.name}_test.sql`);
     const target = path.join(cliSettings.workdir, relPath);
 
+    // `path.join` collapses "..", so check the normalized target: names may include
+    // subdirectories as long as they resolve inside supabase/tests.
+    const testsDir = path.join(cliSettings.workdir, "supabase", "tests");
+    if (!target.startsWith(testsDir + path.sep)) {
+      return yield* new TestNewWriteError({
+        path: relPath,
+        message: `invalid test name: "${flags.name}" must not escape the ${path.join("supabase", "tests")} directory`,
+      });
+    }
+
     const exists = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false));
     if (exists) {
       return yield* new TestNewFileExistsError({

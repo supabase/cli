@@ -9,6 +9,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { TestNewWriteError } from "./new.errors.ts";
 import { PGTAP_TEMPLATE } from "./new.template.ts";
 import { testNew } from "./new.handler.ts";
 
@@ -186,6 +187,46 @@ describe("test new integration", () => {
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("TestNewWriteError");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("creates test files under subdirectories that stay inside the tests directory", () => {
+    const { layer, out, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* testNew(flags("sub/foo"));
+      yield* testNew(flags("sub/../foo"));
+      expect(yield* fs.exists(path.join(workdir, "supabase", "tests", "sub", "foo_test.sql"))).toBe(
+        true,
+      );
+      expect(yield* fs.exists(path.join(workdir, "supabase", "tests", "foo_test.sql"))).toBe(true);
+      expect(out.stdoutText).toContain("supabase/tests/sub/foo_test.sql");
+      expect(out.stdoutText).toContain("supabase/tests/foo_test.sql");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a name that escapes the tests directory and writes nothing", () => {
+    const { layer, telemetry, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // Escapes into a fresh directory inside this test's own temp root, so a guard
+      // that ran after makeDirectory would leave `nested/` behind.
+      const exit = yield* Effect.exit(testNew(flags("../../nested/x")));
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure)).toBe(true);
+        if (Option.isSome(failure)) {
+          expect(failure.value).toBeInstanceOf(TestNewWriteError);
+          expect(failure.value.message).toContain("must not escape the supabase/tests directory");
+        }
+      }
+      expect(yield* fs.exists(path.join(workdir, "nested"))).toBe(false);
+      expect(yield* fs.exists(path.join(workdir, "supabase", "tests"))).toBe(false);
+      expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
