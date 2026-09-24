@@ -285,7 +285,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               );
         }),
       );
-      yield* output.success("Stack is already running.", { id: stack.id, endpoints });
+      yield* output.success(
+        "Stack is already running with its current services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
+        { id: stack.id, endpoints },
+      );
       return stack.id;
     }
     const fullyStopped = currentStatuses.every(

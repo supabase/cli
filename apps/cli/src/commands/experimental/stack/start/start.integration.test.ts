@@ -448,7 +448,17 @@ describe("experimental stack start", () => {
       );
       expect(fixture.members.map(({ service }) => service)).toEqual(["database"]);
       expect(fixture.composed).toBe(1);
-      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
+      const repeatedOutput = mockOutput();
+      yield* stackStart(flags(excluded)).pipe(
+        Effect.provide(layers(root, fixture, repeatedOutput)),
+      );
+      expect(repeatedOutput.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message:
+            "Stack is already running with its current services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
+        }),
+      );
       expect(fixture.composed).toBe(1);
       expect(fixture.stopped).toBe(0);
       yield* fixture.stack.composition.stop;
