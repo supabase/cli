@@ -1,5 +1,5 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
-import { resolveCliConfigSubtree } from "@supabase/config/internal";
+import { ENV_CAPTURE_REGEX, resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
 import {
   DEFAULT_LOCAL_JWT_SECRET,
@@ -717,6 +717,14 @@ const unsupportedConfigPaths = [
   "experimental.s3_secret_key",
 ] as const;
 
+/** An unset `env(NAME)` stays as that literal, which is not a configured value. */
+const unresolvedEnvLiteral = (value: unknown): boolean => {
+  if (typeof value === "string") return ENV_CAPTURE_REGEX.test(value);
+  if (!Redacted.isRedacted(value)) return false;
+  const inner = Redacted.value(value);
+  return typeof inner === "string" && ENV_CAPTURE_REGEX.test(inner);
+};
+
 const pathValue = (value: unknown, path: string): unknown => {
   let current = value;
   for (const segment of path.split(".")) {
@@ -779,6 +787,7 @@ const configValidationError = (config: CliConfig): string | undefined => {
   for (const path of unsupportedConfigPaths) {
     if (path.startsWith("auth.") && !config.auth.enabled) continue;
     const value = pathValue(config, path);
+    if (path.startsWith("experimental.s3_") && unresolvedEnvLiteral(value)) continue;
     const baseline = pathValue(defaults, path);
     const difference = firstDifference(value, baseline, path);
     if (difference !== undefined) return `${difference} is unsupported by the experimental stack`;

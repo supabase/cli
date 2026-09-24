@@ -27,7 +27,7 @@ permissions: {}
 # One source of truth for the model names; resolve, claude-review, codex-review, and
 # post-review's footer all read these instead of hardcoding them separately.
 env:
-  CLAUDE_MODEL: claude-opus-5
+  CLAUDE_MODEL: claude-opus-5-5
   CODEX_MODEL: gpt-6-sol
 
 # Non-command issue_comment events fire for every comment on every PR, so grouping by PR number
@@ -151,6 +151,7 @@ jobs:
       # behavior mid-rollout. Installed from the trusted checkout with npm config isolation so a
       # PR-supplied `.npmrc` in the untrusted `pr` checkout can never redirect this install to a
       # hostile registry.
+      # 2.1.280 is the first release that accepts claude-opus-5-5.
       - name: Install Claude Code CLI
         working-directory: trusted
         run: |
@@ -162,7 +163,7 @@ jobs:
           npm install -g \
             --userconfig "${RUNNER_TEMP}/ai-review-npmrc-user" \
             --globalconfig "${RUNNER_TEMP}/ai-review-npmrc-global" \
-            --registry=https://registry.npmjs.org/ @anthropic-ai/claude-code@2.1.247
+            --registry=https://registry.npmjs.org/ @anthropic-ai/claude-code@2.1.280
 
       # Security-critical invariant: PR code is only ever read by `claude`, in the `pr`-cwd
       # subshell below — no other command in this job, including any `bun` call, runs with a cwd

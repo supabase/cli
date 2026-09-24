@@ -17,6 +17,7 @@
     "!apps/cli/src/commands/feedback/**",
     "!apps/cli/src/commands/functions/**",
     "!apps/cli/src/commands/init/**",
+    "!apps/cli/src/commands/inspect/**",
     "!apps/cli/src/commands/issue/**",
     "!apps/cli/src/commands/link/**",
     "!apps/cli/src/commands/login/**",
