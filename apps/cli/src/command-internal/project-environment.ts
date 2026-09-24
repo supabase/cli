@@ -55,8 +55,9 @@ function readDotEnvFile(path: string): Record<string, string> | undefined {
 export function resolveProjectEnvironmentValues(
   projectEnv: CliProjectEnvironment | null,
   workdir: string,
+  supabaseEnv?: string,
 ): Record<string, string> {
-  const env = process.env["SUPABASE_ENV"] || "development";
+  const env = supabaseEnv || process.env["SUPABASE_ENV"] || "development";
   const filenames = candidateDotenvFilenames(env);
   const merged: Record<string, string> = {};
 

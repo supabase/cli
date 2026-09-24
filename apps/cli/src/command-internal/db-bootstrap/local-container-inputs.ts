@@ -17,6 +17,7 @@ import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { resolveExperimentalWithProjectEnv } from "../global-flags.ts";
 import { DbConfigLoadError } from "../db-config.errors.ts";
+import { InvalidServiceVersionTagError } from "../service-version-overrides.ts";
 import { localDbContainerId } from "../docker-ids.ts";
 import { resolveDockerNetworkMode } from "../../shared/functions/functions-docker.ts";
 import { viperEnvStringWithProjectFallback } from "../viper-env.ts";
@@ -92,7 +93,7 @@ export const buildLocalDbContainerInputs = (
   preloadedContext?: LocalProjectContext,
 ): Effect.Effect<
   LocalDbContainerInputs,
-  DbConfigLoadError,
+  DbConfigLoadError | InvalidServiceVersionTagError,
   | FileSystem.FileSystem
   | Path.Path
   | RuntimeInfo

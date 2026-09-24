@@ -45,12 +45,20 @@ import {
 import {
   makeServiceRecipe,
   ServiceCreation,
+  ServiceCreationInput,
   type CatalogLog,
   type CatalogRecipe,
   serviceSchemas,
 } from "./services/Catalog.ts";
 import * as State from "./State.ts";
-import type { SavedInstance, SavedStack } from "./State.ts";
+import type { SavedInstance, SavedStack, StackCredentials } from "./State.ts";
+import { resolveStackIdentity } from "./services/ServiceConfig.ts";
+import {
+  DEFAULT_LOCAL_DATABASE_PASSWORD,
+  DEFAULT_LOCAL_JWT_SECRET,
+  DEFAULT_POSTGRES_ROOT_KEY,
+} from "./Defaults.ts";
+import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
 
 export class OwnerError extends Data.TaggedError("OwnerError")<{
   readonly operation: string;
@@ -98,7 +106,7 @@ export interface Interface {
   };
   readonly composition: {
     readonly supabase: (
-      creations: ReadonlyArray<ServiceCreation>,
+      creations: ReadonlyArray<ServiceCreationInput>,
       options?: SupabaseCompositionOptions,
     ) => Effect.Effect<ReadonlyArray<{ id: string; creation: ServiceCreation }>, OwnerError>;
     readonly configure: (configuration: CompositionConfig) => Effect.Effect<void, OwnerError>;
@@ -142,6 +150,42 @@ const supabaseError = (cause: unknown) =>
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const consumesCredentials = (creation: unknown): boolean => {
+  if (!isRecord(creation) || typeof creation.service !== "string") return true;
+  if (creation.service === "database") return true;
+  if (["auth", "realtime", "storage", "functions", "studio", "pooler"].includes(creation.service))
+    return true;
+  if (creation.service !== "rest") return false;
+  const config = isRecord(creation.config) ? creation.config : {};
+  return config.jwks === undefined || config.jwtSecret !== undefined;
+};
+
+const credentialOverridesFor = (creation: ServiceCreationInput): Record<string, string> => {
+  const overrides: Record<string, string> = {};
+  if (creation.service === "database") {
+    if (creation.config.jwtSecret !== undefined)
+      overrides.jwtSecret = Redacted.value(creation.config.jwtSecret);
+    if (creation.config.rootKey !== undefined)
+      overrides.postgresRootKey = Redacted.value(creation.config.rootKey);
+    if (creation.config.databasePassword !== undefined)
+      overrides.databasePassword = Redacted.value(creation.config.databasePassword);
+  } else if ("jwtSecret" in creation.config && creation.config.jwtSecret !== undefined) {
+    overrides.jwtSecret = creation.config.jwtSecret;
+  }
+  return overrides;
+};
+
+const clearUnusedCredentials = (current: SavedStack): SavedStack => {
+  if (
+    current.credentials === undefined ||
+    current.instances.some(({ creation }) => consumesCredentials(creation))
+  )
+    return current;
+  const withoutCredentials = { ...current };
+  delete withoutCredentials.credentials;
+  return withoutCredentials;
+};
+
 const creationJson = Schema.toCodecJson(ServiceCreation);
 const encodeCreation = (creation: ServiceCreation) => Schema.encodeEffect(creationJson)(creation);
 
@@ -157,10 +201,17 @@ const makeOwnerWithDependencies = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const http = yield* HttpClient.HttpClient;
     const ownerScope = yield* Scope.Scope;
+    const helperOwnerId = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) => errorFor("identity", cause)),
+    );
+    const helpers = yield* makeDockerHelperRegistry(helperOwnerId);
     const recipes = yield* Ref.make(new Map<string, CatalogRecipe>());
     const instances = yield* Ref.make(new Map<string, ServiceInstance<ServiceCreation>>());
     const namespaces = yield* Ref.make(new Map<string, NetworkNamespace>());
-    const composition = yield* Ref.make<CompositionConfig>({ members: [], dependencies: [] });
+    const composition = yield* Ref.make<CompositionConfig>({
+      members: [],
+      dependencies: [],
+    });
     const registryGate = yield* Semaphore.make(1);
     const compositionGate = yield* Semaphore.make(1);
     const draining = yield* Ref.make(false);
@@ -227,18 +278,204 @@ const makeOwnerWithDependencies = (
       );
     });
 
+    const routeKeys = {
+      publishableKey: options.saved.credentials?.publishableKey ?? "",
+      secretKey: options.saved.credentials?.secretKey ?? "",
+      anonKey: options.saved.credentials?.anonKey ?? "",
+      serviceRoleKey: options.saved.credentials?.serviceRoleKey ?? "",
+    };
+    const resolveStackCredentials = Effect.fn("Owner.resolveStackCredentials")(function* (
+      overrides: Record<string, string>,
+      identity?: State.StackIdentityInput,
+    ) {
+      const credentials = yield* options.state
+        .withLock(
+          Effect.gen(function* () {
+            const current = yield* options.state
+              .read(options.saved.id)
+              .pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
+            if (current === undefined)
+              return yield* errorFor("credentials", "Saved stack is missing");
+            const saved = current.credentials;
+            if (saved === undefined) {
+              const hasCredentialConsumer = current.instances.some(({ creation: value }) =>
+                consumesCredentials(value),
+              );
+              if (hasCredentialConsumer)
+                return yield* errorFor(
+                  "credentials",
+                  "Saved instances have no stack credential record; refusing to infer credentials",
+                );
+              const jwtSecret = overrides.jwtSecret ?? DEFAULT_LOCAL_JWT_SECRET;
+              const resolvedIdentity = yield* resolveStackIdentity(jwtSecret, identity, undefined);
+              const initial: StackCredentials = {
+                jwtSecret,
+                postgresRootKey: overrides.postgresRootKey ?? DEFAULT_POSTGRES_ROOT_KEY,
+                databasePassword: overrides.databasePassword ?? DEFAULT_LOCAL_DATABASE_PASSWORD,
+                ...resolvedIdentity,
+              };
+              yield* options.state
+                .save({ ...current, credentials: initial })
+                .pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
+              return initial;
+            }
+            const conflict =
+              (overrides.postgresRootKey !== undefined &&
+                overrides.postgresRootKey !== saved.postgresRootKey &&
+                "rootKey") ||
+              (overrides.databasePassword !== undefined &&
+                overrides.databasePassword !== saved.databasePassword &&
+                "databasePassword") ||
+              (identity === undefined &&
+                overrides.jwtSecret !== undefined &&
+                overrides.jwtSecret !== saved.jwtSecret &&
+                "jwtSecret");
+            if (conflict !== false && conflict !== undefined)
+              return yield* errorFor(
+                "credentials",
+                `Credential override ${conflict} conflicts with the saved stack value`,
+              );
+            const jwtSecret =
+              identity === undefined
+                ? saved.jwtSecret
+                : (overrides.jwtSecret ?? DEFAULT_LOCAL_JWT_SECRET);
+            const resolvedIdentity = yield* resolveStackIdentity(jwtSecret, identity, saved);
+            const next: StackCredentials = {
+              ...saved,
+              jwtSecret,
+              ...resolvedIdentity,
+            };
+            const identityChanged =
+              next.jwtSecret !== saved.jwtSecret ||
+              next.publishableKey !== saved.publishableKey ||
+              next.secretKey !== saved.secretKey ||
+              next.anonKey !== saved.anonKey ||
+              next.serviceRoleKey !== saved.serviceRoleKey ||
+              next.jwks !== saved.jwks ||
+              next.gotrueJwtKeys !== saved.gotrueJwtKeys ||
+              next.remoteJwks !== saved.remoteJwks ||
+              next.anonKeyIsOverride !== saved.anonKeyIsOverride ||
+              next.serviceRoleKeyIsOverride !== saved.serviceRoleKeyIsOverride;
+            if (identityChanged) {
+              const savedComposition = yield* Schema.decodeUnknownEffect(
+                Orchestrator.CompositionConfig,
+              )(current.composition).pipe(
+                Effect.mapError((cause) => errorFor("credentials", cause)),
+              );
+              const memberIds = new Set([
+                ...savedComposition.members.map(({ id }) => id),
+                ...savedComposition.dependencies.flatMap(({ from, to }) => [from, to]),
+              ]);
+              for (const id of memberIds) {
+                const { lifecycle, wakeEnabled } = yield* observation(id).pipe(
+                  Effect.mapError((cause) => errorFor("credentials", cause)),
+                );
+                if (lifecycle !== "stopped" || wakeEnabled)
+                  return yield* errorFor(
+                    "credentials",
+                    `Service ${id} must be stopped with wake disabled before identity changes`,
+                  );
+              }
+              yield* options.state
+                .save({ ...current, credentials: next })
+                .pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
+            }
+            return next;
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            cause instanceof OwnerError ? cause : errorFor("credentials", cause),
+          ),
+        );
+      Object.assign(routeKeys, credentials);
+      return credentials;
+    });
+
+    const resolveCredentials = Effect.fn("Owner.resolveCredentials")(function* (input: unknown) {
+      const creation = yield* Schema.decodeUnknownEffect(ServiceCreationInput)(input).pipe(
+        Effect.mapError((cause) => errorFor("config", cause)),
+      );
+      if (!consumesCredentials(creation))
+        return yield* Schema.decodeUnknownEffect(ServiceCreation)(creation).pipe(
+          Effect.mapError((cause) => errorFor("config", cause)),
+        );
+      const overrides = credentialOverridesFor(creation);
+      const credentials = yield* resolveStackCredentials(overrides);
+
+      const config = { ...creation.config };
+      if (creation.service === "database") {
+        Object.assign(config, {
+          databasePassword: Redacted.make(credentials.databasePassword),
+          jwtSecret: Redacted.make(credentials.jwtSecret),
+          rootKey: Redacted.make(credentials.postgresRootKey),
+        });
+      } else {
+        Object.assign(config, { jwtSecret: credentials.jwtSecret });
+        switch (creation.service) {
+          case "auth":
+            Object.assign(config, {
+              gotrueJwtKeys: creation.config.gotrueJwtKeys ?? credentials.gotrueJwtKeys,
+            });
+            break;
+          case "rest":
+          case "realtime":
+            Object.assign(config, {
+              jwks: creation.config.jwks ?? credentials.jwks,
+            });
+            break;
+          case "storage":
+            Object.assign(config, {
+              jwks: creation.config.jwks ?? credentials.jwks,
+              anonKey: creation.config.anonKey ?? credentials.anonKey,
+              serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
+            });
+            break;
+          case "functions":
+            Object.assign(config, {
+              jwks: creation.config.jwks ?? credentials.jwks,
+              anonKey: creation.config.anonKey ?? credentials.anonKey,
+              serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
+              publishableKey: creation.config.publishableKey ?? credentials.publishableKey,
+              secretKey: creation.config.secretKey ?? credentials.secretKey,
+            });
+            break;
+          case "studio":
+            Object.assign(config, {
+              anonKey: creation.config.anonKey ?? credentials.anonKey,
+              serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
+              publishableKey: creation.config.publishableKey ?? credentials.publishableKey,
+              secretKey: creation.config.secretKey ?? credentials.secretKey,
+            });
+            break;
+          default:
+            break;
+        }
+      }
+      return yield* Schema.decodeUnknownEffect(ServiceCreation)({
+        ...creation,
+        config,
+      }).pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
+    });
+
     const removeCreation = (id: string) =>
       updateState((current) =>
-        Effect.succeed({
-          ...current,
-          instances: current.instances.filter((instance) => instance.id !== id),
-        }),
+        Effect.succeed(
+          clearUnusedCredentials({
+            ...current,
+            instances: current.instances.filter((instance) => instance.id !== id),
+          }),
+        ),
       ).pipe(Effect.asVoid);
 
     const persistComposition = (value: CompositionConfig) =>
       updateState((current) => Effect.succeed({ ...current, composition: value })).pipe(
         Effect.asVoid,
       );
+    const clearCredentialsIfUnused = () =>
+      updateState((current) => {
+        return Effect.succeed(clearUnusedCredentials(current));
+      }).pipe(Effect.asVoid);
     const removeInstance = (id: string) => {
       const prune = (current: CompositionConfig): CompositionConfig => ({
         members: current.members.filter((member) => member.id !== id),
@@ -249,11 +486,13 @@ const makeOwnerWithDependencies = (
       return updateState((current) =>
         Schema.decodeUnknownEffect(Orchestrator.CompositionConfig)(current.composition).pipe(
           Effect.mapError((cause) => errorFor("state", cause)),
-          Effect.map((savedComposition) => ({
-            ...current,
-            instances: current.instances.filter((instance) => instance.id !== id),
-            composition: prune(savedComposition),
-          })),
+          Effect.map((savedComposition) =>
+            clearUnusedCredentials({
+              ...current,
+              instances: current.instances.filter((instance) => instance.id !== id),
+              composition: prune(savedComposition),
+            }),
+          ),
         ),
       ).pipe(
         Effect.tap(() => Ref.update(composition, prune)),
@@ -268,6 +507,7 @@ const makeOwnerWithDependencies = (
         root: options.root,
         cacheRoot: options.cacheRoot,
         runtime,
+        helpers,
       }).pipe(Effect.mapError((cause) => errorFor("recipe", cause)));
     const recipeReady = (input: unknown, id: string) =>
       recipeFor(input, id).pipe(
@@ -330,7 +570,12 @@ const makeOwnerWithDependencies = (
           launch: (context) =>
             persistCreation(id, context.config).pipe(
               Effect.mapError(
-                (cause) => new ServiceError({ operation: "state", message: cause.message, cause }),
+                (cause) =>
+                  new ServiceError({
+                    operation: "state",
+                    message: cause.message,
+                    cause,
+                  }),
               ),
               Effect.andThen(recipe.definition.launch(context)),
               Effect.map((session) => ({
@@ -341,7 +586,11 @@ const makeOwnerWithDependencies = (
                       Effect.flatMap((value) => value?.close ?? Effect.void),
                       Effect.mapError(
                         (cause) =>
-                          new ServiceError({ operation: "close", message: cause.message, cause }),
+                          new ServiceError({
+                            operation: "close",
+                            message: cause.message,
+                            cause,
+                          }),
                       ),
                     ),
                   ),
@@ -380,7 +629,11 @@ const makeOwnerWithDependencies = (
                   Effect.flatMap((value) => value?.release ?? Effect.void),
                   Effect.mapError(
                     (cause) =>
-                      new ServiceError({ operation: "release", message: cause.message, cause }),
+                      new ServiceError({
+                        operation: "release",
+                        message: cause.message,
+                        cause,
+                      }),
                   ),
                 ),
               ),
@@ -388,7 +641,11 @@ const makeOwnerWithDependencies = (
                 removeInstance(id).pipe(
                   Effect.mapError(
                     (cause) =>
-                      new ServiceError({ operation: "state", message: cause.message, cause }),
+                      new ServiceError({
+                        operation: "state",
+                        message: cause.message,
+                        cause,
+                      }),
                   ),
                 ),
               ),
@@ -402,7 +659,10 @@ const makeOwnerWithDependencies = (
               Effect.flatMap((isDraining) =>
                 isDraining && ["start", "arm", "restart", "storage"].includes(operation)
                   ? Effect.fail(
-                      new ServiceError({ operation: "draining", message: "Owner is draining" }),
+                      new ServiceError({
+                        operation: "draining",
+                        message: "Owner is draining",
+                      }),
                     )
                   : orchestrator.admissionFor(id)(operation, transition),
               ),
@@ -428,10 +688,19 @@ const makeOwnerWithDependencies = (
               Effect.flatMap((address): Effect.Effect<BackendAddress, ProxyError> => {
                 if (address.kind === "unix") {
                   return address.path === undefined
-                    ? Effect.fail(new ProxyError({ message: "Unix endpoint has no path" }))
-                    : Effect.succeed({ path: `${address.path}/.s.PGSQL.${address.port}` });
+                    ? Effect.fail(
+                        new ProxyError({
+                          message: "Unix endpoint has no path",
+                        }),
+                      )
+                    : Effect.succeed({
+                        path: `${address.path}/.s.PGSQL.${address.port}`,
+                      });
                 }
-                return Effect.succeed({ host: address.host ?? "127.0.0.1", port: address.port });
+                return Effect.succeed({
+                  host: address.host ?? "127.0.0.1",
+                  port: address.port,
+                });
               }),
               Effect.mapError((cause) =>
                 cause instanceof ProxyError
@@ -450,14 +719,43 @@ const makeOwnerWithDependencies = (
                             prefix: "/realtime/v1/api",
                             upstreamPrefix: "/api",
                             upstreamHost: "realtime-dev",
+                            keyRewrite: { policy: "bearer" as const, keys: routeKeys },
                           },
                           {
                             prefix: route,
                             upstreamPrefix: "/socket",
                             upstreamHost: "realtime-dev",
+                            keyRewrite: { policy: "query" as const, keys: routeKeys },
                           },
                         ]
-                      : [{ prefix: route, upstreamPrefix: "/" }],
+                      : initial.service === "storage"
+                        ? [
+                            {
+                              prefix: `${route}/s3`,
+                              upstreamPrefix: "/s3",
+                            },
+                            {
+                              prefix: route,
+                              upstreamPrefix: "/",
+                              keyRewrite: { policy: "bearer" as const, keys: routeKeys },
+                            },
+                          ]
+                        : [
+                            {
+                              prefix: route,
+                              upstreamPrefix: "/",
+                              ...(initial.service === "rest" || initial.service === "auth"
+                                ? { keyRewrite: { policy: "bearer" as const, keys: routeKeys } }
+                                : initial.service === "functions"
+                                  ? {
+                                      keyRewrite: {
+                                        policy: "sb-api-key" as const,
+                                        keys: routeKeys,
+                                      },
+                                    }
+                                  : {}),
+                            },
+                          ],
                 }),
           };
           return [name, endpoint];
@@ -499,7 +797,12 @@ const makeOwnerWithDependencies = (
             name,
             value.pipe(
               Effect.mapError(
-                (cause) => new ServiceError({ operation: "output", message: cause.message, cause }),
+                (cause) =>
+                  new ServiceError({
+                    operation: "output",
+                    message: cause.message,
+                    cause,
+                  }),
               ),
             ),
           ],
@@ -520,7 +823,12 @@ const makeOwnerWithDependencies = (
         startAt: (revision, inputs, wake, guard) =>
           getCreation(id).pipe(
             Effect.mapError(
-              (cause) => new ServiceError({ operation: "get", message: cause.message, cause }),
+              (cause) =>
+                new ServiceError({
+                  operation: "get",
+                  message: cause.message,
+                  cause,
+                }),
             ),
             Effect.flatMap((creation) => mergeInputs(creation, inputs)),
             Effect.flatMap((candidate) => instance.startAt(revision, candidate, wake, guard)),
@@ -528,7 +836,12 @@ const makeOwnerWithDependencies = (
         restart: (revision, inputs, candidate, guard) =>
           getCreation(id).pipe(
             Effect.mapError(
-              (cause) => new ServiceError({ operation: "get", message: cause.message, cause }),
+              (cause) =>
+                new ServiceError({
+                  operation: "get",
+                  message: cause.message,
+                  cause,
+                }),
             ),
             Effect.flatMap((creation) => restartCreation(creation, candidate)),
             Effect.flatMap((creation) => mergeInputs(creation, inputs)),
@@ -536,12 +849,22 @@ const makeOwnerWithDependencies = (
           ),
         bind: namespace.bind.pipe(
           Effect.mapError(
-            (cause) => new ServiceError({ operation: "bind", message: cause.message, cause }),
+            (cause) =>
+              new ServiceError({
+                operation: "bind",
+                message: cause.message,
+                cause,
+              }),
           ),
         ),
         close: namespace.close.pipe(
           Effect.mapError(
-            (cause) => new ServiceError({ operation: "close", message: cause.message, cause }),
+            (cause) =>
+              new ServiceError({
+                operation: "close",
+                message: cause.message,
+                cause,
+              }),
           ),
           Effect.tap(() =>
             instance.get.pipe(
@@ -580,7 +903,12 @@ const makeOwnerWithDependencies = (
         orchestrator.register(registered).pipe(
           Effect.catch((cause) => namespace.release.pipe(Effect.andThen(Effect.fail(cause)))),
           Effect.mapError(
-            (cause) => new ServiceError({ operation: "register", message: String(cause), cause }),
+            (cause) =>
+              new ServiceError({
+                operation: "register",
+                message: String(cause),
+                cause,
+              }),
           ),
         ),
       );
@@ -622,7 +950,11 @@ const makeOwnerWithDependencies = (
               return namespace === undefined
                 ? Effect.fail(errorFor("status", "Service namespace is missing"))
                 : namespace.bindings.pipe(
-                    Effect.map((endpoints) => ({ ...value, config: creation, endpoints })),
+                    Effect.map((endpoints) => ({
+                      ...value,
+                      config: creation,
+                      endpoints,
+                    })),
                     Effect.mapError((cause) => errorFor("status", cause)),
                   );
             }),
@@ -656,7 +988,11 @@ const makeOwnerWithDependencies = (
                 .storage(
                   action.pipe(
                     Effect.mapError(
-                      (cause) => new ServiceError({ operation: "storage", message: String(cause) }),
+                      (cause) =>
+                        new ServiceError({
+                          operation: "storage",
+                          message: String(cause),
+                        }),
                     ),
                   ),
                 )
@@ -669,9 +1005,7 @@ const makeOwnerWithDependencies = (
           isDraining ? Effect.fail(errorFor("create", "Owner is draining")) : Effect.void,
         ),
       );
-      const creation = yield* Schema.decodeUnknownEffect(ServiceCreation)(input).pipe(
-        Effect.mapError((cause) => errorFor("create", cause)),
-      );
+      const creation = yield* resolveCredentials(input);
       const id = yield* crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) => errorFor("identity", cause)),
       );
@@ -719,54 +1053,98 @@ const makeOwnerWithDependencies = (
       );
     });
 
+    const replaceCreation = Effect.fn("Owner.replaceCreation")(function* (
+      id: string,
+      input: ServiceCreation,
+    ) {
+      const creation = yield* Schema.decodeEffect(ServiceCreation)(input).pipe(
+        Effect.mapError((cause) => errorFor("supabase", cause)),
+      );
+      const current = yield* getCreation(id).pipe(
+        Effect.mapError((cause) => errorFor("supabase", cause)),
+      );
+      if (creation.service !== current.service)
+        return yield* errorFor("supabase", `Reused service ${id} cannot change service kind`);
+      yield* persistCreation(id, creation);
+      return { id, creation };
+    });
+
     const supabaseComposition = Effect.fn("Owner.supabaseComposition")(
-      (inputs: ReadonlyArray<ServiceCreation>, options?: SupabaseCompositionOptions) =>
-        makeSupabaseComposition(
-          {
-            currentComposition: Ref.get(composition),
-            get: (id) => get(id).pipe(Effect.mapError(supabaseError)),
-            status: (id) =>
-              observation(id).pipe(
-                Effect.map(({ lifecycle, wakeEnabled }) => ({ lifecycle, wakeEnabled })),
-                Effect.mapError(supabaseError),
-              ),
-            create: (creation) => createService(creation).pipe(Effect.mapError(supabaseError)),
-            destroy: (id) => destroy(id).pipe(Effect.mapError(supabaseError)),
-            bind: (id) =>
-              orchestrator.get(id).pipe(
-                Effect.flatMap((registered) => registered.bind),
-                Effect.mapError(supabaseError),
-              ),
-            address: (id, endpoint, from) =>
-              Ref.get(namespaces).pipe(
-                Effect.flatMap((values) => {
-                  const namespace = values.get(id);
-                  return namespace === undefined
-                    ? Effect.fail(supabaseError("Service namespace is missing"))
-                    : namespace.address(endpoint, from).pipe(
-                        Effect.map(({ host, port }) => publicUrl(host, port)),
-                        Effect.mapError(supabaseError),
-                      );
-                }),
-              ),
-            output: (id, name) =>
-              orchestrator.get(id).pipe(
-                Effect.flatMap((registered) => {
-                  const output = registered.outputs[name];
-                  return output === undefined
-                    ? Effect.fail(supabaseError(`Missing output ${name}`))
-                    : output.pipe(Effect.mapError(supabaseError));
-                }),
-                Effect.mapError(supabaseError),
-              ),
-            updateCreation: (id, values) =>
-              updateCreation(id, values).pipe(Effect.mapError(supabaseError)),
-            configure: (configuration) =>
-              configureComposition(configuration).pipe(Effect.mapError(supabaseError)),
-          },
-          inputs,
-          options,
-        ).pipe(
+      (
+        inputs: ReadonlyArray<ServiceCreationInput>,
+        compositionOptions?: SupabaseCompositionOptions,
+      ) =>
+        Effect.gen(function* () {
+          const overrides: Record<string, string> = {};
+          for (const input of inputs) {
+            for (const [key, value] of Object.entries(credentialOverridesFor(input))) {
+              if (overrides[key] !== undefined && overrides[key] !== value)
+                return yield* errorFor(
+                  "credentials",
+                  `Credential override ${key} conflicts within the stack composition`,
+                );
+              overrides[key] = value;
+            }
+          }
+          yield* resolveStackCredentials(overrides, compositionOptions?.identity);
+          return yield* Effect.forEach(inputs, resolveCredentials);
+        }).pipe(
+          Effect.flatMap((creations) =>
+            makeSupabaseComposition(
+              {
+                currentComposition: Ref.get(composition),
+                get: (id) => get(id).pipe(Effect.mapError(supabaseError)),
+                status: (id) =>
+                  observation(id).pipe(
+                    Effect.map(({ lifecycle, wakeEnabled }) => ({
+                      lifecycle,
+                      wakeEnabled,
+                    })),
+                    Effect.mapError(supabaseError),
+                  ),
+                create: (creation) => createService(creation).pipe(Effect.mapError(supabaseError)),
+                destroy: (id) => destroy(id).pipe(Effect.mapError(supabaseError)),
+                bind: (id) =>
+                  orchestrator.get(id).pipe(
+                    Effect.flatMap((registered) => registered.bind),
+                    Effect.mapError(supabaseError),
+                  ),
+                address: (id, endpoint, from) =>
+                  Ref.get(namespaces).pipe(
+                    Effect.flatMap((values) => {
+                      const namespace = values.get(id);
+                      return namespace === undefined
+                        ? Effect.fail(supabaseError("Service namespace is missing"))
+                        : namespace.address(endpoint, from).pipe(
+                            Effect.map(({ host, port }) => publicUrl(host, port)),
+                            Effect.mapError(supabaseError),
+                          );
+                    }),
+                  ),
+                output: (id, name) =>
+                  orchestrator.get(id).pipe(
+                    Effect.flatMap((registered) => {
+                      const output = registered.outputs[name];
+                      return output === undefined
+                        ? Effect.fail(supabaseError(`Missing output ${name}`))
+                        : output.pipe(Effect.mapError(supabaseError));
+                    }),
+                    Effect.mapError(supabaseError),
+                  ),
+                updateCreation: (id, values) =>
+                  updateCreation(id, values).pipe(Effect.mapError(supabaseError)),
+                replaceCreation: (id, creation) =>
+                  replaceCreation(id, creation).pipe(Effect.mapError(supabaseError)),
+                configure: (configuration) =>
+                  configureComposition(configuration).pipe(Effect.mapError(supabaseError)),
+              },
+              creations,
+              compositionOptions,
+            ),
+          ),
+          Effect.catch((cause) =>
+            clearCredentialsIfUnused().pipe(Effect.andThen(Effect.fail(cause))),
+          ),
           Effect.mapError((cause) => {
             if (cause instanceof OwnerError) return cause;
             if (cause instanceof SupabaseCompositionError && cause.cause instanceof OwnerError)
@@ -789,12 +1167,19 @@ const makeOwnerWithDependencies = (
       operation("ready", orchestrator.get(id).pipe(Effect.flatMap((value) => value.core.ready))),
     );
     const stop = Effect.fn("Owner.stop")((id: string) => operation("stop", orchestrator.stop(id)));
-    const restart = Effect.fn("Owner.restart")((id: string, input?: unknown) =>
-      operation(
-        "restart",
-        input === undefined ? orchestrator.restart(id) : orchestrator.restart(id, input),
-      ),
-    );
+    const restart = Effect.fn("Owner.restart")(function* (id: string, input?: unknown) {
+      const effect =
+        input === undefined
+          ? orchestrator.restart(id)
+          : Effect.gen(function* () {
+              const previous = yield* getCreation(id);
+              const next = yield* resolveCredentials(input);
+              if (next.service !== previous.service)
+                return yield* errorFor("restart", "Service kind cannot change");
+              return yield* orchestrator.restart(id, next);
+            });
+      return yield* operation("restart", effect);
+    });
     const destroy = Effect.fn("Owner.destroy")((id: string) =>
       operation("destroy", orchestrator.destroy(id)),
     );
@@ -822,7 +1207,9 @@ const makeOwnerWithDependencies = (
                     value.service === "database"
                       ? Effect.succeed(Redacted.value(value.config.databasePassword))
                       : Effect.fail(
-                          new EndpointError({ message: "Credentials require a database" }),
+                          new EndpointError({
+                            message: "Credentials require a database",
+                          }),
                         ),
                   ),
                   Effect.mapError((cause) =>
@@ -843,7 +1230,7 @@ const makeOwnerWithDependencies = (
       ),
     );
     const compose = Effect.fn("Owner.compose")(
-      (creations: ReadonlyArray<ServiceCreation>, options?: SupabaseCompositionOptions) =>
+      (creations: ReadonlyArray<ServiceCreationInput>, options?: SupabaseCompositionOptions) =>
         compositionGate.withPermits(1)(supabaseComposition(creations, options)),
     );
     const configure = Effect.fn("Owner.configure")((input: CompositionConfig) =>
@@ -964,7 +1351,10 @@ const makeOwnerWithDependencies = (
         get,
         list: Ref.get(recipes).pipe(
           Effect.map((values) =>
-            [...values].map(([id, recipe]) => ({ id, creation: recipe.creation })),
+            [...values].map(([id, recipe]) => ({
+              id,
+              creation: recipe.creation,
+            })),
           ),
           Effect.mapError((cause) => errorFor("list", cause)),
         ),
@@ -1030,5 +1420,10 @@ export const layer = (options: Omit<OwnerOptions, "state">) =>
     }),
   ).pipe(
     Layer.provide(Layer.fresh(Orchestrator.layer)),
-    Layer.provide(Network.layer({ stackId: options.saved.id, runtime: options.saved.runtime })),
+    Layer.provide(
+      Network.layer({
+        stackId: options.saved.id,
+        runtime: options.saved.runtime,
+      }),
+    ),
   );

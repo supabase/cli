@@ -97,6 +97,9 @@ const buildDefines = {
   ),
   "process.env.SUPABASE_CLI_POSTHOG_KEY": JSON.stringify(process.env.POSTHOG_API_KEY ?? ""),
   "process.env.SUPABASE_CLI_POSTHOG_HOST": JSON.stringify(process.env.POSTHOG_ENDPOINT ?? ""),
+  // Skips msgpackr's startup probe for its native addon at the build host's store path, which
+  // on macOS goes through the automounter and can hang every command (supabase/cli#6771).
+  "process.env.MSGPACKR_NATIVE_ACCELERATION_DISABLED": JSON.stringify("true"),
 };
 
 type BunTarget = (typeof TARGETS)[number]["bunTarget"];

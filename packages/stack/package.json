@@ -6,11 +6,13 @@
   "exports": {
     ".": "./src/index.ts",
     "./effect": "./src/effect.ts",
+    "./defaults": "./src/Defaults.ts",
     "./tools": "./src/Tools.ts",
     "./internal/dispatch": "./src/internal/dispatch.ts",
     "./internal/identity": "./src/identity/Identity.ts",
     "./internal/functions/serve-main": "./src/functions/serve.main.ts",
-    "./internal/postgres-artifact": "./src/internal/postgres-artifact.ts"
+    "./internal/postgres-artifact": "./src/internal/postgres-artifact.ts",
+    "./internal/service-catalog": "./src/internal/service-catalog.ts"
   },
   "scripts": {
     "test": "pnpm run test:unit && pnpm run test:integration",

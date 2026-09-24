@@ -1575,6 +1575,7 @@ describe("db start stack backend", () => {
       credentialsCalled?: boolean;
     },
     onDestroy: () => void = () => {},
+    version = databaseCreation.config.version,
   ): DatabaseInstance => ({
     id: "database-primary",
     service: "database",
@@ -1596,7 +1597,10 @@ describe("db start stack backend", () => {
       endpoints: state.running
         ? [{ name: "sql", protocol: "tcp" as const, host: "127.0.0.1", port: 54329 }]
         : [],
-      config: databaseCreation,
+      config: {
+        ...databaseCreation,
+        config: { ...databaseCreation.config, version },
+      },
       lifecycle: state.running ? ("running" as const) : ("stopped" as const),
       health: state.running ? ("healthy" as const) : undefined,
       error: undefined,
@@ -1620,17 +1624,26 @@ describe("db start stack backend", () => {
     resetData: Effect.die("unused"),
   });
 
-  const stackFixture = (existing: boolean, running = false, standalone = false) => {
+  const stackFixture = (
+    existing: boolean,
+    running = false,
+    standalone = false,
+    version = databaseCreation.config.version,
+  ) => {
     const state: { running: boolean; destroyed: boolean; credentialsCalled?: boolean } = {
       running,
       destroyed: false,
     };
     let members: ReadonlyArray<DatabaseInstance> = [];
     let registered: ReadonlyArray<DatabaseInstance> = [];
-    const database = databaseInstance(state, () => {
-      members = [];
-      registered = [];
-    });
+    const database = databaseInstance(
+      state,
+      () => {
+        members = [];
+        registered = [];
+      },
+      version,
+    );
     members = existing && !standalone ? [database] : [];
     registered = existing ? [database] : [];
     const stack: Stack = {
@@ -1642,6 +1655,22 @@ describe("db start stack backend", () => {
             ? Effect.succeed(database)
             : Effect.fail(new StackError({ operation: "get", message: `unknown ${id}` })),
         list: Effect.sync(() => registered),
+      },
+      credentials: {
+        get: Effect.succeed({
+          jwtSecret: "secret",
+          postgresRootKey: "root-key",
+          databasePassword: "secret",
+          publishableKey: "sb_publishable_test",
+          secretKey: "sb_secret_test",
+          anonKey: "anon-token",
+          serviceRoleKey: "service-token",
+          jwks: '{"keys":[]}',
+          gotrueJwtKeys: "[]",
+          remoteJwks: "[]",
+          anonKeyIsOverride: false,
+          serviceRoleKeyIsOverride: false,
+        }),
       },
       composition: {
         describe: Effect.sync(() => ({
@@ -1730,11 +1759,33 @@ describe("db start stack backend", () => {
     });
   });
 
-  it.live("resumes the existing database without replacing its composition", () => {
-    const { layer, out, catalogApplied } = setup({ recordCatalog: true });
-    const fixture = stackFixture(true);
+  it.live(
+    "resumes the existing database when its pinned version matches the configured major",
+    () => {
+      const { layer, out, catalogApplied } = setup({ recordCatalog: true });
+      const fixture = stackFixture(true);
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              layer,
+              stackBackendLayer("stack"),
+              stackLayer(tempRoot.current, fixture, true),
+            ),
+          ),
+        );
+        expect(fixture.state.running).toBe(true);
+        expect(catalogApplied).toEqual([]);
+        expect(out.stderrText).not.toContain("already running");
+      });
+    },
+  );
+
+  it.live("rejects a different database major when resuming the saved stack", () => {
+    const { layer, catalogApplied } = setup({ recordCatalog: true });
+    const fixture = stackFixture(true, false, false, "15.13.0.161");
     return Effect.gen(function* () {
-      yield* dbStart(DEFAULT_FLAGS).pipe(
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
         Effect.provide(
           Layer.mergeAll(
             layer,
@@ -1742,10 +1793,11 @@ describe("db start stack backend", () => {
             stackLayer(tempRoot.current, fixture, true),
           ),
         ),
+        Effect.exit,
       );
-      expect(fixture.state.running).toBe(true);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fixture.state.running).toBe(false);
       expect(catalogApplied).toEqual([]);
-      expect(out.stderrText).not.toContain("already running");
     });
   });
 

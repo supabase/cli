@@ -30,6 +30,8 @@ const result = await Bun.build({
     SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(
       await Effect.runPromise(bundleStackFunctionsServeMainTemplate()),
     ),
+    // Skips msgpackr's native addon probe at the build host's path, which can hang macOS startup.
+    "process.env.MSGPACKR_NATIVE_ACCELERATION_DISABLED": JSON.stringify("true"),
   },
 });
 for (const log of result.logs) {

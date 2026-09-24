@@ -4,7 +4,7 @@ import { Effect, Exit, FileSystem, Layer, Redacted } from "effect";
 import { makeServiceRecipe } from "./Catalog.ts";
 
 const options = (root: string) => ({
-  stackId: "catalog-test",
+  stackId: "catalog-recipe",
   instanceId: "instance",
   root,
   cacheRoot: `${root}/cache`,

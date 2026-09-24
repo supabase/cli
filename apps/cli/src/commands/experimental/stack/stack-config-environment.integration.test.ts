@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer } from "effect";
-import type { ServiceCreation } from "@supabase/stack/effect";
+import type { ServiceCreationInput } from "@supabase/stack/effect";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
@@ -28,7 +28,7 @@ const withEnvironment = <A, E, R>(
 ): Effect.Effect<A, E, R> =>
   Object.entries(values).reduce((effect, [name, value]) => withEnvVar(name, value, effect), body);
 
-const service = (services: ReadonlyArray<ServiceCreation>, name: string) =>
+const service = (services: ReadonlyArray<ServiceCreationInput>, name: string) =>
   services.find((entry) => entry.service === name);
 
 describe("loadStackConfig environment overrides", () => {

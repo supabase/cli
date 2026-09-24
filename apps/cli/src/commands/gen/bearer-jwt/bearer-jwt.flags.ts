@@ -1,3 +1,4 @@
+import { DateTime } from "effect";
 import { parseGoDuration } from "../../../command-internal/go-duration.ts";
 import { bearerJwtErrorMessage } from "./bearer-jwt.errors.ts";
 
@@ -144,10 +145,11 @@ export function parseBearerJwtExp(value: string): BearerJwtInstant {
   // any two-digit year in `[0, 99]` (e.g. year 1 becomes 1901), but a valid
   // RFC3339 year in that range must be accepted literally. `setUTCFullYear`
   // has no such remapping, so building the instant this way avoids it.
-  const parsedDate = new Date(0);
-  parsedDate.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
-  parsedDate.setUTCHours(Number(hour), Number(minute), Number(second), 0);
-  const wholeSeconds = parsedDate.getTime() / 1000 - offsetSeconds;
+  const parsedDate = DateTime.mutateUtc(DateTime.makeUnsafe(0), (date) => {
+    date.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
+    date.setUTCHours(Number(hour), Number(minute), Number(second), 0);
+  });
+  const wholeSeconds = DateTime.toEpochMillis(parsedDate) / 1000 - offsetSeconds;
   const nanos = fraction === undefined ? 0 : Number(fraction.slice(0, 9).padEnd(9, "0"));
   return { wholeSeconds, nanos };
 }

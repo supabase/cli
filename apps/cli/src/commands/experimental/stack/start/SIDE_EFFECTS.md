@@ -6,8 +6,14 @@ It creates or resumes the stack for the project and optional `--stack` name, or 
 
 ## Configuration and state
 
-The CLI loads the target project's `supabase/config.toml`, supported environment overrides, and
-project dotenv files. It validates the supported configuration before creating service definitions.
+For a new stack or a stopped existing stack, the CLI loads the target project's
+`supabase/config.toml`, supported environment overrides, and project dotenv files. It validates the
+supported configuration before creating service definitions. When the existing composition is
+already running, start reports its current endpoints and returns without reading or applying project
+configuration.
+
+If the stack is in a partial lifecycle state, start fails with guidance to stop the stack and start
+it again before applying configuration.
 Auth policies, OAuth providers, hooks, MFA, SMTP, email subjects and notification controls are
 forwarded to Auth. REST search paths, pooler limits, Realtime settings, Studio settings, Storage
 S3 protocol/vector controls, and configured Vector ports are forwarded to their services.
@@ -29,9 +35,9 @@ Native startup refuses root because PostgreSQL `initdb` cannot run as root.
 
 Database is eager by default. Other services are lazy; traffic wakes them through their listeners.
 Lazy services with idle policies stop after 60 seconds without traffic; Functions has no automatic
-idle stop. `--eager` makes all selected services eager. Changing activation policy can stop and
-restart the composition, including when a later invocation omits an earlier `--eager` flag.
-`--preparation` selects on-demand or background artifact preparation.
+idle stop. `--eager` makes all selected services eager. Changes to activation policy take effect
+after stopping and starting the stack, including when a later invocation omits an earlier `--eager`
+flag. `--preparation` selects on-demand or background artifact preparation.
 
 When Functions is selected, the CLI reads and validates `supabase/functions/.env`, ignoring reserved
 `SUPABASE_*` entries. `edge_runtime.secrets` overrides that file, while `functions.<name>.env`
@@ -39,9 +45,10 @@ provides per-function values from project environment references. Per-function e
 entrypoints, import maps and static files are forwarded to the worker bootstrap. Configured paths
 are relative to `supabase/` and must remain within the project; Docker mounts that project read-only.
 The inspector port is retained as an endpoint intent and does not enable debugging by itself.
-If custom env values, per-function settings or default JWT verification differ from the saved member,
-start restarts Functions in place before ordinary composition start. A stopped member briefly launches
-and stops again so normal lazy activation is retained; its identity and endpoints stay unchanged.
+After an explicit stack stop, start applies changed Functions env values, per-function settings,
+files root, and JWT verification when it updates the saved composition. Existing service identities,
+endpoints, and lazy activation are retained. Running start calls do not refresh Functions from
+changed project files; stop the stack and start it again to apply those changes.
 
 ## Service selection
 
@@ -49,14 +56,14 @@ and stops again so normal lazy activation is retained; its identity and endpoint
 `storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`. Database cannot be excluded.
 Storage includes its Imgproxy companion, Studio includes Pgmeta, and Analytics includes Vector.
 Studio requires REST; excluding REST while keeping Studio fails before stopping the composition.
-The native Vector artifact currently ships a demo configuration with its health API disabled.
-CLI log collection configuration remains unimplemented; exclude Analytics to avoid Vector readiness
-timeouts until that configuration is supplied.
+Vector runs a stack-owned default configuration that enables its health API and forwards no service
+logs; log collection into Analytics is not implemented yet.
 
-Changing exclusions stops the composition and reuses the existing service identities, data, and
-ports. Removed services remain saved and stopped so including them again can reuse them. The
+After an explicit stop, changed exclusions reuse existing service identities, data, and ports.
+Removed services remain saved and stopped so including them again can reuse them. The
 project configuration file is unchanged. Incompatible version, endpoint, or supported configuration
-changes fail before stopping existing services; they are not silently applied to saved instances.
+changes fail before modifying the stopped composition; they are not silently applied to saved
+instances.
 
 ## First startup and retries
 

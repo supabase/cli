@@ -128,6 +128,12 @@ const OAuthServer = Schema.Struct({
   allow_dynamic_registration: Schema.Boolean,
 });
 
+const Webauthn = Schema.Struct({
+  rpId: Schema.String,
+  rpDisplayName: Schema.String,
+  rpOrigins: Schema.Array(Schema.String),
+});
+
 /** Authentication policy passed to the Auth process. */
 export const Settings = Schema.Struct({
   additionalRedirectUrls: Schema.optionalKey(Schema.String),
@@ -138,6 +144,8 @@ export const Settings = Schema.Struct({
   minimumPasswordLength: Schema.optionalKey(Schema.Finite),
   passwordRequirements: Schema.optionalKey(Schema.String),
   jwtIssuer: Schema.optionalKey(Schema.String),
+  passkeyEnabled: Schema.optionalKey(Schema.Boolean),
+  webauthn: Schema.optionalKey(Webauthn),
   rateLimit: Schema.optionalKey(RateLimit),
   email: Schema.optionalKey(Email),
   sms: Schema.optionalKey(Sms),
@@ -154,7 +162,7 @@ export interface Settings extends Schema.Schema.Type<typeof Settings> {}
 /** Converts Auth policy into the upstream process configuration. */
 export const settingsEnvironment = (
   settings: Settings | undefined,
-  externalUrl: string,
+  jwtIssuer: string,
 ): Record<string, string> => {
   if (settings === undefined) return {};
   const env: Record<string, string> = {};
@@ -168,7 +176,12 @@ export const settingsEnvironment = (
   put("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED", settings.enableAnonymousSignIns);
   put("GOTRUE_PASSWORD_MIN_LENGTH", settings.minimumPasswordLength);
   put("GOTRUE_PASSWORD_REQUIRED_CHARACTERS", settings.passwordRequirements);
-  put("GOTRUE_JWT_ISSUER", settings.jwtIssuer);
+  put("GOTRUE_PASSKEY_ENABLED", settings.passkeyEnabled);
+  if (settings.webauthn !== undefined) {
+    put("GOTRUE_WEBAUTHN_RP_ID", settings.webauthn.rpId);
+    put("GOTRUE_WEBAUTHN_RP_DISPLAY_NAME", settings.webauthn.rpDisplayName);
+    put("GOTRUE_WEBAUTHN_RP_ORIGINS", settings.webauthn.rpOrigins.join(","));
+  }
   if (settings.email !== undefined) {
     const email = settings.email;
     put("GOTRUE_EXTERNAL_EMAIL_ENABLED", email.enable_signup);
@@ -181,13 +194,14 @@ export const settingsEnvironment = (
     for (const [name, template] of Object.entries(email.template))
       put(`GOTRUE_MAILER_SUBJECTS_${name.toUpperCase()}`, template.subject);
     for (const [name, notification] of Object.entries(email.notification)) {
-      put(`GOTRUE_MAILER_NOTIFICATIONS_${name.toUpperCase()}_ENABLED`, notification.enabled);
-      put(`GOTRUE_MAILER_SUBJECTS_${name.toUpperCase()}_NOTIFICATION`, notification.subject);
+      if (notification.enabled) {
+        put(`GOTRUE_MAILER_NOTIFICATIONS_${name.toUpperCase()}_ENABLED`, true);
+        put(`GOTRUE_MAILER_SUBJECTS_${name.toUpperCase()}_NOTIFICATION`, notification.subject);
+      }
     }
   }
   if (settings.rateLimit !== undefined) {
     const limits = settings.rateLimit;
-    put("GOTRUE_RATE_LIMIT_EMAIL_SENT", limits.email_sent);
     put("GOTRUE_RATE_LIMIT_SMS_SENT", limits.sms_sent);
     put("GOTRUE_RATE_LIMIT_ANONYMOUS_USERS", limits.anonymous_users);
     put("GOTRUE_RATE_LIMIT_TOKEN_REFRESH", limits.token_refresh);
@@ -256,13 +270,12 @@ export const settingsEnvironment = (
   for (const [name, provider] of Object.entries(settings.external ?? {})) {
     const prefix = `GOTRUE_EXTERNAL_${name.toUpperCase()}`;
     put(`${prefix}_ENABLED`, provider.enabled);
-    if (!provider.enabled) continue;
     put(`${prefix}_CLIENT_ID`, provider.client_id);
-    put(`${prefix}_SECRET`, provider.secret);
+    put(`${prefix}_SECRET`, provider.secret ?? "");
     put(`${prefix}_URL`, provider.url || undefined);
     put(
       `${prefix}_REDIRECT_URI`,
-      provider.redirect_uri || `${externalUrl.replace(/\/+$/u, "")}/callback`,
+      provider.redirect_uri || `${jwtIssuer.replace(/\/+$/u, "")}/callback`,
     );
     put(`${prefix}_SKIP_NONCE_CHECK`, provider.skip_nonce_check);
     put(`${prefix}_EMAIL_OPTIONAL`, provider.email_optional);

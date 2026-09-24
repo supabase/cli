@@ -270,7 +270,7 @@ export function computeLogRow(options: {
     stream,
     event_message: options.message ?? "compute shim: listening on :8080 (serving)",
     log_attributes: {
-      source: stream,
+      subservice: stream,
       worker: options.compute ?? "api",
       project: COMPUTE_PROJECT_REF,
       ...options.attributes,

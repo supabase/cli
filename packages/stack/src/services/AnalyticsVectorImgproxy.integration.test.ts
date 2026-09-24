@@ -8,7 +8,7 @@ import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-rela
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 
 const options = (root: string) => ({
-  stackId: "catalog-test",
+  stackId: "catalog-analytics",
   instanceId: "instance",
   root,
   cacheRoot: `${root}/cache`,
@@ -87,8 +87,7 @@ describe("service catalog", () => {
           yield* fs.writeFileString(
             `${root}/vector.yaml`,
             "sources:\n  dummy:\n    type: demo_logs\n    format: syslog\n    interval: 60\n" +
-              "sinks:\n  print:\n    type: console\n    inputs: [dummy]\n    encoding:\n      codec: json\n" +
-              "api:\n  enabled: true\n  address: 0.0.0.0:9001\n",
+              "sinks:\n  print:\n    type: console\n    inputs: [dummy]\n    encoding:\n      codec: json\n",
           );
           const vector = yield* makeService(vectorRecipe.definition, {
             id: "vector",

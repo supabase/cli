@@ -1,5 +1,5 @@
 import { ProjectConfigParseError } from "@supabase/config";
-import { Effect } from "effect";
+import { Cause, Effect } from "effect";
 
 /**
  * Wraps a `@supabase/config` convergence call (`fromApiProjectConfig`, `fromConfigDocument`,
@@ -9,9 +9,9 @@ import { Effect } from "effect";
 export function configProjectConfigTry<A>(
   thunk: () => A,
 ): Effect.Effect<A, ProjectConfigParseError> {
-  return Effect.try({ try: thunk, catch: (cause) => cause }).pipe(
-    Effect.catch((cause) =>
-      cause instanceof ProjectConfigParseError ? Effect.fail(cause) : Effect.die(cause),
-    ),
-  );
+  return Effect.try({
+    try: thunk,
+    catch: (cause) =>
+      cause instanceof ProjectConfigParseError ? cause : new Cause.UnknownError(cause),
+  }).pipe(Effect.catchTag("UnknownError", (error) => Effect.die(error.cause)));
 }

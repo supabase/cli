@@ -1,12 +1,10 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
-import { ENV_CAPTURE_REGEX, resolveCliConfigSubtree } from "@supabase/config/internal";
+import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
-import {
-  DEFAULT_LOCAL_JWT_SECRET,
-  DEFAULT_POSTGRES_ROOT_KEY,
-  type ServiceCreation as ServiceCreationType,
-} from "@supabase/stack/effect";
-import { Crypto, Effect, Data, FileSystem, Path, Redacted, SchemaIssue } from "effect";
+import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
+import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
+import { Crypto, Effect, Data, FileSystem, Path, Redacted, Schema, SchemaIssue } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 
 import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
@@ -18,6 +16,7 @@ declare const SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 import {
   decryptAuthSecret,
   resolveJwtSecret,
+  resolveConfiguredSigningKeys,
   envOverride,
   envOverrideApiMaxRows,
   envOverrideAuthPasswordRequirements,
@@ -36,17 +35,26 @@ import {
   resolveAuthCaptcha,
   resolveAuthEmail,
   resolveAuthEmailSmtp,
+  resolveAuthExternalUrl,
   resolveAuthExternalProviders,
   resolveAuthHooks,
   resolveAuthMfa,
   resolveAuthSms,
   resolveDbSettingsEnvOverrides,
   resolveGotrueOAuthServer,
+  resolveGotruePasskeyWebauthn,
   resolveGotrueRateLimit,
   resolveGotrueSessions,
   resolveGotrueWeb3,
   strToArr,
 } from "./local-config-values.ts";
+import { generateAsymmetricGoJwt } from "./go-jwt.ts";
+import {
+  resolveRemoteJwks,
+  resolveThirdPartyIssuerUrl,
+  thirdPartyIssuerUrlUnchecked,
+  toPublicJwk,
+} from "../shared/auth/jwks.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -63,14 +71,27 @@ export class StackConfigError extends Data.TaggedError("StackConfigError")<{
 }
 
 interface StackStartConfig {
-  readonly jwtSecret: Redacted.Redacted<string>;
   readonly creations: (
     stackId: string,
-    options?: { readonly jwtSecret?: Redacted.Redacted<string> },
   ) => Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError>;
   readonly source: CliConfig;
   readonly projectEnvValues: Readonly<Record<string, string>>;
   readonly document?: Record<string, unknown>;
+  readonly remoteJwks: Effect.Effect<string | undefined, StackConfigError>;
+  readonly identity: Effect.Effect<
+    {
+      readonly publishableKey?: string;
+      readonly secretKey?: string;
+      readonly anonKey?: string;
+      readonly serviceRoleKey?: string;
+      readonly anonKeyIsOverride: boolean;
+      readonly serviceRoleKeyIsOverride: boolean;
+      readonly gotrueJwtKeys?: string;
+      readonly publicSigningKeys?: string;
+      readonly remoteJwks?: string;
+    },
+    StackConfigError
+  >;
 }
 
 type StackConfigEffect = Effect.Effect<
@@ -81,6 +102,8 @@ type StackConfigEffect = Effect.Effect<
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const encodeJwkArray = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.Unknown)));
 
 const withoutUndefined = (value: unknown): unknown => {
   if (Redacted.isRedacted(value)) return value;
@@ -260,83 +283,6 @@ const resolveAuthOverrides = (
           sender_name: smtp.senderName,
         };
   const resolvedSms = resolveAuthSms(authDocument, auth.sms, env);
-  const thirdParty = {
-    firebase: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
-        auth.third_party.firebase.enabled,
-        "auth.third_party.firebase.enabled",
-        env,
-      ),
-      project_id: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
-        auth.third_party.firebase.project_id,
-        env,
-      ),
-    },
-    auth0: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
-        auth.third_party.auth0.enabled,
-        "auth.third_party.auth0.enabled",
-        env,
-      ),
-      tenant: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
-        auth.third_party.auth0.tenant,
-        env,
-      ),
-      tenant_region: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
-        auth.third_party.auth0.tenant_region,
-        env,
-      ),
-    },
-    aws_cognito: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
-        auth.third_party.aws_cognito.enabled,
-        "auth.third_party.aws_cognito.enabled",
-        env,
-      ),
-      user_pool_id: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
-        auth.third_party.aws_cognito.user_pool_id,
-        env,
-      ),
-      user_pool_region: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
-        auth.third_party.aws_cognito.user_pool_region,
-        env,
-      ),
-    },
-    clerk: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
-        auth.third_party.clerk.enabled,
-        "auth.third_party.clerk.enabled",
-        env,
-      ),
-      domain: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
-        auth.third_party.clerk.domain,
-        env,
-      ),
-    },
-    workos: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
-        auth.third_party.workos.enabled,
-        "auth.third_party.workos.enabled",
-        env,
-      ),
-      issuer_url: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
-        auth.third_party.workos.issuer_url,
-        env,
-      ),
-    },
-  };
   return {
     ...auth,
     enabled: envOverrideBool("SUPABASE_AUTH_ENABLED", auth.enabled, "auth.enabled", env),
@@ -412,7 +358,6 @@ const resolveAuthOverrides = (
     external: externalResolved,
     web3: resolveGotrueWeb3(auth.web3, env),
     oauth_server: resolveGotrueOAuthServer(auth.oauth_server, env),
-    third_party: thirdParty,
   };
 };
 
@@ -618,11 +563,89 @@ const resolveEffectiveCliConfig = (
     "auth.enabled",
     env,
   );
+  const thirdParty = {
+    firebase: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
+        config.auth.third_party.firebase.enabled,
+        "auth.third_party.firebase.enabled",
+        env,
+      ),
+      project_id: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
+        config.auth.third_party.firebase.project_id,
+        env,
+      ),
+    },
+    auth0: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
+        config.auth.third_party.auth0.enabled,
+        "auth.third_party.auth0.enabled",
+        env,
+      ),
+      tenant: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
+        config.auth.third_party.auth0.tenant,
+        env,
+      ),
+      tenant_region: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
+        config.auth.third_party.auth0.tenant_region,
+        env,
+      ),
+    },
+    aws_cognito: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
+        config.auth.third_party.aws_cognito.enabled,
+        "auth.third_party.aws_cognito.enabled",
+        env,
+      ),
+      user_pool_id: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
+        config.auth.third_party.aws_cognito.user_pool_id,
+        env,
+      ),
+      user_pool_region: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
+        config.auth.third_party.aws_cognito.user_pool_region,
+        env,
+      ),
+    },
+    clerk: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
+        config.auth.third_party.clerk.enabled,
+        "auth.third_party.clerk.enabled",
+        env,
+      ),
+      domain: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
+        config.auth.third_party.clerk.domain,
+        env,
+      ),
+    },
+    workos: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
+        config.auth.third_party.workos.enabled,
+        "auth.third_party.workos.enabled",
+        env,
+      ),
+      issuer_url: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
+        config.auth.third_party.workos.issuer_url,
+        env,
+      ),
+    },
+  };
   // JWT security settings apply to non-Auth workloads too, so resolve them
   // regardless of whether the Auth capability is enabled.
   const authResolved = {
     ...(authEnabled ? resolveAuthOverrides(config.auth, document, env) : config.auth),
     enabled: authEnabled,
+    third_party: thirdParty,
     jwt_issuer: envOverride("SUPABASE_AUTH_JWT_ISSUER", config.auth.jwt_issuer, env),
     signing_keys_path: envOverride(
       "SUPABASE_AUTH_SIGNING_KEYS_PATH",
@@ -699,31 +722,17 @@ const resolveEffectiveCliConfig = (
 };
 
 const unsupportedConfigPaths = [
-  "auth.third_party",
-  "auth.publishable_key",
-  "auth.secret_key",
-  "auth.anon_key",
-  "auth.service_role_key",
-  "api.tls",
-  "analytics.gcp_project_id",
-  "analytics.gcp_project_number",
-  "analytics.gcp_jwt_path",
-  "edge_runtime.deno_version",
-  "storage.analytics",
-  "experimental.orioledb_version",
-  "experimental.s3_host",
-  "experimental.s3_region",
-  "experimental.s3_access_key",
-  "experimental.s3_secret_key",
+  { path: "api.tls", active: (config: CliConfig) => config.api.enabled },
+  { path: "analytics.gcp_project_id", active: (config: CliConfig) => config.analytics.enabled },
+  {
+    path: "analytics.gcp_project_number",
+    active: (config: CliConfig) => config.analytics.enabled,
+  },
+  { path: "analytics.gcp_jwt_path", active: (config: CliConfig) => config.analytics.enabled },
+  { path: "edge_runtime.deno_version", active: (config: CliConfig) => config.edge_runtime.enabled },
+  { path: "storage.analytics", active: (config: CliConfig) => config.storage.enabled },
+  { path: "experimental.orioledb_version", active: (_config: CliConfig) => true },
 ] as const;
-
-/** An unset `env(NAME)` stays as that literal, which is not a configured value. */
-const unresolvedEnvLiteral = (value: unknown): boolean => {
-  if (typeof value === "string") return ENV_CAPTURE_REGEX.test(value);
-  if (!Redacted.isRedacted(value)) return false;
-  const inner = Redacted.value(value);
-  return typeof inner === "string" && ENV_CAPTURE_REGEX.test(inner);
-};
 
 const pathValue = (value: unknown, path: string): unknown => {
   let current = value;
@@ -782,19 +791,20 @@ const configValidationError = (config: CliConfig): string | undefined => {
       if (notification.enabled && notification.content_path !== "")
         return `auth.email.notification.${name}.content_path requires template serving, which is not supported by the experimental stack`;
   }
-  if (config.auth.signing_keys_path !== undefined)
-    return "auth.signing_keys_path is unsupported by the experimental stack";
-  for (const path of unsupportedConfigPaths) {
-    if (path.startsWith("auth.") && !config.auth.enabled) continue;
+  for (const { path, active } of unsupportedConfigPaths) {
+    if (!active(config)) continue;
     const value = pathValue(config, path);
-    if (path.startsWith("experimental.s3_") && unresolvedEnvLiteral(value)) continue;
     const baseline = pathValue(defaults, path);
     const difference = firstDifference(value, baseline, path);
     if (difference !== undefined) return `${difference} is unsupported by the experimental stack`;
   }
   if (config.analytics.enabled && config.analytics.backend !== "postgres")
     return "analytics.backend must be postgres for the experimental stack";
-  if (Object.keys(config.storage.vector.buckets).length > 0)
+  if (
+    config.storage.enabled &&
+    config.storage.vector.enabled &&
+    Object.keys(config.storage.vector.buckets).length > 0
+  )
     return "storage.vector settings are unsupported by the experimental stack";
   if (config.db.major_version !== 15 && config.db.major_version !== 17)
     return "db.major_version must be 15 or 17 for the experimental stack";
@@ -847,8 +857,112 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       if (validationError !== undefined)
         return yield* new StackConfigError({ message: validationError });
 
-      const authConfig = yield* resolveAuthConfig(validatedConfig.auth, validatedConfig.local_smtp);
+      const externalProviders = yield* Effect.try({
+        try: () =>
+          resolveAuthExternalProviders(
+            section(context.loaded?.document, "auth"),
+            validatedConfig.auth.external,
+            context.projectEnvValues,
+          ),
+        catch: (cause) =>
+          new StackConfigError({
+            message: cause instanceof Error ? cause.message : "invalid auth provider config",
+          }),
+      });
+      const authConfig = yield* resolveAuthConfig(
+        validatedConfig.auth,
+        validatedConfig.local_smtp,
+        {
+          authExternalUrl: resolveAuthExternalUrl(
+            context.loaded?.document,
+            context.projectEnvValues,
+          ),
+          apiExternalUrl: validatedConfig.api.external_url,
+          externalProviders,
+          ...resolveGotruePasskeyWebauthn(context.loaded?.document, context.projectEnvValues),
+        },
+      );
       const path = yield* Path.Path;
+      const auth = validatedConfig.auth;
+      const issuer = yield* Effect.try({
+        try: () => {
+          const resolved = auth.enabled
+            ? resolveThirdPartyIssuerUrl(auth.third_party)
+            : thirdPartyIssuerUrlUnchecked(auth.third_party);
+          return resolved === undefined || resolved.length === 0 ? undefined : resolved;
+        },
+        catch: (cause) =>
+          new StackConfigError({
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+      const localIdentity = Effect.try({
+        try: () => {
+          const configured = (value: string | undefined) =>
+            value === undefined || value === ""
+              ? undefined
+              : decryptAuthSecret(value, context.projectEnvValues);
+          const publishableKey = configured(auth.publishable_key);
+          const secretKey = configured(auth.secret_key);
+          const configuredAnonKey = configured(auth.anon_key);
+          const configuredServiceRoleKey = configured(auth.service_role_key);
+          const configuredSigningKeys = resolveConfiguredSigningKeys(
+            validatedConfig,
+            projectRoot,
+            context.projectEnvValues,
+          );
+          const signingKeys =
+            configuredSigningKeys ??
+            (auth.signing_keys_path === undefined || auth.signing_keys_path.length === 0
+              ? undefined
+              : [DEFAULT_SIGNING_KEY]);
+          const signingKey = signingKeys?.[0];
+          return {
+            ...(publishableKey === undefined ? {} : { publishableKey }),
+            ...(secretKey === undefined ? {} : { secretKey }),
+            ...(configuredAnonKey === undefined
+              ? signingKey === undefined
+                ? {}
+                : { anonKey: generateAsymmetricGoJwt(signingKey, "anon") }
+              : { anonKey: configuredAnonKey }),
+            ...(configuredServiceRoleKey === undefined
+              ? signingKey === undefined
+                ? {}
+                : { serviceRoleKey: generateAsymmetricGoJwt(signingKey, "service_role") }
+              : { serviceRoleKey: configuredServiceRoleKey }),
+            anonKeyIsOverride: configuredAnonKey !== undefined,
+            serviceRoleKeyIsOverride: configuredServiceRoleKey !== undefined,
+            ...(signingKeys === undefined
+              ? {}
+              : {
+                  gotrueJwtKeys: encodeJwkArray(signingKeys),
+                  publicSigningKeys: encodeJwkArray(signingKeys.map(toPublicJwk)),
+                }),
+          };
+        },
+        catch: (cause) =>
+          new StackConfigError({
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+      const remoteJwks = Effect.gen(function* () {
+        return issuer === undefined
+          ? undefined
+          : encodeJwkArray(
+              yield* resolveRemoteJwks(issuer).pipe(
+                Effect.provide(FetchHttpClient.layer),
+                Effect.mapError((cause) => new StackConfigError({ message: cause.message })),
+              ),
+            );
+      });
+      const identity = Effect.gen(function* () {
+        const configuredKeys = yield* localIdentity;
+        const refreshedRemoteJwks = yield* remoteJwks;
+        return {
+          ...configuredKeys,
+          ...(refreshedRemoteJwks === undefined ? {} : { remoteJwks: refreshedRemoteJwks }),
+        };
+      });
       const functionEnvironments = Object.fromEntries(
         yield* Effect.forEach(Object.entries(validatedConfig.functions), ([name, config]) =>
           resolveCliConfigSubtree(
@@ -935,7 +1049,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             : resolveJwtSecret(validatedConfig.auth.jwt_secret),
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });
-      const jwtSecret = Redacted.make(configuredJwtSecret ?? DEFAULT_LOCAL_JWT_SECRET);
+      const jwtSecret =
+        configuredJwtSecret === undefined ? undefined : Redacted.make(configuredJwtSecret);
       const document = context.loaded?.document;
       const rootKey = yield* Effect.try({
         try: () => {
@@ -946,7 +1061,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             envOverride("SUPABASE_DB_ROOT_KEY", raw, context.projectEnvValues),
             context.projectEnvValues,
           );
-          return value === undefined || value === "" ? DEFAULT_POSTGRES_ROOT_KEY : value;
+          return value === undefined || value === "" ? undefined : value;
         },
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });
@@ -1020,18 +1135,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const storagePath = `${projectRoot}/supabase/.temp/stack-uploads`;
       const createCreations = (
         stackId: string,
-        options?: { readonly jwtSecret?: Redacted.Redacted<string> },
       ): Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError> =>
         Effect.gen(function* () {
-          const effectiveJwtSecret = options?.jwtSecret ?? jwtSecret;
-          if (
-            options?.jwtSecret !== undefined &&
-            configuredJwtSecret !== undefined &&
-            Redacted.value(options.jwtSecret) !== configuredJwtSecret
-          )
-            return yield* new StackConfigError({
-              message: "The configured auth.jwt_secret does not match the existing stack",
-            });
           const bootstrap = validatedConfig.edge_runtime.enabled
             ? yield* typeof SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
                 ? Effect.succeed(SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE)
@@ -1056,12 +1161,11 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               service: "database",
               config: {
                 version: String(validatedConfig.db.major_version),
-                databasePassword: Redacted.make("postgres"),
-                jwtSecret: effectiveJwtSecret,
+                ...(jwtSecret === undefined ? {} : { jwtSecret }),
                 jwtExpiry: validatedConfig.auth.jwt_expiry,
                 settings: validatedConfig.db.settings,
                 healthTimeoutMs,
-                rootKey: Redacted.make(rootKey),
+                ...(rootKey === undefined ? {} : { rootKey: Redacted.make(rootKey) }),
               },
               endpoints: { sql: endpoint(dbPort) },
             },
@@ -1084,7 +1188,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     service: "pooler" as const,
                     config: {
                       databaseUrl: "postgresql://placeholder",
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       poolMode,
                       tenant: "pooler-dev",
                       defaultPoolSize: validatedConfig.db.pooler.default_pool_size,
@@ -1115,7 +1219,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       ...(validatedConfig.api.external_url === undefined
                         ? {}
                         : { externalApiUrl: validatedConfig.api.external_url }),
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                     },
                     endpoints: { http: endpoint(apiPort) },
                   } satisfies ServiceCreationType,
@@ -1127,7 +1231,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     service: "auth" as const,
                     config: {
                       ...authConfig,
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                     },
                     endpoints: { http: endpoint(apiPort) },
                   } satisfies ServiceCreationType,
@@ -1139,8 +1243,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     service: "realtime" as const,
                     config: {
                       databaseUrl: "postgresql://placeholder",
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
-                      secretKeyBase: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       ipVersion:
                         validatedConfig.realtime.ip_version === "IPv6"
                           ? ("IPv6" as const)
@@ -1160,7 +1263,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     service: "storage" as const,
                     config: {
                       databaseUrl: "postgresql://placeholder",
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       filePath: `${storagePath}/${stackId}`,
                       fileSizeLimit: storageFileSizeLimit,
                       s3ProtocolEnabled: validatedConfig.storage.s3_protocol.enabled,
@@ -1213,7 +1316,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       bootstrap,
                       policy: validatedConfig.edge_runtime.policy,
                       verifyJwt: true,
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                     },
                     endpoints: {
                       http: endpoint(apiPort),
@@ -1236,7 +1339,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   {
                     service: "studio" as const,
                     config: {
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       ...(validatedConfig.studio.openai_api_key === undefined
                         ? {}
                         : { openaiApiKey: validatedConfig.studio.openai_api_key }),
@@ -1264,10 +1367,11 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           ];
         });
       return {
-        jwtSecret,
         creations: createCreations,
         source: validatedConfig,
         projectEnvValues: context.projectEnvValues,
+        remoteJwks,
+        identity,
         ...(context.loaded?.document === undefined ? {} : { document: context.loaded.document }),
       };
     }),

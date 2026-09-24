@@ -1,9 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { importJWK, jwtVerify } from "jose";
 
@@ -28,8 +26,7 @@ import { processControlLayer } from "../../../shared/runtime/process-control.lay
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
-import { genCommand } from "../gen.command.ts";
-import type { GenBearerJwtFlags } from "./bearer-jwt.command.ts";
+import { genBearerJwtCommand, type GenBearerJwtFlags } from "./bearer-jwt.command.ts";
 import { genBearerJwt } from "./bearer-jwt.handler.ts";
 
 const tempRoot = useTempWorkdir("supabase-gen-bearer-jwt-int-");
@@ -92,15 +89,21 @@ function setup(options: SetupOptions = {}) {
   return { layer, out, telemetry };
 }
 
-async function writeConfig(contents: string) {
-  await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
-  await writeFile(join(tempRoot.current, "supabase", "config.toml"), contents);
-}
+const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const jsonTextSync = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-async function writeSigningKeys(contents: string) {
-  await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
-  await writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), contents);
-}
+const writeSupabaseFile = (fileName: string, contents: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = path.join(tempRoot.current, "supabase");
+    yield* fs.makeDirectory(dir, { recursive: true });
+    yield* fs.writeFileString(path.join(dir, fileName), contents);
+  });
+
+const writeConfig = (contents: string) => writeSupabaseFile("config.toml", contents);
+
+const writeSigningKeys = (contents: string) => writeSupabaseFile("signing_keys.json", contents);
 
 /**
  * Writes `supabase/.env.development`, selected by `SUPABASE_ENV` (default
@@ -108,10 +111,8 @@ async function writeSigningKeys(contents: string) {
  * resolution — `resolveSigningKeysConfigPaths` must resolve and thread
  * through an accurate `CliProjectEnvironment` explicitly.
  */
-async function writeSupabaseEnvDevelopment(contents: string) {
-  await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
-  await writeFile(join(tempRoot.current, "supabase", ".env.development"), contents);
-}
+const writeSupabaseEnvDevelopment = (contents: string) =>
+  writeSupabaseFile(".env.development", contents);
 
 const baseFlags: GenBearerJwtFlags = {
   role: Option.some("anon"),
@@ -130,8 +131,10 @@ function tokenFrom(out: { stdoutText: string }): string {
 }
 
 const testRoot = Command.make("supabase").pipe(
+  Command.withSubcommands([
+    Command.make("gen").pipe(Command.withSubcommands([genBearerJwtCommand])),
+  ]),
   Command.withGlobalFlags(GLOBAL_FLAGS),
-  Command.withSubcommands([genCommand]),
 );
 
 describe("gen bearer-jwt integration", () => {
@@ -167,7 +170,7 @@ describe("gen bearer-jwt integration", () => {
     () => {
       const { layer, out } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeConfig("[auth]\nenabled = true\n"));
+        yield* writeConfig("[auth]\nenabled = true\n");
 
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
@@ -262,9 +265,9 @@ describe("gen bearer-jwt integration", () => {
         const exit = yield* Effect.exit(genBearerJwt({ ...baseFlags, role: Option.none() }));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtRoleRequiredError");
-          expect(json).toContain('required flag(s) \\"role\\" not set');
+          expect(json).toContain('required flag(s) "role" not set');
         }
         expect(out.stdoutText).toBe("");
         expect(telemetry?.flushed).toBe(true);
@@ -275,16 +278,15 @@ describe("gen bearer-jwt integration", () => {
   it.live(
     "ignores an ancestor project's signing_keys_path when the resolved workdir has no config.toml of its own (CLI-1961)",
     () => {
-      const nestedWorkdir = join(tempRoot.current, "nested", "deeper");
+      const nestedWorkdir = `${tempRoot.current}/nested/deeper`;
       const { layer, out } = setup({ workdir: nestedWorkdir, pipedAnswer: "" });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => mkdir(nestedWorkdir, { recursive: true }));
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(nestedWorkdir, { recursive: true });
         // `writeConfig`/`writeSigningKeys` target `tempRoot.current`, the
         // ancestor of `nestedWorkdir`, never `nestedWorkdir` itself.
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([generateEcJwk("ec-kid")])));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([generateEcJwk("ec-kid")]));
 
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
@@ -309,7 +311,7 @@ describe("gen bearer-jwt integration", () => {
         const exit = yield* Effect.exit(genBearerJwt({ ...baseFlags, payload: "not json" }));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtPayloadError");
           expect(json).toContain("failed to parse payload:");
         }
@@ -320,7 +322,7 @@ describe("gen bearer-jwt integration", () => {
 
   it.live("Branch A: accepts a pasted RS256 JWK from stdin", () => {
     const jwk = generateRsaJwk("rsa-kid");
-    const { layer, out } = setup({ pipedAnswer: JSON.stringify(jwk) });
+    const { layer, out } = setup({ pipedAnswer: jsonTextSync(jwk) });
     return Effect.gen(function* () {
       yield* genBearerJwt(baseFlags);
       const token = tokenFrom(out);
@@ -340,7 +342,7 @@ describe("gen bearer-jwt integration", () => {
     // Branch A always uses plain text prompting regardless of TTY-ness; only
     // Branches B/C fork on interactivity.
     const jwk = generateEcJwk("ec-kid");
-    const { layer, out } = setup({ stdinIsTty: true, pipedAnswer: JSON.stringify(jwk) });
+    const { layer, out } = setup({ stdinIsTty: true, pipedAnswer: jsonTextSync(jwk) });
     return Effect.gen(function* () {
       yield* genBearerJwt(baseFlags);
       const token = tokenFrom(out);
@@ -358,7 +360,7 @@ describe("gen bearer-jwt integration", () => {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("GenBearerJwtKeyParseError");
         expect(json).toContain("failed to parse JWK:");
       }
@@ -371,7 +373,7 @@ describe("gen bearer-jwt integration", () => {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("GenBearerJwtKeyParseError");
         expect(json).toContain("cannot unmarshal array into Go value of type config.JWK");
       }
@@ -384,7 +386,7 @@ describe("gen bearer-jwt integration", () => {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Cause.pretty(exit.cause)).toContain(
           "cannot unmarshal number into Go value of type config.JWK",
         );
       }
@@ -397,7 +399,7 @@ describe("gen bearer-jwt integration", () => {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Cause.pretty(exit.cause)).toContain(
           "cannot unmarshal string into Go value of type config.JWK",
         );
       }
@@ -410,7 +412,7 @@ describe("gen bearer-jwt integration", () => {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Cause.pretty(exit.cause)).toContain(
           "cannot unmarshal bool into Go value of type config.JWK",
         );
       }
@@ -425,7 +427,7 @@ describe("gen bearer-jwt integration", () => {
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtSignError");
           expect(json).toContain("failed to convert JWK to private key: unsupported key type: ");
         }
@@ -455,12 +457,12 @@ describe("gen bearer-jwt integration", () => {
   it.live(
     "Branch A: rejects a pasted JWK with an unsupported alg at decode time, not sign time",
     () => {
-      const { layer } = setup({ pipedAnswer: JSON.stringify({ kty: "oct", alg: "HS256" }) });
+      const { layer } = setup({ pipedAnswer: jsonTextSync({ kty: "oct", alg: "HS256" }) });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtKeyParseError");
           expect(json).toContain("failed to parse JWK: must be one of [RS256 ES256]");
         }
@@ -472,12 +474,12 @@ describe("gen bearer-jwt integration", () => {
     "Branch A: accepts a pasted JWK missing alg entirely (validated later, at sign time, not decode time)",
     () => {
       const { alg: _alg, ...jwkWithoutAlg } = generateEcJwk("no-alg-kid");
-      const { layer } = setup({ pipedAnswer: JSON.stringify(jwkWithoutAlg) });
+      const { layer } = setup({ pipedAnswer: jsonTextSync(jwkWithoutAlg) });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtSignError");
           expect(json).toContain("unsupported algorithm: ");
         }
@@ -489,13 +491,13 @@ describe("gen bearer-jwt integration", () => {
     "Branch A: rejects a pasted JWK with a non-string key_ops element (CLI-1961 Codex review finding)",
     () => {
       const { layer } = setup({
-        pipedAnswer: JSON.stringify({ kty: "oct", alg: "ES256", key_ops: ["sign", 1] }),
+        pipedAnswer: jsonTextSync({ kty: "oct", alg: "ES256", key_ops: ["sign", 1] }),
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtKeyParseError");
           expect(json).toContain(
             "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.key_ops of type string",
@@ -509,13 +511,13 @@ describe("gen bearer-jwt integration", () => {
     "Branch A: rejects a pasted JWK with ext given as a string instead of a bool (CLI-1961 Codex review finding)",
     () => {
       const { layer } = setup({
-        pipedAnswer: JSON.stringify({ kty: "oct", alg: "ES256", ext: "true" }),
+        pipedAnswer: jsonTextSync({ kty: "oct", alg: "ES256", ext: "true" }),
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtKeyParseError");
           expect(json).toContain(
             "failed to parse JWK: json: cannot unmarshal string into Go struct field JWK.ext of type bool",
@@ -527,13 +529,13 @@ describe("gen bearer-jwt integration", () => {
 
   it.live("Branch A: rejects a pasted JWK with a non-string kid", () => {
     const { layer } = setup({
-      pipedAnswer: JSON.stringify({ kty: "oct", alg: "ES256", kid: 123 }),
+      pipedAnswer: jsonTextSync({ kty: "oct", alg: "ES256", kid: 123 }),
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Cause.pretty(exit.cause)).toContain(
           "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.kid of type string",
         );
       }
@@ -550,7 +552,7 @@ describe("gen bearer-jwt integration", () => {
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(Cause.pretty(exit.cause)).toContain(
             "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.kid of type string",
           );
         }
@@ -568,7 +570,7 @@ describe("gen bearer-jwt integration", () => {
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(Cause.pretty(exit.cause)).toContain(
             "failed to parse JWK: must be one of [RS256 ES256]",
           );
         }
@@ -580,7 +582,7 @@ describe("gen bearer-jwt integration", () => {
     "Branch A: accepts a pasted JWK with a duplicate alg where EVERY occurrence is individually valid and allowed",
     () => {
       const { layer, out } = setup({
-        pipedAnswer: JSON.stringify({ ...generateEcJwk("dup-alg-kid"), alg: "ES256" }).replace(
+        pipedAnswer: jsonTextSync({ ...generateEcJwk("dup-alg-kid"), alg: "ES256" }).replace(
           '"alg":"ES256"',
           '"alg":"RS256","alg":"ES256"',
         ),
@@ -611,7 +613,7 @@ describe("gen bearer-jwt integration", () => {
         Y: jwk.y,
         D: jwk.d,
       };
-      const { layer, out } = setup({ pipedAnswer: JSON.stringify(caseVariantJwk) });
+      const { layer, out } = setup({ pipedAnswer: jsonTextSync(caseVariantJwk) });
       return Effect.gen(function* () {
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
@@ -635,7 +637,7 @@ describe("gen bearer-jwt integration", () => {
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(Cause.pretty(exit.cause)).toContain(
             "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.kid of type string",
           );
         }
@@ -647,7 +649,7 @@ describe("gen bearer-jwt integration", () => {
     "Branch A: a null field value is treated as absent, not a type mismatch (Go's encoding/json no-op)",
     () => {
       const { layer, out } = setup({
-        pipedAnswer: JSON.stringify({ ...generateEcJwk("null-ext-kid"), ext: null }),
+        pipedAnswer: jsonTextSync({ ...generateEcJwk("null-ext-kid"), ext: null }),
       });
       return Effect.gen(function* () {
         yield* genBearerJwt(baseFlags);
@@ -667,19 +669,15 @@ describe("gen bearer-jwt integration", () => {
     () => {
       const { layer } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() =>
-          writeSigningKeys(
-            JSON.stringify([{ kty: "oct", alg: "ES256", kid: "k1", key_ops: ["sign", 1] }]),
-          ),
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(
+          yield* jsonText([{ kty: "oct", alg: "ES256", kid: "k1", key_ops: ["sign", 1] }]),
         );
 
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtDecodeError");
           expect(json).toContain(
             "failed to decode signing keys: failed to parse response body: json: cannot unmarshal number into Go struct field JWK.key_ops of type string",
@@ -694,17 +692,13 @@ describe("gen bearer-jwt integration", () => {
     () => {
       const { layer } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() =>
-          writeSigningKeys('[{"kty":"oct","alg":"ES256","kid":1,"kid":"k1"}]'),
-        );
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys('[{"kty":"oct","alg":"ES256","kid":1,"kid":"k1"}]');
 
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtDecodeError");
           expect(json).toContain(
             "failed to decode signing keys: failed to parse response body: json: cannot unmarshal number into Go struct field JWK.kid of type string",
@@ -719,17 +713,13 @@ describe("gen bearer-jwt integration", () => {
     () => {
       const { layer } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() =>
-          writeSigningKeys('[{"kty":"oct","kid":"k1","alg":"HS256","alg":"ES256"}]'),
-        );
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys('[{"kty":"oct","kid":"k1","alg":"HS256","alg":"ES256"}]');
 
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtDecodeError");
           expect(json).toContain(
             "failed to decode signing keys: failed to parse response body: must be one of [RS256 ES256]",
@@ -745,10 +735,8 @@ describe("gen bearer-jwt integration", () => {
       const jwk = generateEcJwk("ec-kid");
       const { layer, out } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([jwk])));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([jwk]));
 
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
@@ -776,10 +764,8 @@ describe("gen bearer-jwt integration", () => {
       };
       const { layer, out } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([caseVariantJwk])));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([caseVariantJwk]));
 
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
@@ -802,13 +788,9 @@ describe("gen bearer-jwt integration", () => {
       const jwk = generateEcJwk("ec-kid");
       const { layer, out } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "env(KEYS_PATH)"\n'),
-        );
-        yield* Effect.tryPromise(() =>
-          writeSupabaseEnvDevelopment("KEYS_PATH=./signing_keys.json\n"),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([jwk])));
+        yield* writeConfig('[auth]\nsigning_keys_path = "env(KEYS_PATH)"\n');
+        yield* writeSupabaseEnvDevelopment("KEYS_PATH=./signing_keys.json\n");
+        yield* writeSigningKeys(yield* jsonText([jwk]));
 
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
@@ -823,15 +805,13 @@ describe("gen bearer-jwt integration", () => {
     () => {
       const { layer } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([{ kty: "oct" }])));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([{ kty: "oct" }]));
 
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtSignError");
           expect(json).toContain("failed to convert JWK to private key: unsupported key type: oct");
         }
@@ -842,15 +822,13 @@ describe("gen bearer-jwt integration", () => {
   it.live("Branch B: fails with an empty key type when the stored key omits kty entirely", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([{ alg: "ES256" }])));
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys(yield* jsonText([{ alg: "ES256" }]));
 
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Cause.pretty(exit.cause)).toContain(
           "failed to convert JWK to private key: unsupported key type: ",
         );
       }
@@ -862,17 +840,13 @@ describe("gen bearer-jwt integration", () => {
     () => {
       const { layer } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() =>
-          writeSigningKeys(JSON.stringify([{ kty: "oct", alg: "HS256" }])),
-        );
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([{ kty: "oct", alg: "HS256" }]));
 
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtDecodeError");
           expect(json).toContain(
             "failed to decode signing keys: failed to parse response body: must be one of [RS256 ES256]",
@@ -888,15 +862,13 @@ describe("gen bearer-jwt integration", () => {
       const { layer } = setup();
       return Effect.gen(function* () {
         const validKey = generateEcJwk("k2");
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([[], validKey])));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([[], validKey]));
 
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtDecodeError");
           expect(json).toContain("failed to decode signing keys: expected a JSON array of objects");
         }
@@ -910,10 +882,8 @@ describe("gen bearer-jwt integration", () => {
       const validKey = generateEcJwk("valid-kid");
       const { layer, out } = setup({ pipedAnswer: "valid-kid" });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([validKey, null])));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([validKey, null]));
 
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
@@ -933,10 +903,8 @@ describe("gen bearer-jwt integration", () => {
       const validKey = generateEcJwk("valid-kid");
       const { layer, out } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(`${JSON.stringify([validKey])} []`));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(`${yield* jsonText([validKey])} []`);
 
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
@@ -956,10 +924,8 @@ describe("gen bearer-jwt integration", () => {
       const jwk = { ...generateEcJwk("null-key-ops-kid"), key_ops: ["sign", null] };
       const { layer, out } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([jwk])));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([jwk]));
 
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
@@ -978,15 +944,13 @@ describe("gen bearer-jwt integration", () => {
     () => {
       const { layer } = setup({ stdinIsTty: true });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys("[]"));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys("[]");
 
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtKeyPickerAbortedError");
           expect(json).toContain("user aborted");
         }
@@ -1001,10 +965,8 @@ describe("gen bearer-jwt integration", () => {
       const rsaJwk = generateRsaJwk("rsa-kid");
       const { layer, out } = setup({ pipedAnswer: "rsa-kid" });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([ecJwk, rsaJwk])));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([ecJwk, rsaJwk]));
 
         yield* genBearerJwt({ ...baseFlags, role: Option.some("postgres") });
         const token = tokenFrom(out);
@@ -1019,15 +981,13 @@ describe("gen bearer-jwt integration", () => {
     () => {
       const { layer } = setup({ pipedAnswer: "test-key" });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys("[]"));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys("[]");
 
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtKeyNotFoundError");
           expect(json).toContain("signing key not found: test-key");
         }
@@ -1042,13 +1002,11 @@ describe("gen bearer-jwt integration", () => {
       const { kid: _kid, ...unnamedKey } = generateEcJwk("unused");
       const { layer, out } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
         // `namedKey` has a non-empty kid; `unnamedKey` has none (-> ""). A
         // blank answer must resolve to `unnamedKey` via the exact-match
         // loop, not to `namedKey` via "return first".
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([namedKey, unnamedKey])));
+        yield* writeSigningKeys(yield* jsonText([namedKey, unnamedKey]));
 
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
@@ -1065,10 +1023,8 @@ describe("gen bearer-jwt integration", () => {
       const rsaJwk = generateRsaJwk("rsa-kid");
       const { layer, out } = setup({ stdinIsTty: true, promptSelectResponses: ["1"] });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([ecJwk, rsaJwk])));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([ecJwk, rsaJwk]));
 
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
@@ -1085,10 +1041,8 @@ describe("gen bearer-jwt integration", () => {
       const { kid: _kid, alg: _alg, ...bareKey } = generateEcJwk("unused");
       const { layer, out } = setup({ stdinIsTty: true, promptSelectResponses: ["0"] });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([bareKey])));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([bareKey]));
 
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         // No `alg` at all fails downstream in the shared signer ("unsupported
@@ -1112,10 +1066,8 @@ describe("gen bearer-jwt integration", () => {
       };
       const { layer, out } = setup({ stdinIsTty: true, promptSelectResponses: ["0"] });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([jwk])));
+        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([jwk]));
 
         yield* genBearerJwt(baseFlags);
         expect(out.promptSelectCalls[0]?.options[0]?.hint).toBe("ES256 (sign,verify)");
@@ -1129,10 +1081,8 @@ describe("gen bearer-jwt integration", () => {
       const otherJwk = generateEcJwk("configured-kid");
       const { layer, out } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([otherJwk])));
+        yield* writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([otherJwk]));
 
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
@@ -1152,15 +1102,13 @@ describe("gen bearer-jwt integration", () => {
       const otherJwk = generateEcJwk("configured-kid");
       const { layer } = setup({ pipedAnswer: "configured-kid" });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => writeSigningKeys(JSON.stringify([otherJwk])));
+        yield* writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n');
+        yield* writeSigningKeys(yield* jsonText([otherJwk]));
 
         const exit = yield* Effect.exit(genBearerJwt(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("signing key not found: configured-kid");
+          expect(Cause.pretty(exit.cause)).toContain("signing key not found: configured-kid");
         }
       }).pipe(Effect.provide(layer));
     },
@@ -1169,14 +1117,12 @@ describe("gen bearer-jwt integration", () => {
   it.live("fails when signing_keys_path is configured but the file is missing", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
 
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("GenBearerJwtReadError");
         expect(json).toContain("failed to read signing keys");
       }
@@ -1186,15 +1132,13 @@ describe("gen bearer-jwt integration", () => {
   it.live("fails when the configured signing keys file is not valid JSON at all", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() => writeSigningKeys("not valid json {"));
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("not valid json {");
 
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("GenBearerJwtDecodeError");
         expect(json).toContain("failed to decode signing keys:");
       }
@@ -1204,15 +1148,13 @@ describe("gen bearer-jwt integration", () => {
   it.live("fails when the configured signing keys file is not a JSON array at all", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() => writeSigningKeys("{}"));
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("{}");
 
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("GenBearerJwtDecodeError");
         expect(json).toContain("expected a JSON array");
       }
@@ -1222,15 +1164,13 @@ describe("gen bearer-jwt integration", () => {
   it.live("fails when the configured signing keys file is a JSON array of non-objects", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() => writeSigningKeys("[1, 2]"));
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("[1, 2]");
 
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("GenBearerJwtDecodeError");
         expect(json).toContain("expected a JSON array of objects");
       }
@@ -1240,12 +1180,12 @@ describe("gen bearer-jwt integration", () => {
   it.live("fails with a config parse error when config.toml is malformed", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeConfig("not valid toml ]["));
+      yield* writeConfig("not valid toml ][");
 
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("GenBearerJwtConfigParseError");
+        expect(Cause.pretty(exit.cause)).toContain("GenBearerJwtConfigParseError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1261,9 +1201,7 @@ describe("gen bearer-jwt integration", () => {
   it.live("flushes telemetry state even when the signing-key resolution fails", () => {
     const { layer, telemetry } = setup({ trackTelemetry: true });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
       // No signing_keys.json written -> GenBearerJwtReadError.
       yield* Effect.exit(genBearerJwt(baseFlags));
       expect(telemetry?.flushed).toBe(true);
@@ -1286,8 +1224,8 @@ describe("gen bearer-jwt integration", () => {
       Layer.succeed(
         TelemetryRuntime,
         TelemetryRuntime.of({
-          configDir: join(tempRoot.current, ".supabase"),
-          tracesDir: join(tempRoot.current, ".supabase", "traces"),
+          configDir: `${tempRoot.current}/.supabase`,
+          tracesDir: `${tempRoot.current}/.supabase/traces`,
           consent: "granted",
           showDebug: false,
           deviceId: "test-device-id",
@@ -1317,6 +1255,6 @@ describe("gen bearer-jwt integration", () => {
       const [, payload] = token.split(".");
       const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
       expect(claims["role"]).toBe("service_role");
-    }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+    }).pipe(Effect.provide(layer));
   });
 });
