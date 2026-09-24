@@ -11,6 +11,8 @@ allowBuilds:
   msgpackr-extract: true
   sharp: true
 
+autoDedupe: true
+
 catalog:
   "@effect/platform-bun": "4.0.0-rc.112"
   "@effect/platform-node": "4.0.0-rc.112"
@@ -19,7 +21,7 @@ catalog:
   "@effect/vitest": "4.0.0-rc.112"
   "@supabase/supabase-js": ^2.110.7
   "@tsconfig/bun": "^1.0.11"
-  "@types/bun": "^1.4.0"
+  "@types/bun": "^1.4.2"
   "@types/ws": "8.18.1"
   "typescript": "^7.0.2"
   "@vitest/coverage-v8": "^5.0.0"
@@ -44,11 +46,6 @@ packageExtensions:
   # The global virtual store has no hidden hoist directory
   # (node_modules/.pnpm/node_modules), so anything a package imports without
   # declaring has to be declared here for it to resolve at all.
-  bun-types:
-    dependencies:
-      # bun-types imports undici-types but declares only @types/node; keep
-      # this range matching @types/node's own so both resolve to one copy.
-      undici-types: "~8.3.0"
   "@supabase/pg-delta":
     dependencies:
       # Consumed as raw TypeScript source (`bun` exports condition), which
@@ -108,8 +105,6 @@ minimumReleaseAgeExclude:
   - "@supabase/pg-delta@1.0.0-alpha.52"
   - "@supabase/pg-topo@1.0.0-alpha.6"
   - "@supabase/postgrest-typegen@0.2.2"
-  - "@types/bun@1.4.0"
-  - "bun-types@1.4.0"
   - "effect@4.0.0-rc.112"
   - "turbo@2.10.11"
 
