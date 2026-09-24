@@ -52,6 +52,9 @@ const errorFor = (cause: unknown, responded?: boolean) =>
     ...(responded === undefined ? {} : { responded }),
   });
 
+// RFC 9110 section 9.2.2: repeating these methods has no additional effect on the server.
+const idempotentMethods = new Set(["GET", "HEAD", "OPTIONS", "TRACE", "PUT", "DELETE"]);
+
 // RFC 9112 section 6: a request carries a body only when Content-Length or
 // Transfer-Encoding is present, regardless of method.
 const hasBody = (request: IncomingMessage) =>
@@ -153,6 +156,7 @@ const retryOnce = (request: IncomingMessage, response: ServerResponse, route: Ht
         input._tag === "HttpProxyError" &&
         input.responded === false &&
         !response.destroyed &&
+        idempotentMethods.has(request.method ?? "GET") &&
         !hasBody(request),
     ),
     Schedule.tap(({ input }) =>

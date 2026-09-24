@@ -56,11 +56,11 @@ const droppingBackend = (drops: number) => {
   return { server, connections: () => connections };
 };
 
-const request = (port: number, path: string, body: Uint8Array) =>
+const request = (port: number, path: string, body: Uint8Array, method: "POST" | "PUT" = "POST") =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
-      HttpClientRequest.post(`http://127.0.0.1:${port}${path}`).pipe(
+      HttpClientRequest.make(method)(`http://127.0.0.1:${port}${path}`).pipe(
         HttpClientRequest.bodyUint8Array(body),
       ),
     );
@@ -347,7 +347,12 @@ it.live("does not replay a request with a body when the upstream drops the conne
       const address = yield* listen(backend.server);
       const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
       yield* proxy.setRoutes([{ id: "functions", prefix: "/", target: Effect.succeed(address) }]);
-      const response = yield* request(proxy.port, "/hello", new TextEncoder().encode("payload"));
+      const response = yield* request(
+        proxy.port,
+        "/hello",
+        new TextEncoder().encode("payload"),
+        "PUT",
+      );
       expect(response.status).toBe(502);
       expect(backend.connections()).toBe(1);
       expect(errors).toHaveLength(1);
@@ -359,6 +364,30 @@ it.live("does not replay a request with a body when the upstream drops the conne
     ),
   );
 });
+
+it.live(
+  "does not replay a bodyless non-idempotent request when the upstream drops the connection",
+  () => {
+    const errors: Array<string> = [];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const backend = droppingBackend(1);
+        const address = yield* listen(backend.server);
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        yield* proxy.setRoutes([{ id: "functions", prefix: "/", target: Effect.succeed(address) }]);
+        const response = yield* request(proxy.port, "/hello", new Uint8Array());
+        expect(response.status).toBe(502);
+        expect(backend.connections()).toBe(1);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain("Route functions request failed");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(errors)),
+      ),
+    );
+  },
+);
 
 it.live("gives up after a single retry when the upstream keeps dropping connections", () => {
   const errors: Array<string> = [];
