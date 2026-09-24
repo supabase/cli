@@ -11,6 +11,8 @@
     "!apps/cli/src/commands/bootstrap/**",
     "!apps/cli/src/commands/branches/**",
     "!apps/cli/src/commands/completion/**",
+    "!apps/cli/src/commands/config/*.ts",
+    "!apps/cli/src/commands/config/diff/**",
     "!apps/cli/src/commands/domains/**",
     "!apps/cli/src/commands/encryption/**",
     "!apps/cli/src/commands/experimental/**",
