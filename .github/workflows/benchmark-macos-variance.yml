@@ -1,6 +1,11 @@
 name: Benchmark macOS eager variance
 
 on:
+  push:
+    branches:
+      - bench/cli-workflows-2026-09-24
+    paths:
+      - .github/workflows/benchmark-macos-variance.yml
   workflow_dispatch:
     inputs:
       source_sha:
