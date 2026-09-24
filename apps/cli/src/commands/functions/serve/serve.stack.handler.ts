@@ -241,13 +241,15 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   if (databaseUrl === undefined) return yield* invalidConfig("The database has no runtime URL.");
   const apiSource = [...members, ...instances].find(
     (instance) =>
-      instance.service === "rest" || instance.service === "auth" || instance.service === "storage",
+      instance.service === "rest" ||
+      instance.service === "auth" ||
+      instance.service === "storage" ||
+      instance.service === "realtime",
   );
   const apiStatus = apiSource === undefined ? undefined : yield* apiSource.status;
   const savedPort = apiStatus?.endpoints.find(({ name }) => name === "http")?.port;
   const requestedPort = source.endpoints?.http?.port;
-  const port =
-    savedPort ?? (typeof requestedPort === "number" ? requestedPort : config.source.api.port);
+  const port = savedPort ?? requestedPort ?? "auto";
   let apiUrl: string | undefined;
   if (apiSource === undefined) {
     const gatewayConfig = yield* config.gateway;
