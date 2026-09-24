@@ -91,6 +91,7 @@ it.live("reports the failed binding and cleanup reason with the retained instanc
       address: unused,
       output: unused,
       updateCreation: unused,
+      replaceCreation: unused,
       configure: unused,
     };
     const error = yield* makeSupabaseComposition(operations, [
@@ -177,6 +178,7 @@ it.live("cleans created registrations when composition is interrupted", () =>
       address: () => Effect.die("address is unused"),
       output: () => Effect.die("output is unused"),
       updateCreation: () => Effect.die("updateCreation is unused"),
+      replaceCreation: () => Effect.die("replaceCreation is unused"),
       configure: () => Effect.die("configure is unused"),
     };
     const running = yield* makeSupabaseComposition(operations, [database]).pipe(Effect.forkChild);

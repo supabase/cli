@@ -11,6 +11,7 @@ import { readDbToml } from "../../command-internal/db-config.toml-read.ts";
 import { resolveDbImage } from "../../command-internal/db-image.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import { readServiceVersionOverrides } from "../../command-internal/service-version-overrides.ts";
+import { currentStackBackend } from "../../command-internal/stack-backend.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { encodeGoJson } from "../../command-internal/go-output.encoders.ts";
@@ -30,9 +31,11 @@ import {
   mergeRemoteServiceVersions,
   renderServicesTable,
   renderServicesWarning,
+  type ServiceVersionRow,
 } from "../../shared/services/services.shared.ts";
 import type { ServicesFlags } from "./services.command.ts";
 import { ServicesEnvNotSupportedError } from "./services.errors.ts";
+import { stackServiceVersions } from "./services-local-stack.ts";
 
 /**
  * Struct shape for `imageVersion`: field order is name, local, remote (not
@@ -101,6 +104,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
     );
 
     const validLinkedRef = Option.filter(linkedProjectRef, (ref) => PROJECT_REF_PATTERN.test(ref));
+    const backend = yield* currentStackBackend;
     if (Option.isSome(linkedProjectRef) && Option.isNone(validLinkedRef)) {
       // A malformed linked ref still warns, but the remote call is skipped:
       // `fetchLinkedServiceVersions` embeds the ref unescaped into the tenant
@@ -110,66 +114,97 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
       yield* output.raw(`${INVALID_PROJECT_REF_MESSAGE}\n`, "stderr");
     }
 
-    const tomlValues = yield* readDbToml(
-      fs,
-      path,
-      cliSettings.workdir,
-      Option.getOrUndefined(linkedProjectRef),
-    ).pipe(
-      Effect.catch((error) =>
-        output.raw(`${formatConfigLoadError(error)}\n`, "stderr").pipe(Effect.as(null)),
-      ),
+    let rows: ReadonlyArray<ServiceVersionRow>;
+    if (backend.kind === "stack") {
+      const remote =
+        Option.isSome(validLinkedRef) && Option.isSome(accessToken)
+          ? yield* fetchLinkedServiceVersions({
+              apiUrl: cliSettings.apiUrl,
+              projectHost: cliSettings.projectHost,
+              projectRef: validLinkedRef.value,
+              accessToken: accessToken.value,
+              userAgent: cliSettings.userAgent,
+            })
+          : {};
+      const result = yield* stackServiceVersions(cliSettings.workdir, remote);
+      if (result.configError !== undefined) {
+        yield* output.raw(
+          `${result.configError}; using default stack catalog versions\n`,
+          "stderr",
+        );
+      }
+      rows = result.rows;
+    } else {
+      const tomlValues = yield* readDbToml(
+        fs,
+        path,
+        cliSettings.workdir,
+        Option.getOrUndefined(linkedProjectRef),
+      ).pipe(
+        Effect.catch((error) =>
+          output.raw(`${formatConfigLoadError(error)}\n`, "stderr").pipe(Effect.as(null)),
+        ),
+      );
+      const serviceVersions =
+        tomlValues === null
+          ? {}
+          : yield* readServiceVersionOverrides(
+              fs,
+              path,
+              cliSettings.workdir,
+              tomlValues.majorVersion,
+            );
+      const postgresImage =
+        tomlValues === null
+          ? undefined
+          : (yield* resolveDbImage(
+              fs,
+              path,
+              cliSettings.workdir,
+              tomlValues.majorVersion,
+              Option.getOrUndefined(tomlValues.orioledbVersion),
+            )).image;
+      const edgeRuntimeImage =
+        tomlValues === null
+          ? undefined
+          : yield* resolveEdgeRuntimeImage(fs, path, cliSettings.workdir, tomlValues.denoVersion);
+      const imageOverrides: LocalServiceImageOverrides = {};
+      if (postgresImage !== undefined) {
+        imageOverrides.postgres = postgresImage;
+      }
+      if (edgeRuntimeImage !== undefined) {
+        imageOverrides["edge-runtime"] = edgeRuntimeImage;
+      }
+      const localImageOptions = {
+        imageOverrides,
+        normalizeVersionTags: false,
+        serviceVersions,
+        slimCurrentPinOnly: true,
+      };
+
+      rows = listLocalServiceVersions(localImageOptions);
+      if (Option.isSome(validLinkedRef) && Option.isSome(accessToken)) {
+        const remote = yield* fetchLinkedServiceVersions({
+          apiUrl: cliSettings.apiUrl,
+          projectHost: cliSettings.projectHost,
+          projectRef: validLinkedRef.value,
+          accessToken: accessToken.value,
+          userAgent: cliSettings.userAgent,
+        });
+        rows = mergeRemoteServiceVersions(remote, localImageOptions);
+      }
+    }
+
+    const warning = renderServicesWarning(
+      rows,
+      backend.kind === "stack"
+        ? {
+            heading: "The CLI stack catalog versions differ from your linked project:",
+            recommendation:
+              "These versions come from the CLI stack catalog and cannot be changed with supabase link.",
+          }
+        : {},
     );
-    const serviceVersions =
-      tomlValues === null
-        ? {}
-        : yield* readServiceVersionOverrides(
-            fs,
-            path,
-            cliSettings.workdir,
-            tomlValues.majorVersion,
-          );
-    const postgresImage =
-      tomlValues === null
-        ? undefined
-        : (yield* resolveDbImage(
-            fs,
-            path,
-            cliSettings.workdir,
-            tomlValues.majorVersion,
-            Option.getOrUndefined(tomlValues.orioledbVersion),
-          )).image;
-    const edgeRuntimeImage =
-      tomlValues === null
-        ? undefined
-        : yield* resolveEdgeRuntimeImage(fs, path, cliSettings.workdir, tomlValues.denoVersion);
-    const imageOverrides: LocalServiceImageOverrides = {};
-    if (postgresImage !== undefined) {
-      imageOverrides.postgres = postgresImage;
-    }
-    if (edgeRuntimeImage !== undefined) {
-      imageOverrides["edge-runtime"] = edgeRuntimeImage;
-    }
-    const localImageOptions = {
-      imageOverrides,
-      normalizeVersionTags: false,
-      serviceVersions,
-      slimCurrentPinOnly: true,
-    };
-
-    let rows = listLocalServiceVersions(localImageOptions);
-    if (Option.isSome(validLinkedRef) && Option.isSome(accessToken)) {
-      const remote = yield* fetchLinkedServiceVersions({
-        apiUrl: cliSettings.apiUrl,
-        projectHost: cliSettings.projectHost,
-        projectRef: validLinkedRef.value,
-        accessToken: accessToken.value,
-        userAgent: cliSettings.userAgent,
-      });
-      rows = mergeRemoteServiceVersions(remote, localImageOptions);
-    }
-
-    const warning = renderServicesWarning(rows);
     if (warning !== undefined) {
       yield* output.raw(formatServicesWarning(warning, output.format === "text"), "stderr");
     }

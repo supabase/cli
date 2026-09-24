@@ -84,14 +84,17 @@ inspects a container; it resolves the stack's database connection through
 | Code | Condition                                                                                                                                                                                             |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success — types printed to stdout                                                                                                                                                                     |
-| `1`  | no target specified (must use one flag)                                                                                                                                                               |
-| `1`  | mutually exclusive flags combined (all four Go flag groups)                                                                                                                                           |
-| `1`  | `--postgrest-v9-compat` used without `--db-url`                                                                                                                                                       |
+| `1`  | no target specified (must use one flag) (`GenTypesFlagUsageError`)                                                                                                                                    |
+| `1`  | mutually exclusive flags combined (all four Go flag groups) (`GenTypesFlagUsageError`)                                                                                                                |
+| `1`  | `--postgrest-v9-compat` used without `--db-url` (`GenTypesFlagUsageError`)                                                                                                                            |
+| `1`  | a positional language other than `typescript` passed without `--lang` (`GenTypesFlagUsageError`)                                                                                                      |
 | `1`  | invalid `--query-timeout` duration or invalid `--db-url`                                                                                                                                              |
 | `1`  | `--network-id` set (`GenTypesNetworkIdUnsupportedError`) — generation runs in-process and cannot join a Docker network                                                                                |
-| `1`  | `supabase start` not running (`--local` on the legacy Docker Compose stack) or db inspection failed                                                                                                   |
+| `1`  | `supabase start` not running (`--local` on the legacy Docker Compose stack) (`GenTypesLocalDbNotRunningError`)                                                                                        |
+| `1`  | `--local` on the legacy Docker Compose stack and `container inspect` exits non-zero for any other reason (`GenTypesLocalDbInspectError`)                                                              |
 | `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`GenTypesWorkdirError`) — beats every other guard                                                                         |
 | `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` holds no project config on a schema-selecting path (`GenTypesMissingProjectConfigError`) — a DEFAULTED workdir keeps the embedded-default fallback instead |
+| `1`  | a resolved preview branch config has no `db_user`/`db_pass` (`GenTypesBranchCredentialsUnavailableError`)                                                                                             |
 | `1`  | API error or database connection/introspection/generation failure (`GenTypesGenerationError`)                                                                                                         |
 
 ## Output

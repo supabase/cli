@@ -1,4 +1,4 @@
-import type { ServiceCreation } from "@supabase/stack/effect";
+import type { ServiceCreation, StackError } from "@supabase/stack/effect";
 import { Context, Data, Effect, Layer, Option, Path } from "effect";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import {
@@ -190,4 +190,15 @@ export const stackCapabilityForService = (service: ServiceCreation["service"]) =
     default:
       return service;
   }
+};
+
+/** Formats the failed per-service outcomes of a composition error, one `label: error` per line. */
+export const failedOutcomesDetail = (
+  cause: Partial<Pick<StackError, "outcomes">>,
+  label: (id: string) => string = (id) => id,
+): string | undefined => {
+  const failed = cause.outcomes?.filter((outcome) => !outcome.succeeded) ?? [];
+  return failed.length === 0
+    ? undefined
+    : failed.map((outcome) => `${label(outcome.id)}: ${outcome.error ?? "failed"}`).join("\n");
 };

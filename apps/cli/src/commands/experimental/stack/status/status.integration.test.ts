@@ -1,7 +1,12 @@
 import { BunServices } from "@effect/platform-bun";
 import { expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted, Stream } from "effect";
-import { type Observation, type ServiceCreation, StackError } from "@supabase/stack/effect";
+import {
+  type Observation,
+  type ServiceCreation,
+  type StackCredentials,
+  StackError,
+} from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
@@ -17,6 +22,20 @@ type StatusOutputFormat = "text" | "json" | "stream-json";
 type OpenedStack = Effect.Success<ReturnType<(typeof StackApi.Service)["open"]>>;
 type StackInstance = Effect.Success<OpenedStack["services"]["list"]>[number];
 const jwtSecret = "status-test-jwt-secret-with-at-least-32-chars";
+const savedCredentials: StackCredentials = {
+  jwtSecret,
+  postgresRootKey: "status-test-postgres-root-key",
+  databasePassword: "postgres",
+  publishableKey: "saved-publishable-key",
+  secretKey: "saved-secret-key",
+  anonKey: "saved-anon-token",
+  serviceRoleKey: "saved-service-token",
+  jwks: '{"keys":[]}',
+  gotrueJwtKeys: "[]",
+  remoteJwks: "[]",
+  anonKeyIsOverride: false,
+  serviceRoleKeyIsOverride: false,
+};
 const database: ServiceCreation = {
   service: "database",
   config: {
@@ -99,6 +118,7 @@ const makeService = (input: {
 const makeStack = (
   services: ReadonlyArray<StackInstance>,
   members: ReadonlyArray<{ readonly id: string; readonly activation: "eager" | "lazy" }>,
+  credentials: StackCredentials = savedCredentials,
 ): OpenedStack => ({
   id: stackId,
   services: {
@@ -106,6 +126,7 @@ const makeStack = (
     get: (_id) => Effect.die("unused"),
     list: Effect.succeed([...services]),
   },
+  credentials: { get: Effect.succeed(credentials) },
   composition: {
     supabase: (_services, _options) => Effect.die("unused"),
     configure: (_config) => Effect.die("unused"),
@@ -127,6 +148,7 @@ const runStatus = (input: {
   readonly reachable?: boolean;
   readonly outputFormat?: StatusOutputFormat;
   readonly config?: "missing" | "invalid" | "explicit";
+  readonly stackCredentials?: StackCredentials;
   readonly flags?: StackStatusFlags;
 }) =>
   Effect.gen(function* () {
@@ -147,6 +169,7 @@ const runStatus = (input: {
     const stack = makeStack(
       input.services,
       input.members ?? input.services.map(({ id }) => ({ id, activation: "lazy" as const })),
+      input.stackCredentials,
     );
     const definition = {
       id: stackId,
@@ -445,7 +468,7 @@ it.live("rejects environment export when the owner is unavailable", () =>
   }),
 );
 
-it.live("exports host variables and JWTs only for a running database", () =>
+it.live("exports saved credentials only for a running database", () =>
   Effect.gen(function* () {
     const services = [
       makeService({
@@ -483,8 +506,10 @@ it.live("exports host variables and JWTs only for a running database", () =>
       "DB_URL='postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres?connect_timeout=10'",
     );
     expect(run.out.stdoutText).toContain("API_URL='http://127.0.0.1:54321'");
-    expect(run.out.stdoutText).toContain("ANON_KEY=");
-    expect(run.out.stdoutText).toContain("SERVICE_ROLE_KEY=");
+    expect(run.out.stdoutText).toContain("ANON_KEY='saved-anon-token'");
+    expect(run.out.stdoutText).toContain("SERVICE_ROLE_KEY='saved-service-token'");
+    expect(run.out.stdoutText).toContain("PUBLISHABLE_KEY='saved-publishable-key'");
+    expect(run.out.stdoutText).toContain("SECRET_KEY='saved-secret-key'");
   }),
 );
 

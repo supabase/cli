@@ -283,7 +283,11 @@ GenSigningKeyDecodeError
 GenSigningKeyGenerateError
 GenSigningKeyReadError
 GenSigningKeyWriteError
+GenTypesBranchCredentialsUnavailableError
+GenTypesFlagUsageError
 GenTypesGenerationError
+GenTypesLocalDbInspectError
+GenTypesLocalDbNotRunningError
 GenTypesMissingProjectConfigError
 GenTypesNetworkError
 GenTypesNetworkIdUnsupportedError
@@ -316,6 +320,7 @@ InvalidProjectLinkStateError
 InvalidProjectRefError
 InvalidRemoteProjectIdError
 InvalidSecretPairError
+InvalidServiceVersionTagError
 InvalidTokenError
 KongReloadError
 LinkApiKeysNetworkError

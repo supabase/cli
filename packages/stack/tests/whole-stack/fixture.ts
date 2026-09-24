@@ -127,87 +127,90 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
           : destroy;
       }),
     );
-    const created = yield* stack.composition.supabase([
-      {
-        service: "database",
-        config: {
-          version: "17",
-          databasePassword: Redacted.make("postgres"),
-          jwtSecret: Redacted.make(secret),
-          jwtExpiry: 3600,
+    const created = yield* stack.composition.supabase(
+      [
+        {
+          service: "database",
+          config: {
+            version: "17",
+            databasePassword: Redacted.make("postgres"),
+            jwtSecret: Redacted.make(secret),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: endpoint("auto") },
         },
-        endpoints: { sql: endpoint("auto") },
-      },
-      {
-        service: "rest",
-        config: { databaseUrl: "postgresql://placeholder", jwtSecret: secret },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "auth",
-        config: { databaseUrl: "postgresql://placeholder", jwtSecret: secret },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "realtime",
-        config: { databaseUrl: "postgresql://placeholder", jwtSecret: secret },
-        endpoints: { http: endpoint("auto"), rpc: endpoint("auto") },
-      },
-      {
-        service: "storage",
-        config: {
-          databaseUrl: "postgresql://placeholder",
-          filePath: storageRoot,
-          jwtSecret: secret,
+        {
+          service: "rest",
+          config: { databaseUrl: "postgresql://placeholder", jwtSecret: secret },
+          endpoints: { http: endpoint("auto") },
         },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "imgproxy",
-        config: { filePath: storageRoot },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "functions",
-        config: { functionsRoot, bootstrap, verifyJwt: true, jwtSecret: secret },
-        endpoints: { http: endpoint("auto") },
-      },
-      { service: "studio", config: { jwtSecret: secret }, endpoints: { http: endpoint("auto") } },
-      {
-        service: "pgmeta",
-        config: { databaseUrl: "postgresql://placeholder" },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "mail",
-        config: {},
-        endpoints: { http: endpoint("auto"), smtp: endpoint("auto"), pop3: endpoint("auto") },
-      },
-      {
-        service: "analytics",
-        config: { databaseUrl: "postgresql://placeholder", backend: "postgres", apiKey: secret },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "vector",
-        config: {
-          analyticsUrl: "http://placeholder",
-          apiKey: secret,
-          configPath: vectorConfigPath,
+        {
+          service: "auth",
+          config: { databaseUrl: "postgresql://placeholder", jwtSecret: secret },
+          endpoints: { http: endpoint("auto") },
         },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "pooler",
-        config: {
-          databaseUrl: "postgresql://placeholder",
-          jwtSecret: secret,
-          tenant: "whole",
-          poolMode: "transaction",
+        {
+          service: "realtime",
+          config: { databaseUrl: "postgresql://placeholder", jwtSecret: secret },
+          endpoints: { http: endpoint("auto"), rpc: endpoint("auto") },
         },
-        endpoints: { http: endpoint("auto"), sql: endpoint("auto") },
-      },
-    ]);
+        {
+          service: "storage",
+          config: {
+            databaseUrl: "postgresql://placeholder",
+            filePath: storageRoot,
+            jwtSecret: secret,
+          },
+          endpoints: { http: endpoint("auto") },
+        },
+        {
+          service: "imgproxy",
+          config: { filePath: storageRoot },
+          endpoints: { http: endpoint("auto") },
+        },
+        {
+          service: "functions",
+          config: { functionsRoot, bootstrap, verifyJwt: true, jwtSecret: secret },
+          endpoints: { http: endpoint("auto") },
+        },
+        { service: "studio", config: { jwtSecret: secret }, endpoints: { http: endpoint("auto") } },
+        {
+          service: "pgmeta",
+          config: { databaseUrl: "postgresql://placeholder" },
+          endpoints: { http: endpoint("auto") },
+        },
+        {
+          service: "mail",
+          config: {},
+          endpoints: { http: endpoint("auto"), smtp: endpoint("auto"), pop3: endpoint("auto") },
+        },
+        {
+          service: "analytics",
+          config: { databaseUrl: "postgresql://placeholder", backend: "postgres", apiKey: secret },
+          endpoints: { http: endpoint("auto") },
+        },
+        {
+          service: "vector",
+          config: {
+            analyticsUrl: "http://placeholder",
+            apiKey: secret,
+            configPath: vectorConfigPath,
+          },
+          endpoints: { http: endpoint("auto") },
+        },
+        {
+          service: "pooler",
+          config: {
+            databaseUrl: "postgresql://placeholder",
+            jwtSecret: secret,
+            tenant: "whole",
+            poolMode: "transaction",
+          },
+          endpoints: { http: endpoint("auto"), sql: endpoint("auto") },
+        },
+      ],
+      { identity: { gotrueJwtKeys: "[]", publicSigningKeys: "[]" } },
+    );
     const logTails = yield* Ref.make<ReadonlyArray<readonly [string, string]>>([]);
     yield* watchServiceLogs(created, logTails);
     yield* Effect.addFinalizer((exit) =>

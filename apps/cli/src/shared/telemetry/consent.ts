@@ -1,4 +1,14 @@
-import { Effect, FileSystem, Option, Path, Schema } from "effect";
+import {
+  Duration,
+  Effect,
+  FileSystem,
+  Option,
+  Path,
+  PlatformError,
+  Predicate,
+  Schedule,
+  Schema,
+} from "effect";
 import { CliSettings } from "../config/cli-settings.service.ts";
 import { type ConsentState, TelemetryConfigSchema, type TelemetryConfig } from "./types.ts";
 
@@ -75,6 +85,7 @@ export const readTelemetryConfig = Effect.fnUntraced(
 export const writeTelemetryConfig = Effect.fnUntraced(function* (
   config: TelemetryConfig,
   configDir: string,
+  platform: NodeJS.Platform = process.platform,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -84,11 +95,58 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
   // two CLI processes) in the same millisecond would otherwise share a tmp
   // path and race the rename into ENOENT.
   const tmpPath = `${configPath}.tmp.${crypto.randomUUID()}`;
-  yield* fs.writeFileString(tmpPath, encodePrettyJson(encodeTelemetryConfig(config)), {
-    mode: 0o600,
-  });
-  yield* fs.rename(tmpPath, configPath);
+  const retrySchedule = Schedule.exponential("10 millis", 2).pipe(
+    Schedule.modifyDelay(({ duration }) =>
+      Effect.succeed(Duration.min(duration, Duration.millis(100))),
+    ),
+    Schedule.upTo({ times: 12 }),
+  );
+  const errorCode = (error: unknown): string | undefined => {
+    if (!Predicate.hasProperty(error, "cause")) return undefined;
+    return Predicate.hasProperty(error.cause, "code") && typeof error.cause.code === "string"
+      ? error.cause.code
+      : undefined;
+  };
+  yield* Effect.acquireUseRelease(
+    Effect.succeed(tmpPath),
+    (temporary) =>
+      Effect.gen(function* () {
+        yield* fs.writeFileString(temporary, encodePrettyJson(encodeTelemetryConfig(config)), {
+          mode: 0o600,
+        });
+        yield* fs.rename(temporary, configPath).pipe(
+          Effect.retry({
+            schedule: retrySchedule,
+            while: (error) =>
+              platform === "win32" && ["EPERM", "EACCES", "EBUSY"].includes(errorCode(error) ?? ""),
+          }),
+          Effect.mapError((cause) => contextualRenameError(cause, configPath, errorCode(cause))),
+        );
+      }),
+    (temporary) => fs.remove(temporary, { force: true }).pipe(Effect.ignore),
+  );
 }, Effect.orDie);
+
+function contextualRenameError(
+  cause: unknown,
+  configPath: string,
+  code: string | undefined,
+): PlatformError.PlatformError {
+  const reason =
+    cause instanceof PlatformError.PlatformError &&
+    cause.reason instanceof PlatformError.SystemError
+      ? cause.reason
+      : undefined;
+  return PlatformError.systemError({
+    _tag: reason?._tag ?? "Unknown",
+    module: reason?.module ?? "FileSystem",
+    method: reason?.method ?? "rename",
+    syscall: reason?.syscall,
+    pathOrDescriptor: configPath,
+    description: `${reason?.description ? `${reason.description}; ` : ""}Unable to publish telemetry config${code ? ` (${code})` : ""}`,
+    cause,
+  });
+}
 
 export const getEffectiveConsent = Effect.fnUntraced(function* (
   config: Option.Option<TelemetryConfig>,

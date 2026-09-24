@@ -61,6 +61,36 @@ it.live("registers and discovers saved definitions without inventing live observ
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
+it.live("starts the owner on opt-in reopen without starting saved services", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-open-owner-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* create(options);
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        const mail = yield* stack.services.create({ service: "mail", config: {} });
+        yield* stack.stop;
+
+        const offline = yield* open({ ...options, id: stack.id });
+        expect(offline.id).toBe(stack.id);
+        expect(Exit.isFailure(yield* Effect.exit(mail.status))).toBe(true);
+
+        const reopened = yield* open({ ...options, id: stack.id, startOwner: true });
+        expect(reopened.id).toBe(stack.id);
+        const observation = yield* (yield* reopened.services.get(mail.id)).status;
+        expect(observation.lifecycle).toBe("stopped");
+      }),
+      destroyTestStack(stack),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 it.live(
   "stops the owner after destroy fails and retains saved data for retry",
   () =>
@@ -146,8 +176,8 @@ const resetDataStory = (runtime: "native" | "docker") =>
             service: "database",
             config: {
               version: "17",
-              databasePassword: Redacted.make("reset-target-password"),
-              jwtSecret: Redacted.make("reset-target-jwt-secret"),
+              databasePassword: Redacted.make("reset-shared-password"),
+              jwtSecret: Redacted.make("reset-shared-jwt-secret-long-enough-32chars"),
               jwtExpiry: 3600,
             },
             endpoints: { sql: { port: "auto" } },
@@ -156,8 +186,8 @@ const resetDataStory = (runtime: "native" | "docker") =>
             service: "database",
             config: {
               version: "17",
-              databasePassword: Redacted.make("reset-sibling-password"),
-              jwtSecret: Redacted.make("reset-sibling-jwt-secret"),
+              databasePassword: Redacted.make("reset-shared-password"),
+              jwtSecret: Redacted.make("reset-shared-jwt-secret-long-enough-32chars"),
               jwtExpiry: 3600,
             },
             endpoints: { sql: { port: "auto" } },

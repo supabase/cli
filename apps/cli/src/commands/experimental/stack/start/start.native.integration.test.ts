@@ -78,12 +78,26 @@ const captureOwnerPid = (capture: (pid: number) => void) =>
             ),
         },
       });
+      const captureOpenOwner = (stack: Stack, stateRoot: string) =>
+        api.discover({ stateRoot }).pipe(
+          Effect.flatMap((definitions) => {
+            const host = definitions.find(({ definition }) => definition.id === stack.id)?.host;
+            return host === undefined ? Effect.void : Effect.sync(() => capture(host.pid));
+          }),
+        );
       return StackApi.of({
         ...api,
         create: (options) =>
           api.create(options).pipe(Effect.map((stack) => observe(stack, options.stateRoot))),
         open: (options) =>
-          api.open(options).pipe(Effect.map((stack) => observe(stack, options.stateRoot))),
+          api.open(options).pipe(
+            Effect.tap((stack) =>
+              options.startOwner === true
+                ? captureOpenOwner(stack, options.stateRoot)
+                : Effect.void,
+            ),
+            Effect.map((stack) => observe(stack, options.stateRoot)),
+          ),
       });
     }),
   );
@@ -252,6 +266,7 @@ describe("experimental stack start native lifecycle", () => {
             const services = yield* reopened.services.list;
             const secondDatabase = services.find((instance) => instance.service === "database");
             if (secondDatabase === undefined) return yield* Effect.die("reopened database missing");
+            expect(services.some((instance) => instance.service === "rest")).toBe(false);
             expect(secondDatabase.id).toBe(firstDatabase.id);
             const secondCredentials = yield* secondDatabase.credentials({ from: "host" });
             expect(secondCredentials.databaseUrl).toBe(firstDatabaseUrl);
@@ -267,7 +282,39 @@ describe("experimental stack start native lifecycle", () => {
               }),
             );
             expect(rows).toEqual([{ value: "preserved" }]);
-            expect(services.some((instance) => instance.service === "rest")).toBe(true);
+            yield* reopened.stop;
+            const restartedId = yield* stackStart(flags([]));
+            expect(restartedId).toBe(stackId);
+            const restarted = yield* api.open({
+              id: restartedId,
+              stateRoot: path.join(root, "stacks"),
+              cacheRoot: path.join(root, "cache"),
+            });
+            const restartedServices = yield* restarted.services.list;
+            const restartedDatabase = restartedServices.find(
+              (instance) => instance.service === "database",
+            );
+            if (restartedDatabase === undefined)
+              return yield* Effect.die("restarted database missing");
+            expect(restartedServices.some((instance) => instance.service === "rest")).toBe(true);
+            expect(restartedDatabase.id).toBe(firstDatabase.id);
+            const restartedCredentials = yield* restartedDatabase.credentials({ from: "host" });
+            expect(restartedCredentials.databaseUrl).toBe(firstDatabaseUrl);
+            const restartedConnection = parseConnectionString(
+              restartedCredentials.databaseUrl ?? "",
+            );
+            if (restartedConnection === undefined)
+              return yield* Effect.die("restarted URL invalid");
+            const restartedRows = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const session = yield* db.connect(restartedConnection, {
+                  isLocal: true,
+                  dnsResolver: "native",
+                });
+                return yield* session.query("SELECT value FROM native_start_probe");
+              }),
+            );
+            expect(restartedRows).toEqual([{ value: "preserved" }]);
           }),
           Effect.gen(function* () {
             const api = yield* StackApi;
@@ -279,7 +326,7 @@ describe("experimental stack start native lifecycle", () => {
   );
 
   it.live(
-    "stops each owner across retries when initial database startup cannot bind its endpoint",
+    "stops owners after bind and pre-compose config failures across retries",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -314,9 +361,10 @@ describe("experimental stack start native lifecycle", () => {
           projectConfig.replace("[db.pooler]", `[db]\nport = ${occupiedPort}\n\n[db.pooler]`),
         );
         const ownerPids: Array<number> = [];
+        let activeAttempt = 0;
         const fixture = makeLayers(
           root,
-          captureOwnerPid((pid) => ownerPids.push(pid)),
+          captureOwnerPid((pid) => (ownerPids[activeAttempt] = pid)),
         );
         yield* Effect.scoped(
           Effect.gen(function* () {
@@ -326,6 +374,7 @@ describe("experimental stack start native lifecycle", () => {
             );
             let stackId: string | undefined;
             for (let attempt = 0; attempt < 2; attempt++) {
+              activeAttempt = attempt;
               const failedStart = yield* Effect.scoped(Effect.exit(stackStart(flags([]))));
               expect(Exit.isFailure(failedStart)).toBe(true);
               if (!Exit.isFailure(failedStart)) return;
@@ -351,7 +400,34 @@ describe("experimental stack start native lifecycle", () => {
               expect(yield* stack.services.list).toHaveLength(0);
               expect((yield* stack.composition.describe).members).toHaveLength(0);
             }
-            expect(ownerPids).toHaveLength(2);
+            yield* fs.writeFileString(path.join(root, "supabase", "config.toml"), "project_id = [");
+            activeAttempt = 2;
+            const invalidConfigStart = yield* Effect.scoped(Effect.exit(stackStart(flags([]))));
+            expect(Exit.isFailure(invalidConfigStart)).toBe(true);
+            if (!Exit.isFailure(invalidConfigStart)) return;
+            const configError = Cause.findErrorOption(invalidConfigStart.cause);
+            expect(Option.isSome(configError)).toBe(true);
+            if (Option.isSome(configError))
+              expect(configError.value).toMatchObject({ reason: "invalid-config" });
+            const configFailureOwnerPid = ownerPids[2];
+            expect(configFailureOwnerPid).toBeDefined();
+            if (configFailureOwnerPid === undefined)
+              return yield* Effect.die("owner PID missing after config failure");
+            expect(yield* ownerHasExited(configFailureOwnerPid)).toBe(true);
+            const definitions = yield* api.discover({ stateRoot: path.join(root, "stacks") });
+            expect(definitions).toHaveLength(1);
+            const definition = definitions[0];
+            if (definition === undefined) return yield* Effect.die("registered stack missing");
+            expect(definition.definition.id).toBe(stackId);
+            expect(definition.host).toBeUndefined();
+            const stack = yield* api.open({
+              id: definition.definition.id,
+              stateRoot: path.join(root, "stacks"),
+              cacheRoot: path.join(root, "cache"),
+            });
+            expect(yield* stack.services.list).toHaveLength(0);
+            expect((yield* stack.composition.describe).members).toHaveLength(0);
+            expect(ownerPids.filter((pid) => pid !== undefined)).toHaveLength(3);
           }),
         ).pipe(Effect.provide(fixture.layer));
       }).pipe(Effect.provide(BunServices.layer)),

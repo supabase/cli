@@ -1,5 +1,6 @@
 import {
   Data,
+  Duration,
   Effect,
   FileSystem,
   Context,
@@ -27,6 +28,35 @@ export const SavedInstance = Schema.Struct({
 });
 export interface SavedInstance extends Schema.Schema.Type<typeof SavedInstance> {}
 
+export const StackIdentityInput = Schema.Struct({
+  publishableKey: Schema.optionalKey(Schema.String),
+  secretKey: Schema.optionalKey(Schema.String),
+  anonKey: Schema.optionalKey(Schema.String),
+  anonKeyIsOverride: Schema.optionalKey(Schema.Boolean),
+  serviceRoleKey: Schema.optionalKey(Schema.String),
+  serviceRoleKeyIsOverride: Schema.optionalKey(Schema.Boolean),
+  gotrueJwtKeys: Schema.optionalKey(Schema.String),
+  publicSigningKeys: Schema.optionalKey(Schema.String),
+  remoteJwks: Schema.optionalKey(Schema.String),
+});
+export interface StackIdentityInput extends Schema.Schema.Type<typeof StackIdentityInput> {}
+
+export const StackCredentials = Schema.Struct({
+  jwtSecret: Schema.String,
+  postgresRootKey: Schema.String,
+  databasePassword: Schema.String,
+  publishableKey: Schema.String,
+  secretKey: Schema.String,
+  anonKey: Schema.String,
+  serviceRoleKey: Schema.String,
+  jwks: Schema.String,
+  gotrueJwtKeys: Schema.String,
+  remoteJwks: Schema.String,
+  anonKeyIsOverride: Schema.Boolean,
+  serviceRoleKeyIsOverride: Schema.Boolean,
+});
+export interface StackCredentials extends Schema.Schema.Type<typeof StackCredentials> {}
+
 export const SavedStack = Schema.Struct({
   id: SafeId,
   identity: Schema.Struct({
@@ -37,6 +67,7 @@ export const SavedStack = Schema.Struct({
   runtime: Schema.Literals(["native", "docker", "podman"]),
   instances: Schema.Array(SavedInstance),
   composition: Schema.Unknown,
+  credentials: Schema.optionalKey(StackCredentials),
   ports: Schema.Array(
     Schema.Struct({
       key: Schema.String,
@@ -96,6 +127,7 @@ const decodeState = (
 
 interface Options {
   readonly root: string;
+  readonly platform?: NodeJS.Platform;
   readonly onInvalidState?: (id: string, error: StateError) => Effect.Effect<void>;
 }
 
@@ -115,6 +147,36 @@ const makeState = (
 
     const stackRoot = (id: string) => path.join(root, id);
     const statePath = (id: string) => path.join(stackRoot(id), "state.json");
+    const publishRetrySchedule = Schedule.exponential("10 millis", 2).pipe(
+      Schedule.modifyDelay(({ duration }) =>
+        Effect.succeed(Duration.min(duration, Duration.millis(100))),
+      ),
+      Schedule.upTo({ times: 12 }),
+    );
+    const renameErrorCode = (error: unknown): string | undefined => {
+      if (!Predicate.hasProperty(error, "cause")) return undefined;
+      return Predicate.hasProperty(error.cause, "code") && typeof error.cause.code === "string"
+        ? error.cause.code
+        : undefined;
+    };
+    const publish = Effect.fn("State.publish")(function* (temporary: string, target: string) {
+      yield* fs.rename(temporary, target).pipe(
+        Effect.retry({
+          schedule: publishRetrySchedule,
+          while: (error) =>
+            (options.platform ?? process.platform) === "win32" &&
+            ["EPERM", "EACCES", "EBUSY"].includes(renameErrorCode(error) ?? ""),
+        }),
+        Effect.mapError(
+          (cause) =>
+            new StateError({
+              operation: "publish",
+              message: `Unable to publish state to ${target}${renameErrorCode(cause) ? ` (${renameErrorCode(cause)})` : ""}: ${cause instanceof Error ? cause.message : String(cause)}`,
+              cause,
+            }),
+        ),
+      );
+    });
     const removeEmptyDirectory = (directory: string) =>
       Effect.tryPromise({
         try: () => rmdir(directory),
@@ -185,9 +247,7 @@ const makeState = (
             yield* fs
               .writeFileString(temporary, serialized, { mode: 0o600 })
               .pipe(Effect.mapError((cause) => stateError("write", cause)));
-            yield* fs
-              .rename(temporary, target)
-              .pipe(Effect.mapError((cause) => stateError("publish", cause)));
+            yield* publish(temporary, target);
           }),
         (directory) =>
           fs

@@ -2,7 +2,14 @@ import { endpointReports } from "../stack-endpoints.format.ts";
 import { readStackFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
-import { nativePostgresRootError, type ServiceCreation, type Stack } from "@supabase/stack/effect";
+import {
+  nativePostgresRootError,
+  type ServiceCreationInput,
+  type Stack,
+  type StackError,
+  type StackIdentityInput,
+} from "@supabase/stack/effect";
+import { postgresVersion } from "@supabase/stack/internal/postgres-artifact";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
   OutputFlag,
@@ -30,6 +37,7 @@ import {
   stackCapabilityForService,
   StackTargetError,
   StackTargetResolver,
+  failedOutcomesDetail,
   rejectStackOutput,
   validateStackTarget,
 } from "../stack.shared.ts";
@@ -69,12 +77,38 @@ const mapTargetError = (error: StackTargetError) =>
     cause: error,
   });
 
-const stackError = (cause: { readonly message: string }) =>
-  new StackCommandStartError({
+const stackError = (
+  cause: { readonly message: string } & Partial<Pick<StackError, "outcomes">>,
+  members: ReadonlyArray<{ readonly id: string; readonly service: string }> = [],
+) => {
+  const detail = failedOutcomesDetail(cause, (id) => {
+    const service = members.find((member) => member.id === id)?.service;
+    return service === undefined ? id : `${service} (${id})`;
+  });
+  return new StackCommandStartError({
     reason: "unknown",
     message: cause.message,
+    ...(detail === undefined ? {} : { detail }),
     cause,
   });
+};
+
+const loadStartConfig = (projectRoot: string, fs: FileSystem.FileSystem, path: Path.Path) =>
+  Effect.gen(function* () {
+    const config = yield* loadStackConfig(projectRoot);
+    const identity = yield* config.identity;
+    const toml = yield* readDbToml(fs, path, projectRoot);
+    return { config, identity, toml };
+  }).pipe(
+    Effect.mapError(
+      (error) =>
+        new StackCommandStartError({
+          reason: "invalid-config",
+          message: error.message,
+          cause: error,
+        }),
+    ),
+  );
 
 const sameKinds = (
   left: ReadonlyArray<{ readonly service: string }>,
@@ -107,21 +141,34 @@ const sameBinding = (
     comparableConfig(requested.service, requested.config),
   );
 
-const reconciledConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
-  database: new Set(["databasePassword", "jwtSecret"]),
-  rest: new Set(["databaseUrl", "jwtSecret"]),
-  auth: new Set(["databaseUrl", "jwtSecret", "externalApiUrl", "smtpUrl"]),
-  realtime: new Set(["databaseUrl", "jwtSecret"]),
-  storage: new Set(["databaseUrl", "filePath", "jwtSecret", "imgproxyUrl", "vectorDatabaseUrl"]),
+const compositionManagedConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
+  database: new Set(["databasePassword", "jwtSecret", "rootKey"]),
+  rest: new Set(["databaseUrl", "jwtSecret", "jwks"]),
+  auth: new Set(["databaseUrl", "jwtSecret", "gotrueJwtKeys", "externalApiUrl", "smtpUrl"]),
+  realtime: new Set(["databaseUrl", "jwtSecret", "jwks"]),
+  storage: new Set([
+    "databaseUrl",
+    "filePath",
+    "jwtSecret",
+    "jwks",
+    "anonKey",
+    "serviceRoleKey",
+    "imgproxyUrl",
+    "vectorDatabaseUrl",
+  ]),
   functions: new Set([
-    "functionsRoot",
+    "apiUrl",
+    "bootstrap",
+    "databaseUrl",
+    "env",
     "filesRoot",
     "functions",
-    "bootstrap",
-    "apiUrl",
-    "databaseUrl",
     "jwtSecret",
-    "env",
+    "jwks",
+    "anonKey",
+    "serviceRoleKey",
+    "publishableKey",
+    "secretKey",
     "verifyJwt",
   ]),
   studio: new Set([
@@ -133,6 +180,11 @@ const reconciledConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
     "apiUrl",
     "publicApiUrl",
     "jwtSecret",
+    "jwks",
+    "anonKey",
+    "serviceRoleKey",
+    "publishableKey",
+    "secretKey",
   ]),
   analytics: new Set(["databaseUrl"]),
   vector: new Set(["analyticsUrl"]),
@@ -142,12 +194,20 @@ const reconciledConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
 
 const comparableConfig = (service: string, value: unknown): unknown => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
-  const ignored = reconciledConfigKeys[service] ?? new Set<string>();
-  return Object.fromEntries(Object.entries(value).filter(([key]) => !ignored.has(key)));
+  const ignored = compositionManagedConfigKeys[service] ?? new Set<string>();
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !ignored.has(key))
+      .map(([key, entry]) =>
+        service === "database" && key === "version" && typeof entry === "string"
+          ? [key, postgresVersion(entry)]
+          : [key, entry],
+      ),
+  );
 };
 
 const selectedCreations = (
-  creations: ReadonlyArray<ServiceCreation>,
+  creations: ReadonlyArray<ServiceCreationInput>,
   exclusions: ReadonlyArray<string>,
 ) =>
   creations.filter((creation) => {
@@ -157,9 +217,14 @@ const selectedCreations = (
 
 const compose = (
   stack: Stack,
-  creations: ReadonlyArray<ServiceCreation>,
+  creations: ReadonlyArray<ServiceCreationInput>,
   reuseIds: ReadonlyArray<string>,
-) => stack.composition.supabase(creations, reuseIds.length === 0 ? undefined : { reuseIds });
+  identity: StackIdentityInput,
+) =>
+  stack.composition.supabase(creations, {
+    identity,
+    ...(reuseIds.length === 0 ? {} : { reuseIds }),
+  });
 
 /** Starts the selected managed stack and applies the local database overlays. */
 export const stackStart = Effect.fn("experimental.stack.start")(function* (flags: StackStartFlags) {
@@ -187,52 +252,88 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         runtime: flags.runtime,
       })
       .pipe(Effect.mapError(mapTargetError));
-    const config = yield* loadStackConfig(target.projectRoot).pipe(
-      Effect.mapError(
-        (error) =>
-          new StackCommandStartError({
-            reason: "invalid-config",
-            message: error.message,
-            cause: error,
-          }),
-      ),
-    );
-    const toml = yield* readDbToml(fs, path, target.projectRoot).pipe(
-      Effect.mapError(
-        (error) =>
-          new StackCommandStartError({
-            reason: "invalid-config",
-            message: error.message,
-            cause: error,
-          }),
-      ),
-    );
     const selectedRuntime = target.runtime ?? defaultStackRuntime(runtime);
-    const rootError = nativePostgresRootError(selectedRuntime, process.getuid?.());
-    if (rootError !== undefined)
-      return yield* new StackCommandStartError({ reason: "lifecycle", message: rootError });
+    const configBeforeCreate =
+      target.id === undefined ? yield* loadStartConfig(target.projectRoot, fs, path) : undefined;
+    if (target.id === undefined) {
+      const rootError = nativePostgresRootError(selectedRuntime, process.getuid?.());
+      if (rootError !== undefined)
+        return yield* new StackCommandStartError({ reason: "lifecycle", message: rootError });
+    }
     const stateRoot = path.join(settings.supabaseHome, "stacks");
     const cacheRoot = path.join(settings.supabaseHome, "cache", "stack");
-    const stack =
+    const startupComplete = yield* Ref.make(false);
+    const stack = yield* Effect.acquireRelease(
       target.id === undefined
-        ? yield* stackApi
-            .create({
-              projectRoot: target.projectRoot,
-              stateRoot,
-              cacheRoot,
-              runtime: selectedRuntime,
-              ...(target.name === undefined ? {} : { name: target.name }),
-            })
-            .pipe(Effect.mapError(stackError))
-        : yield* stackApi
-            .open({ id: target.id, stateRoot, cacheRoot })
-            .pipe(Effect.mapError(stackError));
+        ? stackApi.create({
+            projectRoot: target.projectRoot,
+            stateRoot,
+            cacheRoot,
+            runtime: selectedRuntime,
+            ...(target.name === undefined ? {} : { name: target.name }),
+          })
+        : stackApi.open({ id: target.id, stateRoot, cacheRoot, startOwner: true }),
+      (stack) =>
+        Ref.get(startupComplete).pipe(
+          Effect.flatMap((complete) =>
+            complete || target.hostRunning
+              ? Effect.void
+              : stack.stop.pipe(
+                  Effect.catch((error) =>
+                    output.raw(
+                      `Failed to stop stack host ${stack.id}: ${error.message}. Run supabase stack stop --stack-id ${stack.id} to stop it.\n`,
+                      "stderr",
+                    ),
+                  ),
+                ),
+          ),
+        ),
+    ).pipe(Effect.mapError(stackError));
     const existingServices = yield* stack.services.list.pipe(Effect.mapError(stackError));
     const composition = yield* stack.composition.describe.pipe(Effect.mapError(stackError));
     const currentInstances = yield* Effect.forEach(composition.members, ({ id }) =>
       stack.services.get(id).pipe(Effect.mapError(stackError)),
     );
+    const currentStatuses = yield* Effect.forEach(currentInstances, (instance) =>
+      instance.status.pipe(Effect.mapError(stackError)),
+    );
     const primaryDatabase = currentInstances.find((instance) => instance.service === "database");
+    const databaseStatus = currentStatuses.find(({ id }) => id === primaryDatabase?.id);
+    const fullyStarted =
+      databaseStatus?.lifecycle === "running" &&
+      currentStatuses.every(({ lifecycle, wakeEnabled }) => lifecycle === "running" || wakeEnabled);
+    if (fullyStarted) {
+      yield* Ref.set(startupComplete, true);
+      const endpoints = Object.fromEntries(
+        currentStatuses.flatMap((observation, index) => {
+          const instance = currentInstances[index];
+          return instance === undefined
+            ? []
+            : Object.entries(endpointReports(observation)).map(
+                ([name, endpoint]) => [`${instance.service}.${name}`, endpoint] as const,
+              );
+        }),
+      );
+      yield* output.success(
+        "Stack is already running with its current services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
+        { id: stack.id, endpoints },
+      );
+      return stack.id;
+    }
+    const fullyStopped = currentStatuses.every(
+      ({ lifecycle, wakeEnabled }) => lifecycle === "stopped" && !wakeEnabled,
+    );
+    if (!fullyStopped)
+      return yield* new StackCommandStartError({
+        reason: "lifecycle",
+        message: "The stack is in a partial lifecycle state",
+        suggestion: "Run supabase stack stop, then supabase stack start to recover the stack.",
+      });
+    if (target.id !== undefined) {
+      const rootError = nativePostgresRootError(selectedRuntime, process.getuid?.());
+      if (rootError !== undefined)
+        return yield* new StackCommandStartError({ reason: "lifecycle", message: rootError });
+    }
     const shadowDatabase =
       composition.members.length === 0
         ? existingServices.find((instance) => instance.service === "database")
@@ -243,45 +344,22 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "A standalone database exists outside the saved stack composition",
         suggestion: "Destroy the standalone database before starting this stack.",
       });
-    const persistedJwt =
-      primaryDatabase === undefined
-        ? undefined
-        : yield* primaryDatabase.status.pipe(
-            Effect.catchTag("StackError", () =>
-              primaryDatabase
-                .credentials({ from: "host" })
-                .pipe(Effect.andThen(primaryDatabase.status)),
-            ),
-            Effect.map((status) =>
-              status.config.service === "database"
-                ? Redacted.isRedacted(status.config.config.jwtSecret)
-                  ? status.config.config.jwtSecret
-                  : Redacted.make(status.config.config.jwtSecret)
-                : undefined,
-            ),
-            Effect.mapError(stackError),
-          );
-    if (primaryDatabase !== undefined && persistedJwt === undefined)
-      return yield* new StackCommandStartError({
-        reason: "invalid-config",
-        message: "The existing database has no persisted JWT secret",
-      });
-    const creations = yield* config
-      .creations(stack.id, persistedJwt === undefined ? undefined : { jwtSecret: persistedJwt })
-      .pipe(
-        Effect.mapError(
-          (error) =>
-            new StackCommandStartError({
-              reason: "invalid-config",
-              message: error.message,
-              cause: error,
-            }),
-        ),
-      );
+    const { config, identity, toml } =
+      configBeforeCreate ?? (yield* loadStartConfig(target.projectRoot, fs, path));
+    const creations = yield* config.creations(stack.id).pipe(
+      Effect.mapError(
+        (error) =>
+          new StackCommandStartError({
+            reason: "invalid-config",
+            message: error.message,
+            cause: error,
+          }),
+      ),
+    );
     const requested = yield* Effect.forEach(selectedCreations(creations, exclusions), (creation) =>
       creation.service === "functions"
         ? readStackFunctionsEnv(`${creation.config.functionsRoot}/.env`, true).pipe(
-            Effect.map((env): ServiceCreation => ({
+            Effect.map((env): ServiceCreationInput => ({
               ...creation,
               config: { ...creation.config, env: { ...env, ...creation.config.env } },
             })),
@@ -305,6 +383,16 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "Studio cannot be started without the REST API capability",
         suggestion: "Remove --exclude rest or also exclude studio.",
       });
+    const requestedDatabase = requested.find((creation) => creation.service === "database");
+    const savedCredentials = yield* stack.credentials.get.pipe(Effect.mapError(stackError));
+    if (requestedDatabase?.service === "database" && savedCredentials !== undefined) {
+      const rootKey = requestedDatabase.config.rootKey;
+      if (rootKey !== undefined && Redacted.value(rootKey) !== savedCredentials.postgresRootKey)
+        return yield* new StackCommandStartError({
+          reason: "invalid-config",
+          message: "The configured Postgres root key conflicts with the saved stack credentials",
+        });
+    }
     if (requested.some(({ service }) => service === "storage"))
       yield* fs
         .makeDirectory(
@@ -337,25 +425,32 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           ),
         );
     const initialComposition = composition.members.length === 0;
-    let compositionChanged = !sameKinds(currentInstances, requested);
+    const serviceKindsChanged = !sameKinds(currentInstances, requested);
     for (const instance of currentInstances) {
       const creation = requested.find(({ service }) => service === instance.service);
       if (creation === undefined) continue;
       const status = yield* instance.status.pipe(Effect.mapError(stackError));
+      if (
+        creation.service === "database" &&
+        status.config.service === "database" &&
+        postgresVersion(creation.config.version) !== postgresVersion(status.config.config.version)
+      )
+        return yield* new StackCommandStartError({
+          reason: "invalid-config",
+          message: "The requested database version does not match the saved stack binding",
+          suggestion: "Keep the saved database version, or destroy the stack.",
+        });
       if (!sameBinding(status.config, creation))
         return yield* new StackCommandStartError({
           reason: "invalid-config",
           message: `The requested ${creation.service} configuration does not match the saved stack binding`,
-          suggestion:
-            "Keep the saved endpoint and version settings, or destroy the stack before changing them.",
+          suggestion: "Keep the saved endpoint and version settings, or destroy the stack.",
         });
     }
-    const reuseIds: Array<string> = compositionChanged
-      ? currentInstances
-          .filter((instance) => requested.some((creation) => creation.service === instance.service))
-          .map(({ id }) => id)
-      : [];
-    if (compositionChanged) {
+    const reuseIds: Array<string> = currentInstances
+      .filter((instance) => requested.some((creation) => creation.service === instance.service))
+      .map(({ id }) => id);
+    if (serviceKindsChanged) {
       const currentKinds = new Set(currentInstances.map(({ service }) => service));
       for (const creation of requested) {
         if (currentKinds.has(creation.service)) continue;
@@ -384,51 +479,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         if (candidate !== undefined) reuseIds.push(candidate.id);
       }
     }
-    const initialCleanupComplete = yield* Ref.make(!initialComposition);
     const starting = yield* output.task("Starting local Supabase stack...");
-    if (compositionChanged && composition.members.length > 0) {
-      const stopping = yield* output.task(
-        "Stopping local Supabase stack before applying changes...",
-      );
-      yield* stack.composition.stop.pipe(
-        Effect.tapError((error) => stopping.fail(error.message)),
-        Effect.mapError(stackError),
-      );
-      yield* stopping.succeed();
-    } else if (compositionChanged && primaryDatabase !== undefined) {
-      const stopping = yield* output.task(
-        "Stopping local Supabase stack before applying changes...",
-      );
-      yield* primaryDatabase.stop.pipe(
-        Effect.tapError((error) => stopping.fail(error.message)),
-        Effect.mapError(stackError),
-      );
-      yield* stopping.succeed();
-    }
-    if (!target.hostRunning && initialComposition) {
-      yield* Effect.addFinalizer(() =>
-        Ref.get(initialCleanupComplete).pipe(
-          Effect.flatMap((complete) =>
-            complete
-              ? Effect.void
-              : stack.stop.pipe(
-                  Effect.catch((error) =>
-                    output.raw(
-                      `Failed to stop initial stack host ${stack.id}: ${error.message}. Run supabase stack stop --stack-id ${stack.id} to stop it.\n`,
-                      "stderr",
-                    ),
-                  ),
-                ),
-          ),
-        ),
-      );
-    }
-    const members = compositionChanged
-      ? yield* compose(stack, requested, reuseIds).pipe(
-          Effect.tapError((error) => starting.fail(error.message)),
-          Effect.mapError(stackError),
-        )
-      : currentInstances;
+    const members = yield* compose(stack, requested, reuseIds, identity).pipe(
+      Effect.tapError((error) => starting.fail(error.message)),
+      Effect.mapError(stackError),
+    );
     if (initialComposition) {
       const existingIds = new Set(existingServices.map(({ id }) => id));
       const owned = members.filter(({ id }) => !existingIds.has(id));
@@ -457,29 +512,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         ),
       );
       yield* Effect.addFinalizer(() =>
-        Ref.get(initialCleanupComplete).pipe(
+        Ref.get(startupComplete).pipe(
           Effect.flatMap((complete) => (complete ? Effect.void : cleanupInitialSafe)),
         ),
       );
-    }
-    const functions = members.find((member) => member.service === "functions");
-    const requestedFunctions = requested.find((creation) => creation.service === "functions");
-    if (functions?.service === "functions" && requestedFunctions?.service === "functions") {
-      const before = yield* functions.status.pipe(Effect.mapError(stackError));
-      if (before.config.service === "functions") {
-        const next = {
-          ...before.config.config,
-          env: requestedFunctions.config.env,
-          functions: requestedFunctions.config.functions,
-          filesRoot: requestedFunctions.config.filesRoot,
-          verifyJwt: requestedFunctions.config.verifyJwt,
-        };
-        if (!Equal.equals(before.config.config, next)) {
-          yield* functions.restart({ config: next }).pipe(Effect.mapError(stackError));
-          if (before.lifecycle === "stopped")
-            yield* functions.stop.pipe(Effect.mapError(stackError));
-        }
-      }
     }
     const configured = yield* stack.composition.describe.pipe(Effect.mapError(stackError));
     const desiredMembers = configured.members.map(({ id }) => {
@@ -498,16 +534,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       );
     });
     if (activationChanged) {
-      if (!compositionChanged && composition.members.length > 0) {
-        const stopping = yield* output.task(
-          "Stopping local Supabase stack before applying changes...",
-        );
-        yield* stack.composition.stop.pipe(
-          Effect.tapError((error) => stopping.fail(error.message)),
-          Effect.mapError(stackError),
-        );
-        yield* stopping.succeed();
-      }
       yield* stack.composition
         .configure({ ...configured, members: desiredMembers })
         .pipe(Effect.mapError(stackError));
@@ -534,6 +560,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       Effect.tapError((error) => starting.fail(error.message)),
       Effect.mapError(stackError),
     );
+    const stackCredentials = yield* stack.credentials.get.pipe(Effect.mapError(stackError));
+    if (stackCredentials === undefined)
+      return yield* new StackCommandStartError({
+        reason: "invalid-config",
+        message: "The stack has no saved credentials",
+      });
     const databaseServices = requested
       .filter(
         (creation) =>
@@ -550,7 +582,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             stack,
             database,
             databaseServices,
-            jwtSecret: Redacted.value(persistedJwt ?? config.jwtSecret),
           },
           overlay: {
             webhooks: "config",
@@ -569,14 +600,13 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         Effect.tapError((error) => starting.fail(error.message)),
         Effect.mapError(stackError),
       );
-    } else if (compositionChanged) {
+    } else if (serviceKindsChanged) {
       yield* catalog
         .apply({
           target: {
             stack,
             database,
             databaseServices,
-            jwtSecret: Redacted.value(persistedJwt ?? config.jwtSecret),
           },
           overlay: {
             webhooks: "config",
@@ -618,7 +648,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           );
           const credentials = yield* stackStorageCredentialsFor(
             storage,
-            Redacted.value(persistedJwt ?? config.jwtSecret),
+            stackCredentials.serviceRoleKey,
           ).pipe(Effect.mapError(stackError));
           yield* seedBucketsRun({
             projectRef: "",
@@ -635,10 +665,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     }
     yield* stack.composition.start.pipe(
       Effect.tapError((error) => starting.fail(error.message)),
-      Effect.mapError(stackError),
+      Effect.mapError((error) => stackError(error, members)),
     );
     yield* Effect.forEach(preparation, (fiber) => Fiber.join(fiber));
-    yield* Ref.set(initialCleanupComplete, true);
+    yield* Ref.set(startupComplete, true);
     const endpoints = Object.fromEntries(
       (yield* Effect.forEach(members, (member) =>
         member.status.pipe(

@@ -106,6 +106,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
       get: () => Effect.succeed(database),
       list: Effect.succeed([database]),
     },
+    credentials: { get: Effect.die("unused") },
     composition: {
       describe: Effect.succeed({
         members: [{ id, activation: "eager" as const }],

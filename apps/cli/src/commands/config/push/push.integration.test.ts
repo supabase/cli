@@ -1,10 +1,21 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { V1UpdateAuthServiceConfigOutput } from "@supabase/api/effect";
-import { Effect, Exit, Layer, Option, Stdio } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Schema,
+  Stdio,
+} from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 import {
   mockAnalytics,
@@ -24,10 +35,12 @@ import {
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { v2ProjectConfigResponse } from "../../../../tests/helpers/config-fixtures.ts";
 import { mockRuntimeInfo, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { secretDigestHex } from "./push.secret.ts";
 import { configPush } from "./push.handler.ts";
@@ -37,11 +50,45 @@ const tempRoot = useTempWorkdir("supabase-config-push-int-");
 
 const REF = VALID_REF;
 
-function writeConfig(toml: string): void {
-  const dir = join(tempRoot.current, "supabase");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "config.toml"), toml);
-}
+const workdirPath = Effect.fnUntraced(function* (...segments: ReadonlyArray<string>) {
+  const path = yield* Path.Path;
+  return path.join(tempRoot.current, ...segments);
+});
+
+const writeWorkdirFile = Effect.fnUntraced(function* (
+  segments: ReadonlyArray<string>,
+  contents: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = yield* workdirPath(...segments);
+  yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+  yield* fs.writeFileString(file, contents);
+});
+
+const makeWorkdirDirectory = Effect.fnUntraced(function* (...segments: ReadonlyArray<string>) {
+  const fs = yield* FileSystem.FileSystem;
+  const directory = yield* workdirPath(...segments);
+  yield* fs.makeDirectory(directory, { recursive: true });
+  return directory;
+});
+
+type WorkdirSeed = Effect.Effect<
+  unknown,
+  PlatformError.PlatformError | Schema.SchemaError,
+  FileSystem.FileSystem | Path.Path
+>;
+
+/** Writes `supabase/config.toml` and any `seed` files when the scenario's layer is built. */
+const workdirFilesLayer = (toml: string, seed: WorkdirSeed = Effect.void) =>
+  Layer.effectDiscard(
+    Effect.andThen(writeWorkdirFile(["supabase", "config.toml"], toml), seed),
+  ).pipe(Layer.provide(BunServices.layer));
+
+const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const v1TransportFailure = (description: string) =>
+  Effect.fail(transportFailure(HttpClientRequest.get(DEFAULT_API_URL), description));
 
 /** The shared v2 project-config fixture (schema-default baseline) — see `config-fixtures.ts`. */
 const v2Response = v2ProjectConfigResponse;
@@ -61,24 +108,6 @@ function digestOf(plaintext: string): string {
 const DOTENVX_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
 const DOTENVX_ENCRYPTED_VALUE =
   "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
-
-/** Save/restore `DOTENV_PRIVATE_KEY` around a test. */
-function withDotenvPrivateKey<A, E, R>(
-  value: string | undefined,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> {
-  const prev = process.env["DOTENV_PRIVATE_KEY"];
-  if (value === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
-  else process.env["DOTENV_PRIVATE_KEY"] = value;
-  return effect.pipe(
-    Effect.ensuring(
-      Effect.sync(() => {
-        if (prev === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
-        else process.env["DOTENV_PRIVATE_KEY"] = prev;
-      }),
-    ),
-  );
-}
 
 // Schema-valid response for the postgrest PATCH when routed through the real typed client
 // (`setup()` below); the body itself is never asserted on, only its schema-validity.
@@ -190,17 +219,12 @@ const BRANCH_CONFIG = {
   db_port: 5432,
 };
 
-function writeLinkedProjectRefFile(ref: string): void {
-  const dir = join(tempRoot.current, "supabase", ".temp");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "project-ref"), ref);
-}
+const writeLinkedProjectRefFile = (ref: string) =>
+  writeWorkdirFile(["supabase", ".temp", "project-ref"], ref);
 
-function writeLinkedProjectCacheFile(json: Record<string, unknown>): void {
-  const dir = join(tempRoot.current, "supabase", ".temp");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "linked-project.json"), JSON.stringify(json));
-}
+const writeLinkedProjectCacheFile = Effect.fnUntraced(function* (json: Record<string, unknown>) {
+  yield* writeWorkdirFile(["supabase", ".temp", "linked-project.json"], yield* jsonText(json));
+});
 
 /**
  * Real-client setup, routed by URL — for scenarios writing only `api` (PATCH /postgrest) and
@@ -251,8 +275,9 @@ function setup(opts: {
    * model an env override distinct from any linked-state files.
    */
   readonly projectId?: Option.Option<string>;
+  /** Extra workdir files (linked-project state) written alongside `config.toml`. */
+  readonly seed?: WorkdirSeed;
 }) {
-  writeConfig(opts.toml);
   const out = mockOutput({
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm,
@@ -373,6 +398,8 @@ function setup(opts: {
       opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
     ),
     Layer.succeed(YesFlag, opts.yes ?? false),
+    workdirFilesLayer(opts.toml, opts.seed),
+    cliConfigProviderLayer,
   );
   return { layer, out, api, telemetry, linkedProjectCache };
 }
@@ -389,7 +416,9 @@ describe("config push integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushApiUpdateStatusError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushApiUpdateStatusError");
+      }
       expect(out.stderrText).toContain(`Pushing config to project: ${REF}`);
       expect(out.stderrText).toContain("Updating API service with config:");
     }).pipe(Effect.provide(layer));
@@ -404,7 +433,9 @@ describe("config push integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushApiUpdateNetworkError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushApiUpdateNetworkError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -420,9 +451,6 @@ describe("config push integration", () => {
   });
 
   it.live("names supabase/config.json (not config.toml) on a malformed config.json", () => {
-    const dir = join(tempRoot.current, "supabase");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "config.json"), "{not valid json");
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) => Effect.succeed(jsonResponse(request, 200, { available_addons: [] })),
@@ -438,13 +466,13 @@ describe("config push integration", () => {
       Layer.succeed(YesFlag, true),
     );
     return Effect.gen(function* () {
+      yield* writeWorkdirFile(["supabase", "config.json"], "{not valid json");
       const message = yield* configPush({ projectRef: Option.none() }).pipe(
         Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
-        Effect.provide(layer),
       );
       expect(message).toContain("failed to parse supabase/config.json:");
       expect(api.requests).toHaveLength(0);
-    });
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("merges a matching [remotes.*] block over the base and pushes it", () => {
@@ -677,107 +705,91 @@ max_rows = 1000
   });
 
   it.live("honors SUPABASE_YES from supabase/.env even against a piped 'n'", () => {
-    const prev = process.env["SUPABASE_YES"];
-    delete process.env["SUPABASE_YES"];
     const { layer, api } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       stdinIsTty: false,
       pipedAnswers: ["n"],
     });
-    writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_YES=true\n");
-    return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
-      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
-        true,
-      );
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
+    return withEnvVar(
+      "SUPABASE_YES",
+      undefined,
+      Effect.gen(function* () {
+        yield* writeWorkdirFile(["supabase", ".env"], "SUPABASE_YES=true\n");
+        yield* configPush({ projectRef: Option.none() });
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
+      }),
+    ).pipe(Effect.provide(layer));
   });
 
   it.live("honors SUPABASE_YES set directly in the shell environment", () => {
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "true";
     const { layer, api } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       stdinIsTty: false,
       pipedAnswers: ["n"],
     });
-    return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
-      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
-        true,
-      );
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
+    return withEnvVar(
+      "SUPABASE_YES",
+      "true",
+      Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
+      }),
+    ).pipe(Effect.provide(layer));
   });
 
-  it.live("loads config-push env from the project root when --workdir names a subdirectory", () => {
-    const prev = process.env["SUPABASE_YES"];
-    delete process.env["SUPABASE_YES"];
-    const sub = join(tempRoot.current, "nested", "dir");
-    mkdirSync(sub, { recursive: true });
-    const { layer, api } = setup({
-      toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
-      stdinIsTty: false,
-      pipedAnswers: ["n"],
-      workdir: sub,
-    });
-    writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_YES=true\n");
-    return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
-      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
-        true,
-      );
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
-  });
+  it.live("loads config-push env from the project root when --workdir names a subdirectory", () =>
+    withEnvVar(
+      "SUPABASE_YES",
+      undefined,
+      Effect.gen(function* () {
+        const sub = yield* makeWorkdirDirectory("nested", "dir");
+        const { layer, api } = setup({
+          toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
+          stdinIsTty: false,
+          pipedAnswers: ["n"],
+          workdir: sub,
+        });
+        yield* writeWorkdirFile(["supabase", ".env"], "SUPABASE_YES=true\n");
+        yield* configPush({ projectRef: Option.none() }).pipe(Effect.provide(layer));
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
+      }),
+    ).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live(
     "does not climb to an ancestor project's config when --workdir names a subdirectory with no config of its own",
-    () => {
-      const sub = join(tempRoot.current, "nested", "dir");
-      mkdirSync(sub, { recursive: true });
-      const { layer, api, telemetry } = setup({
-        toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
-        yes: true,
-        workdir: sub,
-        explicitWorkdir: true,
-      });
-      return Effect.gen(function* () {
-        const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+    () =>
+      Effect.gen(function* () {
+        const sub = yield* makeWorkdirDirectory("nested", "dir");
+        const { layer, api, telemetry } = setup({
+          toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
+          yes: true,
+          workdir: sub,
+          explicitWorkdir: true,
+        });
+        const exit = yield* configPush({ projectRef: Option.none() }).pipe(
+          Effect.exit,
+          Effect.provide(layer),
+        );
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPushLoadConfigError");
-        expect(rendered).toContain("file not found");
-        expect(rendered).not.toContain("supabase init");
-        expect(rendered).toContain("--workdir/SUPABASE_WORKDIR");
-        expect(rendered).toContain(sub);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPushLoadConfigError");
+          expect(causeText).toContain("file not found");
+          expect(causeText).not.toContain("supabase init");
+          expect(causeText).toContain("--workdir/SUPABASE_WORKDIR");
+          expect(causeText).toContain(sub);
+        }
         expect(api.requests.some((r) => r.method === "PATCH" || r.method === "PUT")).toBe(false);
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("a defaulted workdir with no project still points at supabase init", () => {
@@ -798,56 +810,66 @@ max_rows = 1000
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPushLoadConfigError");
-      expect(rendered).toContain("supabase init");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPushLoadConfigError");
+        expect(causeText).toContain("supabase init");
+      }
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
   it.live(
     "an explicit --workdir naming a directory that does not exist at all fails before target resolution",
-    () => {
-      const missing = join(tempRoot.current, "does-not-exist");
-      const { layer, api } = setup({
-        toml: `project_id = "test"\n`,
-        yes: true,
-        workdir: missing,
-        explicitWorkdir: true,
-      });
-      return Effect.gen(function* () {
-        const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+    () =>
+      Effect.gen(function* () {
+        const missing = yield* workdirPath("does-not-exist");
+        const { layer, api } = setup({
+          toml: `project_id = "test"\n`,
+          yes: true,
+          workdir: missing,
+          explicitWorkdir: true,
+        });
+        const exit = yield* configPush({ projectRef: Option.none() }).pipe(
+          Effect.exit,
+          Effect.provide(layer),
+        );
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPushWorkdirError");
-        expect(rendered).toContain("failed to change workdir: chdir");
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPushWorkdirError");
+          expect(causeText).toContain("failed to change workdir: chdir");
+        }
         expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer));
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(
     "an explicit --workdir naming a regular file fails with the workdir error, not a confusing env-file error",
-    () => {
-      const notADirectory = join(tempRoot.current, "not-a-directory");
-      writeFileSync(notADirectory, "");
-      const { layer, api, telemetry } = setup({
-        toml: `project_id = "test"\n`,
-        yes: true,
-        workdir: notADirectory,
-        explicitWorkdir: true,
-      });
-      return Effect.gen(function* () {
-        const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+    () =>
+      Effect.gen(function* () {
+        yield* writeWorkdirFile(["not-a-directory"], "");
+        const notADirectory = yield* workdirPath("not-a-directory");
+        const { layer, api, telemetry } = setup({
+          toml: `project_id = "test"\n`,
+          yes: true,
+          workdir: notADirectory,
+          explicitWorkdir: true,
+        });
+        const exit = yield* configPush({ projectRef: Option.none() }).pipe(
+          Effect.exit,
+          Effect.provide(layer),
+        );
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPushWorkdirError");
-        expect(rendered).toContain("failed to change workdir: chdir");
-        expect(rendered).toContain("not a directory");
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPushWorkdirError");
+          expect(causeText).toContain("failed to change workdir: chdir");
+          expect(causeText).toContain("not a directory");
+        }
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("emits a structured summary in json mode with every payload field", () => {
@@ -1111,7 +1133,9 @@ otp_expiry = 120
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushConfigReadNetworkError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigReadNetworkError");
+      }
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -1135,7 +1159,9 @@ otp_expiry = 120
       return Effect.gen(function* () {
         const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ProjectConfigParseError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ProjectConfigParseError");
+        }
         expect(
           api.requests.some(
             (r) => r.method === "PATCH" || r.method === "PUT" || r.method === "POST",
@@ -1158,7 +1184,9 @@ otp_expiry = 120
       return Effect.gen(function* () {
         const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ConfigPushConfigEmptyError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigEmptyError");
+        }
         expect(out.stderrText).toContain(
           "Comparison scope: (none) (not returned: api, auth, database, pooler, realtime, storage)",
         );
@@ -1321,7 +1349,6 @@ function setupService(opts: {
   /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
   readonly pipedAnswers?: ReadonlyArray<string>;
 }) {
-  writeConfig(opts.toml);
   const out = mockOutput({
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm,
@@ -1364,6 +1391,8 @@ function setupService(opts: {
       opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
     ),
     Layer.succeed(YesFlag, opts.yes ?? false),
+    workdirFilesLayer(opts.toml),
+    cliConfigProviderLayer,
   );
   return { layer, out, apiMock };
 }
@@ -1374,11 +1403,6 @@ function methodsOf(apiMock: ReturnType<typeof setupService>["apiMock"]): Array<s
 
 describe("config push gated services", () => {
   it.live("pushes auth email HTML loaded from content_path", () => {
-    const templateDir = join(tempRoot.current, "templates");
-    mkdirSync(templateDir, { recursive: true });
-    writeFileSync(join(templateDir, "invite.html"), "<h1>Invite</h1>");
-    writeFileSync(join(templateDir, "password_changed.html"), "<p>Password changed</p>");
-
     const toml = `project_id = "test"
 [auth]
 site_url = "http://localhost:3000"
@@ -1396,6 +1420,8 @@ content_path = "./templates/password_changed.html"
       v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
+      yield* writeWorkdirFile(["templates", "invite.html"], "<h1>Invite</h1>");
+      yield* writeWorkdirFile(["templates", "password_changed.html"], "<p>Password changed</p>");
       yield* configPush({ projectRef: Option.none() });
       const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
       expect(update).toBeDefined();
@@ -1429,34 +1455,31 @@ content_path = "./templates/missing.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves auth template paths from the discovered project root", () => {
-    const nestedCwd = join(tempRoot.current, "packages", "app");
-    const templateDir = join(tempRoot.current, "templates");
-    mkdirSync(nestedCwd, { recursive: true });
-    mkdirSync(templateDir, { recursive: true });
-    writeFileSync(join(templateDir, "invite.html"), "<h1>Nested invite</h1>");
+  it.live("resolves auth template paths from the discovered project root", () =>
+    Effect.gen(function* () {
+      const nestedCwd = yield* makeWorkdirDirectory("packages", "app");
+      yield* writeWorkdirFile(["templates", "invite.html"], "<h1>Nested invite</h1>");
 
-    const toml = `project_id = "test"
+      const toml = `project_id = "test"
 [auth]
 site_url = "http://localhost:3000"
 [auth.email.template.invite]
 subject = "Nested invite"
 content_path = "./templates/invite.html"
 `;
-    const { layer, apiMock } = setupService({
-      toml,
-      yes: true,
-      runtimeCwd: nestedCwd,
-      v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
-    });
-    return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      const { layer, apiMock } = setupService({
+        toml,
+        yes: true,
+        runtimeCwd: nestedCwd,
+        v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
+      });
+      yield* configPush({ projectRef: Option.none() }).pipe(Effect.provide(layer));
       const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
       expect(update).toBeDefined();
       const input = update?.input as Record<string, unknown>;
       expect(input["mailer_templates_invite_content"]).toBe("<h1>Nested invite</h1>");
-    }).pipe(Effect.provide(layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live(
     "sends the raw captcha secret (not the hash) when pushing auth (security regression)",
@@ -1503,7 +1526,8 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
         yes: true,
         v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
       });
-      return withDotenvPrivateKey(
+      return withEnvVar(
+        "DOTENV_PRIVATE_KEY",
         DOTENVX_PRIVATE_KEY,
         Effect.gen(function* () {
           yield* configPush({ projectRef: Option.none() });
@@ -1526,7 +1550,8 @@ provider = "hcaptcha"
 secret = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
       const { layer, api } = setup({ toml, yes: true });
-      return withDotenvPrivateKey(
+      return withEnvVar(
+        "DOTENV_PRIVATE_KEY",
         undefined,
         Effect.gen(function* () {
           const message = yield* configPush({ projectRef: Option.none() }).pipe(
@@ -1549,7 +1574,8 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
 openai_api_key = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
       const { layer, api } = setup({ toml, yes: true });
-      return withDotenvPrivateKey(
+      return withEnvVar(
+        "DOTENV_PRIVATE_KEY",
         undefined,
         Effect.gen(function* () {
           const message = yield* configPush({ projectRef: Option.none() }).pipe(
@@ -1562,13 +1588,39 @@ openai_api_key = "${DOTENVX_ENCRYPTED_VALUE}"
     },
   );
 
+  it.live("aborts on an undecryptable secret an env() reference reads from the root .env", () => {
+    const toml = `project_id = "test"
+[auth.captcha]
+enabled = true
+provider = "hcaptcha"
+secret = "env(CAPTCHA_SECRET_FROM_ROOT_ENV)"
+`;
+    const { layer, api } = setup({ toml, yes: true });
+    return withEnvVar(
+      "DOTENV_PRIVATE_KEY",
+      undefined,
+      Effect.gen(function* () {
+        yield* writeWorkdirFile(
+          [".env"],
+          `CAPTCHA_SECRET_FROM_ROOT_ENV="${DOTENVX_ENCRYPTED_VALUE}"\n`,
+        );
+        const message = yield* configPush({ projectRef: Option.none() }).pipe(
+          Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
+        );
+        expect(message).toBe("failed to parse config: missing private key");
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer)),
+    );
+  });
+
   it.live("aborts on an undecryptable [db.vault] secret (CLI-1881)", () => {
     const toml = `project_id = "test"
 [db.vault]
 my_secret = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
     const { layer, api } = setup({ toml, yes: true });
-    return withDotenvPrivateKey(
+    return withEnvVar(
+      "DOTENV_PRIVATE_KEY",
       undefined,
       Effect.gen(function* () {
         const message = yield* configPush({ projectRef: Option.none() }).pipe(
@@ -1588,7 +1640,8 @@ my_secret = "${DOTENVX_ENCRYPTED_VALUE}"
 secret = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
       const { layer, api } = setup({ toml, yes: true });
-      return withDotenvPrivateKey(
+      return withEnvVar(
+        "DOTENV_PRIVATE_KEY",
         undefined,
         Effect.gen(function* () {
           const message = yield* configPush({ projectRef: Option.none() }).pipe(
@@ -1700,7 +1753,9 @@ allowed_cidrs_v6 = ["::1/128"]
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushEnableWebhookStatusError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushEnableWebhookStatusError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1865,7 +1920,9 @@ sender_name = "My Project"
       return Effect.gen(function* () {
         const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ConfigPushConfigEmptyError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigEmptyError");
+        }
         expect(out.stderrText).toContain(
           "Comparison scope: (none) (not returned: api, auth, database, pooler, realtime, storage)",
         );
@@ -2156,7 +2213,7 @@ enroll_enabled = true
     const { layer } = setupService({
       toml,
       yes: true,
-      v1: { updatePostgresConfig: () => Effect.fail(new Error("boom")) },
+      v1: { updatePostgresConfig: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -2169,7 +2226,7 @@ enroll_enabled = true
     const { layer } = setupService({
       toml,
       yes: true,
-      v1: { updateNetworkRestrictions: () => Effect.fail(new Error("boom")) },
+      v1: { updateNetworkRestrictions: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -2182,7 +2239,7 @@ enroll_enabled = true
     const { layer } = setupService({
       toml,
       yes: true,
-      v1: { updateSslEnforcementConfig: () => Effect.fail(new Error("boom")) },
+      v1: { updateSslEnforcementConfig: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -2195,7 +2252,7 @@ enroll_enabled = true
     const { layer } = setupService({
       toml,
       yes: true,
-      v1: { updateAuthServiceConfig: () => Effect.fail(new Error("boom")) },
+      v1: { updateAuthServiceConfig: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -2208,7 +2265,7 @@ enroll_enabled = true
     const { layer } = setupService({
       toml,
       yes: true,
-      v1: { updateStorageConfig: () => Effect.fail(new Error("boom")) },
+      v1: { updateStorageConfig: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -2221,12 +2278,14 @@ enroll_enabled = true
     const { layer } = setupService({
       toml,
       yes: true,
-      v1: { enableDatabaseWebhook: () => Effect.fail(new Error("ECONNRESET")) },
+      v1: { enableDatabaseWebhook: () => v1TransportFailure("ECONNRESET") },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushEnableWebhookNetworkError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushEnableWebhookNetworkError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -2667,9 +2726,6 @@ secret = "irrelevant"
   it.live(
     "A5/D8: a content-only auth push prints a [content] block and PATCHes only the template content key",
     () => {
-      const templateDir = join(tempRoot.current, "templates-content-only");
-      mkdirSync(templateDir, { recursive: true });
-      writeFileSync(join(templateDir, "invite.html"), "<h1>Invite</h1>");
       const toml = `project_id = "test"
 [auth.email.template.invite]
 content_path = "./templates-content-only/invite.html"
@@ -2681,6 +2737,7 @@ content_path = "./templates-content-only/invite.html"
         v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
       });
       return Effect.gen(function* () {
+        yield* writeWorkdirFile(["templates-content-only", "invite.html"], "<h1>Invite</h1>");
         yield* configPush({ projectRef: Option.none() });
         expect(out.stderrText).toContain(
           "Updating Auth service with config:\nauth.email.template.invite.content [content]\n  local:  (file content from content_path)\n  remote: (differs)\n\n",
@@ -2784,8 +2841,10 @@ secrets = "v1,whsec_abc"
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushConfigReadNetworkError");
-      expect(JSON.stringify(exit)).toContain("response body is not a JSON object");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigReadNetworkError");
+        expect(Cause.pretty(exit.cause)).toContain("response body is not a JSON object");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -2800,9 +2859,12 @@ secrets = "v1,whsec_abc"
       return Effect.gen(function* () {
         const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const serialized = JSON.stringify(exit);
-        expect(serialized).toContain("ConfigPushConfigReadNetworkError");
-        expect(serialized).toContain('"decode":true');
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigReadNetworkError");
+          expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+            decode: true,
+          });
+        }
       }).pipe(Effect.provide(layer));
     },
   );
@@ -2864,9 +2926,11 @@ function setupLinkedBranchPush(
     readonly pipedAnswers?: ReadonlyArray<string>;
   } = {},
 ) {
-  writeLinkedProjectRefFile(BRANCH_REF);
-  writeLinkedProjectCacheFile({ ref: PARENT_REF, name: "My App" });
   return setup({
+    seed: Effect.all([
+      writeLinkedProjectRefFile(BRANCH_REF),
+      writeLinkedProjectCacheFile({ ref: PARENT_REF, name: "My App" }),
+    ]),
     toml: BRANCH_PUSH_TOML,
     projectId: Option.none(),
     format: opts.format,
@@ -2937,9 +3001,11 @@ describe("config push branch/project target detection (CLI-2168)", () => {
   it.live(
     "a branch push with no branch-list match still trusts a just-linked parent (no cached name)",
     () => {
-      writeLinkedProjectRefFile(BRANCH_REF);
-      writeLinkedProjectCacheFile({ ref: PARENT_REF });
       const { layer, out, api } = setup({
+        seed: Effect.all([
+          writeLinkedProjectRefFile(BRANCH_REF),
+          writeLinkedProjectCacheFile({ ref: PARENT_REF }),
+        ]),
         toml: BRANCH_PUSH_TOML,
         yes: true,
         projectId: Option.none(),
@@ -2985,7 +3051,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ConfigPushCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushCancelledError");
       }
       expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
       expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(false);
@@ -3002,7 +3068,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ConfigPushCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushCancelledError");
       }
       expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -3017,7 +3083,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ConfigPushCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushCancelledError");
       }
       expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -3044,13 +3110,13 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const rendered = JSON.stringify(exit.cause);
-          expect(rendered).toContain("ConfigPushCancelledError");
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPushCancelledError");
           // A machine-mode/non-TTY decline never renders the interactive prompt's own hint
           // (`promptYesNo` returns the default silently) — the cancelled error's own
           // `suggestion` field is the only place a script/agent sees the --yes escape hatch.
-          expect(rendered).toContain("--yes");
-          expect(rendered).toContain("SUPABASE_YES");
+          const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(error).toMatchObject({ suggestion: expect.stringContaining("--yes") });
+          expect(error).toMatchObject({ suggestion: expect.stringContaining("SUPABASE_YES") });
         }
         expect(out.messages.some((m) => m.type === "success")).toBe(false);
         expect(api.requests.some((r) => ["PATCH", "PUT", "POST"].includes(r.method))).toBe(false);
@@ -3075,8 +3141,8 @@ describe("config push branch/project target detection (CLI-2168)", () => {
   it.live(
     "an unrelated cached parent does not get credited without a confirming branch-list match",
     () => {
-      writeLinkedProjectCacheFile({ ref: PARENT_REF });
       const { layer, out, api } = setup({
+        seed: writeLinkedProjectCacheFile({ ref: PARENT_REF }),
         toml: BRANCH_PUSH_TOML,
         yes: true,
         projectId: Option.some(PROBE_REF),
@@ -3095,8 +3161,8 @@ describe("config push branch/project target detection (CLI-2168)", () => {
   );
 
   it.live("a self-referential cached parent is dropped without any branch-list lookup", () => {
-    writeLinkedProjectCacheFile({ ref: PROBE_REF });
     const { layer, out, api } = setup({
+      seed: writeLinkedProjectCacheFile({ ref: PROBE_REF }),
       toml: BRANCH_PUSH_TOML,
       yes: true,
       projectId: Option.some(PROBE_REF),
@@ -3112,8 +3178,8 @@ describe("config push branch/project target detection (CLI-2168)", () => {
   });
 
   it.live("a non-ref-shaped cached parent is dropped without any branch-list lookup", () => {
-    writeLinkedProjectCacheFile({ ref: "not-a-real-ref" });
     const { layer, out, api } = setup({
+      seed: writeLinkedProjectCacheFile({ ref: "not-a-real-ref" }),
       toml: BRANCH_PUSH_TOML,
       yes: true,
       projectId: Option.some(PROBE_REF),
@@ -3168,9 +3234,11 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       // propagate it. A cache candidate (with a branch-list response that
       // does NOT confirm this ref) is required so recovery actually reaches
       // the `.temp/project-ref` read at all.
-      mkdirSync(join(tempRoot.current, "supabase", ".temp", "project-ref"), { recursive: true });
-      writeLinkedProjectCacheFile({ ref: PARENT_REF });
       const { layer, out, api } = setup({
+        seed: Effect.all([
+          makeWorkdirDirectory("supabase", ".temp", "project-ref"),
+          writeLinkedProjectCacheFile({ ref: PARENT_REF }),
+        ]),
         toml: BRANCH_PUSH_TOML,
         yes: true,
         projectId: Option.some(PROBE_REF),
@@ -3285,8 +3353,8 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
   it.live(
     "--project-ref <branch-name> enriches the parent name from a matching linked-project cache",
     () => {
-      writeLinkedProjectCacheFile({ ref: REF, name: "Test Project" });
       const { layer, out } = setup({
+        seed: writeLinkedProjectCacheFile({ ref: REF, name: "Test Project" }),
         toml: BRANCH_PUSH_TOML,
         yes: true,
         branchByName: { status: 200, body: BRANCH_BY_NAME },
@@ -3302,8 +3370,8 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
   it.live(
     "--project-ref <branch-name> ignores a linked-project cache belonging to a different parent",
     () => {
-      writeLinkedProjectCacheFile({ ref: OTHER_PARENT_REF, name: "Someone Else" });
       const { layer, out } = setup({
+        seed: writeLinkedProjectCacheFile({ ref: OTHER_PARENT_REF, name: "Someone Else" }),
         toml: BRANCH_PUSH_TOML,
         yes: true,
         branchByName: { status: 200, body: BRANCH_BY_NAME },
@@ -3395,10 +3463,12 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.some("ghost") }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPushBranchNotFoundError");
-      expect(rendered).toContain('Branch \\"ghost\\" not found');
-      expect(rendered).toContain("supabase branches list");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPushBranchNotFoundError");
+        expect(causeText).toContain('Branch "ghost" not found');
+        expect(causeText).toContain("supabase branches list");
+      }
       expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
       // Telemetry flushes even though ref resolution failed; the linked-project cache stays
       // untouched since no ref was ever resolved.
@@ -3419,7 +3489,9 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
       return Effect.gen(function* () {
         const exit = yield* configPush({ projectRef: Option.some("ghost") }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ConfigPushBranchNotFoundError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPushBranchNotFoundError");
+        }
         expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -3434,9 +3506,11 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.some("somebranch") }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPushBranchNotLinkedError");
-      expect(rendered).toContain('\\"somebranch\\"');
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPushBranchNotLinkedError");
+        expect(causeText).toContain('"somebranch"');
+      }
       expect(api.requests).toHaveLength(0);
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
@@ -3452,9 +3526,11 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.some("somebranch") }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPushParentRefInvalidError");
-      expect(rendered).toContain('\\"somebranch\\"');
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPushParentRefInvalidError");
+        expect(causeText).toContain('"somebranch"');
+      }
       expect(api.requests).toHaveLength(0);
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
@@ -3470,9 +3546,11 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.some("staging") }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPushBranchNotReadyError");
-      expect(rendered).toContain("has no project ref yet");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPushBranchNotReadyError");
+        expect(causeText).toContain("has no project ref yet");
+      }
       expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
       // Fails inside `resolveConfigTarget` before a ref is ever assigned, so the cache write is
       // still a no-op.
@@ -3490,7 +3568,9 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.some("staging") }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushBranchResolveNetworkError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushBranchResolveNetworkError");
+      }
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -3505,7 +3585,9 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.some("staging") }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushBranchResolveStatusError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushBranchResolveStatusError");
+      }
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));

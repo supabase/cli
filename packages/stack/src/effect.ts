@@ -8,7 +8,6 @@ import {
   Layer,
   Match,
   Option,
-  Redacted,
   Ref,
   Scope,
   Schema,
@@ -22,7 +21,7 @@ import { connectHost, launchHost, waitForOwnerExit } from "./HostProcess.ts";
 import type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import * as State from "./State.ts";
-import type { SavedStack } from "./State.ts";
+import type { SavedStack, StackCredentials, StackIdentityInput } from "./State.ts";
 import {
   StackError,
   StackErrorSchema,
@@ -32,44 +31,37 @@ import {
 } from "./Rpc.ts";
 import {
   ServiceCreation as ServiceCreationSchema,
+  ServiceCreationInput as ServiceCreationInputSchema,
   type ServiceCreation,
+  type ServiceCreationInput as CatalogServiceCreationInput,
 } from "./services/Catalog.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { PgProveOptions, PostgresTool } from "./Tools.ts";
-import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.ts";
-
-export { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.ts";
+export {
+  DEFAULT_LOCAL_DATABASE_PASSWORD,
+  DEFAULT_LOCAL_JWT_SECRET,
+  DEFAULT_LOCAL_PUBLISHABLE_KEY,
+  DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
+  DEFAULT_LOCAL_S3_REGION,
+  DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
+  DEFAULT_LOCAL_SECRET_KEY,
+  DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
+  DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
+  DEFAULT_POSTGRES_ROOT_KEY,
+  DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
+  DEFAULT_SIGNING_KEY,
+} from "./Defaults.ts";
 
 export { postgres } from "./Tools.ts";
 export { nativePostgresRootError } from "./services/Database.ts";
 export { StackError } from "./Rpc.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
-type DatabaseCreation = Extract<ServiceCreation, { service: "database" }>;
-/** Service configuration accepted before database defaults are applied. */
-export type ServiceCreationInput =
-  | Exclude<ServiceCreation, DatabaseCreation>
-  | (Omit<DatabaseCreation, "config"> & {
-      readonly config: Omit<DatabaseCreation["config"], "jwtSecret" | "rootKey"> & {
-        readonly jwtSecret?: DatabaseCreation["config"]["jwtSecret"];
-        readonly rootKey?: DatabaseCreation["config"]["rootKey"];
-      };
-    });
+export type ServiceCreationInput = CatalogServiceCreationInput;
 export type { CompositionConfig } from "./Orchestrator.ts";
 export type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
+export type { StackCredentials, StackIdentityInput };
 export type { Observation } from "./Rpc.ts";
 export type { PgProveOptions } from "./Tools.ts";
-
-const normalizeCreation = (creation: ServiceCreationInput): ServiceCreation =>
-  creation.service === "database"
-    ? {
-        ...creation,
-        config: {
-          ...creation.config,
-          jwtSecret: creation.config.jwtSecret ?? Redacted.make(DEFAULT_LOCAL_JWT_SECRET),
-          rootKey: creation.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
-        },
-      }
-    : creation;
 
 const stateFor = (root: string) => State.Service.pipe(Effect.provide(State.layer({ root })));
 
@@ -87,6 +79,7 @@ export interface CreateOptions extends StackLocations {
 /** Opens a previously registered stack. */
 export interface OpenOptions extends StackLocations {
   readonly id: string;
+  readonly startOwner?: boolean;
 }
 
 const failure = (operation: string, cause: unknown): StackError =>
@@ -102,31 +95,9 @@ const failure = (operation: string, cause: unknown): StackError =>
       });
 
 type Kind = ServiceCreation["service"];
-type ServiceCreationRestartInput<K extends Kind> = Pick<
-  K extends "database"
-    ? Extract<ServiceCreationInput, { service: "database" }>
-    : Extract<ServiceCreation, { service: K }>,
-  "config"
->;
-const normalizeRestart = (service: Kind, config: unknown): unknown => {
-  if (service !== "database" || typeof config !== "object" || config === null) {
-    return { service, config };
-  }
-  return {
-    service,
-    config: {
-      ...config,
-      jwtSecret:
-        "jwtSecret" in config && config.jwtSecret !== undefined
-          ? config.jwtSecret
-          : Redacted.make(DEFAULT_LOCAL_JWT_SECRET),
-      rootKey:
-        "rootKey" in config && config.rootKey !== undefined
-          ? config.rootKey
-          : Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
-    },
-  };
-};
+type ServiceCreationRestartInput<K extends Kind> =
+  | Pick<Extract<ServiceCreationInput, { service: K }>, "config">
+  | Extract<ServiceCreationInput, { service: K }>;
 /** An individually identified service controlled through the owner. */
 export interface ServiceInstance<K extends Kind = Kind> {
   readonly id: string;
@@ -177,6 +148,9 @@ export interface Stack {
     ) => Effect.Effect<ServiceInstances[Input["service"]], StackError>;
     readonly get: (id: string) => Effect.Effect<AnyInstance, StackError>;
     readonly list: Effect.Effect<ReadonlyArray<AnyInstance>, StackError>;
+  };
+  readonly credentials: {
+    readonly get: Effect.Effect<StackCredentials | undefined, StackError>;
   };
   readonly composition: {
     readonly supabase: (
@@ -295,8 +269,8 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     restart: (input) =>
       input === undefined
         ? call("restart", (rpc) => rpc.restartService({ id }))
-        : Schema.decodeUnknownEffect(ServiceCreationSchema)(
-            normalizeRestart(service, input.config),
+        : Schema.decodeUnknownEffect(ServiceCreationInputSchema)(
+            "service" in input ? input : { service, config: input.config },
           ).pipe(
             Effect.mapError((cause) => failure("restart", cause)),
             Effect.flatMap((creation) =>
@@ -356,9 +330,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     creation: Input,
   ): Effect.Effect<ServiceInstances[Input["service"]], StackError>;
   function create(creation: ServiceCreationInput): Effect.Effect<AnyInstance, StackError> {
-    return call("createService", (rpc) => rpc.createService(normalizeCreation(creation))).pipe(
-      Effect.map(instance),
-    );
+    return call("createService", (rpc) => rpc.createService(creation)).pipe(Effect.map(instance));
   }
   const run = Effect.fn("Stack.runTool")(function* <E, R>(
     tool: PostgresTool,
@@ -465,6 +437,12 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         ),
       list: definitions.pipe(Effect.map((entries) => entries.map(instance))),
     },
+    credentials: {
+      get: state.read(saved.id).pipe(
+        Effect.map((current) => current?.credentials),
+        Effect.mapError((cause) => failure("credentials", cause)),
+      ),
+    },
     composition: {
       supabase: (
         services: ReadonlyArray<ServiceCreationInput>,
@@ -472,8 +450,9 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       ) =>
         call("supabaseComposition", (rpc) =>
           rpc.supabaseComposition({
-            services: services.map(normalizeCreation),
+            services,
             ...(options?.reuseIds === undefined ? {} : { reuseIds: options.reuseIds }),
+            ...(options?.identity === undefined ? {} : { identity: options.identity }),
           }),
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
       configure: (config: Orchestrator.CompositionConfig) =>
@@ -520,12 +499,14 @@ export const create = Effect.fn("Stack.create")(
   Effect.mapError((cause) => failure("create", cause)),
 );
 
-/** Opens saved definitions without starting or reconstructing live services. */
+/** Opens saved definitions and optionally starts the detached owner without starting services. */
 export const open = Effect.fn("Stack.open")(
   function* (options: OpenOptions) {
     const state = yield* stateFor(options.stateRoot);
     const saved = yield* state.read(options.id);
     if (saved === undefined) return yield* failure("open", "Stack does not exist");
+    if (options.startOwner)
+      yield* Effect.scoped(launchHost(state, { ...options, stackId: saved.id }));
     return yield* makeHandle(state, saved, options);
   },
   Effect.mapError((cause) => failure("open", cause)),

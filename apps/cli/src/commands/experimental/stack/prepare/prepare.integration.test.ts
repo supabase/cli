@@ -117,6 +117,7 @@ const makeFixture = (root: string, failPreparation = false) => {
       get: () => Effect.succeed(database),
       list: Effect.succeed([]),
     },
+    credentials: { get: Effect.die("unused") },
     composition: {
       supabase: () => Effect.die("prepare must not change the composition"),
       configure: () => Effect.void,

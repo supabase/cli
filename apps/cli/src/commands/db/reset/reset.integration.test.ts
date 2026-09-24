@@ -55,6 +55,7 @@ import type {
   ServiceCreation,
   ServiceInstance,
   ServiceInstances,
+  StackCredentials,
   Stack,
   Observation,
 } from "@supabase/stack/effect";
@@ -483,6 +484,20 @@ function recordingStackStorageHttpClientBucketListTransportFails() {
 
 const RESET_STACK_ID = "c".repeat(64);
 const RESET_JWT = "stack-jwt-secret-with-at-least-32-characters";
+const RESET_STACK_CREDENTIALS: StackCredentials = {
+  jwtSecret: RESET_JWT,
+  postgresRootKey: "postgres-root-key",
+  databasePassword: "postgres",
+  publishableKey: "publishable-key",
+  secretKey: "secret-key",
+  anonKey: "anon-key",
+  serviceRoleKey: generateGoJwt(RESET_JWT, "service_role"),
+  jwks: '{"keys":[]}',
+  gotrueJwtKeys: "[]",
+  remoteJwks: "[]",
+  anonKeyIsOverride: false,
+  serviceRoleKeyIsOverride: false,
+};
 
 type ResetServiceKind = "database" | "auth" | "storage" | "realtime" | "pooler";
 type StackService = ServiceInstances[ResetServiceKind];
@@ -732,6 +747,7 @@ function mockResetStackApi(opts: {
       },
       list: Effect.succeed(members),
     },
+    credentials: { get: Effect.succeed(RESET_STACK_CREDENTIALS) },
     composition: {
       describe: Effect.succeed({
         members: members.map(({ id }, index) => ({
@@ -1173,7 +1189,7 @@ describe("db reset", () => {
         expect(stackApi.stopCalls).toBe(1);
         expect(stackApi.startCalls).toBe(2);
         expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "storage", "realtime"]);
-        expect(catalogApplied[0]?.target.jwtSecret).toBe(RESET_JWT);
+        expect(catalogApplied[0]?.target).not.toHaveProperty("jwtSecret");
         expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
           false,
         );

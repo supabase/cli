@@ -50,9 +50,6 @@ sinks:
       max_events: 1
       timeout_secs: 1
     healthcheck: false
-api:
-  enabled: true
-  address: "${"${VECTOR_API_ADDRESS}"}"
 `;
 
 const request = Effect.fn("WholeStack.analyticsRequest")(

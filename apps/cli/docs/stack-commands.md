@@ -89,6 +89,16 @@ For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new b
 precedence over `experimental.stack`; an unset or empty value falls back to the file setting.
 Other values are rejected. The override is applied before reading the project configuration.
 
+`supabase services` follows the same backend selection. In stack mode it lists image versions and
+canonical `ghcr.io/supabase/cli/...` names from the installed CLI's artifact catalog, including
+Mailpit and Vector. PostgreSQL uses the selected major version (15 or 17); invalid configuration
+or an unsupported PostgreSQL major warns with the cause and uses catalog defaults. This inventory describes the
+CLI catalog, not running containers, downloaded images, or service health. The Docker and native
+stack runtimes use the same catalog versions, though a running stack launched by another CLI
+version or using mirrored images may differ. Legacy version pins and slim-image overrides do not
+apply in stack mode. Linked versions remain best-effort; catalog mismatches cannot be changed with
+`supabase link`.
+
 `SUPABASE_EXPERIMENTAL_STACK=1 supabase init` writes `[experimental] stack = true` into the new
 project config and omits the Docker-era default ports so the stack is not pinned to them.
 Without the environment variable, `init` still writes the established template with those ports

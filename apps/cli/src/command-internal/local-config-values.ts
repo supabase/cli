@@ -4,6 +4,13 @@ import { basename } from "node:path";
 import type { CliConfig } from "@supabase/config";
 import { ENV_CAPTURE_REGEX } from "@supabase/config/internal";
 import {
+  DEFAULT_LOCAL_DATABASE_PASSWORD,
+  DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
+  DEFAULT_LOCAL_S3_REGION,
+  DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
+  DEFAULT_POSTGRES_ROOT_KEY,
+} from "@supabase/stack/defaults";
+import {
   defaultJwtSecret,
   defaultPublishableKey,
   defaultSecretKey,
@@ -64,21 +71,19 @@ import { collectDotenvPrivateKeys, decryptSecret, isEncryptedSecret } from "./va
  */
 
 /** Local Postgres password; not configurable via config.toml. */
-const DEFAULT_DB_PASSWORD = "postgres";
+const DEFAULT_DB_PASSWORD = DEFAULT_LOCAL_DATABASE_PASSWORD;
 
 /** Local S3 credentials; not configurable via config.toml. */
-const DEFAULT_S3_ACCESS_KEY_ID = "625729a08b95bf1b7ff351a663f3a23c";
-const DEFAULT_S3_SECRET_ACCESS_KEY =
-  "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907";
-const DEFAULT_S3_REGION = "local";
+const DEFAULT_S3_ACCESS_KEY_ID = DEFAULT_LOCAL_S3_ACCESS_KEY_ID;
+const DEFAULT_S3_SECRET_ACCESS_KEY = DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY;
+const DEFAULT_S3_REGION = DEFAULT_LOCAL_S3_REGION;
 
 /**
  * Default Postgres root key. Exported so `start`'s Postgres container-spec builder can
  * reuse this literal instead of duplicating it; `db.root_key` isn't modeled in
  * `@supabase/config`'s schema, so it's resolved from the raw document like `jwtSecret`.
  */
-export const POSTGRES_DEFAULT_ROOT_KEY =
-  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275";
+export const POSTGRES_DEFAULT_ROOT_KEY = DEFAULT_POSTGRES_ROOT_KEY;
 
 export interface LocalConfigValues {
   readonly apiUrl: string;
