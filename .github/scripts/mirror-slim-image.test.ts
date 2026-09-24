@@ -120,6 +120,77 @@ describe("verifyDigest", () => {
       }),
     ).rejects.toThrow(InvalidPayloadError);
   });
+
+  test("re-reads a stale tag until it converges", async () => {
+    const heads = [fail("not found [http 404]"), ok(`${OTHER}\n`), ok(`${DIGEST}\n`)];
+    let reads = 0;
+    const run: RunCommand = async () => heads[reads++] ?? fail("unexpected read");
+    await verifyDigest({
+      reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+      digest: DIGEST,
+      run,
+      attempts: 5,
+      sleep: async () => undefined,
+      log: () => undefined,
+    });
+    expect(reads).toBe(3);
+  });
+
+  test("reports the last mismatch once attempts are exhausted", async () => {
+    let reads = 0;
+    const run: RunCommand = async () => {
+      reads++;
+      return ok(`${OTHER}\n`);
+    };
+    await expect(
+      verifyDigest({
+        reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+        digest: DIGEST,
+        run,
+        attempts: 3,
+        sleep: async () => undefined,
+        log: () => undefined,
+      }),
+    ).rejects.toThrow(`resolves to ${OTHER}, expected ${DIGEST}`);
+    expect(reads).toBe(3);
+  });
+
+  test("fails on the first read when the head errors for another reason", async () => {
+    let reads = 0;
+    const run: RunCommand = async () => {
+      reads++;
+      return fail("unauthorized [http 401]");
+    };
+    await expect(
+      verifyDigest({
+        reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+        digest: DIGEST,
+        run,
+        attempts: 5,
+        sleep: async () => undefined,
+        log: () => undefined,
+      }),
+    ).rejects.toThrow("unauthorized [http 401]");
+    expect(reads).toBe(1);
+  });
+
+  test("rejects a non-integer attempt count before reading", async () => {
+    let reads = 0;
+    const run: RunCommand = async () => {
+      reads++;
+      return ok(`${OTHER}\n`);
+    };
+    await expect(
+      verifyDigest({
+        reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+        digest: DIGEST,
+        run,
+        attempts: Number.NaN,
+        log: () => undefined,
+      }),
+    ).rejects.toThrow(InvalidPayloadError);
+    expect(reads).toBe(0);
+  });
 });
 
 describe("ensureEcrPublicRepo", () => {
@@ -264,6 +335,23 @@ describe("main", () => {
     });
     expect(code).toBe(0);
     expect(fields["destination"]).toBe("public.ecr.aws/supabase/cli/postgrest:v16.2");
+  });
+
+  test("verify-digest re-reads up to ATTEMPTS times", async () => {
+    const heads = [ok(`${OTHER}\n`), ok(`${DIGEST}\n`)];
+    let reads = 0;
+    const code = await main(["verify-digest"], {
+      env: {
+        REFERENCE: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+        DIGEST,
+        ATTEMPTS: "2",
+      },
+      run: async () => heads[reads++] ?? fail("unexpected read"),
+      sleep: async () => undefined,
+      log: () => undefined,
+    });
+    expect(code).toBe(0);
+    expect(reads).toBe(2);
   });
 
   test("copy-natives no-ops without a dispatch payload", async () => {

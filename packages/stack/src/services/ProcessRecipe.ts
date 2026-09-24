@@ -66,6 +66,10 @@ export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown
     endpoints: ReadonlyMap<string, ServiceEndpoint>,
     container: boolean,
   ) => Effect.Effect<Readonly<Record<string, string>>, ServiceError>;
+  readonly nativeStartupEnv?: (
+    creation: C,
+    endpoints: ReadonlyMap<string, ServiceEndpoint>,
+  ) => Effect.Effect<Readonly<Record<string, string>>, ServiceError>;
   readonly mounts: (
     creation: C,
     context: { readonly container: boolean },
@@ -363,7 +367,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             {
               executable: `${artifactRoot}/bin/${process.nativeExecutable ?? "prepare"}`,
               args: process.args,
-              env: yield* spec.env(context.config, desired, false),
+              env: yield* (spec.nativeStartupEnv ?? spec.env)(context.config, desired, false),
               cwd: artifactRoot,
             },
             defaultNativeProcessLauncher(),
