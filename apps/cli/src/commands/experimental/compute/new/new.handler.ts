@@ -340,13 +340,24 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
 
     // Everything below this line changes the user's disk, and nothing below it
     // can fail for a reason the plan above could have caught.
-    yield* fs.makeDirectory(destination, { recursive: true });
+    const starters = Object.entries(COMPUTE_STACKS[runtime]);
+    const removeScaffold = (yield* fs.exists(destination))
+      ? Effect.forEach(
+          starters,
+          ([filename]) => fs.remove(path.join(destination, filename)).pipe(Effect.ignore),
+          { discard: true },
+        )
+      : fs.remove(destination, { recursive: true }).pipe(Effect.ignore);
 
-    for (const [filename, contents] of Object.entries(COMPUTE_STACKS[runtime])) {
-      yield* fs.writeFileString(path.join(destination, filename), contents);
-    }
+    yield* Effect.gen(function* () {
+      yield* fs.makeDirectory(destination, { recursive: true });
 
-    yield* commitComputeEntry(configWrite);
+      for (const [filename, contents] of starters) {
+        yield* fs.writeFileString(path.join(destination, filename), contents);
+      }
+
+      yield* commitComputeEntry(configWrite);
+    }).pipe(Effect.onError(() => removeScaffold));
 
     // Relative to the project root when the workdir was defaulted, since it also
     // reads as relative to the terminal the command ran from. An explicit

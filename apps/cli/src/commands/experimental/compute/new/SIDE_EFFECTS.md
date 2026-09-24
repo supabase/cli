@@ -88,7 +88,10 @@ and before anything reaches disk — because editing an entry the user owns is
 not this command's job.
 
 Nothing at the destination is ever removed or overwritten: a destination that
-exists and is not empty is refused, and clearing it is left to the user.
+exists and is not empty is refused, and clearing it is left to the user. A
+write that fails partway, including the final `config.toml` append, removes the
+starter files again, and the destination too when this run created it, so a
+retry finds it free.
 `--source` is refused when it resolves to the project root, `supabase/`,
 `supabase/functions/`, `supabase/migrations/`, or outside the project. Symlinks
 are resolved first, so a path inside the project that points outside it is

@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, FileSystem, Path, Predicate, Schema } from "effect";
+import { Effect, Option, FileSystem, Path, PlatformError, Predicate, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { makeComputeProject, setupCompute } from "../../../../../tests/helpers/compute.ts";
 import {
@@ -777,6 +777,49 @@ describe("compute new", () => {
         expect(yield* repo.config).toBe('project_id = "demo"\n\ncompute.api.runtime = "node"\n');
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live.each([false, true])(
+    "takes the scaffold back when config.toml cannot be written (destination already there: %s)",
+    (destinationExisted) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* project();
+        const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+        if (destinationExisted) yield* fs.makeDirectory(computeDir, { recursive: true });
+        const { layer } = setupCompute({ workdir: repo.dir });
+
+        return yield* Effect.gen(function* () {
+          const error = yield* computeNew(
+            flags({ name: Option.some("api"), runtime: Option.some("node") }),
+          ).pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              writeFileString: (target, data, options) =>
+                path.basename(target) === "config.toml"
+                  ? Effect.fail(
+                      PlatformError.systemError({
+                        _tag: "PermissionDenied",
+                        module: "FileSystem",
+                        method: "writeFileString",
+                        pathOrDescriptor: target,
+                      }),
+                    )
+                  : fs.writeFileString(target, data, options),
+            }),
+            Effect.flip,
+          );
+
+          expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+          expect(yield* fs.exists(computeDir)).toBe(destinationExisted);
+          if (destinationExisted) expect(yield* fs.readDirectory(computeDir)).toEqual([]);
+          expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+
+          yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
+          expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(true);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   it.live.each([false, true])(
