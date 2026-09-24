@@ -87,4 +87,35 @@ describe("vector recipe", () => {
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     { timeout: 120_000 },
   );
+
+  it.live("rejects a caller pipeline that defines the API or reuses a stack-owned path", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-vector-reject-" });
+        const start = (configPath: string) =>
+          Effect.gen(function* () {
+            const recipe = yield* makeServiceRecipe(
+              {
+                service: "vector",
+                config: { analyticsUrl: "http://analytics", configPath },
+                endpoints: { http: { port: "auto" } },
+              },
+              options(root, "docker"),
+            );
+            const vector = yield* makeService(recipe.definition, {
+              id: "vector",
+              config: recipe.creation,
+            });
+            return yield* vector.start.pipe(Effect.flip);
+          });
+        const withApi = `${root}/with-api.yaml`;
+        yield* fs.writeFileString(withApi, "api:\n  enabled: true\n  address: 0.0.0.0:8686\n");
+        expect((yield* start(withApi)).message).toContain("must not define `api`");
+        expect((yield* start(`${root}/vector/runtime/vector/vector-api.yaml`)).message).toContain(
+          "stack-owned Vector config file",
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
 });

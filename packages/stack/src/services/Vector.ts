@@ -10,7 +10,7 @@ import {
 export const Config = Schema.Struct({
   analyticsUrl: Schema.String,
   apiKey: Schema.optionalKey(Schema.String),
-  /** Pipeline config without an `api` block; the recipe adds its own and Vector rejects a different address. */
+  /** Pipeline config without an `api` block; the recipe adds its own. */
   configPath: Schema.optionalKey(Schema.String),
 });
 export interface Config extends Schema.Schema.Type<typeof Config> {}
@@ -62,6 +62,18 @@ const writeAtomically = Effect.fn("Vector.writeAtomically")(
   ),
 );
 
+const definesApi = (file: string, content: string): Effect.Effect<boolean> => {
+  if (file.endsWith(".json"))
+    return Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(content).pipe(
+      Effect.map(
+        (parsed) => typeof parsed === "object" && parsed !== null && Object.hasOwn(parsed, "api"),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+  if (file.endsWith(".toml")) return Effect.succeed(/^\s*(\[api[.\]]|api\s*[.=])/mu.test(content));
+  return Effect.succeed(/^["']?api["']?\s*:/mu.test(content));
+};
+
 const makeSpec = (
   instanceId: string,
   instanceRoot: string,
@@ -108,8 +120,36 @@ const makeSpec = (
     prepare: (creation) =>
       Effect.gen(function* () {
         yield* ownedInstance("prepare");
+        const callerPath = creation.config.configPath;
+        if (callerPath !== undefined) {
+          const resolved = path.resolve(callerPath);
+          if (
+            resolved === path.resolve(apiConfigPath) ||
+            resolved === path.resolve(defaultPipelinePath)
+          )
+            return yield* new ServiceError({
+              operation: "prepare",
+              message: "Vector configPath must not point at a stack-owned Vector config file",
+            });
+          const content = yield* fs.readFileString(callerPath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServiceError({
+                  operation: "prepare",
+                  message: "Unable to read Vector configPath",
+                  cause,
+                }),
+            ),
+          );
+          if (yield* definesApi(callerPath, content))
+            return yield* new ServiceError({
+              operation: "prepare",
+              message:
+                "Vector configPath must not define `api`; the stack configures the Vector API",
+            });
+        }
         yield* writeAtomically(fs, path, apiConfigPath, apiConfig);
-        if (creation.config.configPath === undefined)
+        if (callerPath === undefined)
           yield* writeAtomically(fs, path, defaultPipelinePath, defaultPipelineConfig);
       }),
     // A caller configPath may live anywhere under the instance root, so only recipe files and empty directories go.
