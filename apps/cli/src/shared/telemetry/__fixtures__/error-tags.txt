@@ -316,6 +316,7 @@ InvalidProjectLinkStateError
 InvalidProjectRefError
 InvalidRemoteProjectIdError
 InvalidSecretPairError
+InvalidServiceVersionTagError
 InvalidTokenError
 KongReloadError
 LinkApiKeysNetworkError

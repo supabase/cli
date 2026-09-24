@@ -1,6 +1,10 @@
 import { Effect, Schema } from "effect";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { databaseConnection, localJwtSecret } from "./ServiceConfig.ts";
+import {
+  DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
+  DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
+} from "../Defaults.ts";
 import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
 
 export const Config = Schema.Struct({
@@ -38,8 +42,8 @@ const environment: ProcessRecipeSpec<Creation>["env"] = (creation, endpoints, co
       METRICS_JWT_SECRET: creation.config.jwtSecret ?? localJwtSecret,
       REGION: "local",
       CLUSTER_POSTGRES: "true",
-      SECRET_KEY_BASE: localJwtSecret,
-      VAULT_ENC_KEY: "0123456789abcdef0123456789abcdef",
+      SECRET_KEY_BASE: DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
+      VAULT_ENC_KEY: DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
       DEFAULT_POOL_SIZE: String(creation.config.defaultPoolSize ?? 20),
       MAX_CLIENT_CONN: String(creation.config.maxClientConnections ?? 100),
       POOL_MODE: mode,
@@ -89,7 +93,11 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
     name === "sql" && creation.config.poolMode === "session" ? 5432 : port,
   containerEntrypoint: () => "/usr/bin/tini",
   startup: [
-    { args: [], nativeExecutable: "prepare", containerEntrypoint: "/app/bin/prepare" },
+    {
+      args: [],
+      nativeExecutable: "prepare",
+      containerEntrypoint: "/app/bin/prepare",
+    },
     {
       args: [],
       nativeExecutable: "provision-tenant",

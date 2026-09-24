@@ -6,21 +6,26 @@ import {
   Effect,
   Exit,
   FileSystem,
+  Layer,
   Option,
   Path,
   Schema,
+  Sink,
   Scope,
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { makeContainerRuntime } from "../runtime/Container.ts";
 import { makeDatabaseSnapshots } from "../services/DatabaseSnapshot.ts";
 import { makeDockerDatabaseStorage } from "./DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "./DockerHelperRegistry.ts";
 import type { DockerHelperRegistry } from "./DockerHelperRegistry.ts";
 
-const helperImage =
-  "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
+const postgresImage = (version: string) =>
+  resolveArtifact({ service: "database", version: postgresVersion(version) }).pipe(
+    Effect.map(({ image }) => image),
+  );
 const Marker = Schema.Struct({
   backend: Schema.Literals(["docker", "host"]),
   volume: Schema.optionalKey(Schema.String),
@@ -33,6 +38,50 @@ const Marker = Schema.Struct({
 class DockerTestError extends Data.TaggedError("DockerTestError")<{
   readonly message: string;
 }> {}
+
+const helperMirror = "registry.test/supabase/postgres:17";
+const fakeHelperEngine = () => {
+  const commands: string[][] = [];
+  const local = new Set<string>();
+  const handle = (exitCode: number, stdout = "", stderr = "") =>
+    ChildProcessSpawner.makeHandle({
+      pid: ChildProcessSpawner.ProcessId(4242),
+      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+      isRunning: Effect.succeed(false),
+      kill: () => Effect.void,
+      stdin: Sink.drain,
+      stdout: Stream.succeed(new TextEncoder().encode(stdout)),
+      stderr: Stream.succeed(new TextEncoder().encode(stderr)),
+      all: Stream.empty,
+      getInputFd: () => Sink.drain,
+      getOutputFd: () => Stream.empty,
+      unref: Effect.succeed(Effect.void),
+    });
+  const spawner = ChildProcessSpawner.make((command) => {
+    if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
+    const args = [...command.args];
+    commands.push(args);
+    if (args[0] === "image")
+      return Effect.succeed(handle(0, local.has(args.at(-1) ?? "") ? "sha256:1" : ""));
+    if (args[0] === "pull") {
+      if (args.at(-1) !== helperMirror)
+        return Effect.succeed(handle(1, "", `denied: ${args.at(-1)}`));
+      local.add(helperMirror);
+      return Effect.succeed(handle(0));
+    }
+    if (args[0] === "inspect") return Effect.succeed(handle(1, "", "no such container"));
+    if (args[0] === "run") {
+      const shellIndex = args.indexOf("/bin/sh");
+      const image = args[shellIndex - 1];
+      return image !== undefined && local.has(image)
+        ? Effect.succeed(handle(0, "abcdef0123456789"))
+        : Effect.succeed(handle(1, "", `Unable to find image '${image ?? ""}' locally`));
+    }
+    if (args[0] === "exec" || args[0] === "rm") return Effect.succeed(handle(0, "done"));
+    return Effect.succeed(handle(1, "", `unexpected engine command: ${args[0] ?? ""}`));
+  });
+  return { commands, layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner) };
+};
 
 const docker = Effect.fn("DockerStorageTest.docker")((args: ReadonlyArray<string>) =>
   Effect.scoped(
@@ -71,12 +120,225 @@ const docker = Effect.fn("DockerStorageTest.docker")((args: ReadonlyArray<string
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 describe("Docker database storage", { timeout: 120_000 }, () => {
+  it.live("starts a storage helper with the mirror image selected during preparation", () => {
+    const engine = fakeHelperEngine();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "storage-helper-mirror-" });
+        const storageRoot = path.join(root, "state", "stack", "data");
+        const cacheRoot = path.join(root, "cache");
+        const instanceRoot = path.join(storageRoot, "database");
+        yield* fs.makeDirectory(instanceRoot, { recursive: true });
+        const container = yield* makeContainerRuntime({
+          engine: "podman",
+          imageMirrors: () => [helperMirror],
+        });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const storage = yield* makeDockerDatabaseStorage({
+          runtime: "podman",
+          stackId: "storage-helper-mirror",
+          instanceId: "database",
+          instanceRoot,
+          root: storageRoot,
+          cacheRoot,
+          fs,
+          path,
+          crypto,
+          container,
+          spawner,
+        });
+
+        yield* storage.prepare("17");
+        yield* storage.removeData("17");
+
+        const run = engine.commands.find((args) => args[0] === "run");
+        const shellIndex = run?.indexOf("/bin/sh") ?? -1;
+        expect(run?.[shellIndex - 1]).toBe(helperMirror);
+        expect(
+          engine.commands.filter((args) => args[0] === "pull").map((args) => args.at(-1)),
+        ).toEqual([expect.stringContaining("ghcr.io/supabase/cli/postgres:"), helperMirror]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+  });
+
+  it.live("starts a shared volume helper with the mirror image selected during preparation", () => {
+    const engine = fakeHelperEngine();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "storage-shared-helper-mirror-" });
+        const storageRoot = path.join(root, "state", "stack", "data");
+        const cacheRoot = path.join(root, "cache");
+        const instanceRoot = path.join(storageRoot, "database");
+        yield* fs.makeDirectory(instanceRoot, { recursive: true });
+        yield* fs.makeDirectory(cacheRoot, { recursive: true });
+        const stackId = "shared-helper-mirror";
+        const instanceId = "database";
+        const cachePath = yield* fs.realPath(cacheRoot);
+        const cacheHash = yield* crypto.digest("SHA-256", new TextEncoder().encode(cachePath));
+        const cacheNamespace = `cache-${Array.from(cacheHash, (byte) =>
+          byte.toString(16).padStart(2, "0"),
+        )
+          .join("")
+          .slice(0, 32)}`;
+        const marker = yield* Schema.encodeEffect(Schema.fromJsonString(Marker))({
+          backend: "docker",
+          volume: "database-volume",
+          namespace: `instance-${stackId}-${instanceId}`,
+          cacheNamespace,
+          initialized: false,
+        });
+        yield* fs.writeFileString(
+          path.join(instanceRoot, ".supabase-database-storage.json"),
+          marker,
+        );
+        const container = yield* makeContainerRuntime({
+          engine: "podman",
+          imageMirrors: () => [helperMirror],
+        });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const helpers = yield* makeDockerHelperRegistry("mirror-test");
+        const storage = yield* makeDockerDatabaseStorage({
+          runtime: "podman",
+          stackId,
+          instanceId,
+          instanceRoot,
+          root: storageRoot,
+          cacheRoot,
+          fs,
+          path,
+          crypto,
+          container,
+          spawner,
+          helpers,
+        });
+
+        yield* storage.prepare("17");
+
+        const run = engine.commands.find((args) => args[0] === "run");
+        const shellIndex = run?.indexOf("/bin/sh") ?? -1;
+        expect(run?.[shellIndex - 1]).toBe(helperMirror);
+        expect(
+          engine.commands.filter((args) => args[0] === "pull").map((args) => args.at(-1)),
+        ).toEqual([expect.stringContaining("ghcr.io/supabase/cli/postgres:"), helperMirror]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+  });
+
+  it.live("round-trips PostgreSQL 15 data with its catalog image", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const helperImage = yield* postgresImage("15");
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-pg15-" });
+        const storageRoot = path.join(root, "state", "stack", "data");
+        const cacheRoot = path.join(root, "cache");
+        const sourceRoot = path.join(storageRoot, "source");
+        const targetRoot = path.join(storageRoot, "target");
+        yield* fs.makeDirectory(sourceRoot, { recursive: true });
+        yield* fs.makeDirectory(targetRoot, { recursive: true });
+        yield* fs.makeDirectory(cacheRoot, { recursive: true });
+        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const stackId = `storage-pg15-${yield* crypto.randomUUIDv4}`;
+        const makeStorage = (instanceId: string, instanceRoot: string) =>
+          makeDockerDatabaseStorage({
+            runtime: "docker",
+            stackId,
+            instanceId,
+            instanceRoot,
+            root: storageRoot,
+            cacheRoot,
+            fs,
+            path,
+            crypto,
+            container,
+            spawner,
+          });
+        const source = yield* makeStorage("source", sourceRoot);
+        const target = yield* makeStorage("target", targetRoot);
+        const ownerScope = yield* Scope.Scope;
+        yield* Scope.addFinalizer(
+          ownerScope,
+          Effect.gen(function* () {
+            yield* source.destroyData("15").pipe(Effect.ignore);
+            yield* target.destroyData("15").pipe(Effect.ignore);
+            const marker = yield* fs
+              .readFileString(path.join(sourceRoot, ".supabase-database-storage.json"))
+              .pipe(Effect.option);
+            if (Option.isSome(marker)) {
+              const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+                marker.value,
+              ).pipe(Effect.option);
+              if (Option.isSome(parsed) && parsed.value.volume !== undefined)
+                yield* docker(["volume", "rm", parsed.value.volume]).pipe(Effect.ignore);
+            }
+          }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.ignore,
+          ),
+        );
+
+        yield* source.prepare("15");
+        const sourceMarker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+          yield* fs.readFileString(path.join(sourceRoot, ".supabase-database-storage.json")),
+        );
+        if (sourceMarker.backend !== "docker" || sourceMarker.volume === undefined)
+          return yield* new DockerTestError({ message: "Docker test selected host fallback" });
+        yield* docker([
+          "run",
+          "--rm",
+          "--mount",
+          `type=volume,src=${sourceMarker.volume},dst=/store`,
+          helperImage,
+          "/bin/sh",
+          "-c",
+          `set -eu; printf 15 > ${quote(`/store/${sourceMarker.namespace}/data/PG_VERSION`)}; printf pg15-source > ${quote(`/store/${sourceMarker.namespace}/data/fixture`)}`,
+        ]);
+        yield* source.markInitialized("15");
+        yield* fs.writeFileString(
+          path.join(sourceRoot, ".supabase-database-ready.json"),
+          '{"version":"15","runtime":"docker","profile":"supabase"}',
+        );
+        yield* source.saveSnapshot("15", "restore-me");
+
+        yield* target.prepare("15");
+        expect(yield* target.restoreSnapshot("15", "restore-me")).toBe(true);
+        const targetMarker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+          yield* fs.readFileString(path.join(targetRoot, ".supabase-database-storage.json")),
+        );
+        expect(targetMarker.volume).toBe(sourceMarker.volume);
+        yield* docker([
+          "run",
+          "--rm",
+          "--mount",
+          `type=volume,src=${sourceMarker.volume},dst=/store,volume-subpath=${targetMarker.namespace}/data`,
+          helperImage,
+          "/bin/sh",
+          "-c",
+          'test "$(cat /store/PG_VERSION)" = 15 && test "$(cat /store/fixture)" = pg15-source',
+        ]);
+        yield* target.destroyData("15");
+        yield* source.destroyData("15");
+        yield* docker(["volume", "rm", sourceMarker.volume]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("round-trips stopped data and protects managed namespaces", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
+        const helperImage = yield* postgresImage("17");
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-" });
         const stateRoot = path.join(root, "state");
         const storageRoot = path.join(stateRoot, "stack", "data");
@@ -146,7 +408,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           helperImage,
           "/bin/sh",
           "-c",
-          `set -eu; printf 17 > ${quote(`/store/${sourceMarker.namespace}/data/PG_VERSION`)}; printf source > ${quote(`/store/${sourceMarker.namespace}/data/fixture`)}`,
+          `set -eu; printf 17 > ${quote(`/store/${sourceMarker.namespace}/data/PG_VERSION`)}; printf source > ${quote(`/store/${sourceMarker.namespace}/data/fixture`)}; /usr/bin/busybox setfattr -n user.storage-smoke -v preserved ${quote(`/store/${sourceMarker.namespace}/data/fixture`)}`,
         ]);
         yield* source.markInitialized("17");
         yield* fs.writeFileString(
@@ -201,10 +463,10 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           helperImage,
           "/bin/sh",
           "-c",
-          `test "$(cat /store/fixture)" = source`,
+          `set -eu; test "$(cat /store/fixture)" = source; /usr/bin/busybox setfattr -x user.storage-smoke /store/fixture`,
         ]);
 
-        yield* target.removeData("17");
+        yield* target.removeData("unsupported");
         const resetMarker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
           yield* fs.readFileString(path.join(targetRoot, ".supabase-database-storage.json")),
         );
@@ -219,7 +481,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           helperImage,
           "/bin/sh",
           "-c",
-          'descriptor=$(find /store -name descriptor.json -print -quit); printf corrupt > "$descriptor"',
+          'descriptor=$(/usr/bin/busybox find /store -name descriptor.json -print -quit); printf corrupt > "$descriptor"',
         ]);
         const corrupt = yield* target.restoreSnapshot("17", "roundtrip").pipe(
           Effect.matchEffect({
@@ -245,6 +507,21 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         expect(missing).toSatisfy((exit) => Exit.isFailure(exit));
 
         yield* target.removeData("17");
+        yield* source.saveSnapshot("17", "retention-first");
+        yield* source.saveSnapshot("17", "retention-second");
+        yield* source.saveSnapshot("17", "retention-third");
+        yield* docker([
+          "run",
+          "--rm",
+          "--mount",
+          `type=volume,src=${sourceMarker.volume},dst=/store`,
+          helperImage,
+          "/bin/sh",
+          "-c",
+          `test "$(/usr/bin/busybox find ${quote(`/store/${sourceMarker.cacheNamespace}/entries`)} -mindepth 1 -maxdepth 1 -type d | /usr/bin/busybox wc -l)" -eq 3`,
+        ]);
+        expect(yield* target.restoreSnapshot("17", "roundtrip")).toBe(false);
+        yield* source.saveSnapshot("17", "roundtrip");
         yield* source.destroyData("17");
         expect(yield* target.restoreSnapshot("17", "roundtrip")).toBe(true);
         yield* target.destroyData("17");
@@ -290,6 +567,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
+        const helperImage = yield* postgresImage("17");
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-legacy-" });
         const storageRoot = path.join(root, "state", "stack", "data");
         const cacheRoot = path.join(root, "cache");
@@ -498,6 +776,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
+        const helperImage = yield* postgresImage("17");
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-missing-" });
         const storageRoot = path.join(root, "state", "stack", "data");
         const cacheRoot = path.join(root, "cache");
@@ -576,6 +855,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
+        const helperImage = yield* postgresImage("17");
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-host-" });
         const stateRoot = path.join(root, "state");
         const storageRoot = path.join(stateRoot, "stack", "data");
@@ -674,7 +954,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           ]),
         ).toBe(expectedOwnership);
         yield* storage.removeData("17");
-        yield* storage.destroyData("17");
+        yield* storage.destroyData("unsupported");
         expect(yield* fs.exists(path.join(instanceRoot, ".supabase-database-storage.json"))).toBe(
           true,
         );
@@ -690,6 +970,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
+        const helperImage = yield* postgresImage("17");
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-reopen-" });
         const stateRoot = path.join(root, "state");
         const storageRoot = path.join(stateRoot, "stack", "data");
