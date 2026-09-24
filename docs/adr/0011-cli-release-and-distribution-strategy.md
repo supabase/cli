@@ -206,15 +206,12 @@ Draft, upload, verify, and finalize by the shared workflow:
     tag_name: v${{ inputs.version }}
     draft: true
     prerelease: ${{ inputs.prerelease }}
-- run: | # one asset at a time, up to three attempts each
-    for asset in dist/supabase_…_darwin_arm64.tar.gz … dist/checksums.txt install; do
-      gh release upload v${VERSION} "$asset" --clobber
-    done
-- run: gh release view v${VERSION} --json assets # fail unless every expected asset is uploaded
+- run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts upload --version "${VERSION}"
+- run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts verify --version "${VERSION}"
 - run: gh release edit v${VERSION} --draft=false
 ```
 
-Assets go through `gh release upload` one at a time with a retry instead of the action's `files:` input: `uploads.github.com` fails single uploads often enough that one per release is routine, and the action uploads everything in parallel with no retry. Details in [release-process.md](../../apps/cli/docs/release-process.md).
+Assets go through [`upload-release-assets.ts`](../../apps/cli/scripts/upload-release-assets.ts), which calls `gh release upload` one asset at a time with a retry and then verifies the asset set, instead of the action's `files:` input: `uploads.github.com` fails single uploads often enough that one per release is routine, and the action uploads everything in parallel with no retry. Details in [release-process.md](../../apps/cli/docs/release-process.md).
 
 Archive layout (per-platform):
 
