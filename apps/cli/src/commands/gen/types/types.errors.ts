@@ -17,6 +17,16 @@ export class GenTypesNetworkError extends Data.TaggedError("GenTypesNetworkError
   }
 }
 
+export class GenTypesBranchCredentialsUnavailableError extends Data.TaggedError(
+  "GenTypesBranchCredentialsUnavailableError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+  }
+}
+
 export class GenTypesUnexpectedStatusError extends Data.TaggedError(
   "GenTypesUnexpectedStatusError",
 )<{

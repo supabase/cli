@@ -45,6 +45,7 @@ import {
 } from "../../../command-internal/pooler-fallback.ts";
 import type { GenTypesFlags } from "./types.command.ts";
 import {
+  GenTypesBranchCredentialsUnavailableError,
   GenTypesFlagUsageError,
   GenTypesLocalDbInspectError,
   GenTypesLocalDbNotRunningError,
@@ -433,9 +434,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         .pipe(Effect.catch(mapBranchDatabaseConfigError));
 
       if (branch.db_user === undefined || branch.db_pass === undefined) {
-        return yield* new GenTypesNetworkError({
+        return yield* new GenTypesBranchCredentialsUnavailableError({
           message: "Preview branch database credentials are unavailable",
-          decode: true,
         });
       }
       const branchUser = branch.db_user;

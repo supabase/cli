@@ -47,7 +47,7 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import type { GenTypesFlags } from "./types.command.ts";
-import { GenTypesLocalDbInspectError, GenTypesNetworkError } from "./types.errors.ts";
+import { GenTypesLocalDbInspectError } from "./types.errors.ts";
 import { genTypes } from "./types.handler.ts";
 import { localDbContainerId, parseQueryTimeoutMillis, rootCaBundle } from "./types.shared.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
@@ -1672,7 +1672,7 @@ describe("gen types", () => {
           expect(
             Option.exists(
               Cause.findErrorOption(exit.cause),
-              (error) => error instanceof GenTypesNetworkError && error.decode === true,
+              Predicate.isTagged("GenTypesBranchCredentialsUnavailableError"),
             ),
           ).toBe(true);
         }

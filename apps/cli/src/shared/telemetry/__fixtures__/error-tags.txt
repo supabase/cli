@@ -283,6 +283,7 @@ GenSigningKeyDecodeError
 GenSigningKeyGenerateError
 GenSigningKeyReadError
 GenSigningKeyWriteError
+GenTypesBranchCredentialsUnavailableError
 GenTypesFlagUsageError
 GenTypesGenerationError
 GenTypesLocalDbInspectError

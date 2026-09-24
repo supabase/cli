@@ -92,6 +92,7 @@ inspects a container; it resolves the stack's database connection through
 | `1`  | `supabase start` not running (`--local` on the legacy Docker Compose stack) or db inspection failed                                                                                                   |
 | `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`GenTypesWorkdirError`) — beats every other guard                                                                         |
 | `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` holds no project config on a schema-selecting path (`GenTypesMissingProjectConfigError`) — a DEFAULTED workdir keeps the embedded-default fallback instead |
+| `1`  | a resolved preview branch config has no `db_user`/`db_pass` (`GenTypesBranchCredentialsUnavailableError`)                                                                                             |
 | `1`  | API error or database connection/introspection/generation failure (`GenTypesGenerationError`)                                                                                                         |
 
 ## Output

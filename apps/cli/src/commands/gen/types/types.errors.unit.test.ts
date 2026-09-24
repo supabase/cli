@@ -3,7 +3,26 @@ import {
   actionability,
   classifyCliErrorActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
-import { GenTypesLocalDbInspectError, GenTypesLocalDbNotRunningError } from "./types.errors.ts";
+import {
+  GenTypesBranchCredentialsUnavailableError,
+  GenTypesLocalDbInspectError,
+  GenTypesLocalDbNotRunningError,
+} from "./types.errors.ts";
+
+describe("GenTypesBranchCredentialsUnavailableError actionability", () => {
+  it("classifies a branch config without credentials as an API response problem", () => {
+    const error = new GenTypesBranchCredentialsUnavailableError({
+      message: "Preview branch database credentials are unavailable",
+    });
+
+    const result = classifyCliErrorActionability(error);
+    expect(result.error_kind).toBe(actionability.apiStatus.error_kind);
+    expect(result.error_category).toBe(actionability.apiStatus.error_category);
+    expect(result.error_fingerprint).toBe(
+      "tag:GenTypesBranchCredentialsUnavailableError:api_response",
+    );
+  });
+});
 
 describe("GenTypesLocalDbNotRunningError actionability", () => {
   it("classifies a missing local DB container as user-actionable with the start-stack remediation", () => {
