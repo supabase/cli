@@ -49,9 +49,8 @@ and stops again so normal lazy activation is retained; its identity and endpoint
 `storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`. Database cannot be excluded.
 Storage includes its Imgproxy companion, Studio includes Pgmeta, and Analytics includes Vector.
 Studio requires REST; excluding REST while keeping Studio fails before stopping the composition.
-The native Vector artifact currently ships a demo configuration with its health API disabled.
-CLI log collection configuration remains unimplemented; exclude Analytics to avoid Vector readiness
-timeouts until that configuration is supplied.
+Vector runs a stack-owned default configuration that enables its health API and forwards no service
+logs; log collection into Analytics is not implemented yet.
 
 Changing exclusions stops the composition and reuses the existing service identities, data, and
 ports. Removed services remain saved and stopped so including them again can reuse them. The

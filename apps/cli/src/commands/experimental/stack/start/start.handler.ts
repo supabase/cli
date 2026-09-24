@@ -2,7 +2,7 @@ import { endpointReports } from "../stack-endpoints.format.ts";
 import { readStackFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
-import type { ServiceCreation, Stack } from "@supabase/stack/effect";
+import type { ServiceCreation, Stack, StackError } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
   OutputFlag,
@@ -30,6 +30,7 @@ import {
   stackCapabilityForService,
   StackTargetError,
   StackTargetResolver,
+  failedOutcomesDetail,
   rejectStackOutput,
   validateStackTarget,
 } from "../stack.shared.ts";
@@ -69,12 +70,21 @@ const mapTargetError = (error: StackTargetError) =>
     cause: error,
   });
 
-const stackError = (cause: { readonly message: string }) =>
-  new StackCommandStartError({
+const stackError = (
+  cause: { readonly message: string } & Partial<Pick<StackError, "outcomes">>,
+  members: ReadonlyArray<{ readonly id: string; readonly service: string }> = [],
+) => {
+  const detail = failedOutcomesDetail(cause, (id) => {
+    const service = members.find((member) => member.id === id)?.service;
+    return service === undefined ? id : `${service} (${id})`;
+  });
+  return new StackCommandStartError({
     reason: "unknown",
     message: cause.message,
+    ...(detail === undefined ? {} : { detail }),
     cause,
   });
+};
 
 const sameKinds = (
   left: ReadonlyArray<{ readonly service: string }>,
@@ -613,7 +623,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     }
     yield* stack.composition.start.pipe(
       Effect.tapError((error) => starting.fail(error.message)),
-      Effect.mapError(stackError),
+      Effect.mapError((error) => stackError(error, members)),
     );
     yield* Effect.forEach(preparation, (fiber) => Fiber.join(fiber));
     yield* Ref.set(initialCleanupComplete, true);

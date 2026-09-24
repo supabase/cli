@@ -1,12 +1,13 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Stream } from "effect";
-import type {
-  ServiceCreation,
-  ServiceCreationInput,
-  ServiceInstance,
-  ServiceInstances,
-  Stack,
+import {
+  StackError,
+  type ServiceCreation,
+  type ServiceCreationInput,
+  type ServiceInstance,
+  type ServiceInstances,
+  type Stack,
 } from "@supabase/stack/effect";
 import {
   mockCommandSettings,
@@ -145,7 +146,7 @@ const requireConcreteCreation = (creation: ServiceCreationInput): ServiceCreatio
   };
 };
 
-const fakeStack = () => {
+const fakeStack = (compositionStart: Stack["composition"]["start"] = Effect.succeed([])) => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   let stopped = 0;
   let composed = 0;
@@ -175,7 +176,7 @@ const fakeStack = () => {
           return members;
         }),
       configure: () => Effect.void,
-      start: Effect.succeed([]),
+      start: compositionStart,
       stop: Effect.sync(() => {
         stopped += 1;
         return [];
@@ -337,6 +338,38 @@ describe("experimental stack start", () => {
       expect(fixture.stopped).toBe(3);
       yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(5);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("names the services that failed when the composition start fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-outcomes-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "start-test"\n[edge_runtime]\nenabled = false\n',
+      );
+      const fixture = fakeStack(
+        Effect.fail(
+          new StackError({
+            operation: "composition.start",
+            message: "Composition start had failures",
+            outcomes: [
+              { id: "database-member", succeeded: true },
+              { id: "vector-member", succeeded: false, error: "Service health timed out" },
+            ],
+          }),
+        ),
+      );
+      const error = yield* stackStart(
+        flags(["rest", "auth", "realtime", "storage", "functions", "studio", "mail", "pooler"]),
+      ).pipe(Effect.provide(layers(root, fixture)), Effect.flip);
+      expect(error).toBeInstanceOf(StackCommandStartError);
+      expect(error).toMatchObject({
+        message: "Composition start had failures",
+        detail: "vector (vector-member): Service health timed out",
+      });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

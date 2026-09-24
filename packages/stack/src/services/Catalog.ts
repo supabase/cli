@@ -355,7 +355,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         case "vector":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Vector.makeSpec()),
+            yield* Vector.makeRecipe(creation, options, deps),
             Schema.is(Vector.Creation),
           );
         case "pooler":
