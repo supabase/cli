@@ -12,7 +12,9 @@ its output, and its outcome. Failed measurements remain part of the dataset.
 ## Running
 
 Use the workflow's manual inputs to select the source revision, released CLI
-version, case set, and sample count. The `docker-stack` case set limits a run to
+version, case set, and sample count. The `eager` case set runs the new CLI's
+native and Docker eager modes, including pooler variants; macOS runs the native
+cases and Linux runs both runtimes. The `docker-stack` case set limits a run to
 the five Linux Docker stack cases. Run a single sample first to validate a new CLI revision
 or harness change, then collect five independent samples. Do not combine smoke
 samples with the final campaign or resume a campaign after changing its source,

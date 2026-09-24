@@ -13,18 +13,19 @@ on:
         description: Immutable CLI source commit to benchmark
         required: true
         type: string
-        default: f31fde455d1509fdad9518de0c263d15c676609e
+        default: e5bd7156a11d065ae55a760aa98e007e1e93eb5c
       legacy_version:
         description: Published CLI version used for the legacy baseline
         required: true
         type: string
         default: 2.117.0
       case_set:
-        description: Benchmark all cases or only Docker stack cases
+        description: Benchmark all cases, eager stack cases, or only Docker stack cases
         required: true
         type: choice
         options:
           - all
+          - eager
           - docker-stack
         default: all
       samples:
@@ -61,7 +62,7 @@ jobs:
       - name: Check out benchmark source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.source_sha || 'f31fde455d1509fdad9518de0c263d15c676609e' }}
+          ref: ${{ inputs.source_sha || 'e5bd7156a11d065ae55a760aa98e007e1e93eb5c' }}
           persist-credentials: false
           submodules: false
 
@@ -135,7 +136,7 @@ jobs:
         platform:
           - linux-x64
           - macos-arm64
-        case: ${{ fromJSON((inputs.case_set || 'all') == 'docker-stack' && '["stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler"]' || '["stack-new-native-default","stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler","schema-new-native","schema-new-docker","schema-legacy-docker"]') }}
+        case: ${{ fromJSON((inputs.case_set || 'all') == 'eager' && '["stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-eager","stack-new-docker-eager-pooler"]' || (inputs.case_set || 'all') == 'docker-stack' && '["stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler"]' || '["stack-new-native-default","stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler","schema-new-native","schema-new-docker","schema-legacy-docker"]') }}
         sample: ${{ fromJSON(github.event_name == 'push' && '[1]' || inputs.samples == '1' && '[1]' || inputs.samples == '3' && '[1,2,3]' || '[1,2,3,4,5]') }}
         exclude:
           - platform: macos-arm64
