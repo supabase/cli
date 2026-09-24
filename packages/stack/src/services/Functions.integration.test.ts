@@ -175,32 +175,40 @@ for (const runtime of ["native", "docker"] as const) {
             id: "configured",
             config: recipe.creation,
           });
-          yield* instance.start;
-          yield* instance.ready;
-          const endpoint = yield* recipe.endpoint("http");
-          const base = `http://${endpoint.host}:${endpoint.port}`;
-          const response = yield* client.execute(HttpClientRequest.get(`${base}/hello`));
-          const responseText = yield* response.text;
-          expect(response.status, `${yield* Ref.get(logs)}\n${responseText}`).toBe(200);
-          const body = yield* Schema.decodeEffect(
-            Schema.fromJsonString(
-              Schema.Struct({
-                message: Schema.String,
-                local: Schema.String,
-                shared: Schema.String,
-                asset: Schema.String,
-              }),
+          yield* Effect.gen(function* () {
+            yield* instance.start;
+            yield* instance.ready;
+            const endpoint = yield* recipe.endpoint("http");
+            const base = `http://${endpoint.host}:${endpoint.port}`;
+            const response = yield* client.execute(HttpClientRequest.get(`${base}/hello`));
+            const responseText = yield* response.text;
+            expect(response.status, responseText).toBe(200);
+            const body = yield* Schema.decodeEffect(
+              Schema.fromJsonString(
+                Schema.Struct({
+                  message: Schema.String,
+                  local: Schema.String,
+                  shared: Schema.String,
+                  asset: Schema.String,
+                }),
+              ),
+            )(responseText);
+            expect(body).toEqual({
+              message: "custom entrypoint",
+              local: "function",
+              shared: "shared",
+              asset: "static content",
+            });
+            expect((yield* client.get(`${base}/disabled`)).status).toBe(404);
+            expect((yield* client.get(`${base}/locked`)).status).toBe(401);
+            yield* instance.stop;
+          }).pipe(
+            Effect.tapCause(() =>
+              Ref.get(logs).pipe(
+                Effect.flatMap((text) => Effect.logError(`Functions ${runtime} logs:\n${text}`)),
+              ),
             ),
-          )(responseText);
-          expect(body).toEqual({
-            message: "custom entrypoint",
-            local: "function",
-            shared: "shared",
-            asset: "static content",
-          });
-          expect((yield* client.get(`${base}/disabled`)).status).toBe(404);
-          expect((yield* client.get(`${base}/locked`)).status).toBe(401);
-          yield* instance.stop;
+          );
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     { timeout: 120_000 },

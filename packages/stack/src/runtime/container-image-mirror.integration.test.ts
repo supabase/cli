@@ -1,6 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Sink, Stream } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, Option, Sink, Stream } from "effect";
+import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { makeContainerRuntime } from "./Container.ts";
 
@@ -8,9 +9,16 @@ const primary = "ghcr.io/supabase/cli/postgrest:v16.2";
 const mirror = "public.ecr.aws/supabase/cli/postgrest:v16.2";
 const secondMirror = "registry.test/supabase/cli/postgrest:v16.2";
 
-/** Docker stand-in: `image inspect` reports `local`, `pull` succeeds for `pullable`, `create` refuses. */
-const fakeEngine = (options: { readonly pullable: ReadonlyArray<string> }) => {
+/**
+ * Docker stand-in: `image inspect` reports `local`, `pull` is rate-limited for the counted
+ * `throttled` attempts and then succeeds for `pullable`, `create` refuses.
+ */
+const fakeEngine = (options: {
+  readonly pullable: ReadonlyArray<string>;
+  readonly throttled?: Readonly<Record<string, number>>;
+}) => {
   const pullable = new Set(options.pullable);
+  const throttled = new Map(Object.entries(options.throttled ?? {}));
   const local = new Set<string>();
   const commands: string[][] = [];
   const handle = (exitCode: number, stdout = "", stderr = "") =>
@@ -34,6 +42,11 @@ const fakeEngine = (options: { readonly pullable: ReadonlyArray<string> }) => {
     const ref = args.at(-1) ?? "";
     if (args[0] === "image") return Effect.succeed(handle(0, local.has(ref) ? "sha256:1" : ""));
     if (args[0] === "pull") {
+      const remaining = throttled.get(ref) ?? 0;
+      if (remaining > 0) {
+        throttled.set(ref, remaining - 1);
+        return Effect.succeed(handle(1, "", "toomanyrequests: Rate exceeded"));
+      }
       if (!pullable.has(ref)) return Effect.succeed(handle(1, "", `denied: ${ref}`));
       local.add(ref);
       return Effect.succeed(handle(0));
@@ -148,6 +161,48 @@ describe("container image mirror", () => {
       yield* runtime.prepare(primary);
       yield* launchImage(runtime);
       expect(engine.commands.flat()).not.toContain(mirror);
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+  });
+
+  it.effect("retries a rate-limited pull with backoff until the registry accepts it", () => {
+    const engine = fakeEngine({ pullable: [primary], throttled: { [primary]: 2 } });
+    return Effect.gen(function* () {
+      const runtime = yield* makeContainerRuntime({ engine: "docker" });
+      const prepared = yield* runtime.prepare(primary).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(prepared);
+      expect(engine.commands.filter((args) => args[0] === "pull")).toHaveLength(3);
+      expect(engine.local.has(primary)).toBe(true);
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+  });
+
+  it.effect("reports the rate limit after five throttled attempts", () => {
+    const engine = fakeEngine({ pullable: [primary], throttled: { [primary]: 10 } });
+    return Effect.gen(function* () {
+      const runtime = yield* makeContainerRuntime({ engine: "docker" });
+      const prepared = yield* runtime.prepare(primary).pipe(Effect.exit, Effect.forkChild);
+      yield* TestClock.adjust("5 minutes");
+      const failed = yield* Fiber.join(prepared);
+      const error = Exit.isFailure(failed)
+        ? Option.getOrUndefined(Cause.findErrorOption(failed.cause))
+        : undefined;
+      expect(error?.message).toContain("toomanyrequests");
+      expect(engine.commands.filter((args) => args[0] === "pull")).toHaveLength(5);
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+  });
+
+  it.effect("falls back to a mirror before backing off on a rate-limited primary", () => {
+    const engine = fakeEngine({ pullable: [mirror], throttled: { [primary]: 10 } });
+    return Effect.gen(function* () {
+      const runtime = yield* makeContainerRuntime({
+        engine: "docker",
+        imageMirrors: (image) => (image === primary ? [mirror] : []),
+      });
+      yield* runtime.prepare(primary);
+      expect(engine.commands.filter((args) => args[0] === "pull")).toEqual([
+        ["pull", primary],
+        ["pull", mirror],
+      ]);
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
   });
 });
