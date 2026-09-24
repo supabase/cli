@@ -70,6 +70,24 @@ const computeEntry = Schema.Struct({
       tags,
     }),
   ),
+  exclude: Schema.optionalKey(
+    // Patterns are left unvalidated here so that `push` can refuse a specific one by name
+    // instead of failing the whole config load: unlike `instances`, a pattern the CLI cannot
+    // read is never silently dropped, so there is nothing for this layer to protect.
+    Schema.Array(Schema.String).annotate({
+      description: dedent`
+        Patterns for paths to leave out of the uploaded build context, read the way
+        \`.gitignore\` reads them: a pattern without \`/\` matches that name at any depth,
+        one with \`/\` is anchored at the compute's source directory, a trailing \`/\`
+        matches directories only, and \`**\` spans directories. Excluding a directory
+        excludes everything under it; re-inclusion (\`!\`) is not supported. Only the
+        patterns recorded here are excluded, so a compute with no list uploads its source
+        directory whole.
+      `,
+      examples: [["node_modules", ".env"]],
+      tags,
+    }),
+  ),
 });
 
 /** `[compute]` — one `[compute.<name>]` table per Compute service, keyed by name. */

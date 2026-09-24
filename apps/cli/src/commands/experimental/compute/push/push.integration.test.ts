@@ -24,6 +24,7 @@ import {
   ComputeSourceEscapingLinkError,
   ComputeSourceMissingError,
   ComputeUploadFailedError,
+  InvalidComputeExcludeError,
   MissingComputeExposureError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { computePush } from "./push.handler.ts";
@@ -2013,6 +2014,131 @@ describe("compute push", () => {
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
+
+  describe("[compute.api] exclude", () => {
+    /** A project whose compute holds a secret and a dependency tree beside its entrypoint. */
+    const withExtraFiles = (configExclude: string) =>
+      project({
+        "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexclude = ${configExclude}\n`,
+        "supabase/compute/api/.env": "SECRET=1\n",
+        "supabase/compute/api/node_modules/left-pad/index.js": "module.exports = 1;\n",
+      });
+
+    it.live("leaves the matched paths out of the uploaded context and says how many", () =>
+      Effect.gen(function* () {
+        const repo = yield* withExtraFiles('[".env", "node_modules"]');
+        const { layer, out } = setupCompute({ workdir: repo.dir, routes: routes() });
+
+        return yield* Effect.gen(function* () {
+          yield* push();
+
+          // Only `index.js` survives, and the two excluded paths are counted where the walk
+          // turned back — `node_modules/left-pad/index.js` is never reached to be counted.
+          expect(out.stderrText).toContain("1 files");
+          expect(out.stderrText).toContain("excluded 2 paths");
+          expect(out.stdoutText).toContain("Deployed Compute api");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.live("says nothing about exclusions when the compute configures none", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const { layer, out } = setupCompute({ workdir: repo.dir, routes: routes() });
+
+        return yield* Effect.gen(function* () {
+          yield* push();
+
+          expect(out.stderrText).toContain("Packaged");
+          expect(out.stderrText).not.toContain("excluded");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // Refused where the refusal is still free: a pattern the CLI cannot read is knowable from
+    // config.toml alone, so nothing should have been packaged or uploaded to find it out.
+    it.live("refuses a re-inclusion pattern before anything is uploaded", () =>
+      Effect.gen(function* () {
+        const repo = yield* withExtraFiles('["node_modules", "!node_modules/left-pad"]');
+        const { layer, out, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+
+        return yield* Effect.gen(function* () {
+          const error = yield* push().pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(InvalidComputeExcludeError);
+          expect(http.requests).toHaveLength(0);
+          expect(out.stderrText).not.toContain("Packaged");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // An over-broad pattern leaves the same empty archive an empty directory would, and the
+    // recovery is the opposite one — narrow the patterns, not write more code.
+    it.live("names the patterns when they match every file in the source", () =>
+      Effect.gen(function* () {
+        const repo = yield* withExtraFiles('["*"]');
+        const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+
+        return yield* Effect.gen(function* () {
+          const error = yield* push().pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(ComputeSourceMissingError);
+          expect(error).toMatchObject({
+            detail: expect.stringContaining("[compute.api] exclude"),
+            suggestion: expect.stringContaining("Narrow [compute.api] exclude"),
+          });
+          // Nothing was uploaded, so the failure costs no remote state.
+          expect(http.requests).toHaveLength(0);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // Configured patterns that matched nothing must not be blamed for an empty archive: the
+    // tree packages to zero files on its own, and the exclusion message would send the user
+    // to edit a line that is doing its job.
+    it.live("blames empty directories, not the patterns, when nothing was excluded", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* withExtraFiles('["nothing-matches-this"]');
+        for (const stale of [".env", "index.js"]) {
+          yield* fs.remove(path.join(repo.dir, "supabase", "compute", "api", stale));
+        }
+        yield* fs.remove(path.join(repo.dir, "supabase", "compute", "api", "node_modules"), {
+          recursive: true,
+        });
+        yield* fs.makeDirectory(path.join(repo.dir, "supabase", "compute", "api", "nested"));
+        const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+
+        return yield* Effect.gen(function* () {
+          const error = yield* push().pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(ComputeSourceMissingError);
+          expect(error).toMatchObject({
+            detail: expect.stringContaining("only empty directories"),
+            suggestion: expect.stringContaining("Add your compute's code"),
+          });
+          expect(http.requests).toHaveLength(0);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // A pattern the config schema accepts but no reader can act on: the loader lets it
+    // through as a list of strings, so this is `push`'s refusal, not a config-load failure.
+    it.live("refuses a malformed pattern", () =>
+      Effect.gen(function* () {
+        const repo = yield* withExtraFiles('["src/[oops"]');
+        const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+
+        return yield* Effect.gen(function* () {
+          const error = yield* push().pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(InvalidComputeExcludeError);
+          expect(http.requests).toHaveLength(0);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+  });
 
   // A malformed config.toml must fail inside the finalizers, or the run skips the
   // telemetry flush every invocation is supposed to perform.

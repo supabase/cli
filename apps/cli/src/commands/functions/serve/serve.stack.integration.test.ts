@@ -140,7 +140,7 @@ const fixture = (
       destroy: Effect.void,
       prepare: Effect.void,
       resetData: Effect.void,
-      exportSnapshot: () => Effect.die("unused"),
+      saveSnapshot: () => Effect.die("unused"),
       restoreSnapshot: () => Effect.die("unused"),
       followStatus: Stream.never,
       logs: Stream.never,

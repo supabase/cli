@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { Effect, Exit, Layer, Schema } from "effect";
 import { ServiceCreationInput } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
@@ -22,6 +22,10 @@ const byService = (services: ReadonlyArray<Schema.Schema.Type<typeof ServiceCrea
   new Map(services.map((service) => [service.service, service]));
 
 describe("loadStackConfig", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it.live("decodes the default recipe and leaves listeners automatic", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-defaults"
@@ -193,6 +197,35 @@ major_version = 14
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit))
         expect(String(exit.cause)).toContain("db.major_version must be 15 or 17");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("ignores unresolved experimental S3 env placeholders", () => {
+    for (const name of ["s3_host", "S3_REGION", "S3_ACCESS_KEY", "S3_SECRET_KEY"])
+      vi.stubEnv(name, "");
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-s3-placeholder"
+[experimental]
+s3_host = "env(s3_host)"
+s3_region = "env(S3_REGION)"
+s3_access_key = "env(S3_ACCESS_KEY)"
+s3_secret_key = "env(S3_SECRET_KEY)"
+`);
+      const config = yield* load(root);
+      const services = yield* config.creations("stack-s3-placeholder");
+      expect(services.some((service) => service.service === "database")).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.live("still rejects an unresolved auth service role key", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-auth-key"
+[auth]
+service_role_key = "env(SUPABASE_AUTH_SERVICE_ROLE_KEY)"
+`);
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.service_role_key");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

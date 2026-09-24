@@ -30,7 +30,7 @@ import {
   type ProcessRecipeResult,
 } from "./Recipe.ts";
 import { makeProcessRecipe, type ProcessDependencies } from "./ProcessRecipe.ts";
-import type { ServiceKind } from "../Artifacts.ts";
+import { slimImageMirrors, type ServiceKind } from "../Artifacts.ts";
 import type { ServiceInstanceContext } from "../Service.ts";
 
 export type { CatalogLog } from "./Recipe.ts";
@@ -213,6 +213,35 @@ const databaseRecipe = (
       : Effect.fail(
           new CatalogError({ operation: "reset", message: "Service kind cannot change" }),
         ),
+  saveDatabaseSnapshot: (context, key) =>
+    context.config.service === "database"
+      ? component
+          .saveSnapshot({ ...context, config: context.config.config }, key)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new CatalogError({ operation: "snapshot-save", message: cause.message, cause }),
+            ),
+          )
+      : Effect.fail(
+          new CatalogError({ operation: "snapshot-save", message: "Service kind cannot change" }),
+        ),
+  restoreDatabaseSnapshot: (context, key) =>
+    context.config.service === "database"
+      ? component
+          .restoreSnapshot({ ...context, config: context.config.config }, key)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new CatalogError({ operation: "snapshot-restore", message: cause.message, cause }),
+            ),
+          )
+      : Effect.fail(
+          new CatalogError({
+            operation: "snapshot-restore",
+            message: "Service kind cannot change",
+          }),
+        ),
   endpoint: (name) =>
     name === "sql"
       ? component.endpoint.pipe(
@@ -286,7 +315,10 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
       const container =
         options.runtime === "native"
           ? undefined
-          : yield* makeContainerRuntime({ engine: options.runtime });
+          : yield* makeContainerRuntime({
+              engine: options.runtime,
+              imageMirrors: slimImageMirrors,
+            });
       const deps: ProcessDependencies = { fs, path, crypto, client, spawner, container };
       switch (creation.service) {
         case "rest":
@@ -369,4 +401,12 @@ export type CatalogRecipe = RecipeCatalogRecipe<ServiceCreation> & {
   readonly resetDatabaseData?: (
     context: ServiceInstanceContext<ServiceCreation>,
   ) => Effect.Effect<void, CatalogError>;
+  readonly saveDatabaseSnapshot?: (
+    context: ServiceInstanceContext<ServiceCreation>,
+    key: string,
+  ) => Effect.Effect<void, CatalogError>;
+  readonly restoreDatabaseSnapshot?: (
+    context: ServiceInstanceContext<ServiceCreation>,
+    key: string,
+  ) => Effect.Effect<boolean, CatalogError>;
 };

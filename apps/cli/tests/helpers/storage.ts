@@ -214,7 +214,7 @@ export function buildStorageStackApi(
   );
   const database = {
     ...instance("database-id", databaseCreation, Effect.succeed(dbObservation)),
-    exportSnapshot: () => Effect.die("unused"),
+    saveSnapshot: () => Effect.die("unused"),
     restoreSnapshot: () => Effect.die("unused"),
     resetData: Effect.die("unused"),
   } satisfies DatabaseInstance;

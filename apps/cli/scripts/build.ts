@@ -7,7 +7,8 @@ import { parseArgs } from "node:util";
 import { Effect } from "effect";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
 import { bundleStackFunctionsServeMainTemplate } from "../src/command-internal/stack-functions-bundler.ts";
-import { OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "./bundle-externals.ts";
+import { oxfmtStubPlugin } from "./bundle-externals.ts";
+import { compileOptions } from "./compile-options.ts";
 import { darwinBinaries, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
 const MUSL_TARGETS = [
@@ -111,17 +112,11 @@ const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
 
 type SignMode = "adhoc" | "off";
 
-function libcForBunTarget(target: string): "glibc" | "musl" | "" {
-  if (!target.startsWith("bun-linux-")) {
-    return "";
-  }
-  return target.includes("-musl") ? "musl" : "glibc";
-}
-
 async function runBunBuild(config: Bun.BuildConfig) {
   const result = await Bun.build({
     ...config,
-    external: [...(config.external ?? []), ...OXFMT_OPTIONAL_PLUGIN_EXTERNALS],
+    ...compileOptions,
+    plugins: [...(config.plugins ?? []), oxfmtStubPlugin],
   });
   for (const log of result.logs) {
     console.warn(log);
@@ -133,17 +128,14 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
   await mkdir(binDir, { recursive: true });
 
   const outfile = path.join(binDir, `supabase${target.ext}`);
-  const libc = libcForBunTarget(target.bunTarget);
 
   console.log(`[${target.pkg}] Compiling Bun CLI...`);
   await runBunBuild({
     entrypoints: [entrypoint],
     compile: { target: target.bunTarget, outfile },
-    minify: true,
     define: {
       ...buildDefines,
       SUPABASE_CLI_VERSION: JSON.stringify(version),
-      SUPABASE_LIBC: JSON.stringify(libc),
     },
   });
   console.log(`[${target.pkg}] Done.`);
@@ -273,16 +265,13 @@ async function buildMuslBinaries() {
       await mkdir(binDir, { recursive: true });
 
       const outfile = path.join(binDir, "supabase");
-      const libc = libcForBunTarget(target.bunTarget);
       console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
       await runBunBuild({
         entrypoints: [entrypoint],
         compile: { target: target.bunTarget, outfile },
-        minify: true,
         define: {
           ...buildDefines,
           SUPABASE_CLI_VERSION: JSON.stringify(version),
-          SUPABASE_LIBC: JSON.stringify(libc),
         },
       });
 

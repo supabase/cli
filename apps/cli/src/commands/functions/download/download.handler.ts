@@ -1,5 +1,4 @@
-import { join } from "node:path";
-import { Effect, Option, Stdio } from "effect";
+import { Effect, Option, Path, Stdio } from "effect";
 import {
   downloadFunctions,
   makeGoProxyLegacyBundleArgs,
@@ -27,9 +26,10 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
   const proxy = yield* GoProxy;
   const output = yield* Output;
   const stdio = yield* Stdio.Stdio;
+  const path = yield* Path.Path;
   const rawArgs = yield* stdio.args;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
-    join(cliSettings.workdir, "supabase"),
+    path.join(cliSettings.workdir, "supabase"),
   );
   let resolvedProjectRef = Option.none<string>();
 

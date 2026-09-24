@@ -5,6 +5,7 @@ import {
   Data,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Layer,
   Path,
@@ -20,6 +21,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { HttpClient } from "effect/unstable/http";
 import {
+  slimImageMirrors,
   prepareNativeArtifact,
   postgresVersion,
   resolveArtifact,
@@ -50,6 +52,11 @@ import {
 import type { StackId } from "../identity/StackId.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
+import { makeDatabaseSnapshots } from "./DatabaseSnapshot.ts";
+import {
+  makeDockerDatabaseStorage,
+  type DockerDatabaseStorage,
+} from "../storage/DockerDatabaseStorage.ts";
 
 export const DatabaseConfig = Schema.Struct({
   version: Schema.String,
@@ -106,9 +113,24 @@ export interface DatabaseComponent {
   readonly resetData: (
     context: ServiceInstanceContext<DatabaseConfig>,
   ) => Effect.Effect<void, ServiceError>;
+  readonly saveSnapshot: (
+    context: ServiceInstanceContext<DatabaseConfig>,
+    key: string,
+  ) => Effect.Effect<void, ServiceError>;
+  readonly restoreSnapshot: (
+    context: ServiceInstanceContext<DatabaseConfig>,
+    key: string,
+  ) => Effect.Effect<boolean, ServiceError>;
   readonly endpoint: Effect.Effect<BackendEndpoint, DatabaseError>;
   readonly logs: Stream.Stream<DatabaseLog, DatabaseError>;
 }
+
+/** initdb and the server both refuse uid 0, so native startup fails before any process is spawned. */
+export const nativePostgresRootError = (
+  runtime: string,
+  uid: number | undefined,
+): string | undefined =>
+  runtime === "native" && uid === 0 ? "PostgreSQL cannot be run as root" : undefined;
 
 const errorFor = (operation: string, cause: unknown): ServiceError =>
   cause instanceof ServiceError
@@ -126,17 +148,41 @@ const databaseError = (operation: string, cause: unknown): DatabaseError =>
     cause,
   });
 
-const processExit = <E extends { readonly message: string }>(
+/** A descendant outside the process group can keep stderr open after the launcher exits. */
+const stderrTailReady = (drained: Fiber.Fiber<void>) =>
+  Fiber.await(drained).pipe(
+    Effect.asVoid,
+    Effect.raceFirst(Effect.sleep("1 second")),
+    Effect.ignore,
+  );
+
+/** Settles a native PostgreSQL exit, waiting briefly after it for the stderr tail to drain. */
+export const processExit = <E extends { readonly message: string }>(
   exitCode: Effect.Effect<number, E>,
+  stderr?: {
+    readonly tail: Ref.Ref<string>;
+    readonly drained: Fiber.Fiber<void>;
+  },
 ): Effect.Effect<Exit.Exit<void, ServiceError>> =>
-  exitCode.pipe(
+  (stderr === undefined
+    ? exitCode
+    : exitCode.pipe(Effect.tap(() => stderrTailReady(stderr.drained)))
+  ).pipe(
     Effect.flatMap((code) =>
       Number(code) === 0
         ? Effect.void
-        : Effect.fail(
-            new ServiceError({
-              operation: "exit",
-              message: `PostgreSQL exited with code ${String(code)}`,
+        : (stderr === undefined ? Effect.succeed("") : Ref.get(stderr.tail)).pipe(
+            Effect.flatMap((text) => {
+              const detail = text.trim();
+              return Effect.fail(
+                new ServiceError({
+                  operation: "exit",
+                  message:
+                    detail.length === 0
+                      ? `PostgreSQL exited with code ${String(code)}`
+                      : `PostgreSQL exited with code ${String(code)}: ${detail}`,
+                }),
+              );
             }),
           ),
     ),
@@ -204,6 +250,7 @@ const health = Effect.fn("Database.health")((
     readonly instanceRoot: string;
     readonly version: string;
     readonly runtime: DatabaseRuntime;
+    readonly markInitialized?: Effect.Effect<void, ServiceError>;
   },
 ): Effect.Effect<void, ServiceError> => {
   const host = endpoint.kind === "unix" ? endpoint.path : endpoint.host;
@@ -282,6 +329,7 @@ const health = Effect.fn("Database.health")((
             prefix: ".ready-",
           });
           yield* context.fs.writeFileString(`${stage}/marker`, readyMarker, { mode: 0o600 });
+          if (context.markInitialized !== undefined) yield* context.markInitialized;
           yield* context.fs.rename(
             `${stage}/marker`,
             `${context.instanceRoot}/.supabase-database-ready.json`,
@@ -304,19 +352,33 @@ const publishLogs = Effect.fn("Database.publishLogs")((
   },
   logs: PubSub.PubSub<DatabaseLog>,
   scope: Scope.Closeable,
-): Effect.Effect<void> => {
-  const drain = (stream: Stream.Stream<Uint8Array, unknown>, name: DatabaseLog["stream"]) =>
-    stream.pipe(
-      Stream.runForEach((bytes) => PubSub.publish(logs, { stream: name, bytes })),
+  stderrTail?: Ref.Ref<string>,
+) => {
+  const drain = (stream: Stream.Stream<Uint8Array, unknown>, name: DatabaseLog["stream"]) => {
+    const decoder = name === "stderr" && stderrTail !== undefined ? new TextDecoder() : undefined;
+    const appendTail = (text: string) =>
+      text.length === 0 || stderrTail === undefined
+        ? Effect.void
+        : Ref.update(stderrTail, (current) => (current + text).slice(-4096));
+    return stream.pipe(
+      Stream.runForEach((bytes) =>
+        Effect.gen(function* () {
+          if (decoder !== undefined) yield* appendTail(decoder.decode(bytes, { stream: true }));
+          yield* PubSub.publish(logs, { stream: name, bytes });
+        }),
+      ),
+      Effect.andThen(
+        decoder === undefined
+          ? Effect.void
+          : Effect.sync(() => decoder.decode()).pipe(Effect.flatMap(appendTail)),
+      ),
       Effect.catch((cause) => Effect.logError(cause)),
     );
-  return Effect.all(
-    [
-      Effect.forkIn(drain(process.stdout, "stdout"), scope),
-      Effect.forkIn(drain(process.stderr, "stderr"), scope),
-    ],
-    { concurrency: "unbounded", discard: true },
-  );
+  };
+  return Effect.gen(function* () {
+    yield* Effect.forkIn(drain(process.stdout, "stdout"), scope);
+    return yield* Effect.forkIn(drain(process.stderr, "stderr"), scope);
+  });
 });
 
 const runtimeFromContainer = (process: ContainerProcess): RuntimeSession => ({
@@ -467,7 +529,39 @@ export const makeDatabase = (
     const container: ContainerRuntime | undefined =
       options.runtime === "native"
         ? undefined
-        : yield* makeContainerRuntime({ engine: options.runtime });
+        : yield* makeContainerRuntime({ engine: options.runtime, imageMirrors: slimImageMirrors });
+    const storage: DockerDatabaseStorage | undefined =
+      options.runtime === "native"
+        ? undefined
+        : yield* makeDockerDatabaseStorage({
+            runtime: options.runtime,
+            stackId: String(options.stackId),
+            instanceId: options.instanceId,
+            instanceRoot,
+            root: options.root,
+            cacheRoot: options.cacheRoot,
+            fs,
+            path,
+            crypto,
+            container,
+            spawner,
+          }).pipe(Effect.mapError((cause) => databaseError("storage", cause)));
+
+    const snapshots = (version: string) =>
+      makeDatabaseSnapshots({
+        instanceRoot,
+        cacheRoot: options.cacheRoot,
+        runtime: options.runtime,
+        version,
+        stackId: String(options.stackId),
+        instanceId: options.instanceId,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.mapError((cause) => errorFor("snapshot", cause)),
+      );
 
     const dataCommand = Effect.fn("Database.containerFiles")(
       function* (version: string, args: ReadonlyArray<string>) {
@@ -485,13 +579,20 @@ export const makeDatabase = (
               entrypoint: "/usr/bin/busybox",
               args,
               env: {},
-              mounts: [{ source: instanceRoot, target: "/instance", readOnly: false }],
+              mounts: [
+                storage === undefined
+                  ? { source: instanceRoot, target: "/instance", readOnly: false }
+                  : yield* storage.mount(version).pipe(
+                      Effect.map((mount) => ({ ...mount, target: "/var/lib/postgresql/data" })),
+                      Effect.mapError((cause) => errorFor("data", cause)),
+                    ),
+              ],
             });
             return yield* Effect.acquireUseRelease(
               Effect.succeed(child),
               (child) =>
                 Effect.gen(function* () {
-                  const [, stdout, , code] = yield* Effect.all(
+                  const [, stdout, stderr, code] = yield* Effect.all(
                     [
                       Stream.empty.pipe(Stream.run(child.stdin)),
                       child.stdout.pipe(
@@ -501,13 +602,22 @@ export const makeDatabase = (
                           (text, chunk) => (text + chunk).slice(-65536),
                         ),
                       ),
-                      child.stderr.pipe(Stream.runDrain),
+                      child.stderr.pipe(
+                        Stream.decodeText,
+                        Stream.runFold(
+                          () => "",
+                          (text, chunk) => (text + chunk).slice(-4096),
+                        ),
+                      ),
                       child.exitCode,
                     ],
                     { concurrency: "unbounded" },
                   );
                   if (code !== 0)
-                    return yield* errorFor("data", "Container filesystem operation failed");
+                    return yield* errorFor(
+                      "data",
+                      stderr.trim() || "Container filesystem operation failed",
+                    );
                   return stdout;
                 }),
               (child) => child.stop.pipe(Effect.andThen(child.remove)),
@@ -571,6 +681,9 @@ export const makeDatabase = (
 
     const prepare = Effect.fn("Database.prepare")(
       function* (input: DatabaseConfig) {
+        const rootError = nativePostgresRootError(options.runtime, process.getuid?.());
+        if (rootError !== undefined) return yield* errorFor("prepare", rootError);
+        if (storage !== undefined) yield* storage.prepare(postgresVersion(input.version));
         const markerPath = path.join(instanceRoot, ".supabase-database-ready.json");
         const hasMarker = yield* fs.exists(markerPath);
         if (hasMarker) {
@@ -596,18 +709,6 @@ export const makeDatabase = (
             );
         }
         yield* prepareArtifact(input);
-        if (!hasMarker && container !== undefined) {
-          const initialized = (yield* dataCommand(input.version, [
-            "sh",
-            "-c",
-            "if [ -f /instance/data/PG_VERSION ]; then /usr/bin/busybox cat /instance/data/PG_VERSION; fi",
-          ])).trim();
-          if (initialized !== "" && initialized !== postgresVersion(input.version).split(".")[0])
-            return yield* errorFor(
-              "prepare",
-              "Initialized PostgreSQL major does not match the requested configuration",
-            );
-        }
       },
       Effect.mapError((cause) => errorFor("prepare", cause)),
     );
@@ -617,11 +718,23 @@ export const makeDatabase = (
         context: ServiceInstanceContext<DatabaseConfig>,
       ): Effect.Effect<RuntimeSession, ServiceError | ServiceLaunchError> =>
         Effect.gen(function* () {
+          const rootError = nativePostgresRootError(options.runtime, process.getuid?.());
+          if (rootError !== undefined) return yield* errorFor("launch", rootError);
           const config = { ...context.config, version: postgresVersion(context.config.version) };
           const dataPath = path.join(instanceRoot, "data");
-          yield* fs
-            .makeDirectory(dataPath, { recursive: true, mode: 0o700 })
-            .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
+          const dataMount =
+            storage === undefined
+              ? yield* fs.makeDirectory(dataPath, { recursive: true, mode: 0o700 }).pipe(
+                  Effect.mapError((cause) => errorFor("launch", cause)),
+                  Effect.as({
+                    source: dataPath,
+                    target: "/var/lib/postgresql/data",
+                    readOnly: false,
+                  }),
+                )
+              : yield* storage
+                  .mount(config.version)
+                  .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
           const rootKey = config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY);
           const rootKeyPath = path.join(instanceRoot, "pgsodium_root.key");
           yield* fs
@@ -653,7 +766,7 @@ export const makeDatabase = (
               config,
               dataPath,
               socketPath,
-              rootKeyPath,
+              rootKeyPath ?? path.join(dataPath, "pgsodium_root.key"),
               settings,
               context,
               String(options.stackId),
@@ -666,15 +779,22 @@ export const makeDatabase = (
               port: 5432,
             };
             yield* Ref.set(endpoint, selectedEndpoint);
-            yield* publishLogs(process, logs, context.scope);
+            const stderrTail = yield* Ref.make("");
+            const stderrDrained = yield* publishLogs(process, logs, context.scope, stderrTail);
             return {
               health: health(selectedEndpoint, config, Effect.void, {
                 fs,
                 instanceRoot,
                 version: config.version,
                 runtime: options.runtime,
+                markInitialized:
+                  storage === undefined
+                    ? undefined
+                    : storage
+                        .markInitialized(config.version)
+                        .pipe(Effect.mapError((cause) => errorFor("health", cause))),
               }),
-              exit: processExit(process.exitCode),
+              exit: processExit(process.exitCode, { tail: stderrTail, drained: stderrDrained }),
               stop: process.kill.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
               remove: fs.remove(socketPath, { recursive: true, force: true }).pipe(
                 Effect.mapError((cause) => errorFor("remove", cause)),
@@ -689,7 +809,13 @@ export const makeDatabase = (
           const selectedContainer = container;
           if (selectedContainer === undefined)
             return yield* errorFor("launch", "Container runtime is unavailable");
-          yield* dataCommand(config.version, ["chown", "100:101", "/instance/data"]);
+          if (
+            storage === undefined ||
+            (yield* storage.needsDataChown.pipe(
+              Effect.mapError((cause) => errorFor("launch", cause)),
+            ))
+          )
+            yield* dataCommand(config.version, ["chown", "100:101", "/var/lib/postgresql/data"]);
           const launched = yield* selectedContainer
             .launch({
               image: image.image,
@@ -697,14 +823,17 @@ export const makeDatabase = (
               instanceId: options.instanceId,
               env: {
                 PGDATA: "/var/lib/postgresql/data",
-                PGSODIUM_KEY_FILE: "/etc/postgresql-custom/pgsodium_root.key",
+                PGSODIUM_KEY_FILE:
+                  rootKeyPath === undefined
+                    ? "/var/lib/postgresql/data/pgsodium_root.key"
+                    : "/etc/postgresql-custom/pgsodium_root.key",
                 POSTGRES_USER: "supabase_admin",
                 POSTGRES_DB: "postgres",
                 POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
               },
               args: ["-p", "5432", "-c", "listen_addresses=*", ...settings],
               mounts: [
-                { source: dataPath, target: "/var/lib/postgresql/data", readOnly: false },
+                dataMount,
                 {
                   source: rootKeyPath,
                   target: "/etc/postgresql-custom/pgsodium_root.key",
@@ -749,6 +878,12 @@ export const makeDatabase = (
                 instanceRoot,
                 version: config.version,
                 runtime: options.runtime,
+                markInitialized:
+                  storage === undefined
+                    ? undefined
+                    : storage
+                        .markInitialized(config.version)
+                        .pipe(Effect.mapError((cause) => errorFor("health", cause))),
               },
             ),
             remove: runtimeFromContainer(launched).remove.pipe(
@@ -769,36 +904,63 @@ export const makeDatabase = (
           String(options.stackId),
           options.instanceId,
           Effect.gen(function* () {
+            if (storage !== undefined) {
+              yield* storage.destroyData(postgresVersion(context.config.version));
+              return;
+            }
             if (container === undefined || !(yield* fs.exists(path.join(instanceRoot, "data"))))
               return;
-            const artifact = yield* resolveArtifact({
-              service: "database",
-              version: postgresVersion(context.config.version),
-            });
-            yield* container.prepare(artifact.image);
-            yield* dataCommand(context.config.version, ["rm", "-rf", "/instance/data"]);
           }).pipe(Effect.mapError((cause) => errorFor("destroy", cause))),
         ),
     };
     const resetData = Effect.fn("Database.resetData")(
       (context: ServiceInstanceContext<DatabaseConfig>) =>
-        definition
-          .removeData(context)
-          .pipe(
-            Effect.andThen(
-              ensureOwnedRoot(
-                fs,
-                path,
-                instanceRoot,
-                String(options.stackId),
-                options.instanceId,
-              ).pipe(Effect.mapError((cause) => errorFor("reset", cause))),
+        storage === undefined
+          ? definition
+              .removeData(context)
+              .pipe(
+                Effect.andThen(
+                  ensureOwnedRoot(
+                    fs,
+                    path,
+                    instanceRoot,
+                    String(options.stackId),
+                    options.instanceId,
+                  ).pipe(Effect.mapError((cause) => errorFor("reset", cause))),
+                ),
+              )
+          : storage.removeData(postgresVersion(context.config.version)).pipe(
+              Effect.andThen(
+                ensureOwnedRoot(
+                  fs,
+                  path,
+                  instanceRoot,
+                  String(options.stackId),
+                  options.instanceId,
+                ).pipe(Effect.mapError((cause) => errorFor("reset", cause))),
+              ),
+              Effect.mapError((cause) => errorFor("reset", cause)),
             ),
-          ),
     );
     return {
       definition,
       resetData,
+      saveSnapshot: (context, key) =>
+        storage === undefined
+          ? Effect.flatMap(snapshots(context.config.version), (store) =>
+              store.saveSnapshot(key),
+            ).pipe(Effect.mapError((cause) => errorFor("snapshot", cause)))
+          : storage
+              .saveSnapshot(postgresVersion(context.config.version), key)
+              .pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
+      restoreSnapshot: (context, key) =>
+        storage === undefined
+          ? Effect.flatMap(snapshots(context.config.version), (store) =>
+              store.restoreSnapshot(key),
+            ).pipe(Effect.mapError((cause) => errorFor("snapshot", cause)))
+          : storage
+              .restoreSnapshot(postgresVersion(context.config.version), key)
+              .pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
       endpoint: Ref.get(endpoint).pipe(
         Effect.flatMap((value) =>
           value === undefined

@@ -1619,7 +1619,7 @@ describe("db start stack backend", () => {
         state.credentialsCalled = true;
         return { databaseUrl: "postgresql://postgres:secret@127.0.0.1:54329/postgres" };
       }),
-    exportSnapshot: () => Effect.die("unused"),
+    saveSnapshot: () => Effect.die("unused"),
     restoreSnapshot: () => Effect.die("unused"),
     resetData: Effect.die("unused"),
   });

@@ -34,6 +34,8 @@ interface ContainerSpec {
     readonly source: string;
     readonly target: string;
     readonly readOnly: boolean;
+    readonly type?: "bind" | "volume";
+    readonly volumeSubpath?: string;
   }>;
   readonly workingDir?: string;
   readonly ports?: ReadonlyArray<number>;
@@ -91,9 +93,14 @@ const mountField = (key: string, value: string) => {
   return /[,"\n\r]/u.test(field) ? `"${field.replaceAll('"', '""')}"` : field;
 };
 
-/** Captures the selected local engine; each launch owns one exact container. */
+/**
+ * Captures the selected local engine; each launch owns one exact container. An image whose pull
+ * fails is pulled from the first of its `imageMirrors` that succeeds, and launches of it then use
+ * that mirror reference. When every mirror fails, the primary pull error is reported.
+ */
 export const makeContainerRuntime = (options: {
   readonly engine: "docker" | "podman";
+  readonly imageMirrors?: (image: string) => ReadonlyArray<string>;
 }): Effect.Effect<
   ContainerRuntime,
   never,
@@ -142,9 +149,49 @@ export const makeContainerRuntime = (options: {
       );
     });
 
+    const mirrored = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
+    const present = (image: string) =>
+      run(["image", "inspect", "--format", "{{.Id}}", image]).pipe(
+        Effect.catchTag("ContainerError", (error) =>
+          /no such image|image .*not known/iu.test(error.message)
+            ? Effect.succeed("")
+            : Effect.fail(error),
+        ),
+        Effect.map((id) => id.length > 0),
+      );
+    const pull = (image: string) => run(["pull", image], { timeout: "5 minutes" });
+
+    const fromMirror = (
+      image: string,
+      mirrors: ReadonlyArray<string>,
+      primaryError: ContainerError,
+    ): Effect.Effect<void, ContainerError> => {
+      const [mirror, ...rest] = mirrors;
+      if (mirror === undefined) return Effect.fail(primaryError);
+      return Effect.gen(function* () {
+        if (!(yield* present(mirror))) yield* pull(mirror);
+        yield* Ref.update(mirrored, (map) => new Map(map).set(image, mirror));
+      }).pipe(
+        Effect.tap(() => Effect.logInfo(`Pulled image from mirror ${mirror}`)),
+        Effect.tapError((cause) => Effect.logWarning(`Image mirror ${mirror} failed`, cause)),
+        Effect.catch(() => fromMirror(image, rest, primaryError)),
+      );
+    };
+
     const prepare = Effect.fn("Container.prepare")(function* (image: string) {
-      const present = yield* run(["image", "ls", "--quiet", "--no-trunc", image]);
-      if (present.length === 0) yield* run(["pull", image], { timeout: "5 minutes" });
+      // A mirror chosen earlier may have been pruned since; launches follow the primary again.
+      const usePrimary = Ref.update(mirrored, (map) => {
+        if (!map.has(image)) return map;
+        const next = new Map(map);
+        next.delete(image);
+        return next;
+      });
+      if (yield* present(image)) return yield* usePrimary;
+      const mirrors = options.imageMirrors?.(image) ?? [];
+      yield* pull(image).pipe(
+        Effect.andThen(usePrimary),
+        Effect.catch((primaryError) => fromMirror(image, mirrors, primaryError)),
+      );
     });
 
     const launch = Effect.fn("Container.launch")(function* (
@@ -152,6 +199,7 @@ export const makeContainerRuntime = (options: {
       interactive = false,
     ) {
       const owner = yield* Scope.Scope;
+      const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
       for (const [key, value] of Object.entries(spec.env)) {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || /[\0\r\n]/u.test(value)) {
           return yield* errorFor(
@@ -201,12 +249,20 @@ export const makeContainerRuntime = (options: {
         envPath,
         ...(spec.mounts ?? []).flatMap((mount) => [
           "--mount",
-          `type=bind,${mountField("src", mount.source)},${mountField("dst", mount.target)}${mount.readOnly ? ",ro" : ""}`,
+          [
+            `type=${mount.type ?? "bind"}`,
+            mountField("src", mount.source),
+            mountField("dst", mount.target),
+            ...(mount.volumeSubpath === undefined
+              ? []
+              : [mountField("volume-subpath", mount.volumeSubpath)]),
+            ...(mount.readOnly ? ["ro"] : []),
+          ].join(","),
         ]),
         ...(spec.workingDir === undefined ? [] : ["--workdir", spec.workingDir]),
         ...(spec.ports ?? []).flatMap((port) => ["--publish", `127.0.0.1::${port}`]),
         ...(spec.entrypoint === undefined ? [] : ["--entrypoint", spec.entrypoint]),
-        spec.image,
+        image,
         ...(spec.args ?? []),
       ];
 
