@@ -163,7 +163,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       strictCoverage: flags.strictCoverage,
       dnsResolver,
     };
-    const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent();
+    const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent;
     yield* warnFormerDeclarativeDefault(fs, path, cliSettings.workdir, toml.pgDelta);
     const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
 
@@ -284,7 +284,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         }
       }
       yield* ensureLocalPostgresImageCurrent;
-      yield* seam.ensureLocalDatabaseStarted();
+      yield* seam.ensureLocalDatabaseStarted;
       // The staged export snapshots the running local database verbatim, not a shadow built
       // from migrations (what the failed plan compared) — offer the same reset the smart-target
       // local path offers, so stale Studio-made drift doesn't silently become the staged tree.

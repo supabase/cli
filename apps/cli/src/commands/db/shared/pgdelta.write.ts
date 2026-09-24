@@ -1,4 +1,4 @@
-import { Effect, type FileSystem, type Path } from "effect";
+import { Effect, type FileSystem, type Path, Schema } from "effect";
 import { classifySqlFiles } from "@supabase/pg-delta/frontends";
 
 import { Output } from "../../../shared/output/output.service.ts";
@@ -12,6 +12,8 @@ import type {
 } from "./pgdelta-engine.service.ts";
 
 const EXPORT_MANIFEST_FILE = ".pgdelta-export.json";
+
+const PrettyJsonString = Schema.fromJsonString(Schema.Unknown, { space: 2 });
 
 function declarativeWriteError(message: string): DeclarativeWriteError {
   return new DeclarativeWriteError({ message });
@@ -170,7 +172,12 @@ export const writeDeclarativeSchemas = Effect.fnUntraced(function* (
     ...output.manifest,
     files: proposed.map((file) => file.name).sort(),
   };
-  const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+  const manifestJson = yield* Schema.encodeEffect(PrettyJsonString)(manifest).pipe(
+    Effect.mapError((error) =>
+      declarativeWriteError(`failed to serialize export manifest: ${error.message}`),
+    ),
+  );
+  const serialized = `${manifestJson}\n`;
   const manifestPath = path.join(declarativeDir, EXPORT_MANIFEST_FILE);
   const manifestExists = yield* fs
     .exists(manifestPath)
