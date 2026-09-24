@@ -11,6 +11,7 @@ interface PreparationErrorFields {
   readonly target?: string;
   readonly path?: string;
   readonly key?: string;
+  readonly status?: number;
 }
 
 export class PreparationError extends Data.TaggedError(

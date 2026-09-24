@@ -1,11 +1,30 @@
-import { Effect, FileSystem, Path, Schema, Stream } from "effect";
+import { Effect, FileSystem, Path, Schedule, Schema, Stream } from "effect";
 import { NodeStream } from "@effect/platform-node";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientError } from "effect/unstable/http";
 import { createZstdDecompress } from "node:zlib";
 import { createHash } from "node:crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ArtifactRequest, ArtifactSource } from "./ArtifactStore.ts";
 import { PreparationError } from "./Errors.ts";
+
+/** One host serving the archive and manifest of a slim-services release asset. */
+interface SlimServicesMirror {
+  readonly downloadUrl: string;
+  readonly manifestUrl: string;
+}
+
+/**
+ * Where the expected archive digest comes from: a release `SHA256SUMS` file, or the archive layer
+ * of the native OCI artifact in a registry that allows anonymous pulls.
+ */
+type SlimServicesChecksumSource =
+  | { readonly kind: "sha256sums"; readonly url: string }
+  | {
+      readonly kind: "oci";
+      readonly registry: string;
+      readonly repository: string;
+      readonly tag: string;
+    };
 
 export interface SlimServicesArtifact {
   readonly provider: "supabase/slim-services";
@@ -15,9 +34,13 @@ export interface SlimServicesArtifact {
   readonly target: "darwin-arm64" | "linux-amd64" | "linux-arm64";
   readonly archive: "tar.zst";
   readonly assetName: string;
-  readonly downloadUrl: string;
-  readonly manifestUrl: string;
-  readonly checksumUrl: string;
+  /** Checksum authorities, tried in order. Download mirrors never supply their own checksum. */
+  readonly checksums: readonly [
+    SlimServicesChecksumSource,
+    ...ReadonlyArray<SlimServicesChecksumSource>,
+  ];
+  /** Hosts carrying the same release assets, tried in order until one serves them. */
+  readonly mirrors: readonly [SlimServicesMirror, ...ReadonlyArray<SlimServicesMirror>];
   readonly requiredRuntimePaths: ReadonlyArray<string>;
   readonly executablePath: string;
 }
@@ -43,7 +66,7 @@ export interface TarBoundary {
 }
 
 /** The system tar boundary is argv-based so archive paths never enter a shell string. */
-export const systemTarBoundary: TarBoundary = {
+const systemTarBoundary: TarBoundary = {
   list: Effect.fn("SlimServicesSource.tarList")(function* (archivePath) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     return yield* spawner
@@ -73,23 +96,60 @@ export const systemTarBoundary: TarBoundary = {
       );
   }),
 };
-const responseFor = (url: string) =>
+const responseFor = (url: string, headers?: Readonly<Record<string, string>>) =>
   Effect.flatMap(HttpClient.HttpClient, (client) =>
-    HttpClient.followRedirects(client).get(url),
+    HttpClient.followRedirects(client).get(url, { headers }),
   ).pipe(
     Effect.flatMap((response) =>
       Effect.gen(function* () {
         if (response.status < 200 || response.status >= 300)
-          return yield* new PreparationError({ message: `HTTP ${response.status}` });
+          return yield* new PreparationError({
+            message: `HTTP ${response.status}`,
+            status: response.status,
+          });
         return response;
       }),
     ),
   );
 
-const fetchBytes = Effect.fn("SlimServicesSource.fetchBytes")(function* (url: string) {
-  return yield* responseFor(url).pipe(
+/**
+ * Release hosts answer rate limits, gateway errors, and dropped transfers that a later attempt
+ * resolves. A transfer cut mid-body surfaces as `DecodeError`, so it retries alongside connect
+ * failures, while deterministic request faults fail on the first attempt.
+ */
+const transferFault = (error: unknown): boolean =>
+  error instanceof PreparationError
+    ? error.status !== undefined &&
+      (error.status === 408 || error.status === 429 || error.status >= 500)
+    : HttpClientError.isHttpClientError(error) &&
+      (error.reason._tag === "TransportError" || error.reason._tag === "DecodeError");
+
+/** 4 retries (5 attempts) per request: 500ms exponential, jittered. */
+const TRANSFER_MAX_RETRIES = 4;
+
+const transferBackoff = Schedule.exponential("500 millis").pipe(Schedule.jittered);
+
+const withTransferRetry =
+  (url: string, backoff: Schedule.Schedule<unknown>) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    effect.pipe(
+      Effect.tapError((cause) =>
+        transferFault(cause)
+          ? Effect.logWarning(`Retrying slim-services transfer of ${url}`, cause)
+          : Effect.void,
+      ),
+      Effect.retry({ schedule: backoff, times: TRANSFER_MAX_RETRIES, while: transferFault }),
+    );
+
+const fetchBytes = Effect.fn("SlimServicesSource.fetchBytes")(function* (
+  url: string,
+  backoff: Schedule.Schedule<unknown>,
+  headers?: Readonly<Record<string, string>>,
+) {
+  return yield* responseFor(url, headers).pipe(
     Effect.flatMap((response) => response.arrayBuffer),
     Effect.map((bytes) => new Uint8Array(bytes)),
+    withTransferRetry(url, backoff),
     Effect.mapError(
       (cause) => new PreparationError({ message: `Unable to download ${url}`, cause }),
     ),
@@ -130,34 +190,76 @@ const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* 
   url: string,
   destination: string,
   expectedSha256: string,
+  backoff: Schedule.Schedule<unknown>,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const response = yield* responseFor(url);
-  const hash = yield* Effect.try({
-    try: () => createHash("sha256"),
-    catch: (cause) =>
-      new PreparationError({ message: "Unable to initialize archive digest", cause }),
+  // Each attempt reopens the sink in truncating mode, so a retry replaces any partial transfer.
+  const transfer = Effect.gen(function* () {
+    const response = yield* responseFor(url);
+    const hash = yield* Effect.try({
+      try: () => createHash("sha256"),
+      catch: (cause) =>
+        new PreparationError({ message: "Unable to initialize archive digest", cause }),
+    });
+    yield* response.stream.pipe(
+      Stream.tap((chunk) =>
+        Effect.try({
+          try: () => {
+            hash.update(chunk);
+          },
+          catch: (cause) => new PreparationError({ message: "Unable to hash archive", cause }),
+        }),
+      ),
+      Stream.run(fs.sink(destination, { mode: 0o600 })),
+    );
+    return yield* Effect.try({
+      try: () => hash.digest("hex"),
+      catch: (cause) => new PreparationError({ message: "Unable to finish archive digest", cause }),
+    });
   });
-  yield* response.stream.pipe(
-    Stream.tap((chunk) =>
-      Effect.try({
-        try: () => {
-          hash.update(chunk);
-        },
-        catch: (cause) => new PreparationError({ message: "Unable to hash archive", cause }),
-      }),
-    ),
-    Stream.run(fs.sink(destination, { mode: 0o600 })),
-  );
-  const actual = yield* Effect.try({
-    try: () => hash.digest("hex"),
-    catch: (cause) => new PreparationError({ message: "Unable to finish archive digest", cause }),
-  });
+  const actual = yield* transfer.pipe(withTransferRetry(url, backoff));
   if (actual !== expectedSha256.toLowerCase())
     return yield* new PreparationError({
       message: `expected ${expectedSha256}, got ${actual}`,
     });
 });
+
+const fallbackDetail = (error: PreparationError): string => {
+  const nested = error.cause instanceof PreparationError ? error.cause.message : undefined;
+  return nested === undefined || nested.length === 0
+    ? error.message
+    : `${error.message} (${nested})`;
+};
+
+/**
+ * Runs `attempt` against each candidate until one succeeds. When every candidate fails, the
+ * returned error is still the primary's. A fallback failure, including a checksum mismatch, is
+ * logged as a warning, and a fallback that succeeds names the host it used.
+ */
+const firstSuccess = <T, A, R>(
+  candidates: readonly [T, ...ReadonlyArray<T>],
+  describe: (candidate: T) => string,
+  attempt: (candidate: T) => Effect.Effect<A, PreparationError, R>,
+): Effect.Effect<A, PreparationError, R> => {
+  const [primary, ...fallbacks] = candidates;
+  const fallback = (
+    primaryError: PreparationError,
+    remaining: ReadonlyArray<T>,
+  ): Effect.Effect<A, PreparationError, R> => {
+    const [candidate, ...rest] = remaining;
+    if (candidate === undefined) return Effect.fail(primaryError);
+    return attempt(candidate).pipe(
+      Effect.tap(() => Effect.logInfo(`Slim-services used ${describe(candidate)}`)),
+      Effect.tapError((cause) =>
+        Effect.logWarning(
+          `Slim-services fallback ${describe(candidate)} failed: ${fallbackDetail(cause)}`,
+        ),
+      ),
+      Effect.catch(() => fallback(primaryError, rest)),
+    );
+  };
+  return attempt(primary).pipe(Effect.catch((primaryError) => fallback(primaryError, fallbacks)));
+};
 
 const checksumFor = (contents: string, archiveName: string): string | undefined =>
   contents
@@ -165,24 +267,127 @@ const checksumFor = (contents: string, archiveName: string): string | undefined 
     .map((line) => line.trim().match(/^([a-f0-9]{64})\s+[* ]?(.+)$/iu))
     .find((match) => match?.[2] === archiveName || match?.[2]?.endsWith(`/${archiveName}`))?.[1];
 
+const ARCHIVE_MEDIA_TYPE = "application/vnd.supabase.slim.archive.v1.tar+zstd";
+
+const RegistryToken = Schema.Struct({ token: Schema.String });
+
+const NativeOciManifest = Schema.Struct({
+  layers: Schema.Array(Schema.Struct({ mediaType: Schema.String, digest: Schema.String })),
+});
+
+const decodeJson = <S extends Schema.Top>(schema: S, bytes: Uint8Array, message: string) =>
+  Schema.decodeEffect(Schema.fromJsonString(schema))(new TextDecoder().decode(bytes)).pipe(
+    Effect.mapError((cause) => new PreparationError({ message, cause })),
+  );
+
+/** Reads the archive layer digest of a native OCI artifact through an anonymous pull token. */
+const ociArchiveDigest = Effect.fn("SlimServicesSource.ociArchiveDigest")(function* (
+  source: Extract<SlimServicesChecksumSource, { readonly kind: "oci" }>,
+  backoff: Schedule.Schedule<unknown>,
+) {
+  const tokenUrl = `https://${source.registry}/token?scope=repository:${source.repository}:pull&service=${source.registry}`;
+  const { token } = yield* decodeJson(
+    RegistryToken,
+    yield* fetchBytes(tokenUrl, backoff),
+    "Slim-services registry token is invalid",
+  );
+  const manifest = yield* decodeJson(
+    NativeOciManifest,
+    yield* fetchBytes(
+      `https://${source.registry}/v2/${source.repository}/manifests/${source.tag}`,
+      backoff,
+      {
+        accept: "application/vnd.oci.image.manifest.v1+json",
+        authorization: `Bearer ${token}`,
+      },
+    ),
+    "Slim-services native OCI manifest is invalid",
+  );
+  const digest = manifest.layers
+    .find((layer) => layer.mediaType === ARCHIVE_MEDIA_TYPE)
+    ?.digest.match(/^sha256:([a-f0-9]{64})$/u)?.[1];
+  if (digest === undefined)
+    return yield* new PreparationError({
+      message: "Slim-services native OCI manifest has no archive layer",
+    });
+  return digest;
+});
+
+const describeChecksumSource = (source: SlimServicesChecksumSource): string =>
+  source.kind === "sha256sums"
+    ? source.url
+    : `${source.registry}/${source.repository}:${source.tag}`;
+
 export const slimServicesChecksum = Effect.fn("SlimServicesSource.checksum")(function* (
   artifact: SlimServicesArtifact,
+  backoff: Schedule.Schedule<unknown> = transferBackoff,
 ) {
-  return yield* fetchBytes(artifact.checksumUrl).pipe(
-    Effect.map((bytes) => new TextDecoder().decode(bytes)),
-    Effect.flatMap((contents) => {
-      const checksum = checksumFor(contents, `${artifact.assetName}.tar.zst`);
-      return checksum === undefined || !/^[a-f0-9]{64}$/iu.test(checksum)
-        ? Effect.fail(
-            new PreparationError({
-              message: "Slim-services checksum is missing",
-              service: artifact.service,
-              version: artifact.version,
-            }),
-          )
-        : Effect.succeed(checksum.toLowerCase());
-    }),
+  return yield* firstSuccess(artifact.checksums, describeChecksumSource, (source) =>
+    source.kind === "oci"
+      ? ociArchiveDigest(source, backoff)
+      : fetchBytes(source.url, backoff).pipe(
+          Effect.map((bytes) => new TextDecoder().decode(bytes)),
+          Effect.flatMap((contents) => {
+            const checksum = checksumFor(contents, `${artifact.assetName}.tar.zst`);
+            return checksum === undefined || !/^[a-f0-9]{64}$/iu.test(checksum)
+              ? Effect.fail(
+                  new PreparationError({
+                    message: "Slim-services checksum is missing",
+                    service: artifact.service,
+                    version: artifact.version,
+                  }),
+                )
+              : Effect.succeed(checksum.toLowerCase());
+          }),
+        ),
   );
+});
+
+const manifestSchema = Schema.Struct({
+  service: Schema.String,
+  version: Schema.String,
+  target: Schema.Literals(["darwin-arm64", "linux-amd64", "linux-arm64"]),
+  entrypoint: Schema.optionalKey(Schema.Array(Schema.String)),
+  cmd: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const verifiedManifest = Effect.fn("SlimServicesSource.verifiedManifest")(function* (
+  artifact: SlimServicesArtifact,
+  mirror: SlimServicesMirror,
+  backoff: Schedule.Schedule<unknown>,
+) {
+  const manifestBytes = yield* fetchBytes(mirror.manifestUrl, backoff);
+  const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(manifestSchema))(
+    new TextDecoder().decode(manifestBytes),
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new PreparationError({
+          message: "Slim-services manifest is invalid",
+          cause,
+        }),
+    ),
+  );
+  if (
+    manifest.service !== artifact.service ||
+    manifest.version !== artifact.version ||
+    manifest.target !== artifact.target
+  )
+    return yield* new PreparationError({
+      message: "Slim-services manifest does not match the catalog artifact",
+      service: artifact.service,
+      version: artifact.version,
+      target: artifact.target,
+    });
+  if (
+    (manifest.entrypoint !== undefined && manifest.entrypoint.some(unsafeManifestCommand)) ||
+    (manifest.cmd !== undefined && manifest.cmd.some(unsafeManifestCommand))
+  )
+    return yield* new PreparationError({
+      message: "Slim-services manifest command is invalid",
+      service: artifact.service,
+      version: artifact.version,
+    });
 });
 
 const unsafeArchivePath = (value: string): boolean => {
@@ -256,9 +461,15 @@ const validateExtractedTree = (
 
 export const makeSlimServicesSource = (
   resolve: (request: ArtifactRequest) => SlimServicesArtifact | undefined,
-  tarBoundary: TarBoundary = systemTarBoundary,
-  decompressor: ZstdDecompressor = nodeZstdDecompressor,
+  overrides: {
+    readonly tarBoundary?: TarBoundary;
+    readonly decompressor?: ZstdDecompressor;
+    readonly backoff?: Schedule.Schedule<unknown>;
+  } = {},
 ): ArtifactSource => {
+  const tarBoundary = overrides.tarBoundary ?? systemTarBoundary;
+  const decompressor = overrides.decompressor ?? nodeZstdDecompressor;
+  const backoff = overrides.backoff ?? transferBackoff;
   const resolveArtifact = Effect.fn("SlimServicesSource.resolveArtifact")(function* (
     request: ArtifactRequest,
   ) {
@@ -269,7 +480,9 @@ export const makeSlimServicesSource = (
   });
   return {
     checksum: (request) =>
-      resolveArtifact(request).pipe(Effect.flatMap((artifact) => slimServicesChecksum(artifact))),
+      resolveArtifact(request).pipe(
+        Effect.flatMap((artifact) => slimServicesChecksum(artifact, backoff)),
+      ),
     materialize: Effect.fn("SlimServicesSource.materialize")(
       function* (request, destination, expectedSha256, onProgress) {
         const fs = yield* FileSystem.FileSystem;
@@ -282,59 +495,28 @@ export const makeSlimServicesSource = (
         ]);
         return yield* Effect.gen(function* () {
           const artifact = yield* resolveArtifact(request);
-          const manifestBytes = yield* fetchBytes(artifact.manifestUrl);
-          const manifestText = new TextDecoder().decode(manifestBytes);
-          const manifestSchema = Schema.Struct({
-            service: Schema.String,
-            version: Schema.String,
-            target: Schema.Literals(["darwin-arm64", "linux-amd64", "linux-arm64"]),
-            entrypoint: Schema.optionalKey(Schema.Array(Schema.String)),
-            cmd: Schema.optionalKey(Schema.Array(Schema.String)),
-          });
-          const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(manifestSchema))(
-            manifestText,
-          ).pipe(
-            Effect.mapError(
-              (cause) =>
-                new PreparationError({
-                  message: "Slim-services manifest is invalid",
-                  cause,
-                }),
-            ),
-          );
-          if (
-            manifest.service !== artifact.service ||
-            manifest.version !== artifact.version ||
-            manifest.target !== artifact.target
-          )
-            return yield* new PreparationError({
-              message: "Slim-services manifest does not match the catalog artifact",
-              service: artifact.service,
-              version: artifact.version,
-              target: artifact.target,
-            });
-          const entrypoint = manifest.entrypoint;
-          const command = manifest.cmd;
-          if (
-            (entrypoint !== undefined && entrypoint.some(unsafeManifestCommand)) ||
-            (command !== undefined && command.some(unsafeManifestCommand))
-          )
-            return yield* new PreparationError({
-              message: "Slim-services manifest command is invalid",
-              service: artifact.service,
-              version: artifact.version,
-            });
-          yield* Effect.sync(() => onProgress?.("downloading")).pipe(
-            Effect.andThen(downloadToFile(artifact.downloadUrl, compressedPath, expectedSha256)),
-            Effect.mapError(
-              (cause) =>
-                new PreparationError({
-                  message: "Unable to download slim-services archive",
-                  service: artifact.service,
-                  version: artifact.version,
-                  cause,
-                }),
-            ),
+          yield* firstSuccess(
+            artifact.mirrors,
+            (mirror) => mirror.downloadUrl,
+            (mirror) =>
+              verifiedManifest(artifact, mirror, backoff).pipe(
+                Effect.andThen(
+                  Effect.sync(() => onProgress?.("downloading")).pipe(
+                    Effect.andThen(
+                      downloadToFile(mirror.downloadUrl, compressedPath, expectedSha256, backoff),
+                    ),
+                    Effect.mapError(
+                      (cause) =>
+                        new PreparationError({
+                          message: "Unable to download slim-services archive",
+                          service: artifact.service,
+                          version: artifact.version,
+                          cause,
+                        }),
+                    ),
+                  ),
+                ),
+              ),
           );
           yield* Effect.sync(() => onProgress?.("preparing"));
           yield* decompressor.decompress(compressedPath, archivePath);

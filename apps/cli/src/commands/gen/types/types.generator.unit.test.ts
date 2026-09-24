@@ -9,8 +9,6 @@ import {
   type GeneratorMetadata,
 } from "@supabase/postgrest-typegen";
 
-import { oxfmtTypegenFormat } from "./types.oxfmt.ts";
-
 const emptyMetadata: GeneratorMetadata = {
   version: 1,
   schemas: [{ id: 1, name: "public", owner: "postgres" }],
@@ -43,17 +41,11 @@ describe("postgrest-typegen runtime contract", () => {
   it("renders every supported language from metadata alone", async () => {
     const metadata = sortGeneratorMetadata(emptyMetadata);
 
-    await expect(generateTypescript(metadata, { format: oxfmtTypegenFormat })).resolves.toContain(
-      "public",
-    );
+    await expect(
+      generateTypescript(metadata, { format: (code) => Promise.resolve(code) }),
+    ).resolves.toContain("public");
     expect(generateGo(metadata)).toContain("package");
     expect(generatePython(metadata)).toContain("import");
     expect(generateSwift(metadata, { accessControl: "internal" })).toContain("import Supabase");
-  });
-
-  it("formats through the statically embedded oxfmt binding", async () => {
-    await expect(oxfmtTypegenFormat("export  type A={a:string|null}\n")).resolves.toBe(
-      "export type A = { a: string | null }\n",
-    );
   });
 });

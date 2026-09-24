@@ -237,17 +237,13 @@ describe("makeSupabaseApiClient", () => {
     expect(requests).toBe(0);
   });
 
-  test("retries transport errors for POST requests", async () => {
+  test("retries transport errors for GET requests", async () => {
     let attempts = 0;
 
     const result = await Effect.runPromise(
       makeSupabaseApiClient(config).pipe(
         Effect.flatMap((client) =>
-          client.execute<"v1CreateAProject">(operationDefinitions.v1CreateAProject, {
-            db_pass: "hunter2",
-            name: "project-name",
-            organization_slug: "my-org",
-          }),
+          client.execute<"v1ListAllProjects">(operationDefinitions.v1ListAllProjects, {}),
         ),
         Effect.provide(
           httpClientLayer((request) => {
@@ -256,25 +252,14 @@ describe("makeSupabaseApiClient", () => {
               return Effect.fail(transportError(request, "socket reset"));
             }
 
-            return Effect.succeed(
-              jsonResponse(request, 200, {
-                id: "project-id",
-                ref: "abcdefghijklmnopqrst",
-                organization_id: "org-id",
-                organization_slug: "my-org",
-                name: "project-name",
-                region: "us-east-1",
-                created_at: "2026-03-13T12:00:00.000Z",
-                status: "ACTIVE_HEALTHY",
-              }),
-            );
+            return Effect.succeed(jsonResponse(request, 200, []));
           }),
         ),
       ),
     );
 
     expect(attempts).toBe(3);
-    expect(result.ref).toBe("abcdefghijklmnopqrst");
+    expect(result).toEqual([]);
   });
 
   test("reveals redacted auth tokens only at the transport boundary", async () => {
@@ -687,6 +672,68 @@ describe("makeSupabaseApiClient", () => {
     expect(Exit.isFailure(exit)).toBe(true);
   });
 
+  test("does not retry transport errors for POST requests", async () => {
+    let attempts = 0;
+
+    const exit = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1CreateAProject">(operationDefinitions.v1CreateAProject, {
+            db_pass: "hunter2",
+            name: "project-name",
+            organization_slug: "my-org",
+          }),
+        ),
+        Effect.exit,
+        Effect.provide(
+          httpClientLayer((request) => {
+            attempts += 1;
+            return attempts === 1
+              ? Effect.fail(transportError(request, "connection reset"))
+              : Effect.succeed(
+                  jsonResponse(request, 409, {
+                    message: "project already exists",
+                  }),
+                );
+          }),
+        ),
+      ),
+    );
+
+    expect(attempts).toBe(1);
+    expect(Exit.isFailure(exit)).toBe(true);
+  });
+
+  test("does not retry transport errors for PATCH requests", async () => {
+    let attempts = 0;
+
+    const exit = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1PatchAMigration">(operationDefinitions.v1PatchAMigration, {
+            ref: "abcdefghijklmnopqrst",
+            version: "20240101000000",
+            name: "renamed",
+          }),
+        ),
+        Effect.exit,
+        Effect.provide(
+          httpClientLayer((request) => {
+            attempts += 1;
+            return attempts === 1
+              ? Effect.fail(transportError(request, "connection reset"))
+              : Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response(null, { status: 204 })),
+                );
+          }),
+        ),
+      ),
+    );
+
+    expect(attempts).toBe(1);
+    expect(Exit.isFailure(exit)).toBe(true);
+  });
+
   test("stops after the configured number of transport retries", async () => {
     let attempts = 0;
 
@@ -697,11 +744,7 @@ describe("makeSupabaseApiClient", () => {
         },
       }).pipe(
         Effect.flatMap((client) =>
-          client.execute<"v1CreateAProject">(operationDefinitions.v1CreateAProject, {
-            db_pass: "hunter2",
-            name: "project-name",
-            organization_slug: "my-org",
-          }),
+          client.execute<"v1ListAllProjects">(operationDefinitions.v1ListAllProjects, {}),
         ),
         Effect.exit,
         Effect.provide(
@@ -1144,5 +1187,44 @@ describe("makeSupabaseApiClient", () => {
     expect(result.data.attributes.database.major_version).toBe(17);
     expect(result.data.attributes.storage.upstream_target).toBe("main");
     expect(result.data.attributes.api.db_pool).toBeNull();
+  });
+  // `style: deepObject` — every object-valued query parameter in the spec — is
+  // one `param[key]=value` pair per entry. Serialized as a JSON blob instead,
+  // the server reads no page size and no cursor, so a paginated walk silently
+  // returns the first default-sized page forever.
+  test("expands deepObject query parameters into one pair per entry", async () => {
+    let seenRequest: HttpClientRequest.HttpClientRequest | undefined;
+
+    const client = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            seenRequest = request;
+            return Effect.succeed(
+              jsonResponse(request, 200, {
+                data: [],
+                links: { first: null, last: null, prev: null, next: null },
+              }),
+            );
+          }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      client.execute(operationDefinitions.v2ListNotebooks, {
+        ref: "abcdefghijklmnopqrst",
+        page: { size: 100, after: "cursor-1" },
+        filter: { name: "sales" },
+      }),
+    );
+
+    expect(seenRequest).toBeDefined();
+    expect(requestUrlParam(seenRequest!, "page[size]")).toBe("100");
+    expect(requestUrlParam(seenRequest!, "page[after]")).toBe("cursor-1");
+    expect(requestUrlParam(seenRequest!, "filter[name]")).toBe("sales");
+    // The un-expanded names never reach the wire.
+    expect(requestUrlParam(seenRequest!, "page")).toBeUndefined();
+    expect(requestUrlParam(seenRequest!, "filter")).toBeUndefined();
   });
 });

@@ -1,8 +1,12 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
-import { resolveCliConfigSubtree } from "@supabase/config/internal";
+import { ENV_CAPTURE_REGEX, resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
+import {
+  DEFAULT_LOCAL_JWT_SECRET,
+  DEFAULT_POSTGRES_ROOT_KEY,
+  type ServiceCreation as ServiceCreationType,
+} from "@supabase/stack/effect";
 import { Crypto, Effect, Data, FileSystem, Path, Redacted, SchemaIssue } from "effect";
-import type { ServiceCreation as ServiceCreationType } from "@supabase/stack/effect";
 
 import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
@@ -713,6 +717,14 @@ const unsupportedConfigPaths = [
   "experimental.s3_secret_key",
 ] as const;
 
+/** An unset `env(NAME)` stays as that literal, which is not a configured value. */
+const unresolvedEnvLiteral = (value: unknown): boolean => {
+  if (typeof value === "string") return ENV_CAPTURE_REGEX.test(value);
+  if (!Redacted.isRedacted(value)) return false;
+  const inner = Redacted.value(value);
+  return typeof inner === "string" && ENV_CAPTURE_REGEX.test(inner);
+};
+
 const pathValue = (value: unknown, path: string): unknown => {
   let current = value;
   for (const segment of path.split(".")) {
@@ -775,6 +787,7 @@ const configValidationError = (config: CliConfig): string | undefined => {
   for (const path of unsupportedConfigPaths) {
     if (path.startsWith("auth.") && !config.auth.enabled) continue;
     const value = pathValue(config, path);
+    if (path.startsWith("experimental.s3_") && unresolvedEnvLiteral(value)) continue;
     const baseline = pathValue(defaults, path);
     const difference = firstDifference(value, baseline, path);
     if (difference !== undefined) return `${difference} is unsupported by the experimental stack`;
@@ -905,7 +918,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           ),
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });
-      const crypto = yield* Crypto.Crypto;
       const storageFileSizeLimit = yield* Effect.try({
         try: () => String(parseFileSizeLimit(validatedConfig.storage.file_size_limit)),
         catch: (cause) =>
@@ -918,22 +930,12 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       });
       const configuredJwtSecret = yield* Effect.try({
         try: () =>
-          validatedConfig.auth.jwt_secret === undefined
+          validatedConfig.auth.jwt_secret === undefined || validatedConfig.auth.jwt_secret === ""
             ? undefined
             : resolveJwtSecret(validatedConfig.auth.jwt_secret),
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });
-      const jwtSecret =
-        configuredJwtSecret === undefined
-          ? Redacted.make(
-              yield* crypto.randomUUIDv4.pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new StackConfigError({ message: `Unable to generate JWT secret: ${cause}` }),
-                ),
-              ),
-            )
-          : Redacted.make(configuredJwtSecret);
+      const jwtSecret = Redacted.make(configuredJwtSecret ?? DEFAULT_LOCAL_JWT_SECRET);
       const document = context.loaded?.document;
       const rootKey = yield* Effect.try({
         try: () => {
@@ -944,7 +946,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             envOverride("SUPABASE_DB_ROOT_KEY", raw, context.projectEnvValues),
             context.projectEnvValues,
           );
-          return value === "" ? undefined : value;
+          return value === undefined || value === "" ? DEFAULT_POSTGRES_ROOT_KEY : value;
         },
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });
@@ -1059,7 +1061,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                 jwtExpiry: validatedConfig.auth.jwt_expiry,
                 settings: validatedConfig.db.settings,
                 healthTimeoutMs,
-                ...(rootKey === undefined ? {} : { rootKey: Redacted.make(rootKey) }),
+                rootKey: Redacted.make(rootKey),
               },
               endpoints: { sql: endpoint(dbPort) },
             },

@@ -5,7 +5,7 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
-import { cleanupDockerRoot } from "../../tests/docker-cleanup.ts";
+import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-analytics",
@@ -28,8 +28,7 @@ describe("service catalog", () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-optional-data-" });
-          yield* Effect.addFinalizer(() => cleanupDockerRoot(root));
+          const root = yield* makeDockerDatabaseRoot("catalog-optional-data-");
           const secret = "catalog-optional-data-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {

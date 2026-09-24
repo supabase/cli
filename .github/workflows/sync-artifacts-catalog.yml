@@ -1,0 +1,98 @@
+name: Sync Artifacts catalog
+
+# The script is the base revision. The pull request only supplies the Dockerfile
+# and catalog text, and the job runs for Dependabot so that pull request cannot
+# edit this workflow and then execute it with a write token. The catalog commit
+# is pushed with the app token so the new head triggers CI. Dependabot's
+# GITHUB_TOKEN would not.
+on:
+  pull_request:
+    paths:
+      - apps/cli/src/shared/services/Dockerfile
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-artifacts-catalog-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Pin workload catalog
+    if: github.actor == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      # Bun only. The script imports no workspace packages. The firewall token
+      # is empty on a Dependabot run; setup is not required to format one file.
+      - name: Install toolchains
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.0
+
+      - name: Install regctl
+        run: |
+          set -euo pipefail
+          install -d "${RUNNER_TEMP}/regctl-bin"
+          curl -fsSLo "${RUNNER_TEMP}/regctl-bin/regctl" \
+            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
+          echo "c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467  ${RUNNER_TEMP}/regctl-bin/regctl" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/regctl-bin/regctl"
+          echo "${RUNNER_TEMP}/regctl-bin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/regctl-bin/regctl" version
+
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Pin the catalog to the Dockerfile
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "pull/${PR_NUMBER}/head"
+          fetched="$(git rev-parse FETCH_HEAD)"
+          if [ "$fetched" != "$HEAD_SHA" ]; then
+            echo "::error ::pull/${PR_NUMBER} head is ${fetched}, expected ${HEAD_SHA}."
+            exit 1
+          fi
+          dockerfile="$(mktemp)"
+          catalog="$(mktemp)"
+          original="$(mktemp)"
+          git show "$HEAD_SHA:apps/cli/src/shared/services/Dockerfile" > "$dockerfile"
+          git show "$HEAD_SHA:packages/stack/src/Artifacts.ts" > "$catalog"
+          cp "$catalog" "$original"
+          bun .github/scripts/sync-artifacts-catalog.ts "$dockerfile" "$catalog" apps/cli/src/shared/services/Dockerfile
+          if cmp -s "$original" "$catalog"; then
+            echo "Workload catalog already matches the Dockerfile."
+            exit 0
+          fi
+          git checkout --detach "$HEAD_SHA"
+          cp "$catalog" packages/stack/src/Artifacts.ts
+          bun x oxfmt@0.65.0 --config .oxfmtrc.json packages/stack/src/Artifacts.ts
+          git add -- packages/stack/src/Artifacts.ts
+          if git diff --cached --quiet -- packages/stack/src/Artifacts.ts; then
+            echo "Workload catalog already matches the Dockerfile."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(stack): pin the workload catalog to the Dockerfile image tags"
+          git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin "HEAD:refs/heads/${HEAD_REF}"

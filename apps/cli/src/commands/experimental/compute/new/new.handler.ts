@@ -32,6 +32,7 @@ import {
   COMPUTE_EXPOSURE_DESCRIPTIONS,
   COMPUTE_EXPOSURES,
   COMPUTE_RUNTIME_DESCRIPTIONS,
+  COMPUTE_RUNTIME_EXCLUSIONS,
   COMPUTE_RUNTIMES,
   COMPUTE_SIZES,
   type ComputeExposure,
@@ -273,6 +274,8 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
     const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
     const instances = recordedInstances(flags.instances);
+    // Recorded in `config.toml` rather than applied at push time; see ./SIDE_EFFECTS.md.
+    const exclude = COMPUTE_RUNTIME_EXCLUSIONS[runtime];
 
     // Validated before anything is written: this is the directory the starter files
     // land in, so a value naming the project root, `supabase/`, or anywhere outside
@@ -331,6 +334,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         exposure,
         ...(instances === undefined ? {} : { instances }),
         ...(source === undefined ? {} : { source }),
+        ...(exclude.length === 0 ? {} : { exclude }),
       },
     });
 
@@ -363,6 +367,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       // than "one".
       instances: instances ?? DEFAULT_COMPUTE_INSTANCES,
       source: sourceDisplay,
+      exclude,
       config_path: project.configPath,
     };
 
@@ -391,6 +396,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         // `declared`, the way `compute status` labels the same number: nothing
         // is running yet, so a bare count would read as a live tally.
         ["Instances", `${instances ?? DEFAULT_COMPUTE_INSTANCES} declared`],
+        ["Excluded", exclude.join(", ")],
       ]),
     );
     // On the success trailer rather than inline, the way `bootstrap` emits its

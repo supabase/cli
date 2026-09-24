@@ -1,12 +1,12 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Redacted } from "effect";
+import { Context, Effect, Layer, Redacted } from "effect";
 import { PgClient } from "@effect/sql-pg";
 import { makeService } from "../Service.ts";
 import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
-import { cleanupDockerRoot } from "../../tests/docker-cleanup.ts";
+import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-pooler",
@@ -27,9 +27,7 @@ describe("service catalog", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-pooler-" });
-          yield* Effect.addFinalizer(() => cleanupDockerRoot(root));
+          const root = yield* makeDockerDatabaseRoot("catalog-pooler-");
           const secret = "catalog-pooler-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {

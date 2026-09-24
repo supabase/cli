@@ -158,7 +158,10 @@ const makeOwnerWithDependencies = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const http = yield* HttpClient.HttpClient;
     const ownerScope = yield* Scope.Scope;
-    const helpers = yield* makeDockerHelperRegistry;
+    const helperOwnerId = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) => errorFor("identity", cause)),
+    );
+    const helpers = yield* makeDockerHelperRegistry(helperOwnerId);
     const recipes = yield* Ref.make(new Map<string, CatalogRecipe>());
     const instances = yield* Ref.make(new Map<string, ServiceInstance<ServiceCreation>>());
     const namespaces = yield* Ref.make(new Map<string, NetworkNamespace>());

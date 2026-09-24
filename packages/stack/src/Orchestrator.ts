@@ -700,11 +700,20 @@ const makeOrchestrator = Effect.gen(function* () {
   });
   const destroyNamespace = Effect.fn("Orchestrator.destroyNamespace")(function* () {
     const values = yield* Ref.get(registry);
-    // Each destroy stops that service. A prior waited stop would block ephemeral
-    // databases that only need the stop command to be issued.
     const configured = yield* configurationGraph(yield* Ref.get(composition));
-    for (const id of topo([...values.keys()], configured.prerequisites).toReversed())
-      yield* destroyNode(id);
+    const order = topo([...values.keys()], configured.prerequisites).toReversed();
+    const outcomes = yield* Effect.forEach(order, (id) =>
+      destroyNode(id).pipe(
+        Effect.exit,
+        Effect.map((result) => ({ id, result })),
+      ),
+    );
+    if (outcomes.some(({ result }) => Exit.isFailure(result)))
+      return yield* new OrchestratorError({
+        operation: "destroy",
+        message: "Composition destroy had failures",
+        outcomes,
+      });
   });
 
   const orchestrator: Interface = {

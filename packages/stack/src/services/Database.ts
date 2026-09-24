@@ -5,6 +5,7 @@ import {
   Data,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Layer,
   Path,
@@ -20,6 +21,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { HttpClient } from "effect/unstable/http";
 import {
+  slimImageMirrors,
   prepareNativeArtifact,
   postgresVersion,
   resolveArtifact,
@@ -49,6 +51,7 @@ import {
 } from "../runtime/NativeProcess.ts";
 import type { StackId } from "../identity/StackId.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
+import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeDatabaseSnapshots } from "./DatabaseSnapshot.ts";
 import type { DockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 import {
@@ -62,7 +65,7 @@ export const DatabaseConfig = Schema.Struct({
   jwtSecret: Schema.Redacted(Schema.String),
   jwtExpiry: Schema.Finite,
   healthTimeoutMs: Schema.optionalKey(Schema.Finite),
-  /** When 0, destroy issues stop in the background. An explicit stop still waits. */
+  /** When 0, the database is disposable and can use reduced-durability settings. */
   stopGraceSeconds: Schema.optionalKey(Schema.Finite),
   rootKey: Schema.optionalKey(Schema.Redacted(Schema.String)),
   settings: Schema.optionalKey(
@@ -127,6 +130,13 @@ export interface DatabaseComponent {
   readonly logs: Stream.Stream<DatabaseLog, DatabaseError>;
 }
 
+/** initdb and the server both refuse uid 0, so native startup fails before any process is spawned. */
+export const nativePostgresRootError = (
+  runtime: string,
+  uid: number | undefined,
+): string | undefined =>
+  runtime === "native" && uid === 0 ? "PostgreSQL cannot be run as root" : undefined;
+
 const errorFor = (operation: string, cause: unknown): ServiceError =>
   cause instanceof ServiceError
     ? cause
@@ -142,7 +152,7 @@ const postgresArguments = (config: DatabaseConfig): Array<string> => {
     "-c",
     `${key}=${String(value)}`,
   ]);
-  // stopGraceSeconds 0 is the discarded shadow. Crash safety only adds wait.
+  // Shadow databases are discarded, so they can use reduced-durability settings.
   if (config.stopGraceSeconds === 0)
     for (const setting of ["fsync=off", "synchronous_commit=off", "full_page_writes=off"])
       if (!configured.has(setting.slice(0, setting.indexOf("=")))) settings.push("-c", setting);
@@ -156,17 +166,41 @@ const databaseError = (operation: string, cause: unknown): DatabaseError =>
     cause,
   });
 
-const processExit = <E extends { readonly message: string }>(
+/** A descendant outside the process group can keep stderr open after the launcher exits. */
+const stderrTailReady = (drained: Fiber.Fiber<void>) =>
+  Fiber.await(drained).pipe(
+    Effect.asVoid,
+    Effect.raceFirst(Effect.sleep("1 second")),
+    Effect.ignore,
+  );
+
+/** Settles a native PostgreSQL exit, waiting briefly after it for the stderr tail to drain. */
+export const processExit = <E extends { readonly message: string }>(
   exitCode: Effect.Effect<number, E>,
+  stderr?: {
+    readonly tail: Ref.Ref<string>;
+    readonly drained: Fiber.Fiber<void>;
+  },
 ): Effect.Effect<Exit.Exit<void, ServiceError>> =>
-  exitCode.pipe(
+  (stderr === undefined
+    ? exitCode
+    : exitCode.pipe(Effect.tap(() => stderrTailReady(stderr.drained)))
+  ).pipe(
     Effect.flatMap((code) =>
       Number(code) === 0
         ? Effect.void
-        : Effect.fail(
-            new ServiceError({
-              operation: "exit",
-              message: `PostgreSQL exited with code ${String(code)}`,
+        : (stderr === undefined ? Effect.succeed("") : Ref.get(stderr.tail)).pipe(
+            Effect.flatMap((text) => {
+              const detail = text.trim();
+              return Effect.fail(
+                new ServiceError({
+                  operation: "exit",
+                  message:
+                    detail.length === 0
+                      ? `PostgreSQL exited with code ${String(code)}`
+                      : `PostgreSQL exited with code ${String(code)}: ${detail}`,
+                }),
+              );
             }),
           ),
     ),
@@ -336,19 +370,33 @@ const publishLogs = Effect.fn("Database.publishLogs")((
   },
   logs: PubSub.PubSub<DatabaseLog>,
   scope: Scope.Closeable,
-): Effect.Effect<void> => {
-  const drain = (stream: Stream.Stream<Uint8Array, unknown>, name: DatabaseLog["stream"]) =>
-    stream.pipe(
-      Stream.runForEach((bytes) => PubSub.publish(logs, { stream: name, bytes })),
+  stderrTail?: Ref.Ref<string>,
+) => {
+  const drain = (stream: Stream.Stream<Uint8Array, unknown>, name: DatabaseLog["stream"]) => {
+    const decoder = name === "stderr" && stderrTail !== undefined ? new TextDecoder() : undefined;
+    const appendTail = (text: string) =>
+      text.length === 0 || stderrTail === undefined
+        ? Effect.void
+        : Ref.update(stderrTail, (current) => (current + text).slice(-4096));
+    return stream.pipe(
+      Stream.runForEach((bytes) =>
+        Effect.gen(function* () {
+          if (decoder !== undefined) yield* appendTail(decoder.decode(bytes, { stream: true }));
+          yield* PubSub.publish(logs, { stream: name, bytes });
+        }),
+      ),
+      Effect.andThen(
+        decoder === undefined
+          ? Effect.void
+          : Effect.sync(() => decoder.decode()).pipe(Effect.flatMap(appendTail)),
+      ),
       Effect.catch((cause) => Effect.logError(cause)),
     );
-  return Effect.all(
-    [
-      Effect.forkIn(drain(process.stdout, "stdout"), scope),
-      Effect.forkIn(drain(process.stderr, "stderr"), scope),
-    ],
-    { concurrency: "unbounded", discard: true },
-  );
+  };
+  return Effect.gen(function* () {
+    yield* Effect.forkIn(drain(process.stdout, "stdout"), scope);
+    return yield* Effect.forkIn(drain(process.stderr, "stderr"), scope);
+  });
 });
 
 const runtimeFromContainer = (process: ContainerProcess, discard: boolean): RuntimeSession => ({
@@ -357,7 +405,7 @@ const runtimeFromContainer = (process: ContainerProcess, discard: boolean): Runt
   stop: process.stop.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
   ...(discard
     ? {
-        discard: process.beginStop.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
+        discard: process.discard.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
       }
     : {}),
   remove: process.remove.pipe(Effect.mapError((cause) => errorFor("remove", cause))),
@@ -504,7 +552,7 @@ export const makeDatabase = (
     const container: ContainerRuntime | undefined =
       options.runtime === "native"
         ? undefined
-        : yield* makeContainerRuntime({ engine: options.runtime });
+        : yield* makeContainerRuntime({ engine: options.runtime, imageMirrors: slimImageMirrors });
     const storage: DockerDatabaseStorage | undefined =
       options.runtime === "native"
         ? undefined
@@ -657,6 +705,8 @@ export const makeDatabase = (
 
     const prepare = Effect.fn("Database.prepare")(
       function* (input: DatabaseConfig) {
+        const rootError = nativePostgresRootError(options.runtime, process.getuid?.());
+        if (rootError !== undefined) return yield* errorFor("prepare", rootError);
         if (storage !== undefined) yield* storage.prepare(postgresVersion(input.version));
         const markerPath = path.join(instanceRoot, ".supabase-database-ready.json");
         const hasMarker = yield* fs.exists(markerPath);
@@ -690,7 +740,11 @@ export const makeDatabase = (
     const openDatabaseContainer = Effect.fn("Database.openContainer")(function* (
       context: ServiceInstanceContext<DatabaseConfig>,
     ) {
-      const config = { ...context.config, version: postgresVersion(context.config.version) };
+      const config = {
+        ...context.config,
+        version: postgresVersion(context.config.version),
+        rootKey: context.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
+      };
       const dataPath = path.join(instanceRoot, "data");
       const dataMount =
         storage === undefined
@@ -705,14 +759,12 @@ export const makeDatabase = (
           : yield* storage
               .mount(config.version)
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
-      const rootKeyPath =
-        config.rootKey === undefined ? undefined : path.join(instanceRoot, "pgsodium_root.key");
-      if (rootKeyPath !== undefined && config.rootKey !== undefined)
-        yield* fs
-          .writeFileString(rootKeyPath, Redacted.value(config.rootKey), {
-            mode: options.runtime === "native" ? 0o600 : 0o644,
-          })
-          .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
+      const rootKeyPath = path.join(instanceRoot, "pgsodium_root.key");
+      yield* fs
+        .writeFileString(rootKeyPath, Redacted.value(config.rootKey), {
+          mode: options.runtime === "native" ? 0o600 : 0o644,
+        })
+        .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
       const settings = postgresArguments(config);
       const selectedContainer = container;
       if (selectedContainer === undefined)
@@ -734,10 +786,7 @@ export const makeDatabase = (
           instanceId: options.instanceId,
           env: {
             PGDATA: "/var/lib/postgresql/data",
-            PGSODIUM_KEY_FILE:
-              rootKeyPath === undefined
-                ? "/var/lib/postgresql/data/pgsodium_root.key"
-                : "/etc/postgresql-custom/pgsodium_root.key",
+            PGSODIUM_KEY_FILE: "/etc/postgresql-custom/pgsodium_root.key",
             POSTGRES_USER: "supabase_admin",
             POSTGRES_DB: "postgres",
             POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
@@ -745,15 +794,11 @@ export const makeDatabase = (
           args: ["-p", "5432", "-c", "listen_addresses=*", ...settings],
           mounts: [
             dataMount,
-            ...(rootKeyPath === undefined
-              ? []
-              : [
-                  {
-                    source: rootKeyPath,
-                    target: "/etc/postgresql-custom/pgsodium_root.key",
-                    readOnly: true,
-                  },
-                ]),
+            {
+              source: rootKeyPath,
+              target: "/etc/postgresql-custom/pgsodium_root.key",
+              readOnly: true,
+            },
           ],
           ports: [5432],
           ...(config.stopGraceSeconds === undefined
@@ -781,22 +826,23 @@ export const makeDatabase = (
         context: ServiceInstanceContext<DatabaseConfig>,
       ): Effect.Effect<RuntimeSession, ServiceError | ServiceLaunchError> =>
         Effect.gen(function* () {
-          const config = { ...context.config, version: postgresVersion(context.config.version) };
+          const rootError = nativePostgresRootError(options.runtime, process.getuid?.());
+          if (rootError !== undefined) return yield* errorFor("launch", rootError);
+          const config = {
+            ...context.config,
+            version: postgresVersion(context.config.version),
+            rootKey: context.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
+          };
           const dataPath = path.join(instanceRoot, "data");
-          if (storage === undefined)
+          const settings = postgresArguments(config);
+          if (options.runtime === "native") {
             yield* fs
               .makeDirectory(dataPath, { recursive: true, mode: 0o700 })
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
-          const rootKeyPath =
-            config.rootKey === undefined ? undefined : path.join(instanceRoot, "pgsodium_root.key");
-          if (rootKeyPath !== undefined && config.rootKey !== undefined)
+            const rootKeyPath = path.join(instanceRoot, "pgsodium_root.key");
             yield* fs
-              .writeFileString(rootKeyPath, Redacted.value(config.rootKey), {
-                mode: options.runtime === "native" ? 0o600 : 0o644,
-              })
+              .writeFileString(rootKeyPath, Redacted.value(config.rootKey), { mode: 0o600 })
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
-          const settings = postgresArguments(config);
-          if (options.runtime === "native") {
             // PostgreSQL limits Unix socket paths to 103 bytes, independently of the user's state root.
             const socketPath = yield* Effect.acquireRelease(
               fs.makeTempDirectory({ directory: "/tmp", prefix: "supabase-pg-" }),
@@ -816,7 +862,7 @@ export const makeDatabase = (
               config,
               dataPath,
               socketPath,
-              rootKeyPath ?? path.join(dataPath, "pgsodium_root.key"),
+              rootKeyPath,
               settings,
               context,
               String(options.stackId),
@@ -829,7 +875,8 @@ export const makeDatabase = (
               port: 5432,
             };
             yield* Ref.set(endpoint, selectedEndpoint);
-            yield* publishLogs(process, logs, context.scope);
+            const stderrTail = yield* Ref.make("");
+            const stderrDrained = yield* publishLogs(process, logs, context.scope, stderrTail);
             return {
               health: health(selectedEndpoint, config, Effect.void, {
                 fs,
@@ -843,7 +890,7 @@ export const makeDatabase = (
                         .markInitialized(config.version)
                         .pipe(Effect.mapError((cause) => errorFor("health", cause))),
               }),
-              exit: processExit(process.exitCode),
+              exit: processExit(process.exitCode, { tail: stderrTail, drained: stderrDrained }),
               stop: process.kill.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
               remove: fs.remove(socketPath, { recursive: true, force: true }).pipe(
                 Effect.mapError((cause) => errorFor("remove", cause)),

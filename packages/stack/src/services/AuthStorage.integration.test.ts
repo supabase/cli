@@ -6,7 +6,7 @@ import { SignJWT } from "jose";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
-import { cleanupDockerRoot } from "../../tests/docker-cleanup.ts";
+import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-auth-storage",
@@ -29,8 +29,7 @@ describe("service catalog", () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-auth-storage-" });
-          yield* Effect.addFinalizer(() => cleanupDockerRoot(root));
+          const root = yield* makeDockerDatabaseRoot("catalog-auth-storage-");
           const secret = "catalog-auth-storage-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {

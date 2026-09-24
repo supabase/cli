@@ -56,6 +56,7 @@ class ServiceNotStopped extends Data.TaggedError("ServiceNotStopped")<{
 export class ServiceStaleLaunch extends Data.TaggedError("ServiceStaleLaunch")<{
   readonly id: string;
   readonly launchId: number;
+  readonly message: string;
 }> {}
 
 /** The exact runtime resources owned by one service launch. */
@@ -183,6 +184,10 @@ export const makeService = <Config>(
     const revision = yield* Ref.make(0);
     const launchCounter = yield* Ref.make(0);
     const current = yield* Ref.make<SessionRecord | undefined>(undefined);
+    // stopNow clears observation.launchId while keeping the error, so readiness must not read that field.
+    const launchError = yield* Ref.make<
+      { readonly launchId: number; readonly error: ServiceError } | undefined
+    >(undefined);
     const config = yield* Ref.make(options.config);
     const observations = yield* SubscriptionRef.make<ServiceObservation<Config>>({
       id: options.id,
@@ -303,15 +308,19 @@ export const makeService = <Config>(
           "start",
           guard.pipe(
             Effect.andThen(
-              update({
-                lifecycle: "starting",
-                health: "starting",
-                error: undefined,
-                cleanupError: undefined,
-                exit: undefined,
-                wakeEnabled: observation.wakeEnabled,
-                launchId,
-              }),
+              Ref.set(launchError, undefined).pipe(
+                Effect.andThen(
+                  update({
+                    lifecycle: "starting",
+                    health: "starting",
+                    error: undefined,
+                    cleanupError: undefined,
+                    exit: undefined,
+                    wakeEnabled: observation.wakeEnabled,
+                    launchId,
+                  }),
+                ),
+              ),
             ),
           ),
         );
@@ -326,11 +335,13 @@ export const makeService = <Config>(
         );
         if (Exit.isFailure(launchExit)) {
           yield* Scope.close(runtimeScope, launchExit);
+          const error = exitError("launch", launchExit);
+          if (error !== undefined) yield* Ref.set(launchError, { launchId, error });
           yield* update({
             lifecycle: "stopped",
             health: undefined,
             wakeEnabled: observation.wakeEnabled,
-            error: exitError("launch", launchExit),
+            error,
             launchId: undefined,
           });
           return yield* Effect.failCause(launchExit.cause);
@@ -347,6 +358,8 @@ export const makeService = <Config>(
           removed: yield* Ref.make(false),
         };
         yield* Ref.set(current, record);
+        if (launchFailure !== undefined)
+          yield* Ref.set(launchError, { launchId, error: launchFailure });
         yield* update({
           lifecycle: launchFailure === undefined ? "running" : "stopping",
           health: launchFailure === undefined ? "starting" : undefined,
@@ -358,12 +371,19 @@ export const makeService = <Config>(
         const observeHealth = runtime.health.pipe(
           Effect.onExit((exit) =>
             Effect.gen(function* () {
+              const error = exitError("health", exit);
+              const currentObservation = yield* SubscriptionRef.get(observations);
+              if (
+                error !== undefined &&
+                currentObservation.launchId === launchId &&
+                currentObservation.lifecycle === "running"
+              )
+                yield* Ref.set(launchError, { launchId, error });
               yield* SubscriptionRef.update(
                 observations,
                 (observation): ServiceObservation<Config> => {
                   if (observation.launchId !== launchId || observation.lifecycle !== "running")
                     return observation;
-                  const error = exitError("health", exit);
                   return {
                     ...observation,
                     health: Exit.isSuccess(exit) ? "healthy" : "unhealthy",
@@ -388,6 +408,8 @@ export const makeService = <Config>(
                       operation: "exit",
                       message: "Runtime exited unexpectedly",
                     }));
+              if (error !== undefined)
+                yield* Ref.set(launchError, { launchId: record.launchId, error });
               yield* update({
                 lifecycle: "stopping",
                 health: undefined,
@@ -419,6 +441,17 @@ export const makeService = <Config>(
       });
     });
 
+    /** A wake has no caller to receive a preparation failure, so an idle observation records it. */
+    const recordPreparationFailure = Effect.fn("Service.recordPreparationFailure")(function* (
+      expectedRevision: number,
+      error: ServiceError,
+    ) {
+      if ((yield* Ref.get(revision)) !== expectedRevision) return;
+      yield* SubscriptionRef.update(observations, (value) =>
+        value.registered && value.lifecycle === "stopped" ? { ...value, error } : value,
+      );
+    });
+
     const startAt = Effect.fn("Service.startAt")(function* (
       expectedRevision: number,
       candidate?: Config,
@@ -435,7 +468,10 @@ export const makeService = <Config>(
         if (existing.lifecycle === "running") return;
       }
       const nextConfig = candidate ?? (yield* Ref.get(config));
-      if (definition.prepare !== undefined) yield* definition.prepare(nextConfig);
+      if (definition.prepare !== undefined)
+        yield* definition
+          .prepare(nextConfig)
+          .pipe(Effect.tapError((error) => recordPreparationFailure(expectedRevision, error)));
       yield* run(
         Effect.gen(function* () {
           const observation = yield* SubscriptionRef.get(observations);
@@ -544,6 +580,14 @@ export const makeService = <Config>(
       );
     });
 
+    const staleLaunch = (launchId: number, message: string) =>
+      new ServiceStaleLaunch({ id: options.id, launchId, message });
+    const diedBeforeReady = (launchId: number) =>
+      Effect.gen(function* () {
+        const owned = yield* Ref.get(launchError);
+        if (owned !== undefined && owned.launchId === launchId) return yield* owned.error;
+        return yield* staleLaunch(launchId, `Service ${options.id} stopped before it was ready`);
+      });
     const ready = Effect.fn("Service.ready")(function* () {
       const initial = yield* SubscriptionRef.get(observations);
       if (!initial.registered) return yield* new ServiceDestroyed({ id: options.id });
@@ -556,26 +600,26 @@ export const makeService = <Config>(
       }
       if (record === undefined) {
         if ((yield* Ref.get(revision)) !== expectedRevision)
-          return yield* new ServiceStaleLaunch({
-            id: options.id,
-            launchId: yield* Ref.get(launchCounter),
-          });
+          return yield* staleLaunch(
+            yield* Ref.get(launchCounter),
+            `Service ${options.id} changed before it was ready`,
+          );
         return yield* new ServiceNotRunning({ id: options.id });
       }
       const launchId = record.launchId;
       if ((yield* Ref.get(revision)) !== expectedRevision)
-        return yield* new ServiceStaleLaunch({ id: options.id, launchId });
+        return yield* staleLaunch(launchId, `Service ${options.id} changed before it was ready`);
       if (expectedLaunchId !== undefined && record.launchId !== expectedLaunchId)
-        return yield* new ServiceStaleLaunch({ id: options.id, launchId });
+        return yield* staleLaunch(launchId, `Service ${options.id} changed before it was ready`);
       if ((yield* SubscriptionRef.get(observations)).lifecycle === "stopping") {
-        return yield* new ServiceStaleLaunch({ id: options.id, launchId });
+        return yield* diedBeforeReady(launchId);
       }
       const healthResult = yield* Deferred.await(record.health);
       if (
         (yield* Ref.get(current)) !== record ||
         (yield* SubscriptionRef.get(observations)).lifecycle !== "running"
       ) {
-        return yield* new ServiceStaleLaunch({ id: options.id, launchId });
+        return yield* diedBeforeReady(launchId);
       }
       yield* healthResult;
     });

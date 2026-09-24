@@ -53,8 +53,7 @@ export interface ContainerProcess {
   readonly exitCode: Effect.Effect<number, ContainerError>;
   readonly stdin: Sink.Sink<void, Uint8Array, never, ContainerError>;
   readonly stop: Effect.Effect<void, ContainerError>;
-  /** Starts `stop` and a later `rm` without waiting for either to finish. */
-  readonly beginStop: Effect.Effect<void, ContainerError>;
+  readonly discard: Effect.Effect<void, ContainerError>;
   readonly kill: Effect.Effect<void, ContainerError>;
   readonly remove: Effect.Effect<void, ContainerError>;
 }
@@ -98,9 +97,14 @@ const mountField = (key: string, value: string) => {
   return /[,"\n\r]/u.test(field) ? `"${field.replaceAll('"', '""')}"` : field;
 };
 
-/** Captures the selected local engine; each launch owns one exact container. */
+/**
+ * Captures the selected local engine; each launch owns one exact container. An image whose pull
+ * fails is pulled from the first of its `imageMirrors` that succeeds, and launches of it then use
+ * that mirror reference. When every mirror fails, the primary pull error is reported.
+ */
 export const makeContainerRuntime = (options: {
   readonly engine: "docker" | "podman";
+  readonly imageMirrors?: (image: string) => ReadonlyArray<string>;
 }): Effect.Effect<
   ContainerRuntime,
   never,
@@ -149,15 +153,49 @@ export const makeContainerRuntime = (options: {
       );
     });
 
-    const prepare = Effect.fn("Container.prepare")(function* (image: string) {
-      const inspected = yield* run(["image", "inspect", "--format", "{{.Id}}", image]).pipe(
+    const mirrored = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
+    const present = (image: string) =>
+      run(["image", "inspect", "--format", "{{.Id}}", image]).pipe(
         Effect.catchTag("ContainerError", (error) =>
           /no such image|image .*not known/iu.test(error.message)
             ? Effect.succeed("")
             : Effect.fail(error),
         ),
+        Effect.map((id) => id.length > 0),
       );
-      if (inspected.length === 0) yield* run(["pull", image], { timeout: "5 minutes" });
+    const pull = (image: string) => run(["pull", image], { timeout: "5 minutes" });
+
+    const fromMirror = (
+      image: string,
+      mirrors: ReadonlyArray<string>,
+      primaryError: ContainerError,
+    ): Effect.Effect<void, ContainerError> => {
+      const [mirror, ...rest] = mirrors;
+      if (mirror === undefined) return Effect.fail(primaryError);
+      return Effect.gen(function* () {
+        if (!(yield* present(mirror))) yield* pull(mirror);
+        yield* Ref.update(mirrored, (map) => new Map(map).set(image, mirror));
+      }).pipe(
+        Effect.tap(() => Effect.logInfo(`Pulled image from mirror ${mirror}`)),
+        Effect.tapError((cause) => Effect.logWarning(`Image mirror ${mirror} failed`, cause)),
+        Effect.catch(() => fromMirror(image, rest, primaryError)),
+      );
+    };
+
+    const prepare = Effect.fn("Container.prepare")(function* (image: string) {
+      // A mirror chosen earlier may have been pruned since; launches follow the primary again.
+      const usePrimary = Ref.update(mirrored, (map) => {
+        if (!map.has(image)) return map;
+        const next = new Map(map);
+        next.delete(image);
+        return next;
+      });
+      if (yield* present(image)) return yield* usePrimary;
+      const mirrors = options.imageMirrors?.(image) ?? [];
+      yield* pull(image).pipe(
+        Effect.andThen(usePrimary),
+        Effect.catch((primaryError) => fromMirror(image, mirrors, primaryError)),
+      );
     });
 
     const launch = Effect.fn("Container.launch")(function* (
@@ -165,6 +203,7 @@ export const makeContainerRuntime = (options: {
       interactive = false,
     ) {
       const owner = yield* Scope.Scope;
+      const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
       for (const [key, value] of Object.entries(spec.env)) {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || /[\0\r\n]/u.test(value)) {
           return yield* errorFor(
@@ -227,7 +266,7 @@ export const makeContainerRuntime = (options: {
         ...(spec.workingDir === undefined ? [] : ["--workdir", spec.workingDir]),
         ...(spec.ports ?? []).flatMap((port) => ["--publish", `127.0.0.1::${port}`]),
         ...(spec.entrypoint === undefined ? [] : ["--entrypoint", spec.entrypoint]),
-        spec.image,
+        image,
         ...(spec.args ?? []),
       ];
 
@@ -266,34 +305,11 @@ export const makeContainerRuntime = (options: {
             yield* run(["stop", "--time", grace, id]);
             yield* Ref.set(stopped, true);
           });
-          // Issues stop, then removes the container, without waiting. The caller continues.
-          const beginStop = Effect.scoped(
-            Effect.gen(function* () {
-              if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-              const script = `${options.engine} stop --time 10 ${id} && ${options.engine} rm ${id}`;
-              const child = yield* Effect.mapError(
-                spawner.spawn(
-                  ChildProcess.make(
-                    process.platform === "win32" ? "cmd" : "sh",
-                    process.platform === "win32" ? ["/d", "/c", script] : ["-c", script],
-                    {
-                      detached: true,
-                      stdin: "ignore",
-                      stdout: "ignore",
-                      stderr: "ignore",
-                    },
-                  ),
-                ),
-                (cause) => errorFor("stop", cause),
-              );
-              // `unref` succeeds with a reref effect. Drop it so the stop outlives this scope.
-              yield* Effect.asVoid(
-                Effect.mapError(child.unref, (cause) => errorFor("stop", cause)),
-              );
-              yield* Ref.set(stopped, true);
-              yield* Ref.set(removed, true);
-            }),
-          );
+          const discard = Effect.gen(function* () {
+            if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
+            yield* run(["stop", "--time", "0", id]);
+            yield* Ref.set(stopped, true);
+          });
           const kill = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
             yield* run(["kill", id]);
@@ -319,7 +335,7 @@ export const makeContainerRuntime = (options: {
             exitCode: Effect.fail(errorFor("wait", "Container did not start")),
             stdin: Sink.fail(errorFor("stdin", "Container did not start")),
             stop,
-            beginStop,
+            discard,
             kill,
             remove,
           };

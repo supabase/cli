@@ -634,16 +634,15 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           ),
           Effect.asVoid,
         );
-      // Only the process that created the container removes it. `docker rm` without -f
-      // fails while the container is running, so a racing creator cannot delete it.
       // A container left in `created` cannot exec; remove it and start another.
       const openSharedHelper = (
         mounts: ReadonlyArray<DatabaseStorageMount>,
         key: string,
         image: string,
+        ownerId: string,
       ) =>
         Effect.gen(function* () {
-          const name = `supabase-db-helper-${(yield* hash(key)).slice(0, 32)}`;
+          const name = `supabase-db-helper-${(yield* hash(`${ownerId}\0${key}`)).slice(0, 32)}`;
           const status = yield* engineCommand([
             "inspect",
             "--format",
@@ -655,8 +654,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               missingContainer(cause.message) ? Effect.succeed("absent") : Effect.fail(cause),
             ),
           );
-          if (status === "running" || status === "restarting" || status === "paused")
-            return { id: name, created: false };
+          if (status === "running" || status === "restarting" || status === "paused") return name;
           if (status === "created" || status === "exited" || status === "dead") {
             const removed = yield* engineCommand(["rm", name]).pipe(
               Effect.map(() => "removed"),
@@ -668,33 +666,43 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                     : Effect.fail(cause),
               ),
             );
-            if (removed === "running") return { id: name, created: false };
+            if (removed === "running") return name;
           }
           if (options.container === undefined)
             return yield* errorFor("helper", "Container runtime is unavailable");
           yield* options.container.prepare(image);
-          return yield* engineCommand([
-            "run",
-            "-d",
-            "--name",
-            name,
-            "--label",
-            "com.supabase.stack-managed=true",
-            "--label",
-            "com.supabase.stack-helper=volume",
-            "--label",
-            `com.supabase.stack=${options.stackId}`,
-            ...mountArgs(mounts),
-            image,
-            "/bin/sh",
-            "-c",
-            "trap : TERM INT; while :; do sleep 3600; done",
-          ]).pipe(
-            Effect.as({ id: name, created: true }),
-            Effect.catchTag("DockerDatabaseStorageError", (cause) =>
-              /already in use/iu.test(cause.message)
-                ? Effect.succeed({ id: name, created: false })
-                : Effect.fail(cause),
+          return yield* Effect.uninterruptibleMask((restore) =>
+            restore(
+              engineCommand([
+                "run",
+                "-d",
+                "--name",
+                name,
+                "--label",
+                "com.supabase.stack-managed=true",
+                "--label",
+                "com.supabase.stack-helper=volume",
+                "--label",
+                `com.supabase.stack=${options.stackId}`,
+                ...mountArgs(mounts),
+                image,
+                "/bin/sh",
+                "-c",
+                "trap : TERM INT; while :; do sleep 3600; done",
+              ]).pipe(
+                Effect.as(name),
+                Effect.catchTag("DockerDatabaseStorageError", (cause) =>
+                  /already in use/iu.test(cause.message)
+                    ? Effect.succeed(name)
+                    : Effect.fail(cause),
+                ),
+              ),
+            ).pipe(
+              Effect.onExit((exit) =>
+                Exit.isFailure(exit)
+                  ? closeSharedHelper(name).pipe(Effect.catch(Effect.logError))
+                  : Effect.void,
+              ),
             ),
           );
         });
@@ -715,7 +723,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             if (sharedKey !== undefined && options.helpers !== undefined) {
               const helpers = options.helpers;
               const exec = (id: string) => engineCommand(["exec", id, "/bin/sh", "-c", command]);
-              const open = openSharedHelper(mounts, sharedKey, image);
+              const open = openSharedHelper(mounts, sharedKey, image, helpers.ownerId);
               return helpers.use(sharedKey, open, closeSharedHelper, exec).pipe(
                 Effect.catchTag("DockerDatabaseStorageError", (cause) =>
                   /no such container|is not running/iu.test(cause.message)

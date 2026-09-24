@@ -298,10 +298,12 @@ ImagePrepullError
 InitConfigExistsError
 InitExperimentalRequiredError
 InitParseSettingsError
+InspectCsvqError
 InspectMutuallyExclusiveFlagsError
 InspectReportMkdirError
 InspectReportWriteError
 InvalidAccessTokenError
+InvalidComputeExcludeError
 InvalidComputeNameError
 InvalidComputeSourceError
 InvalidFunctionDeploySlugError
@@ -378,6 +380,14 @@ NoComputeToDeployError
 NoFunctionsToDeployError
 NonInteractiveError
 NotLoggedInError
+NotebookFileError
+NotebookIdError
+NotebookNameConflictError
+NotebookNotFoundError
+NotebooksEnvNotSupportedError
+NotebooksNetworkError
+NotebooksPaginationError
+NotebooksUnexpectedStatusError
 OperationCanceledError
 OrgsCreateNetworkError
 OrgsCreateUnexpectedStatusError
