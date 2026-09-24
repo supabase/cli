@@ -11,7 +11,10 @@ const DiffPayload = Schema.fromJsonString(
   Schema.Struct({
     scope: Schema.Struct({ present: Schema.Array(Schema.String) }),
     changes: Schema.Array(
-      Schema.Struct({ path: Schema.Array(Schema.String), class: Schema.String }),
+      Schema.Struct({
+        path: Schema.Array(Schema.String),
+        class: Schema.Literals(["update", "remote_only", "local_only"]),
+      }),
     ),
   }),
 );

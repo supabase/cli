@@ -81,6 +81,7 @@ export const getCostMatrix = Effect.fn("config.push.cost-matrix")(function* (ref
   return costMatrix;
 });
 
+// Native `JSON.parse` keeps the runtime's syntax-error text in the `failed to list addons` message.
 function parseAddonsBody(text: string): unknown {
   return JSON.parse(text);
 }
