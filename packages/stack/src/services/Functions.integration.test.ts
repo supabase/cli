@@ -2,6 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Ref, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { makeService } from "../Service.ts";
 import { bundleServeMainTemplate } from "../../tests/serve-main-bundler.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
@@ -18,6 +19,26 @@ const dockerOptions = (root: string) => ({
   ...options(root),
   runtime: "docker" as const,
 });
+
+// CI occasionally drops the first connection to a fresh container with no response. The notice
+// goes to stderr because vitest hides console output from passing tests.
+const getFunction = (client: HttpClient.HttpClient, url: string) =>
+  client.execute(HttpClientRequest.get(url)).pipe(
+    Effect.tapError((error) =>
+      Effect.sync(() => process.stderr.write(`Retrying ${url} after ${error.message}\n`)),
+    ),
+    Effect.retry({ times: 1, while: (error) => error.reason._tag === "TransportError" }),
+  );
+
+const dockerInfo = Effect.scoped(
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make("docker", ["info"], { stdout: "pipe", stderr: "pipe" }),
+    );
+    return yield* Stream.mkString(Stream.decodeText(child.all));
+  }),
+).pipe(Effect.orElseSucceed(() => "docker info unavailable"));
 
 describe("service catalog", () => {
   it.live("serves a standalone Functions bootstrap over HTTP", () =>
@@ -67,8 +88,9 @@ describe("service catalog", () => {
         yield* instance.start;
         yield* instance.ready;
         const endpoint = yield* recipe.endpoint("http");
-        const response = yield* client.execute(
-          HttpClientRequest.get("http://" + endpoint.host + ":" + endpoint.port + "/hello"),
+        const response = yield* getFunction(
+          client,
+          "http://" + endpoint.host + ":" + endpoint.port + "/hello",
         );
         expect(response.status).toBe(200);
         expect(yield* response.json).toEqual(
@@ -180,7 +202,7 @@ for (const runtime of ["native", "docker"] as const) {
             yield* instance.ready;
             const endpoint = yield* recipe.endpoint("http");
             const base = `http://${endpoint.host}:${endpoint.port}`;
-            const response = yield* client.execute(HttpClientRequest.get(`${base}/hello`));
+            const response = yield* getFunction(client, `${base}/hello`);
             const responseText = yield* response.text;
             expect(response.status, responseText).toBe(200);
             const body = yield* Schema.decodeEffect(
@@ -204,9 +226,11 @@ for (const runtime of ["native", "docker"] as const) {
             yield* instance.stop;
           }).pipe(
             Effect.tapCause(() =>
-              Ref.get(logs).pipe(
-                Effect.flatMap((text) => Effect.logError(`Functions ${runtime} logs:\n${text}`)),
-              ),
+              Effect.gen(function* () {
+                yield* Effect.logError(`Functions ${runtime} logs:\n${yield* Ref.get(logs)}`);
+                if (runtime === "docker")
+                  yield* Effect.logError(`docker info:\n${yield* dockerInfo}`);
+              }),
             ),
           );
         }),

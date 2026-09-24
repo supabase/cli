@@ -26,6 +26,9 @@ import {
 } from "./Supabase.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+// Below every OS ephemeral range, so another test's outbound socket cannot already hold them.
+const FIXED_STUDIO_PORT = 24_391;
+const FIXED_MAIL_PORT = 24_392;
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
@@ -474,7 +477,7 @@ it.live(
             publicApiUrl: "http://placeholder",
             jwtSecret: "studio-reuse-jwt-secret-with-32-chars",
           },
-          endpoints: { http: { port: 54_391 } },
+          endpoints: { http: { port: FIXED_STUDIO_PORT } },
         };
         const initialMembers = yield* owner.composition.supabase([database, rest, pgmeta, studio]);
         const databaseId = initialMembers.find(
@@ -506,7 +509,7 @@ it.live(
         expect(restored.find((entry) => entry.creation.service === "studio")?.id).toBe(studioId);
         const studioCredentials = yield* owner.credentials(studioId, "host");
         if (studioCredentials.url === undefined) return yield* Effect.die("Studio URL missing");
-        expect(new URL(studioCredentials.url).port).toBe("54391");
+        expect(new URL(studioCredentials.url).port).toBe(String(FIXED_STUDIO_PORT));
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   { timeout: 180_000 },
@@ -571,7 +574,7 @@ it.live(
           cacheRoot,
         });
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
-        const fixedPort = 54_392;
+        const fixedPort = FIXED_MAIL_PORT;
         const standaloneMail = yield* owner.services.create({
           service: "mail",
           config: {},
