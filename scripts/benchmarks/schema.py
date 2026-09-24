@@ -80,7 +80,6 @@ def create_project(project: Path, implementation: str, table_count: int) -> None
         "major_version = 17",
         "port = 54322",
         "shadow_port = 54321",
-        'password = "postgres"',
         "",
         "[db.seed]",
         'sql_paths = ["./seed.sql"]',
@@ -181,7 +180,7 @@ def run_command(
                         pass
                     timed_out = True
                     break
-            time.sleep(0.25)
+                time.sleep(0.25)
             process.wait()
             stdout_file.seek(0)
             stderr_file.seek(0)
@@ -248,11 +247,14 @@ def command_for_diff(
     scenario: str,
     *,
     apply: bool,
+    no_cache: bool = False,
 ) -> list[str]:
     if implementation == "new":
         args = [*base_args(implementation, "native"), "db", "schema", "declarative", "sync"]
         args.extend(["--name", scenario.replace("_", "-")])
         args.append("--apply" if apply else "--no-apply")
+        if no_cache:
+            args.append("--no-cache")
         return args
     return ["db", "diff", "--local", "-f", scenario.replace("_", "-")]
 
@@ -264,6 +266,7 @@ def run_diff_cycle(
     project: Path,
     env: dict[str, str],
     records: list[dict[str, Any]],
+    artifact_root: Path,
     scenario: str,
 ) -> None:
     before = migration_files(project)
@@ -298,6 +301,22 @@ def run_diff_cycle(
     after = migration_files(project)
     if after == before:
         raise RuntimeError(f"{scenario} changed the declarative schema but wrote no migration")
+    snapshot_migrations(project, artifact_root, scenario, after - before, records)
+
+    assertion_sql = {
+        "add_table": "SELECT to_regclass('public.bench_added') IS NOT NULL;",
+        "add_column": "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='bench_items' AND column_name='created_at');",
+        "view_function": "SELECT to_regclass('public.bench_items_view') IS NOT NULL AND to_regprocedure('public.bench_item_count()') IS NOT NULL;",
+        "related_index_fk_rls": "SELECT to_regclass('public.bench_orders') IS NOT NULL AND to_regclass('public.bench_orders_item_id_idx') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.bench_orders'::regclass AND confrelid='public.bench_items'::regclass AND contype='f') AND EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='bench_orders' AND policyname='bench_orders_read');",
+        "large_schema_small_edit": "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='bench_items' AND column_name='large_schema_probe');",
+    }
+    assert_sql(
+        project,
+        env,
+        records,
+        f"{scenario}.catalog-verification",
+        assertion_sql[scenario],
+    )
 
     if implementation == "new":
         args = [*base_args(implementation, runtime), "db", "schema", "declarative", "sync", "--no-apply"]
@@ -305,7 +324,7 @@ def run_diff_cycle(
     else:
         args = ["db", "diff", "--local"]
         label = f"{scenario}.convergence-check"
-    result = run_command(cli, args, project, env, records, label)
+    result = run_command(cli, args, project, env, records, label, timed=False)
     if "No schema changes found" not in result.stderr + result.stdout:
         raise RuntimeError(f"{scenario} did not converge to an empty diff")
 
@@ -315,6 +334,7 @@ def run_profile(
     implementation: str,
     runtime: str,
     root: Path,
+    artifact_root: Path,
     profile: str,
     table_count: int,
     records: list[dict[str, Any]],
@@ -343,10 +363,45 @@ def run_profile(
         run_command(cli, stack_start_args(implementation, runtime), project, env, records, f"{profile}.setup.start", timed=False)
         started = True
         run_command(cli, [*base_args(implementation, runtime), "db", "reset", "--local", "--no-seed"], project, env, records, f"{profile}.setup.baseline-reset", timed=False)
+        version = assert_sql(
+            project,
+            env,
+            records,
+            f"{profile}.metadata.postgres-version",
+            "SELECT version();",
+            expected="",
+        )
+        if not version:
+            raise RuntimeError("PostgreSQL version query returned no value")
+        if table_count:
+            assert_sql(
+                project,
+                env,
+                records,
+                f"{profile}.fixture.table-count",
+                "SELECT count(*) = 100 FROM pg_tables WHERE schemaname='public' AND tablename ~ '^bench_[0-9]{3}$';",
+            )
 
         diff_args = command_for_diff(implementation, "no-change", apply=False)
-        run_command(cli, diff_args, project, env, records, f"{profile}.declarative.no-change.first")
-        run_command(cli, diff_args, project, env, records, f"{profile}.declarative.no-change.repeat")
+        for label in ("first", "repeat"):
+            before = migration_files(project)
+            no_change = run_command(cli, diff_args, project, env, records, f"{profile}.declarative.no-change.{label}")
+            if migration_files(project) != before or "No schema changes found" not in no_change.stdout + no_change.stderr:
+                raise RuntimeError("no-change declarative diff unexpectedly produced a migration")
+        if implementation == "new":
+            before = migration_files(project)
+            no_cache = run_command(
+                cli,
+                command_for_diff(implementation, "no-change", apply=False, no_cache=True),
+                project,
+                env,
+                records,
+                f"{profile}.declarative.no-change.no-cache",
+            )
+            if "No schema changes found" not in no_cache.stdout + no_cache.stderr:
+                raise RuntimeError("no-cache declarative diff unexpectedly reported changes")
+            if migration_files(project) != before:
+                raise RuntimeError("no-cache declarative diff unexpectedly wrote a migration")
 
         # Benchmark ordinary `db diff` separately from declarative sync. With the schema tree
         # moved aside it compares the migration baseline directly to the live local database.
@@ -390,6 +445,13 @@ def run_profile(
             )
             if migration_files(project) == before:
                 raise RuntimeError("db diff did not write a migration for the live schema change")
+            snapshot_migrations(
+                project,
+                artifact_root,
+                f"{profile}-direct-db-diff",
+                migration_files(project) - before,
+                records,
+            )
             run_command(
                 cli,
                 [*base_args(implementation, runtime), "db", "reset", "--local", "--no-seed"],
@@ -407,7 +469,7 @@ def run_profile(
             )
             if applied.returncode != 0 or applied.stdout.strip() != "1":
                 raise RuntimeError("db diff migration did not apply the live schema change")
-            empty_diff = run_command(cli, ["db", "diff", "--local"], project, env, records, f"{profile}.db-diff.convergence")
+            empty_diff = run_command(cli, ["db", "diff", "--local"], project, env, records, f"{profile}.db-diff.convergence", timed=False)
             if "No schema changes found" not in empty_diff.stdout + empty_diff.stderr:
                 raise RuntimeError("db diff did not converge to an empty diff after migration up")
         finally:
@@ -438,12 +500,12 @@ CREATE POLICY bench_orders_read ON public.bench_orders FOR SELECT TO anon USING 
             for name, addition in cases:
                 current += addition
                 write_schema(project, current)
-                run_diff_cycle(cli, implementation, runtime, project, env, records, name)
+                run_diff_cycle(cli, implementation, runtime, project, env, records, artifact_root, name)
         else:
             current = baseline_sql(table_count) + "\nALTER TABLE public.bench_items ADD COLUMN db_diff_probe integer;\n"
             current += "\nALTER TABLE public.bench_items ADD COLUMN large_schema_probe text;\n"
             write_schema(project, current)
-            run_diff_cycle(cli, implementation, runtime, project, env, records, "large_schema_small_edit")
+            run_diff_cycle(cli, implementation, runtime, project, env, records, artifact_root, "large_schema_small_edit")
 
         # Exercise db reset with seeds separately, then query the database to prove seed.sql ran.
         run_command(
@@ -486,7 +548,6 @@ def run_external(
     label: str,
 ) -> subprocess.CompletedProcess[str]:
     before = usage_snapshot()
-    started = time.perf_counter()
     result = subprocess.run(command, cwd=project, env=env, capture_output=True, text=True, check=False)
     after = usage_snapshot()
     records.append(
@@ -505,6 +566,65 @@ def run_external(
         }
     )
     return result
+
+
+def assert_sql(
+    project: Path,
+    env: dict[str, str],
+    records: list[dict[str, Any]],
+    label: str,
+    sql: str,
+    *,
+    expected: str = "t",
+) -> str:
+    psql = shutil.which("psql")
+    if psql is None:
+        raise RuntimeError("psql must be installed on the CI runner")
+    command = [
+        psql,
+        "-h",
+        "127.0.0.1",
+        "-p",
+        "54322",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "-w",
+        "-At",
+        "-c",
+        sql,
+    ]
+    result = run_external(command, project, env, records, label)
+    value = result.stdout.strip()
+    if result.returncode != 0 or (expected and value != expected):
+        raise RuntimeError(f"{label} failed: expected {expected!r}, got {value!r}")
+    return value
+
+
+def snapshot_migrations(
+    project: Path,
+    artifact_root: Path,
+    label: str,
+    filenames: set[str],
+    records: list[dict[str, Any]],
+) -> None:
+    snapshots = artifact_root / "migration-snapshots" / label
+    snapshots.mkdir(parents=True, exist_ok=True)
+    copied: list[dict[str, str]] = []
+    migrations_dir = project / "supabase" / "migrations"
+    for filename in sorted(filenames):
+        sql = (migrations_dir / filename).read_text(encoding="utf-8")
+        destination = snapshots / filename
+        destination.write_text(sql, encoding="utf-8")
+        copied.append({"path": str(destination.relative_to(artifact_root)), "sql": sql})
+    records.append(
+        {
+            "label": f"{label}.migration-snapshots",
+            "timed": False,
+            "files": copied,
+        }
+    )
 
 
 def main() -> int:
@@ -546,7 +666,16 @@ def main() -> int:
         version = run_command(cli, ["--version"], root, os.environ.copy(), records, "metadata.version", timed=False)
         report["cli_version"] = version.stdout.strip()
         for profile, table_count in (("small", 0), ("large", 100)):
-            run_profile(cli, args.implementation, args.runtime, scratch, profile, table_count, records)
+            run_profile(
+                cli,
+                args.implementation,
+                args.runtime,
+                scratch,
+                root,
+                profile,
+                table_count,
+                records,
+            )
         report["status"] = "success"
     except Exception as error:  # Preserve raw command output and the failure in the sample artifact.
         report["status"] = "failed"
