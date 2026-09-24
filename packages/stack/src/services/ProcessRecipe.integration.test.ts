@@ -23,6 +23,7 @@ const startupContainer = (tool: {
   readonly exitCode: Effect.Effect<number>;
 }): ContainerRuntime => ({
   prepare: () => Effect.void,
+  prepareImage: (image) => Effect.succeed(image),
   launch: () => Effect.die("the main process must not launch after a failed startup"),
   launchTool: () =>
     Effect.succeed({
