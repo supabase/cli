@@ -43,23 +43,49 @@ it.effect("keeps the helper when a command fails", () =>
   }),
 );
 
-it.effect("closes an interrupted helper after releasing the registry gate", () =>
+it.effect("closes only when an interrupted use entered the helper body", () =>
   Effect.gen(function* () {
     const opened = yield* Ref.make(0);
     const closed = yield* Ref.make<Array<string>>([]);
-    const entered = yield* Deferred.make<void>();
+    const enteredFirst = yield* Deferred.make<void>();
+    const releaseFirst = yield* Deferred.make<void>();
+    const waiterStarted = yield* Deferred.make<void>();
     const registry = yield* makeDockerHelperRegistry("owner-one");
     const open = Ref.updateAndGet(opened, (count) => count + 1).pipe(
       Effect.map((count) => `helper-${String(count)}`),
     );
     const close = (id: string) => Ref.update(closed, (ids) => [...ids, id]);
-    const interrupted = yield* registry
+    const first = yield* registry
       .use("volume", open, close, () =>
-        Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+        Deferred.succeed(enteredFirst, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseFirst)),
+        ),
       )
       .pipe(Effect.forkChild);
-    yield* Deferred.await(entered);
-    const exit = yield* Fiber.interrupt(interrupted).pipe(Effect.andThen(Fiber.await(interrupted)));
+    yield* Deferred.await(enteredFirst);
+    const waiter = yield* Effect.gen(function* () {
+      yield* Deferred.succeed(waiterStarted, undefined);
+      return yield* registry.use("volume", open, close, () => Effect.succeed("unexpected"));
+    }).pipe(Effect.forkChild);
+    yield* Deferred.await(waiterStarted);
+    const waiterExit = yield* Fiber.interrupt(waiter).pipe(Effect.andThen(Fiber.await(waiter)));
+    expect(Exit.isFailure(waiterExit)).toBe(true);
+    expect(yield* Ref.get(closed)).toEqual([]);
+    yield* Deferred.succeed(releaseFirst, undefined);
+    yield* Fiber.await(first);
+
+    const reused = yield* registry.use("volume", open, close, (id) => Effect.succeed(id));
+    expect(reused).toBe("helper-1");
+    expect(yield* Ref.get(opened)).toBe(1);
+
+    const enteredActive = yield* Deferred.make<void>();
+    const active = yield* registry
+      .use("volume", open, close, () =>
+        Deferred.succeed(enteredActive, undefined).pipe(Effect.andThen(Effect.never)),
+      )
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(enteredActive);
+    const exit = yield* Fiber.interrupt(active).pipe(Effect.andThen(Fiber.await(active)));
     expect(Exit.isFailure(exit)).toBe(true);
     expect(yield* Ref.get(closed)).toEqual(["helper-1"]);
 

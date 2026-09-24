@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Ref, Scope, Semaphore } from "effect";
+import { Effect, Ref, Scope, Semaphore } from "effect";
 
 export interface DockerHelperRegistry {
   /** Identifies helpers owned by one host process. */
@@ -40,13 +40,24 @@ export const makeDockerHelperRegistry = (
         }),
       ),
     );
+    const forgetAndClose = (key: string): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const entry = (yield* Ref.get(helpers)).get(key);
+        if (entry === undefined) return;
+        yield* Ref.update(helpers, (map) => {
+          const next = new Map(map);
+          next.delete(key);
+          return next;
+        });
+        yield* release(entry.id, entry.close);
+      });
     const use = <A, E>(
       key: string,
       open: Effect.Effect<string, E>,
       close: (id: string) => Effect.Effect<void, E>,
       body: (id: string) => Effect.Effect<A, E>,
-    ): Effect.Effect<A, E> => {
-      const operation = gate.withPermit(
+    ): Effect.Effect<A, E> =>
+      gate.withPermit(
         Effect.gen(function* () {
           const current = yield* Ref.get(helpers);
           const existing = current.get(key);
@@ -67,27 +78,9 @@ export const makeDockerHelperRegistry = (
                 ),
               ),
             ));
-          return yield* body(id);
+          return yield* body(id).pipe(Effect.onInterrupt(() => forgetAndClose(key)));
         }),
       );
-      return operation.pipe(
-        Effect.onExit((exit) =>
-          Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause) ? drop(key) : Effect.void,
-        ),
-      );
-    };
-    const drop = (key: string): Effect.Effect<void> =>
-      gate.withPermit(
-        Effect.gen(function* () {
-          const entry = (yield* Ref.get(helpers)).get(key);
-          if (entry === undefined) return;
-          yield* Ref.update(helpers, (map) => {
-            const next = new Map(map);
-            next.delete(key);
-            return next;
-          });
-          yield* release(entry.id, entry.close);
-        }),
-      );
+    const drop = (key: string): Effect.Effect<void> => gate.withPermit(forgetAndClose(key));
     return { ownerId, use, drop };
   });
