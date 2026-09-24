@@ -173,7 +173,10 @@ def cache_inventory(root: Path) -> dict[str, Any]:
                         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                             hasher.update(chunk)
                     digest = hasher.hexdigest()
-                files.append({"path": str(path.relative_to(root)), "bytes": size, "sha256": digest})
+                entry = {"path": str(path.relative_to(root)), "bytes": size, "sha256": digest}
+                if path.name == ".artifact.json" or path.name.endswith(".manifest.json"):
+                    entry["metadata"] = json_value(path.read_text(encoding="utf-8"))
+                files.append(entry)
             except (OSError, ValueError):
                 continue
     return {"bytes": total, "file_count": len(files), "files": files}
@@ -400,7 +403,7 @@ def prepare_new_stack(
     prepare_env = env.copy()
     prepare_env.update({"SUPABASE_HOME": str(home), "SUPABASE_WORKDIR": str(project)})
     init_result = init_project(cli, project, prepare_env)
-    configure_project(project, project_id, stack=True, pooler=args.mode == "eager")
+    configure_project(project, project_id, stack=True, pooler=args.mode == "eager-pooler")
     cache_root = home / "cache" / "stack"
     before = cache_inventory(cache_root)
     if not init_result["ok"] or not (project / "supabase" / "config.toml").exists():
@@ -440,20 +443,22 @@ def prepare_new_stack(
         current = docker_image_inventory(prepare_env, project)
         new_ids = sorted(set(current.get("ids", [])) - before_ids)
         prepare_record["images_added"] = inspect_images(new_ids, prepare_env, project)
-        prepare_record["images_removed_to_preserve_start_cold_state"] = remove_sample_images(new_ids, before_ids, prepare_env, project)
-        prepare_record["image_inventory_after_reset"] = docker_image_inventory(prepare_env, project)
     if init_result["ok"]:
         prepare_record["cleanup"] = destroy_new(cli, project, prepare_env)
+    if args.runtime == "docker":
+        prepare_record["images_removed_to_preserve_start_cold_state"] = remove_sample_images(new_ids, before_ids, prepare_env, project)
+        prepare_record["image_inventory_after_reset"] = docker_image_inventory(prepare_env, project)
     removal_results = prepare_record.get("images_removed_to_preserve_start_cold_state", [])
+    image_ids_after_reset = set(prepare_record.get("image_inventory_after_reset", {}).get("ids", []))
+    images_restored = args.runtime != "docker" or image_ids_after_reset == before_ids
     prepare_record["cold_start_cache"] = (
-        "cold" if not before_ids and all(item.get("removed") for item in removal_results)
-        and not prepare_record.get("image_inventory_after_reset", {}).get("ids")
+        "cold" if not before_ids and images_restored and all(item.get("removed") for item in removal_results)
         else "runner-baseline-cache-present" if before_ids
         else "partial-image-cleanup"
     )
     prepare_record["status"] = "completed" if (
         prepared["ok"] and prepare_record.get("cleanup", {}).get("ok", False)
-        and all(item.get("removed") for item in removal_results)
+        and all(item.get("removed") for item in removal_results) and images_restored
     ) else "failed"
     output_record["preparation"] = prepare_record
 
@@ -581,7 +586,8 @@ def service_readiness(payload: Any, mode: str) -> dict[str, Any]:
         for row in members if isinstance(row, dict)
     ]
     running = [row for row in services if row.get("lifecycle") == "running" or row.get("state") == "running"]
-    ready = bool(services) and (len(running) == len(services) if mode == "eager" else any(row.get("service") == "database" for row in running))
+    eager = mode in {"eager", "eager-pooler"}
+    ready = bool(services) and (len(running) == len(services) if eager else any(row.get("service") == "database" for row in running))
     return {"services": services, "selected_service_count": len(services), "running_service_count": len(running), "expected_ready": ready}
 
 
@@ -655,7 +661,7 @@ def start_args(cli: Path, implementation: str, runtime: str, mode: str, project:
         if not (mode == "default" and runtime == "native"):
             args += ["--runtime", runtime]
         args += ["--output-format", "json"]
-        if mode == "eager":
+        if mode in {"eager", "eager-pooler"}:
             args.append("--eager")
     else:
         args += ["--output", "json"]
@@ -808,7 +814,7 @@ def main() -> int:
     parser.add_argument("--cli", required=True, type=Path, help="Compiled CLI or pinned legacy executable")
     parser.add_argument("--implementation", required=True, choices=("new", "legacy"))
     parser.add_argument("--runtime", required=True, choices=("native", "docker"))
-    parser.add_argument("--mode", required=True, choices=("default", "eager"))
+    parser.add_argument("--mode", required=True, choices=("default", "eager", "eager-pooler"))
     parser.add_argument("--sample", required=True, type=int)
     parser.add_argument("--output", required=True, type=Path, help="Shared result directory")
     parser.add_argument("--root", type=Path, help="Fresh temporary data root; defaults to RUNNER_TEMP")
@@ -822,10 +828,6 @@ def main() -> int:
         parser.error("--sample must be >= 1")
     if args.implementation == "legacy" and args.runtime != "docker":
         parser.error("the legacy CLI benchmark supports Docker only")
-    if args.implementation == "legacy" and args.mode == "eager":
-        # Legacy start already waits for all configured services; `eager` identifies
-        # the pooler-enabled comparison with the new stack's eager service set.
-        pass
     output_dir = args.output.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     owned_name = f"stack-{args.implementation}-{args.runtime}-{args.mode}-sample-{args.sample}"
@@ -908,7 +910,7 @@ def main() -> int:
                 cli=cli, implementation=args.implementation, runtime=args.runtime, mode=args.mode,
                 project=project, project_id=this_project_id,
                 stack_name=stack_name, env=phase_env, cache_root=cache_root,
-                phase_name=name, eager_pooler=args.mode == "eager",
+                phase_name=name, eager_pooler=args.mode == "eager-pooler",
             )
         except BaseException as failure:
             data = {"name": name, "project": str(project), "started_at": now(), "ready": False,

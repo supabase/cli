@@ -122,7 +122,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 12
       matrix:
         platform:
           - linux-x64
@@ -130,10 +130,12 @@ jobs:
         case:
           - stack-new-native-default
           - stack-new-native-eager
+          - stack-new-native-eager-pooler
           - stack-new-docker-default
           - stack-new-docker-eager
+          - stack-new-docker-eager-pooler
           - stack-legacy-docker-default
-          - stack-legacy-docker-eager
+          - stack-legacy-docker-eager-pooler
           - schema-new-native
           - schema-new-docker
           - schema-legacy-docker
@@ -144,9 +146,11 @@ jobs:
           - platform: macos-arm64
             case: stack-new-docker-eager
           - platform: macos-arm64
+            case: stack-new-docker-eager-pooler
+          - platform: macos-arm64
             case: stack-legacy-docker-default
           - platform: macos-arm64
-            case: stack-legacy-docker-eager
+            case: stack-legacy-docker-eager-pooler
           - platform: macos-arm64
             case: schema-new-docker
           - platform: macos-arm64

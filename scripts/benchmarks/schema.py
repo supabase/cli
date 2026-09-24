@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -155,6 +156,7 @@ def run_command(
     command = [str(cli), *args, "--workdir", str(project)]
     before = usage_snapshot()
     started = time.perf_counter()
+    command_duration_ms: float | None = None
     peak_rss = 0
     try:
         with tempfile.TemporaryFile(mode="w+t") as stdout_file, tempfile.TemporaryFile(
@@ -169,19 +171,31 @@ def run_command(
                 text=True,
                 start_new_session=True,
             )
-            deadline = started + TIMEOUT_SECONDS
+            stop_sampler = threading.Event()
+            peak = [0]
+
+            def sample_memory() -> None:
+                while not stop_sampler.is_set():
+                    peak[0] = max(peak[0], sample_process_tree(process.pid))
+                    if stop_sampler.wait(0.25):
+                        break
+
+            sampler = threading.Thread(target=sample_memory, name="schema-rss-sampler")
+            sampler.start()
             timed_out = False
-            while process.poll() is None:
-                peak_rss = max(peak_rss, sample_process_tree(process.pid))
-                if time.perf_counter() >= deadline:
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    timed_out = True
-                    break
-                time.sleep(0.25)
-            process.wait()
+            try:
+                process.wait(timeout=TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                timed_out = True
+                process.wait()
+            command_duration_ms = (time.perf_counter() - started) * 1000
+            stop_sampler.set()
+            sampler.join()
+            peak_rss = peak[0]
             stdout_file.seek(0)
             stderr_file.seek(0)
             stdout, stderr = stdout_file.read(), stderr_file.read()
@@ -195,7 +209,7 @@ def run_command(
         "label": label,
         "command": command,
         "timed": timed,
-        "duration_ms": round((time.perf_counter() - started) * 1000, 2) if timed else None,
+        "duration_ms": round(command_duration_ms, 2) if timed and command_duration_ms is not None else None,
         "cpu_user_seconds_delta": round(after[0] - before[0], 3),
         "cpu_system_seconds_delta": round(after[1] - before[1], 3),
         "process_tree_peak_rss_bytes_sampled": peak_rss,
