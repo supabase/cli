@@ -13,6 +13,7 @@ import {
   Schedule,
   Schema,
 } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { postgresVersion } from "../Artifacts.ts";
 import { copyDirectory } from "../storage/DirectoryCopy.ts";
 import type { DatabaseRuntime } from "./Database.ts";
@@ -67,6 +68,7 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const version = postgresVersion(options.version);
   const root = path.join(options.cacheRoot, "stack-database-snapshots");
   const entries = path.join(root, "entries");
@@ -149,6 +151,7 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
     copyDirectory(source, destination).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.mapError((cause) => errorFor("copy", cause)),
     );
 

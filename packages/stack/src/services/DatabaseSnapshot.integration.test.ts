@@ -1,6 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Clock, Crypto, Effect, Exit, FileSystem, Option, Path, Schema, Scope } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { makeDatabaseSnapshots } from "./DatabaseSnapshot.ts";
 
 const version = "17.6.1.173";
@@ -56,7 +57,15 @@ const entryPath = (path: Path.Path, cache: string, name: string) =>
   path.join(cache, "stack-database-snapshots", "entries", name);
 
 const live = <A, E>(
-  effect: Effect.Effect<A, E, Crypto.Crypto | FileSystem.FileSystem | Path.Path | Scope.Scope>,
+  effect: Effect.Effect<
+    A,
+    E,
+    | ChildProcessSpawner.ChildProcessSpawner
+    | Crypto.Crypto
+    | FileSystem.FileSystem
+    | Path.Path
+    | Scope.Scope
+  >,
 ) => Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
 describe("managed native database snapshots", () => {
