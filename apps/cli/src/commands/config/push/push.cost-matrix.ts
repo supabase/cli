@@ -54,18 +54,16 @@ export const getCostMatrix = Effect.fn("config.push.cost-matrix")(function* (ref
   if (response.status !== 200) {
     const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
     const body = sanitizeErrorBody(rawBody);
-    return yield* Effect.fail(
-      new ConfigPushListAddonsStatusError({
-        status: response.status,
-        body,
-        message: `unexpected list addons status ${response.status}: ${body}`,
-      }),
-    );
+    return yield* new ConfigPushListAddonsStatusError({
+      status: response.status,
+      body,
+      message: `unexpected list addons status ${response.status}: ${body}`,
+    });
   }
 
   const rawBody = yield* response.text;
   const parsed = yield* Effect.try({
-    try: () => JSON.parse(rawBody) as unknown,
+    try: () => parseAddonsBody(rawBody),
     catch: (cause) =>
       new ConfigPushListAddonsNetworkError({
         message: `failed to list addons: ${String(cause)}`,
@@ -82,6 +80,10 @@ export const getCostMatrix = Effect.fn("config.push.cost-matrix")(function* (ref
   }
   return costMatrix;
 });
+
+function parseAddonsBody(text: string): unknown {
+  return JSON.parse(text);
+}
 
 interface ParsedAddon {
   readonly type: string;
