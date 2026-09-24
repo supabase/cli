@@ -266,14 +266,18 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
         supabaseComposition: ({
           services,
           reuseIds,
+          identity,
         }: {
           readonly services: Parameters<Owner.Interface["composition"]["supabase"]>[0];
           readonly reuseIds?: NonNullable<
             Parameters<Owner.Interface["composition"]["supabase"]>[1]
           >["reuseIds"];
+          readonly identity?: NonNullable<
+            Parameters<Owner.Interface["composition"]["supabase"]>[1]
+          >["identity"];
         }) =>
           owner.composition
-            .supabase(services, { reuseIds })
+            .supabase(services, { reuseIds, identity })
             .pipe(Effect.mapError((cause) => stackError("supabaseComposition", cause))),
         configureComposition: (
           configuration: Parameters<Owner.Interface["composition"]["configure"]>[0],

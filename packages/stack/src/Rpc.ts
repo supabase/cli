@@ -1,8 +1,9 @@
 import { Data, Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/unstable/rpc";
-import { ServiceCreation } from "./services/Catalog.ts";
+import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
 import { CompositionConfig } from "./Orchestrator.ts";
 import { PgProveOptions, PostgresTool } from "./Tools.ts";
+import { StackIdentityInput } from "./State.ts";
 
 const Outcome = Schema.Struct({
   id: Schema.String,
@@ -70,7 +71,7 @@ export const ToolEvent = Schema.TaggedUnion({
 /** The private transport contract; lifecycle admission remains in the owner. */
 export const StackRpc = RpcGroup.make(
   Rpc.make("createService", {
-    payload: ServiceCreation,
+    payload: ServiceCreationInput,
     success: Definition,
     error: StackErrorSchema,
   }),
@@ -80,7 +81,7 @@ export const StackRpc = RpcGroup.make(
   Rpc.make("readyService", { payload: Instance, error: StackErrorSchema }),
   Rpc.make("stopService", { payload: Instance, error: StackErrorSchema }),
   Rpc.make("restartService", {
-    payload: { ...Instance, config: Schema.optionalKey(ServiceCreation) },
+    payload: { ...Instance, config: Schema.optionalKey(ServiceCreationInput) },
     error: StackErrorSchema,
   }),
   Rpc.make("destroyService", { payload: Instance, error: StackErrorSchema }),
@@ -110,8 +111,9 @@ export const StackRpc = RpcGroup.make(
   Rpc.make("resetData", { payload: Instance, error: StackErrorSchema }),
   Rpc.make("supabaseComposition", {
     payload: {
-      services: Schema.Array(ServiceCreation),
+      services: Schema.Array(ServiceCreationInput),
       reuseIds: Schema.optionalKey(Schema.Array(Schema.String)),
+      identity: Schema.optionalKey(StackIdentityInput),
     },
     success: Schema.Array(Definition),
     error: StackErrorSchema,

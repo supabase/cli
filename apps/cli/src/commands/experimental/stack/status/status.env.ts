@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { generateGoJwt } from "../../../../command-internal/go-jwt.ts";
+import type { StackCredentials } from "@supabase/stack/effect";
 import { StackCommandStatusError } from "./status.errors.ts";
 
 const variableNames = [
@@ -58,16 +58,21 @@ export const stackEnvValues = (
       readonly studio?: { readonly url: string };
       readonly mailUi?: { readonly url: string };
     }>;
-    readonly jwtSecret?: string;
+    readonly credentials?: Pick<
+      StackCredentials,
+      "publishableKey" | "secretKey" | "anonKey" | "serviceRoleKey"
+    >;
   },
   credentials: Readonly<Record<string, string>>,
   names: ReadonlyMap<string, string>,
 ): Readonly<Record<string, string>> => {
   const values: Record<string, string> = {};
   if (credentials.databaseUrl !== undefined) values.DB_URL = credentials.databaseUrl;
-  if (status.jwtSecret !== undefined) {
-    values.ANON_KEY = generateGoJwt(status.jwtSecret, "anon");
-    values.SERVICE_ROLE_KEY = generateGoJwt(status.jwtSecret, "service_role");
+  if (status.credentials !== undefined) {
+    values.ANON_KEY = status.credentials.anonKey;
+    values.SERVICE_ROLE_KEY = status.credentials.serviceRoleKey;
+    values.PUBLISHABLE_KEY = status.credentials.publishableKey;
+    values.SECRET_KEY = status.credentials.secretKey;
   }
   if (status.endpoints.api !== undefined) values.API_URL = status.endpoints.api.url;
   if (status.endpoints.studio !== undefined) values.STUDIO_URL = status.endpoints.studio.url;

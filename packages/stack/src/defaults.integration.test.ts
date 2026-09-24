@@ -73,19 +73,12 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
 
               const customJwt = Redacted.make("custom-defaults-jwt");
               const customRoot = Redacted.make("b".repeat(64));
-              yield* database.restart({
-                config: { ...effectDatabaseConfig, jwtSecret: customJwt, rootKey: customRoot },
-              });
-              yield* database.ready;
-              const overridden = yield* database.status;
-              if (overridden.config.service !== "database")
-                return yield* Effect.die("Expected an overridden database status");
-              expect(redactedValue(overridden.config.config.jwtSecret)).toBe(
-                Redacted.value(customJwt),
+              const conflict = yield* Effect.flip(
+                database.restart({
+                  config: { ...effectDatabaseConfig, jwtSecret: customJwt, rootKey: customRoot },
+                }),
               );
-              expect(redactedValue(overridden.config.config.rootKey)).toBe(
-                Redacted.value(customRoot),
-              );
+              expect(conflict.message).toContain("conflicts with the saved stack value");
               yield* database.destroy;
               const composed = yield* current.composition.supabase([
                 { service: "database", config: effectDatabaseConfig },
@@ -157,22 +150,18 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
               );
               expect(redactedValue(restarted.config.config.rootKey)).toBe(PROMISE_DEFAULT_ROOT_KEY);
 
-              yield* promise(() =>
-                database.restart({
-                  config: {
-                    ...promiseDatabaseConfig,
-                    jwtSecret: "custom-defaults-jwt",
-                    rootKey: "c".repeat(64),
-                  },
-                }),
+              const conflict = yield* Effect.flip(
+                promise(() =>
+                  database.restart({
+                    config: {
+                      ...promiseDatabaseConfig,
+                      jwtSecret: "custom-defaults-jwt",
+                      rootKey: "c".repeat(64),
+                    },
+                  }),
+                ),
               );
-              yield* promise(() => database.ready());
-              const overridden = yield* promise(() => database.status());
-              expect(overridden.config.service).toBe("database");
-              if (overridden.config.service !== "database")
-                return yield* Effect.die("Expected an overridden database status");
-              expect(redactedValue(overridden.config.config.jwtSecret)).toBe("custom-defaults-jwt");
-              expect(redactedValue(overridden.config.config.rootKey)).toBe("c".repeat(64));
+              expect(conflict.message).toContain("conflicts with the saved stack value");
               yield* promise(() => database.destroy());
               const composed = yield* promise(() =>
                 current.composition.supabase([

@@ -343,6 +343,64 @@ describe("services shared", () => {
     }
   });
 
+  test("keeps an already-prefixed tenant version, including uppercase V", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
+          return new Response("boom", { status: 500 });
+        }
+
+        if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
+          return Response.json([
+            {
+              name: "service_role",
+              id: "key-id",
+              type: "secret",
+              api_key: "service-role-key",
+              description: null,
+              secret_jwt_template: { role: "service_role" },
+            },
+          ]);
+        }
+
+        if (url.pathname === "/auth/v1/health") {
+          return Response.json({ version: "v2.190.0" });
+        }
+
+        if (url.pathname === "/rest/v1/") {
+          return Response.json({ info: { version: "V14.13" } });
+        }
+
+        if (url.pathname === "/storage/v1/version") {
+          return new Response("v1.77.1-versions");
+        }
+
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    try {
+      const result = await runLinkedFetch({
+        apiUrl: server.url.origin,
+        projectHost: "supabase.co",
+        projectRef: PROJECT_REF,
+        accessToken: ACCESS_TOKEN,
+        userAgent: "supabase",
+        tenantBaseUrlOverride: server.url.origin,
+      });
+
+      expect(result).toEqual({
+        auth: "v2.190.0",
+        postgrest: "V14.13",
+        storage: "v1.77.1-versions",
+      });
+    } finally {
+      await server.stop(true);
+    }
+  });
+
   test("falls back to empty linked versions when the linked fetch fails", async () => {
     const result = await runLinkedFetch({
       apiUrl: "http://127.0.0.1:1",

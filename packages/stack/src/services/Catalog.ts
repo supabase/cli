@@ -24,6 +24,7 @@ import * as Studio from "./Studio.ts";
 import * as Vector from "./Vector.ts";
 import {
   CatalogError,
+  serviceCreation,
   type CatalogOptions,
   type CatalogRecipe as RecipeCatalogRecipe,
   type ProcessRecipeResult,
@@ -90,6 +91,31 @@ export const ServiceCreation = Schema.Union([
   Pooler.Creation,
 ]);
 export type ServiceCreation = Schema.Schema.Type<typeof ServiceCreation>;
+const DatabaseCreationInput = serviceCreation(
+  "database",
+  Schema.Struct({
+    ...DatabaseConfig.fields,
+    databasePassword: Schema.optionalKey(Schema.Redacted(Schema.String)),
+    jwtSecret: Schema.optionalKey(Schema.Redacted(Schema.String)),
+  }),
+  DatabaseEndpoints,
+);
+export const ServiceCreationInput = Schema.Union([
+  DatabaseCreationInput,
+  Rest.Creation,
+  Auth.Creation,
+  Realtime.Creation,
+  Storage.Creation,
+  Imgproxy.Creation,
+  Functions.Creation,
+  Studio.Creation,
+  Pgmeta.Creation,
+  Mail.Creation,
+  Analytics.Creation,
+  Vector.Creation,
+  Pooler.Creation,
+]);
+export type ServiceCreationInput = Schema.Schema.Type<typeof ServiceCreationInput>;
 export const serviceSchemas = {
   database: DatabaseConfig,
   rest: Rest.Config,
