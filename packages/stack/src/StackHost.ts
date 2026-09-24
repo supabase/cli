@@ -251,19 +251,13 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           owner
             .credentials(id, from)
             .pipe(Effect.mapError((cause) => stackError("credentials", cause))),
-        exportSnapshot: ({
-          id,
-          destination,
-        }: {
-          readonly id: string;
-          readonly destination: string;
-        }) =>
+        saveSnapshot: ({ id, key }: { readonly id: string; readonly key: string }) =>
           owner.snapshots
-            .exportSnapshot(id, destination)
-            .pipe(Effect.mapError((cause) => stackError("exportSnapshot", cause))),
-        restoreSnapshot: ({ id, source }: { readonly id: string; readonly source: string }) =>
+            .saveSnapshot(id, key)
+            .pipe(Effect.mapError((cause) => stackError("saveSnapshot", cause))),
+        restoreSnapshot: ({ id, key }: { readonly id: string; readonly key: string }) =>
           owner.snapshots
-            .restoreSnapshot(id, source)
+            .restoreSnapshot(id, key)
             .pipe(Effect.mapError((cause) => stackError("restoreSnapshot", cause))),
         resetData: ({ id }: { readonly id: string }) =>
           owner.snapshots

@@ -2,6 +2,7 @@ import { endpointReports } from "../stack-endpoints.format.ts";
 import { readStackFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
+import { nativePostgresRootError } from "@supabase/stack/effect";
 import type { ServiceCreationInput, Stack, StackIdentityInput } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
@@ -223,8 +224,14 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         runtime: flags.runtime,
       })
       .pipe(Effect.mapError(mapTargetError));
+    const selectedRuntime = target.runtime ?? defaultStackRuntime(runtime);
     const configBeforeCreate =
       target.id === undefined ? yield* loadStartConfig(target.projectRoot, fs, path) : undefined;
+    if (target.id === undefined) {
+      const rootError = nativePostgresRootError(selectedRuntime, process.getuid?.());
+      if (rootError !== undefined)
+        return yield* new StackCommandStartError({ reason: "lifecycle", message: rootError });
+    }
     const stateRoot = path.join(settings.supabaseHome, "stacks");
     const cacheRoot = path.join(settings.supabaseHome, "cache", "stack");
     const stack =
@@ -234,7 +241,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               projectRoot: target.projectRoot,
               stateRoot,
               cacheRoot,
-              runtime: target.runtime ?? defaultStackRuntime(runtime),
+              runtime: selectedRuntime,
               ...(target.name === undefined ? {} : { name: target.name }),
             })
             .pipe(Effect.mapError(stackError))
@@ -268,6 +275,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       yield* output.success("Stack is already running.", { id: stack.id, endpoints });
       return stack.id;
     }
+    const rootError = nativePostgresRootError(selectedRuntime, process.getuid?.());
+    if (rootError !== undefined)
+      return yield* new StackCommandStartError({ reason: "lifecycle", message: rootError });
     const fullyStopped = currentStatuses.every(
       ({ lifecycle, wakeEnabled }) => lifecycle === "stopped" && !wakeEnabled,
     );

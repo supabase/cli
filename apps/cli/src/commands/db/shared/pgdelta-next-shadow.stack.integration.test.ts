@@ -78,6 +78,14 @@ describe("pg-delta next stack shadow provisioning", () => {
     "keeps migrations on the migration shadow and destroys both shadows with the caller scope",
     () =>
       Effect.gen(function* () {
+        const previousShadowCache = process.env["SUPABASE_SHADOW_CACHE"];
+        process.env["SUPABASE_SHADOW_CACHE"] = "1";
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (previousShadowCache === undefined) delete process.env["SUPABASE_SHADOW_CACHE"];
+            else process.env["SUPABASE_SHADOW_CACHE"] = previousShadowCache;
+          }),
+        );
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "pgdelta-next-stack-" });
         yield* fs.makeDirectory(`${root}/supabase/migrations`, { recursive: true });
@@ -135,8 +143,9 @@ describe("pg-delta next stack shadow provisioning", () => {
               context: { projectId: "test", cwd: root, denoVersion: 2, projectEnv: {} },
               toml,
               projectRef: "test",
-              bypassCache: true,
+              bypassCache: false,
             });
+            expect(plan.allowSameDatabaseIdentity).toBe(true);
             expect(plan.migrationsUrl).not.toBe(plan.declarativeUrl);
             expect(
               yield* query(db, plan.migrationsUrl, "SELECT value FROM public.pgdelta_next_probe"),

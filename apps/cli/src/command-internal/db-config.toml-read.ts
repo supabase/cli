@@ -611,6 +611,21 @@ function findInvalidRemoteProjectId(
 
 const ENV_PATTERN = /^env\((.*)\)$/;
 
+/** The variable name inside an `env(VAR)` reference, or `undefined` for any other string. */
+export function envRefName(value: string): string | undefined {
+  const matches = ENV_PATTERN.exec(value);
+  return matches === null ? undefined : (matches[1] ?? "");
+}
+
+/**
+ * The substitution rule for an `env(VAR)` reference: the resolved value wins only when it
+ * is set and non-empty; otherwise the `env(VAR)` literal is preserved unchanged. Shared
+ * with the inspect report reader, which resolves the name through Effect's `Config`.
+ */
+export function envRefValue(literal: string, resolved: string | undefined): string {
+  return resolved !== undefined && resolved.length > 0 ? resolved : literal;
+}
+
 /**
  * Expand `env(VAR)` config form: a string matching `^env\((.*)\)$` resolves to
  * the named environment variable, but only when that variable is set and
@@ -618,13 +633,10 @@ const ENV_PATTERN = /^env\((.*)\)$/;
  * resolves the name against the shell environment first and then the project
  * `.env` files.
  */
-export function expandEnv(value: string, lookup: (name: string) => string | undefined): string {
-  const matches = ENV_PATTERN.exec(value);
-  if (matches !== null) {
-    const env = lookup(matches[1] ?? "");
-    if (env !== undefined && env.length > 0) return env;
-  }
-  return value;
+function expandEnv(value: string, lookup: (name: string) => string | undefined): string {
+  const name = envRefName(value);
+  if (name === undefined) return value;
+  return envRefValue(value, lookup(name));
 }
 
 /** `[db]` ports decode into `uint16`. */
@@ -746,7 +758,7 @@ export const resolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string 
 /** `[db]` ports default through the development env unless `SUPABASE_ENV` overrides. */
 const DEFAULT_SUPABASE_ENV = "development";
 
-const configEnvOption = Effect.fnUntraced(function* (name: string) {
+export const configEnvOption = Effect.fnUntraced(function* (name: string) {
   return yield* Config.option(Config.string(name)).pipe(
     Effect.mapError(
       () => new DbConfigLoadError({ message: `failed to resolve environment variable: ${name}` }),

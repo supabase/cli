@@ -45,7 +45,7 @@ Most of the above is **already implemented and validated** in this repo (build p
 `bun build --compile` produces a single static binary per target triple (see `[apps/cli/scripts/build.ts](../../apps/cli/scripts/build.ts)` lines 94–103):
 
 ```ts
-await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --outfile=${outfile}`;
+await $`bun build ${entrypoint} --compile --minify --bytecode --bytecode-depth=2 --format=esm --target=${target.bunTarget} --outfile=${outfile}`;
 ```
 
 This matches the artifact shape of the current Go releases exactly: one `supabase` (or `supabase.exe`) per `{darwin,linux,windows} × {arm64,x64}` plus `linux-{arm64,x64}-musl`. Every downstream channel — Homebrew, Scoop, deb/rpm/apk, `.tar.gz`/`.zip` on GitHub Releases — receives the same drop-in binary the Go CLI used to produce. No installer logic changes downstream.

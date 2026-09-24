@@ -110,7 +110,7 @@ const makeService = (input: {
     input.rejectCredentials
       ? Effect.die("credentials must not run")
       : Effect.succeed(input.credentials ?? {}),
-  exportSnapshot: () => Effect.die("unused"),
+  saveSnapshot: () => Effect.die("unused"),
   restoreSnapshot: () => Effect.die("unused"),
   resetData: Effect.die("unused"),
 });

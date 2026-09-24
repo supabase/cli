@@ -50,7 +50,6 @@ import {
   type CatalogRecipe,
   serviceSchemas,
 } from "./services/Catalog.ts";
-import { makeDatabaseSnapshots, type DatabaseSnapshot } from "./services/DatabaseSnapshot.ts";
 import * as State from "./State.ts";
 import type { SavedInstance, SavedStack, StackCredentials } from "./State.ts";
 import { resolveStackIdentity } from "./services/ServiceConfig.ts";
@@ -120,14 +119,8 @@ export interface Interface {
     from: "host" | "runtime",
   ) => Effect.Effect<Readonly<Record<string, string>>, OwnerError>;
   readonly snapshots: {
-    readonly exportSnapshot: (
-      id: string,
-      destination: string,
-    ) => Effect.Effect<DatabaseSnapshot, OwnerError>;
-    readonly restoreSnapshot: (
-      id: string,
-      source: string,
-    ) => Effect.Effect<DatabaseSnapshot, OwnerError>;
+    readonly saveSnapshot: (id: string, key: string) => Effect.Effect<void, OwnerError>;
+    readonly restoreSnapshot: (id: string, key: string) => Effect.Effect<boolean, OwnerError>;
     readonly resetData: (id: string) => Effect.Effect<void, OwnerError>;
   };
   readonly namespace: {
@@ -929,27 +922,6 @@ const makeOwnerWithDependencies = (
                 .pipe(Effect.mapError((cause) => errorFor("storage", cause)));
         }),
       );
-    const snapshotStore = (id: string) =>
-      get(id).pipe(
-        Effect.flatMap(({ creation }) =>
-          creation.service === "database"
-            ? makeDatabaseSnapshots({
-                instanceRoot: path.join(options.root, id),
-                runtime,
-                version: creation.config.version,
-                stackId: options.saved.id,
-                instanceId: id,
-              }).pipe(
-                Effect.provideService(FileSystem.FileSystem, fs),
-                Effect.provideService(Path.Path, path),
-                Effect.provideService(Crypto.Crypto, crypto),
-                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-                Effect.mapError((cause) => errorFor("snapshot", cause)),
-              )
-            : Effect.fail(errorFor("snapshot", "Snapshots are only supported for databases")),
-        ),
-      );
-
     const createService = Effect.fn("Owner.createService")(function* (input: unknown) {
       yield* Ref.get(draining).pipe(
         Effect.flatMap((isDraining) =>
@@ -1197,27 +1169,55 @@ const makeOwnerWithDependencies = (
       Effect.flatMap((values) => Effect.forEach(values, (value) => observation(value.id))),
       Effect.withSpan("Owner.restartComposition"),
     );
-    const exportSnapshot = Effect.fn("Owner.exportSnapshot")((id: string, destination: string) =>
-      snapshotStore(id).pipe(
-        Effect.flatMap((store) =>
-          storage(
-            id,
-            store
-              .exportSnapshot({ destination })
-              .pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
-          ),
+    const saveSnapshot = Effect.fn("Owner.saveSnapshot")((id: string, key: string) =>
+      get(id).pipe(
+        Effect.flatMap(({ creation }) =>
+          creation.service === "database"
+            ? storage(
+                id,
+                Effect.gen(function* () {
+                  const current = yield* getRecipe(id);
+                  const save = current.saveDatabaseSnapshot;
+                  if (save === undefined)
+                    return yield* errorFor("saveSnapshot", "Database snapshots are unavailable");
+                  return yield* Effect.acquireUseRelease(
+                    Scope.make("parallel"),
+                    (scope) =>
+                      save({ id, config: current.creation, scope }, key).pipe(
+                        Effect.mapError((cause) => errorFor("saveSnapshot", cause)),
+                      ),
+                    (scope, exit) => Scope.close(scope, exit),
+                  );
+                }),
+              )
+            : Effect.fail(errorFor("saveSnapshot", "Snapshots are only supported for databases")),
         ),
       ),
     );
-    const restoreSnapshot = Effect.fn("Owner.restoreSnapshot")((id: string, source: string) =>
-      snapshotStore(id).pipe(
-        Effect.flatMap((store) =>
-          storage(
-            id,
-            store
-              .restoreSnapshot({ source })
-              .pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
-          ),
+    const restoreSnapshot = Effect.fn("Owner.restoreSnapshot")((id: string, key: string) =>
+      get(id).pipe(
+        Effect.flatMap(({ creation }) =>
+          creation.service === "database"
+            ? storage(
+                id,
+                Effect.gen(function* () {
+                  const current = yield* getRecipe(id);
+                  const restore = current.restoreDatabaseSnapshot;
+                  if (restore === undefined)
+                    return yield* errorFor("restoreSnapshot", "Database snapshots are unavailable");
+                  return yield* Effect.acquireUseRelease(
+                    Scope.make("parallel"),
+                    (scope) =>
+                      restore({ id, config: current.creation, scope }, key).pipe(
+                        Effect.mapError((cause) => errorFor("restoreSnapshot", cause)),
+                      ),
+                    (scope, exit) => Scope.close(scope, exit),
+                  );
+                }),
+              )
+            : Effect.fail(
+                errorFor("restoreSnapshot", "Snapshots are only supported for databases"),
+              ),
         ),
       ),
     );
@@ -1308,7 +1308,7 @@ const makeOwnerWithDependencies = (
       },
       credentials,
       snapshots: {
-        exportSnapshot,
+        saveSnapshot,
         restoreSnapshot,
         resetData,
       },

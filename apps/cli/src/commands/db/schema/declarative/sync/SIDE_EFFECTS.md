@@ -7,8 +7,8 @@ When `[experimental].stack` is on, each shadow uses a fresh, invocation-owned st
 with an automatically assigned port. State and data live under `$SUPABASE_HOME/stacks`, and
 native artifacts are shared through `$SUPABASE_HOME/cache/stack`. The command destroys its
 shadow namespaces when its Effect scope closes. An abrupt process exit can leave a namespace
-visible to `stack list` for manual `stack destroy` cleanup. Stack shadows do not use the
-baseline snapshot cache described below; `--no-cache` affects only the legacy backend.
+visible to `stack list` for manual `stack destroy` cleanup. Stack shadows use the stack baseline
+cache described below; `--no-cache` bypasses it as well as the legacy backend cache.
 
 Pg-delta runs in-process and uses two scoped shadow databases. Coverage gaps
 warn; `--strict-coverage` makes
@@ -54,7 +54,7 @@ disabling safe compaction.
 | Variable                     | Purpose                                                                                                                                                                                                                                                                                       | Required? |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | `SUPABASE_HOME`              | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                                                                                                     | no        |
-| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes)                                                                                                           | no        |
+| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline state is saved under a managed snapshot key and restored into the next run's fresh stack database (see Notes)                                                                                         | no        |
 | `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                                                                                                                                                | no        |
 | `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate                                                                                                                                                                                                                                                      | no        |
 | `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                                                                                                                                            | no        |
@@ -141,7 +141,14 @@ existing SQL or creates an export manifest.
   with the same flag. A real version/tag mismatch still suggests
   `supabase stop --all --no-backup` then `supabase start`.
 
-### Legacy shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
+### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
+
+Stack mode stores cache-eligible baselines at
+the managed snapshot key `<key>` and retains three entries by LRU, refreshing mtime on warm
+restores. The key includes resolved stack artifacts, runtime,
+platform, enabled catalog services, settings, credentials, overlay inputs, and `roles.sql`.
+`--no-cache` and a falsy `SUPABASE_SHADOW_CACHE` bypass restore and publication. A failed warm
+restore recreates the database; failed publication warns and keeps the live shadow usable.
 
 The bundled (pg-delta next) engine provisions both plan shadows through
 `acquireShadowDatabase` (`pgdelta-next-shadow.layer.ts`): on by default, off when

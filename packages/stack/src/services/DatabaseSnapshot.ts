@@ -1,35 +1,39 @@
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { Crypto, Data, Effect, FileSystem, Path, Schema, Stream } from "effect";
-import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- SQLite is the cross-process lock primitive.
+import { DatabaseSync } from "node:sqlite";
+import {
+  Clock,
+  Crypto,
+  Data,
+  Effect,
+  Exit,
+  FileSystem,
+  Option,
+  Path,
+  Predicate,
+  Schedule,
+  Schema,
+} from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import { postgresVersion } from "../Artifacts.ts";
+import { copyDirectory } from "../storage/DirectoryCopy.ts";
 import type { DatabaseRuntime } from "./Database.ts";
-import { makeContainerRuntime, type ContainerRuntime } from "../runtime/Container.ts";
 
-export const SnapshotDescriptor = Schema.Struct({
+const SnapshotDescriptor = Schema.Struct({
   format: Schema.Literal("supabase-database-snapshot-v1"),
   version: Schema.String,
   runtime: Schema.Literals(["native", "docker", "podman"]),
   platform: Schema.String,
   arch: Schema.String,
   profile: Schema.Literal("supabase"),
+  logicalKey: Schema.String,
+  keyDigest: Schema.String,
 });
-export interface SnapshotDescriptor extends Schema.Schema.Type<typeof SnapshotDescriptor> {}
 
 export class DatabaseSnapshotError extends Data.TaggedError("DatabaseSnapshotError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
 }> {}
-
-export interface DatabaseSnapshot {
-  readonly descriptor: SnapshotDescriptor;
-  readonly destination: string;
-}
-
-const ReadyMarker = Schema.Struct({
-  version: Schema.String,
-  runtime: Schema.Literals(["native", "docker", "podman"]),
-  profile: Schema.Literal("supabase"),
-});
 
 const errorFor = (operation: string, cause: unknown) =>
   cause instanceof DatabaseSnapshotError
@@ -40,14 +44,22 @@ const errorFor = (operation: string, cause: unknown) =>
         cause,
       });
 
-const safeRelative = (name: string) => {
-  if (name.startsWith("/") || name.includes("\\")) return false;
-  const parts = name.split("/");
-  return parts.every((part) => part !== "" && part !== "." && part !== "..");
-};
+const ReadyMarker = Schema.Struct({
+  version: Schema.String,
+  runtime: Schema.Literals(["native", "docker", "podman"]),
+  profile: Schema.Literal("supabase"),
+});
+
+const markerText = (version: string, runtime: DatabaseRuntime) =>
+  Schema.encodeEffect(Schema.fromJsonString(ReadyMarker))({
+    version,
+    runtime,
+    profile: "supabase",
+  });
 
 export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function* (options: {
   readonly instanceRoot: string;
+  readonly cacheRoot: string;
   readonly runtime: DatabaseRuntime;
   readonly version: string;
   readonly stackId: string;
@@ -58,497 +70,319 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
   const crypto = yield* Crypto.Crypto;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const version = postgresVersion(options.version);
-  const container: ContainerRuntime | undefined =
-    options.runtime === "native"
-      ? undefined
-      : yield* makeContainerRuntime({ engine: options.runtime });
-  const helperImage =
-    options.runtime === "native"
-      ? undefined
-      : yield* resolveArtifact({ service: "database", version }).pipe(
-          Effect.mapError((cause) => errorFor("artifact", cause)),
-        );
-  const descriptor: SnapshotDescriptor = {
-    format: "supabase-database-snapshot-v1",
+  const root = path.join(options.cacheRoot, "stack-database-snapshots");
+  const entries = path.join(root, "entries");
+  const stages = path.join(root, "stages");
+  const lockFile = path.join(root, ".lock.sqlite");
+  const base = {
+    format: "supabase-database-snapshot-v1" as const,
     version,
     runtime: options.runtime,
     platform: process.platform,
     arch: process.arch,
-    profile: "supabase",
+    profile: "supabase" as const,
   };
+  const mapError = <A, E>(operation: string, effect: Effect.Effect<A, E>) =>
+    effect.pipe(Effect.mapError((cause) => errorFor(operation, cause)));
+  const ensureStore = mapError(
+    "storage",
+    fs
+      .makeDirectory(root, { recursive: true, mode: 0o700 })
+      .pipe(Effect.andThen(fs.makeDirectory(entries, { recursive: true, mode: 0o700 }))),
+  );
 
-  const commandRaw = Effect.fn("DatabaseSnapshot.command")(function* (args: ReadonlyArray<string>) {
-    return yield* Effect.scoped(
-      Effect.gen(function* () {
-        const child = yield* spawner.spawn(ChildProcess.make("tar", args, { stdin: "ignore" }));
-        const [stdout, stderr, code] = yield* Effect.all(
-          [
-            child.stdout.pipe(
-              Stream.decodeText,
-              Stream.runFold(
-                () => "",
-                (all, chunk) => `${all}${chunk}`.slice(0, 65536),
-              ),
-            ),
-            child.stderr.pipe(
-              Stream.decodeText,
-              Stream.runFold(
-                () => "",
-                (all, chunk) => `${all}${chunk}`.slice(0, 65536),
-              ),
-            ),
-            child.exitCode,
-          ],
-          { concurrency: "unbounded" },
-        );
-        if (Number(code) !== 0)
-          return yield* errorFor("tar", stderr.trim() || `tar exited with ${String(code)}`);
-        return stdout;
+  const withLock = <A>(effect: Effect.Effect<A, DatabaseSnapshotError>) =>
+    Effect.acquireUseRelease(
+      Effect.try({
+        try: () => new DatabaseSync(lockFile),
+        catch: (cause) => errorFor("lock", cause),
       }),
-    );
-  });
-  const command = (args: ReadonlyArray<string>) =>
-    commandRaw(args).pipe(Effect.mapError((cause) => errorFor("tar", cause)));
-
-  const commandLines = Effect.fn("DatabaseSnapshot.commandLines")(
-    (
-      args: ReadonlyArray<string>,
-      onLine: (line: string) => Effect.Effect<void, DatabaseSnapshotError>,
-    ) =>
-      Effect.scoped(
+      (connection) =>
         Effect.gen(function* () {
-          const child = yield* spawner.spawn(ChildProcess.make("tar", args, { stdin: "ignore" }));
-          const [, stderr, code] = yield* Effect.all(
-            [
-              child.stdout.pipe(Stream.decodeText, Stream.splitLines, Stream.runForEach(onLine)),
-              child.stderr.pipe(
-                Stream.decodeText,
-                Stream.runFold(
-                  () => "",
-                  (all, chunk) => `${all}${chunk}`.slice(0, 65536),
-                ),
+          yield* Effect.try({
+            try: () => connection.exec("PRAGMA busy_timeout = 0"),
+            catch: (cause) => errorFor("lock", cause),
+          });
+          yield* Effect.try({
+            try: () => connection.exec("BEGIN IMMEDIATE"),
+            catch: (cause) => errorFor("lock", cause),
+          }).pipe(
+            Effect.retry({
+              schedule: Schedule.spaced("50 millis").pipe(
+                Schedule.upTo({ duration: "120 seconds" }),
               ),
-              child.exitCode,
-            ],
-            { concurrency: "unbounded" },
+              while: (cause) =>
+                Predicate.hasProperty(cause.cause, "errcode") && cause.cause.errcode === 5,
+            }),
+            Effect.mapError((cause) => errorFor("lock", cause)),
           );
-          if (Number(code) !== 0)
-            return yield* errorFor("tar", stderr.trim() || `tar exited with ${String(code)}`);
+          return yield* effect;
         }),
-      ).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof DatabaseSnapshotError ? cause : errorFor("tar", cause),
-        ),
+      (connection) =>
+        Effect.try({
+          try: () => connection.close(),
+          catch: (cause) => errorFor("unlock", cause),
+        }),
+    );
+
+  const keyDescriptor = (key: string) => ({ ...base, logicalKey: key });
+  const digest = (key: string) =>
+    Schema.encodeEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          format: Schema.Literal("supabase-database-snapshot-v1"),
+          version: Schema.String,
+          runtime: Schema.Literals(["native", "docker", "podman"]),
+          platform: Schema.String,
+          arch: Schema.String,
+          profile: Schema.Literal("supabase"),
+          logicalKey: Schema.String,
+        }),
       ),
+    )(keyDescriptor(key)).pipe(
+      Effect.flatMap((encoded) => crypto.digest("SHA-256", new TextEncoder().encode(encoded))),
+      Effect.map((bytes) =>
+        Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+      ),
+      Effect.mapError((cause) => errorFor("key", cause)),
+    );
+
+  const copy = (source: string, destination: string) =>
+    copyDirectory(source, destination).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.mapError((cause) => errorFor("copy", cause)),
+    );
+
+  const readReady = mapError(
+    "ready",
+    fs
+      .readFileString(path.join(options.instanceRoot, ".supabase-database-ready.json"))
+      .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ReadyMarker)))),
   );
 
-  const toolCommand = Effect.fn("DatabaseSnapshot.toolCommand")(
-    (
-      stage: string,
-      script: string,
-      writableInstance = false,
-      onLine?: (line: string) => Effect.Effect<void, DatabaseSnapshotError>,
-    ) =>
-      Effect.gen(function* () {
-        if (container === undefined)
-          return yield* errorFor("container", "Container runtime missing");
-        if (helperImage === undefined)
-          return yield* errorFor("container", "Container runtime missing");
-        yield* container
-          .prepare(helperImage.image)
-          .pipe(Effect.mapError((cause) => errorFor("container", cause)));
-        return yield* Effect.scoped(
-          Effect.gen(function* () {
-            const acquire = container
-              .launchTool({
-                image: helperImage.image,
-                stackId: options.stackId,
-                instanceId: options.instanceId,
-                entrypoint: "/usr/bin/busybox",
-                env: {},
-                mounts: [
-                  {
-                    source: options.instanceRoot,
-                    target: "/instance",
-                    readOnly: !writableInstance,
-                  },
-                  { source: stage, target: "/stage", readOnly: false },
-                ],
-                args: ["sh", "-c", script],
-              })
-              .pipe(
-                Effect.catchTag("ContainerLaunchError", ({ failure, process: partial }) =>
-                  partial.stop.pipe(
-                    Effect.andThen(partial.remove),
-                    Effect.mapError((cause) => errorFor("container-cleanup", cause)),
-                    Effect.andThen(Effect.fail(errorFor("container", failure))),
-                  ),
-                ),
-              );
-            return yield* Effect.acquireUseRelease(
-              acquire,
-              (owned) =>
-                Effect.all(
-                  [
-                    onLine === undefined
-                      ? owned.stdout.pipe(
-                          Stream.decodeText,
-                          Stream.runFold(
-                            () => "",
-                            (all, chunk) => `${all}${chunk}`.slice(0, 65536),
-                          ),
-                        )
-                      : owned.stdout.pipe(
-                          Stream.decodeText,
-                          Stream.splitLines,
-                          Stream.runForEach(onLine),
-                          Effect.as(""),
-                        ),
-                    owned.stderr.pipe(
-                      Stream.decodeText,
-                      Stream.runFold(
-                        () => "",
-                        (all, chunk) => `${all}${chunk}`.slice(0, 65536),
-                      ),
-                    ),
-                    owned.exitCode,
-                  ],
-                  { concurrency: "unbounded" },
-                ).pipe(
-                  Effect.flatMap(([stdout, stderr, code]) =>
-                    Number(code) === 0
-                      ? Effect.succeed(stdout)
-                      : Effect.fail(
-                          errorFor(
-                            "container",
-                            stderr.trim() || `Helper exited with ${String(code)}`,
-                          ),
-                        ),
-                  ),
-                ),
-              (owned) =>
-                owned.stop.pipe(
-                  Effect.andThen(owned.remove),
-                  Effect.mapError((cause) => errorFor("container", cause)),
-                ),
-            );
-          }),
-        );
-      }).pipe(Effect.mapError((cause) => errorFor("container", cause))),
-  );
-
-  const cleanupStage = Effect.fn("DatabaseSnapshot.cleanupStage")((directory: string) =>
-    Effect.gen(function* () {
-      if (
-        options.runtime !== "native" &&
-        ((yield* fs.exists(path.join(directory, "input"))) ||
-          (yield* fs.exists(path.join(directory, "extracted"))))
-      ) {
-        yield* toolCommand(directory, "/usr/bin/busybox rm -rf /stage/extracted /stage/input");
-      }
-      yield* fs.remove(directory, { recursive: true, force: true });
-    }).pipe(Effect.mapError((cause) => errorFor("cleanup", cause))),
-  );
-
-  const readReady = Effect.fn("DatabaseSnapshot.readReady")(() =>
-    Effect.gen(function* () {
-      const marker = yield* fs.readFileString(
-        path.join(options.instanceRoot, ".supabase-database-ready.json"),
-      );
-      return yield* Schema.decodeEffect(Schema.fromJsonString(ReadyMarker))(marker);
-    }).pipe(Effect.mapError((cause) => errorFor("ready", cause))),
-  );
-
-  const verifyData = Effect.fn("DatabaseSnapshot.verifyData")(function* () {
+  const sourceData = Effect.gen(function* () {
+    const ready = yield* readReady;
+    if (ready.version !== version || ready.runtime !== options.runtime)
+      return yield* errorFor("ready", "Database readiness marker does not match the instance");
     const data = path.join(options.instanceRoot, "data");
-    if (options.runtime === "native") {
-      if (!(yield* fs.exists(data).pipe(Effect.mapError((cause) => errorFor("data", cause)))))
-        return yield* errorFor("data", "Database data directory is absent");
-      if (
-        yield* fs
-          .exists(path.join(data, "postmaster.pid"))
-          .pipe(Effect.mapError((cause) => errorFor("data", cause)))
-      )
-        return yield* errorFor("data", "Database must be stopped before snapshotting");
-      if (
-        !(yield* fs
-          .exists(path.join(data, "PG_VERSION"))
-          .pipe(Effect.mapError((cause) => errorFor("data", cause))))
-      )
-        return yield* errorFor("data", "Database data directory is not initialized");
-    } else {
-      yield* toolCommand(
-        options.instanceRoot,
-        "test -d /instance/data && test -f /instance/data/PG_VERSION && test ! -e /instance/data/postmaster.pid",
-      ).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof DatabaseSnapshotError && cause.operation === "container"
-            ? new DatabaseSnapshotError({
-                operation: "data",
-                message: cause.message,
-                cause,
-              })
-            : cause,
-        ),
-      );
-    }
+    if (!(yield* mapError("data", fs.exists(data))))
+      return yield* errorFor("data", "Data is absent");
+    if (yield* mapError("data", fs.exists(path.join(data, "postmaster.pid"))))
+      return yield* errorFor("data", "Database must be stopped before snapshotting");
+    const pgVersion = yield* mapError("data", fs.readFileString(path.join(data, "PG_VERSION")));
+    if (pgVersion.trim() !== version.split(".")[0])
+      return yield* errorFor("data", "Database PostgreSQL major version is incompatible");
     return data;
   });
 
-  const exportSnapshot = Effect.fn("DatabaseSnapshot.export")(function* ({
-    destination,
-  }: {
-    readonly destination: string;
-  }) {
-    const ready = yield* readReady();
-    if (
-      ready.version !== version ||
-      ready.runtime !== options.runtime ||
-      ready.profile !== "supabase"
-    )
-      return yield* errorFor("ready", "Database readiness marker does not match the instance");
-    yield* verifyData();
-    if (yield* fs.exists(destination).pipe(Effect.mapError((cause) => errorFor("export", cause))))
-      return yield* errorFor("export", "Destination already exists");
-    const parent = path.dirname(destination);
-    const stageToken = yield* crypto.randomUUIDv4.pipe(
-      Effect.mapError((cause) => errorFor("export", cause)),
-    );
-    return yield* Effect.acquireUseRelease(
-      fs
-        .makeTempDirectory({ directory: parent, prefix: `.supabase-snapshot-${stageToken}-` })
-        .pipe(Effect.mapError((cause) => errorFor("export", cause))),
-      (stage) =>
-        Effect.gen(function* () {
-          const metadata = path.join(stage, "metadata");
-          yield* fs
-            .makeDirectory(metadata, { recursive: true })
-            .pipe(Effect.mapError((cause) => errorFor("stage", cause)));
-          const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SnapshotDescriptor))(
-            descriptor,
-          ).pipe(Effect.mapError((cause) => errorFor("descriptor", cause)));
-          yield* fs
-            .writeFileString(path.join(metadata, "descriptor.json"), encoded, { mode: 0o600 })
-            .pipe(Effect.mapError((cause) => errorFor("descriptor", cause)));
-          const archive = path.join(stage, "snapshot.tar");
-          if (options.runtime === "native")
-            yield* command([
-              "-cf",
-              archive,
-              "-C",
-              options.instanceRoot,
-              "data",
-              "-C",
-              stage,
-              "metadata",
-            ]);
-          else {
-            yield* fs
-              .writeFileString(archive, "", { mode: 0o600 })
-              .pipe(Effect.mapError((cause) => errorFor("stage", cause)));
-            yield* toolCommand(
-              stage,
-              "/usr/bin/busybox mkdir -p /stage/input && /usr/bin/busybox cp -R /instance/data /stage/input/data && /usr/bin/busybox cp -R /stage/metadata /stage/input/metadata && /usr/bin/busybox tar -cf /stage/snapshot.tar -C /stage/input data metadata",
-            );
-          }
-          yield* fs
-            .link(archive, destination)
-            .pipe(Effect.mapError((cause) => errorFor("publish", cause)));
-          yield* fs.remove(archive).pipe(Effect.mapError((cause) => errorFor("publish", cause)));
-          return { descriptor, destination };
-        }),
-      cleanupStage,
-    );
+  const cleanupChildren = (directory: string, predicate: (name: string) => boolean) =>
+    Effect.gen(function* () {
+      const names = yield* mapError("cleanup", fs.readDirectory(directory));
+      for (const name of names) {
+        if (predicate(name))
+          yield* mapError("cleanup", fs.remove(path.join(directory, name), { recursive: true }));
+      }
+    });
+
+  const cleanupStaleStages = Effect.gen(function* () {
+    yield* cleanupChildren(stages, (name) => name !== "." && name !== "..");
+    yield* cleanupChildren(options.instanceRoot, (name) => name.startsWith(".supabase-restore-"));
   });
 
-  const restoreSnapshot = Effect.fn("DatabaseSnapshot.restore")(function* ({
-    source,
-  }: {
-    readonly source: string;
-  }) {
-    const data = path.join(options.instanceRoot, "data");
-    const dataExists = yield* fs
-      .exists(data)
-      .pipe(Effect.mapError((cause) => errorFor("restore", cause)));
-    if (options.runtime === "native") {
-      if (
-        dataExists &&
-        (yield* fs.readDirectory(data).pipe(Effect.mapError((cause) => errorFor("restore", cause))))
-          .length > 0
-      )
-        return yield* errorFor("restore", "Restore target data directory must be empty");
-    } else {
-      yield* toolCommand(
-        options.instanceRoot,
-        'test ! -e /instance/data || test -z "$(/usr/bin/busybox ls -A /instance/data)"',
-        true,
-      ).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof DatabaseSnapshotError && cause.operation === "container"
-            ? new DatabaseSnapshotError({
-                operation: "restore",
-                message: cause.message,
-                cause,
-              })
-            : cause,
-        ),
-      );
-    }
-    const stageToken = yield* crypto.randomUUIDv4.pipe(
-      Effect.mapError((cause) => errorFor("restore", cause)),
+  const touch = (target: string) =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      yield* mapError("touch", fs.utimes(target, now / 1_000, now / 1_000));
+    });
+
+  const retention = (current: string) =>
+    Effect.gen(function* () {
+      const names = yield* mapError("retention", fs.readDirectory(entries));
+      const values: Array<{ readonly name: string; readonly mtime: number }> = [];
+      for (const name of names) {
+        if (name === current) continue;
+        const info = yield* mapError("retention", fs.stat(path.join(entries, name)));
+        values.push({
+          name,
+          mtime: Option.match(info.mtime, {
+            onNone: () => 0,
+            onSome: (mtime) => mtime.getTime(),
+          }),
+        });
+      }
+      values.sort((left, right) => left.mtime - right.mtime || left.name.localeCompare(right.name));
+      for (const value of values.slice(0, Math.max(0, values.length - 2)))
+        yield* mapError(
+          "retention",
+          fs.remove(path.join(entries, value.name), { recursive: true }),
+        );
+    });
+
+  const saveSnapshot = Effect.fn("DatabaseSnapshot.save")(function* (logicalKey: string) {
+    const source = yield* sourceData;
+    const keyDigest = yield* digest(logicalKey);
+    const descriptor = { ...keyDescriptor(logicalKey), keyDigest };
+    const encoded = yield* mapError(
+      "descriptor",
+      Schema.encodeEffect(Schema.fromJsonString(SnapshotDescriptor))(descriptor),
     );
-    return yield* Effect.acquireUseRelease(
-      fs
-        .makeTempDirectory({
-          directory: options.instanceRoot,
-          prefix: `.supabase-restore-${stageToken}-`,
-        })
-        .pipe(Effect.mapError((cause) => errorFor("restore", cause))),
-      (stage) =>
-        Effect.gen(function* () {
-          const archive = path.join(stage, "source.tar");
-          yield* fs
-            .copyFile(source, archive)
-            .pipe(Effect.mapError((cause) => errorFor("stage", cause)));
-          const descriptorText =
-            options.runtime === "native"
-              ? yield* command(["-xOf", archive, "metadata/descriptor.json"])
-              : yield* toolCommand(
-                  stage,
-                  "/usr/bin/busybox tar -xOf /stage/source.tar metadata/descriptor.json",
-                );
-          const incoming = yield* Schema.decodeEffect(Schema.fromJsonString(SnapshotDescriptor))(
-            descriptorText,
-          ).pipe(Effect.mapError((cause) => errorFor("descriptor", cause)));
-          if (
-            incoming.format !== descriptor.format ||
-            incoming.version !== descriptor.version ||
-            incoming.runtime !== descriptor.runtime ||
-            incoming.platform !== descriptor.platform ||
-            incoming.arch !== descriptor.arch ||
-            incoming.profile !== descriptor.profile
-          )
-            return yield* errorFor(
-              "descriptor",
-              "Snapshot is incompatible with this database instance",
-            );
-          const validateName = (line: string) => {
-            const name = line.replace(/\/$/u, "");
-            return name.length === 0 ||
-              ((["data", "metadata", "metadata/descriptor.json"].includes(name) ||
-                name.startsWith("data/")) &&
-                safeRelative(name))
-              ? Effect.void
-              : Effect.fail(errorFor("validate", `Unsafe snapshot member: ${name}`));
-          };
-          if (options.runtime === "native") yield* commandLines(["-tf", archive], validateName);
-          else
-            yield* toolCommand(
-              stage,
-              "/usr/bin/busybox tar -tf /stage/source.tar",
-              false,
-              validateName,
-            );
-          const validateType = (line: string) =>
-            line.length === 0 || line[0] === "-" || line[0] === "d"
-              ? Effect.void
-              : Effect.fail(errorFor("validate", "Snapshot contains a non-regular member"));
-          if (options.runtime === "native") yield* commandLines(["-tvf", archive], validateType);
-          else
-            yield* toolCommand(
-              stage,
-              "/usr/bin/busybox tar -tvf /stage/source.tar",
-              false,
-              validateType,
-            );
-          const extracted = path.join(stage, "extracted");
-          yield* fs
-            .makeDirectory(extracted, { recursive: true })
-            .pipe(Effect.mapError((cause) => errorFor("extract", cause)));
-          if (options.runtime === "native") yield* command(["-xf", archive, "-C", extracted]);
-          else
-            yield* toolCommand(
-              stage,
-              "/usr/bin/busybox tar -xf /stage/source.tar -C /stage/extracted",
-            );
-          const expectedMajor = version.split(".")[0];
-          if (options.runtime === "native") {
-            const restoredVersion = path.join(extracted, "data", "PG_VERSION");
-            if (
-              !(yield* fs
-                .exists(restoredVersion)
-                .pipe(Effect.mapError((cause) => errorFor("validate", cause))))
-            )
-              return yield* errorFor("validate", "Snapshot data is not initialized");
-            const actualVersion = yield* fs
-              .readFileString(restoredVersion)
-              .pipe(Effect.mapError((cause) => errorFor("validate", cause)));
-            if (actualVersion.trim() !== expectedMajor)
-              return yield* errorFor(
-                "validate",
-                "Snapshot data has an incompatible PostgreSQL major version",
+    const target = path.join(entries, keyDigest);
+    yield* ensureStore;
+    yield* withLock(
+      Effect.gen(function* () {
+        yield* mapError("storage", fs.makeDirectory(stages, { recursive: true, mode: 0o700 }));
+        yield* cleanupStaleStages;
+        const token = yield* crypto.randomUUIDv4.pipe(
+          Effect.mapError((cause) => errorFor("stage", cause)),
+        );
+        const stage = path.join(stages, token);
+        const retired = path.join(stages, "retired-" + token);
+        yield* mapError("stage", fs.makeDirectory(stage, { recursive: true, mode: 0o700 }));
+        yield* Effect.acquireUseRelease(
+          Effect.succeed(stage),
+          () =>
+            Effect.gen(function* () {
+              yield* copy(source, path.join(stage, "data"));
+              yield* mapError(
+                "descriptor",
+                fs.writeFileString(path.join(stage, "descriptor.json"), encoded, { mode: 0o600 }),
               );
-          } else {
-            yield* toolCommand(
-              stage,
-              "/usr/bin/busybox test -f /stage/extracted/data/PG_VERSION && /usr/bin/busybox cat /stage/extracted/data/PG_VERSION || /usr/bin/busybox echo __missing_pg_version__",
-              false,
-              (line) =>
-                line.trim() === expectedMajor
-                  ? Effect.void
-                  : Effect.fail(
-                      errorFor(
-                        "validate",
-                        "Snapshot data is missing or has an incompatible PostgreSQL major version",
-                      ),
-                    ),
-            );
-          }
-          if (options.runtime === "native") {
-            yield* fs
-              .rename(path.join(extracted, "data"), data)
-              .pipe(Effect.mapError((cause) => errorFor("publish", cause)));
-          } else {
-            const stageName = path.basename(stage);
-            yield* toolCommand(
-              stage,
-              `if test -e /instance/data; then /usr/bin/busybox rmdir /instance/data; fi && /usr/bin/busybox mv /instance/${stageName}/extracted/data /instance/data && /usr/bin/busybox chown -R 100:101 /instance/data && /usr/bin/busybox chmod 700 /instance/data`,
-              true,
-            );
-          }
-          const marker = yield* Schema.encodeEffect(Schema.fromJsonString(ReadyMarker))({
-            version,
-            runtime: options.runtime,
-            profile: "supabase",
-          }).pipe(Effect.mapError((cause) => errorFor("ready", cause)));
-          yield* fs
-            .writeFileString(
-              path.join(options.instanceRoot, ".supabase-database-ready.json"),
-              marker,
-              { mode: 0o600 },
-            )
-            .pipe(
-              Effect.mapError((cause) => errorFor("ready", cause)),
-              Effect.catch((failure: DatabaseSnapshotError) => {
-                const cleanup =
-                  options.runtime === "native"
-                    ? fs
-                        .remove(data, { recursive: true, force: true })
-                        .pipe(Effect.mapError((cause) => errorFor("cleanup", cause)))
-                    : toolCommand(
-                        options.instanceRoot,
-                        "/usr/bin/busybox rm -rf /instance/data",
-                        true,
-                      ).pipe(Effect.asVoid);
-                return cleanup.pipe(Effect.andThen(Effect.fail(failure)));
-              }),
-            );
-
-          return { descriptor: incoming, destination: source };
-        }),
-      cleanupStage,
+              const hadTarget = yield* mapError("publish", fs.exists(target));
+              if (hadTarget) yield* mapError("publish", fs.rename(target, retired));
+              const publication = yield* Effect.exit(mapError("publish", fs.rename(stage, target)));
+              if (Exit.isFailure(publication)) {
+                if (hadTarget) yield* mapError("rollback", fs.rename(retired, target));
+                return yield* Effect.failCause(publication.cause);
+              }
+              yield* mapError("publish", fs.remove(retired, { recursive: true, force: true }));
+              yield* touch(target);
+              yield* retention(keyDigest);
+            }),
+          () => mapError("cleanup", fs.remove(stage, { recursive: true, force: true })),
+        );
+      }),
     );
   });
 
-  return { exportSnapshot, restoreSnapshot };
+  const restoreSnapshot = Effect.fn("DatabaseSnapshot.restore")(function* (logicalKey: string) {
+    const data = path.join(options.instanceRoot, "data");
+    const keyDigest = yield* digest(logicalKey);
+    const target = path.join(entries, keyDigest);
+    yield* ensureStore;
+    return yield* withLock(
+      Effect.gen(function* () {
+        yield* mapError("storage", fs.makeDirectory(stages, { recursive: true, mode: 0o700 }));
+        yield* cleanupStaleStages;
+        if (yield* mapError("restore", fs.exists(data))) {
+          if ((yield* mapError("restore", fs.readDirectory(data))).length > 0)
+            return yield* errorFor("restore", "Restore target data directory must be empty");
+        }
+        if (!(yield* mapError("restore", fs.exists(target)))) return false;
+
+        const descriptor = yield* mapError(
+          "descriptor",
+          fs
+            .readFileString(path.join(target, "descriptor.json"))
+            .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(SnapshotDescriptor)))),
+        );
+        if (descriptor.keyDigest !== keyDigest || descriptor.logicalKey !== logicalKey)
+          return yield* errorFor("descriptor", "Snapshot manifest does not match its key");
+        if (
+          descriptor.version !== version ||
+          descriptor.runtime !== options.runtime ||
+          descriptor.platform !== process.platform ||
+          descriptor.arch !== process.arch
+        )
+          return false;
+
+        const token = yield* crypto.randomUUIDv4.pipe(
+          Effect.mapError((cause) => errorFor("stage", cause)),
+        );
+        const stage = path.join(options.instanceRoot, ".supabase-restore-" + token);
+        const retired = path.join(options.instanceRoot, ".supabase-restore-retired-" + token);
+        const marker = path.join(options.instanceRoot, ".supabase-database-ready.json");
+        const retiredMarker = path.join(
+          options.instanceRoot,
+          ".supabase-restore-retired-marker-" + token,
+        );
+        const stagedMarker = path.join(stage, "ready.json");
+        yield* mapError("stage", fs.makeDirectory(stage, { recursive: true, mode: 0o700 }));
+        yield* Effect.acquireUseRelease(
+          Effect.succeed(stage),
+          () =>
+            Effect.gen(function* () {
+              yield* copy(path.join(target, "data"), path.join(stage, "data"));
+              const stagedData = path.join(stage, "data");
+              const stagedVersion = yield* mapError(
+                "validate",
+                fs.readFileString(path.join(stagedData, "PG_VERSION")),
+              );
+              if (stagedVersion.trim() !== version.split(".")[0])
+                return yield* errorFor(
+                  "validate",
+                  "Snapshot PostgreSQL major version is incompatible",
+                );
+              if (yield* mapError("validate", fs.exists(path.join(stagedData, "postmaster.pid"))))
+                return yield* errorFor("validate", "Snapshot contains a running database");
+              const markerContents = yield* markerText(version, options.runtime).pipe(
+                Effect.mapError((cause) => errorFor("ready", cause)),
+              );
+              yield* mapError(
+                "ready",
+                fs.writeFileString(stagedMarker, markerContents, { mode: 0o600 }),
+              );
+
+              // The handoff is short and uninterruptible. If marker publication fails, the old
+              // complete data tree and marker are restored before the error escapes.
+              yield* Effect.uninterruptible(
+                Effect.gen(function* () {
+                  const hadData = yield* mapError("publish", fs.exists(data));
+                  const hadMarker = yield* mapError("publish", fs.exists(marker));
+                  if (hadData) yield* mapError("publish", fs.rename(data, retired));
+                  const dataPublication = yield* Effect.exit(
+                    mapError("publish", fs.rename(path.join(stage, "data"), data)),
+                  );
+                  if (Exit.isFailure(dataPublication)) {
+                    if (hadData) yield* mapError("rollback", fs.rename(retired, data));
+                    return yield* Effect.failCause(dataPublication.cause);
+                  }
+                  if (hadMarker) {
+                    const markerRetirement = yield* Effect.exit(
+                      mapError("publish", fs.rename(marker, retiredMarker)),
+                    );
+                    if (Exit.isFailure(markerRetirement)) {
+                      yield* mapError(
+                        "rollback",
+                        fs.remove(data, { recursive: true, force: true }),
+                      );
+                      if (hadData) yield* mapError("rollback", fs.rename(retired, data));
+                      return yield* Effect.failCause(markerRetirement.cause);
+                    }
+                  }
+                  const markerPublication = yield* Effect.exit(
+                    mapError("ready", fs.rename(stagedMarker, marker)),
+                  );
+                  if (Exit.isFailure(markerPublication)) {
+                    if (hadMarker) yield* mapError("rollback", fs.rename(retiredMarker, marker));
+                    yield* mapError("rollback", fs.remove(data, { recursive: true, force: true }));
+                    if (hadData) yield* mapError("rollback", fs.rename(retired, data));
+                    return yield* Effect.failCause(markerPublication.cause);
+                  }
+                  yield* mapError("publish", fs.remove(retired, { recursive: true, force: true }));
+                  if (hadMarker)
+                    yield* mapError("publish", fs.remove(retiredMarker, { force: true }));
+                }),
+              );
+              yield* touch(target);
+            }),
+          () => mapError("cleanup", fs.remove(stage, { recursive: true, force: true })),
+        );
+        return true;
+      }),
+    );
+  });
+
+  return { saveSnapshot, restoreSnapshot };
 });

@@ -157,6 +157,27 @@ const platformText = (platform: { readonly os: string; readonly arch: string }):
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : typeof cause === "string" ? cause : String(cause);
 
+const SLIM_NATIVE_GITHUB_RELEASES = "https://github.com/supabase/slim-services/releases/download";
+
+/**
+ * Public S3 copy of the release assets for hosts that block GitHub release downloads, such as
+ * agent sandboxes that allow `*.amazonaws.com`.
+ * @see ../../../infra/cli-artifacts/README.md
+ */
+const SLIM_NATIVE_SUPABASE_S3_MIRROR = "https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com";
+
+const SLIM_NATIVE_GHCR_REGISTRY = "ghcr.io";
+const SLIM_NATIVE_GHCR_REPOSITORY = "supabase/cli";
+
+const SLIM_IMAGE_GHCR_REGISTRY = "ghcr.io/supabase/cli/";
+const SLIM_IMAGE_SUPABASE_ECR_MIRROR = "public.ecr.aws/supabase/cli/";
+
+/** Mirrors carrying a catalog slim image under the same tag and digest, in fallback order. */
+export const slimImageMirrors = (image: string): ReadonlyArray<string> =>
+  image.startsWith(SLIM_IMAGE_GHCR_REGISTRY)
+    ? [`${SLIM_IMAGE_SUPABASE_ECR_MIRROR}${image.slice(SLIM_IMAGE_GHCR_REGISTRY.length)}`]
+    : [];
+
 const artifactFor = (
   service: ServiceKind,
   resolved: ArtifactResolution,
@@ -165,7 +186,8 @@ const artifactFor = (
   const sourceService = definitions[service].sourceService;
   const releaseTag = `${sourceService}-${resolved.version}`;
   const assetName = `${releaseTag}-${target}`;
-  const base = `https://github.com/supabase/slim-services/releases/download/${releaseTag}`;
+  const githubRelease = `${SLIM_NATIVE_GITHUB_RELEASES}/${releaseTag}`;
+  const supabaseS3 = `${SLIM_NATIVE_SUPABASE_S3_MIRROR}/${sourceService}/${resolved.version}`;
   return {
     provider: "supabase/slim-services",
     service: sourceService,
@@ -174,9 +196,25 @@ const artifactFor = (
     target,
     archive: "tar.zst",
     assetName,
-    downloadUrl: `${base}/${assetName}.tar.zst`,
-    manifestUrl: `${base}/${assetName}.manifest.json`,
-    checksumUrl: `${base}/SHA256SUMS`,
+    checksums: [
+      { kind: "sha256sums", url: `${githubRelease}/SHA256SUMS` },
+      {
+        kind: "oci",
+        registry: SLIM_NATIVE_GHCR_REGISTRY,
+        repository: `${SLIM_NATIVE_GHCR_REPOSITORY}/${sourceService}`,
+        tag: `${resolved.version}-native-${target}`,
+      },
+    ],
+    mirrors: [
+      {
+        downloadUrl: `${githubRelease}/${assetName}.tar.zst`,
+        manifestUrl: `${githubRelease}/${assetName}.manifest.json`,
+      },
+      {
+        downloadUrl: `${supabaseS3}/${assetName}.tar.zst`,
+        manifestUrl: `${supabaseS3}/${assetName}.manifest.json`,
+      },
+    ],
     requiredRuntimePaths: resolved.requiredRuntimePaths,
     executablePath: resolved.executablePath,
   };

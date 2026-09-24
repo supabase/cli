@@ -27,8 +27,8 @@ permissions: {}
 # One source of truth for the model names; resolve, claude-review, codex-review, and
 # post-review's footer all read these instead of hardcoding them separately.
 env:
-  CLAUDE_MODEL: claude-opus-5
-  CODEX_MODEL: gpt-5.6-sol
+  CLAUDE_MODEL: claude-opus-5-5
+  CODEX_MODEL: gpt-6-sol
 
 # Non-command issue_comment events fire for every comment on every PR, so grouping by PR number
 # alone would let any comment cancel an in-flight review; give those runs their own per-run
@@ -151,6 +151,7 @@ jobs:
       # behavior mid-rollout. Installed from the trusted checkout with npm config isolation so a
       # PR-supplied `.npmrc` in the untrusted `pr` checkout can never redirect this install to a
       # hostile registry.
+      # 2.1.280 is the first release that accepts claude-opus-5-5.
       - name: Install Claude Code CLI
         working-directory: trusted
         run: |
@@ -162,7 +163,7 @@ jobs:
           npm install -g \
             --userconfig "${RUNNER_TEMP}/ai-review-npmrc-user" \
             --globalconfig "${RUNNER_TEMP}/ai-review-npmrc-global" \
-            --registry=https://registry.npmjs.org/ @anthropic-ai/claude-code@2.1.247
+            --registry=https://registry.npmjs.org/ @anthropic-ai/claude-code@2.1.280
 
       # Security-critical invariant: PR code is only ever read by `claude`, in the `pr`-cwd
       # subshell below — no other command in this job, including any `bun` call, runs with a cwd
@@ -307,7 +308,8 @@ jobs:
           effort: high
           output-schema-file: /tmp/ai-review/findings.schema.json
           output-file: /tmp/ai-review/codex-findings.json
-          codex-version: "0.150.1"
+          # 0.156.1 is the first stable CLI whose model catalog carries gpt-6-sol.
+          codex-version: &codex-cli-version "0.156.1"
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
@@ -448,8 +450,8 @@ jobs:
       # `working-directory` is the workspace root so Codex's cwd holds no untrusted AGENTS.md/
       # config; it reads the PR from `pr/` and executes nothing from it.
       - name: Run Codex adjudication
-        # Same v1.11 pin as codex-review's step above (see its comment for the full rationale);
-        # YAML-aliased so the SHA only needs to change in one place.
+        # Same v1.11 action pin and Codex CLI version as codex-review's step above (see its
+        # comments for the rationale); both are YAML-aliased so each changes in one place only.
         uses: *codex-action-pin
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -458,7 +460,7 @@ jobs:
           effort: high
           output-schema-file: /tmp/ai-review/merged-review.schema.json
           output-file: /tmp/ai-review/merged-review.json
-          codex-version: "0.150.1"
+          codex-version: *codex-cli-version
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
