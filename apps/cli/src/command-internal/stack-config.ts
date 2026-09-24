@@ -1,6 +1,7 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
+import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
 import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
 import { Crypto, Effect, Data, FileSystem, Path, Redacted, Schema, SchemaIssue } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -48,7 +49,12 @@ import {
   strToArr,
 } from "./local-config-values.ts";
 import { generateAsymmetricGoJwt } from "./go-jwt.ts";
-import { resolveRemoteJwks, resolveThirdPartyIssuerUrl, toPublicJwk } from "../shared/auth/jwks.ts";
+import {
+  resolveRemoteJwks,
+  resolveThirdPartyIssuerUrl,
+  thirdPartyIssuerUrlUnchecked,
+  toPublicJwk,
+} from "../shared/auth/jwks.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -277,83 +283,6 @@ const resolveAuthOverrides = (
           sender_name: smtp.senderName,
         };
   const resolvedSms = resolveAuthSms(authDocument, auth.sms, env);
-  const thirdParty = {
-    firebase: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
-        auth.third_party.firebase.enabled,
-        "auth.third_party.firebase.enabled",
-        env,
-      ),
-      project_id: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
-        auth.third_party.firebase.project_id,
-        env,
-      ),
-    },
-    auth0: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
-        auth.third_party.auth0.enabled,
-        "auth.third_party.auth0.enabled",
-        env,
-      ),
-      tenant: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
-        auth.third_party.auth0.tenant,
-        env,
-      ),
-      tenant_region: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
-        auth.third_party.auth0.tenant_region,
-        env,
-      ),
-    },
-    aws_cognito: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
-        auth.third_party.aws_cognito.enabled,
-        "auth.third_party.aws_cognito.enabled",
-        env,
-      ),
-      user_pool_id: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
-        auth.third_party.aws_cognito.user_pool_id,
-        env,
-      ),
-      user_pool_region: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
-        auth.third_party.aws_cognito.user_pool_region,
-        env,
-      ),
-    },
-    clerk: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
-        auth.third_party.clerk.enabled,
-        "auth.third_party.clerk.enabled",
-        env,
-      ),
-      domain: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
-        auth.third_party.clerk.domain,
-        env,
-      ),
-    },
-    workos: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
-        auth.third_party.workos.enabled,
-        "auth.third_party.workos.enabled",
-        env,
-      ),
-      issuer_url: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
-        auth.third_party.workos.issuer_url,
-        env,
-      ),
-    },
-  };
   return {
     ...auth,
     enabled: envOverrideBool("SUPABASE_AUTH_ENABLED", auth.enabled, "auth.enabled", env),
@@ -429,7 +358,6 @@ const resolveAuthOverrides = (
     external: externalResolved,
     web3: resolveGotrueWeb3(auth.web3, env),
     oauth_server: resolveGotrueOAuthServer(auth.oauth_server, env),
-    third_party: thirdParty,
   };
 };
 
@@ -635,11 +563,89 @@ const resolveEffectiveCliConfig = (
     "auth.enabled",
     env,
   );
+  const thirdParty = {
+    firebase: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
+        config.auth.third_party.firebase.enabled,
+        "auth.third_party.firebase.enabled",
+        env,
+      ),
+      project_id: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
+        config.auth.third_party.firebase.project_id,
+        env,
+      ),
+    },
+    auth0: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
+        config.auth.third_party.auth0.enabled,
+        "auth.third_party.auth0.enabled",
+        env,
+      ),
+      tenant: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
+        config.auth.third_party.auth0.tenant,
+        env,
+      ),
+      tenant_region: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
+        config.auth.third_party.auth0.tenant_region,
+        env,
+      ),
+    },
+    aws_cognito: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
+        config.auth.third_party.aws_cognito.enabled,
+        "auth.third_party.aws_cognito.enabled",
+        env,
+      ),
+      user_pool_id: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
+        config.auth.third_party.aws_cognito.user_pool_id,
+        env,
+      ),
+      user_pool_region: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
+        config.auth.third_party.aws_cognito.user_pool_region,
+        env,
+      ),
+    },
+    clerk: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
+        config.auth.third_party.clerk.enabled,
+        "auth.third_party.clerk.enabled",
+        env,
+      ),
+      domain: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
+        config.auth.third_party.clerk.domain,
+        env,
+      ),
+    },
+    workos: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
+        config.auth.third_party.workos.enabled,
+        "auth.third_party.workos.enabled",
+        env,
+      ),
+      issuer_url: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
+        config.auth.third_party.workos.issuer_url,
+        env,
+      ),
+    },
+  };
   // JWT security settings apply to non-Auth workloads too, so resolve them
   // regardless of whether the Auth capability is enabled.
   const authResolved = {
     ...(authEnabled ? resolveAuthOverrides(config.auth, document, env) : config.auth),
     enabled: authEnabled,
+    third_party: thirdParty,
     jwt_issuer: envOverride("SUPABASE_AUTH_JWT_ISSUER", config.auth.jwt_issuer, env),
     signing_keys_path: envOverride(
       "SUPABASE_AUTH_SIGNING_KEYS_PATH",
@@ -879,7 +885,12 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const path = yield* Path.Path;
       const auth = validatedConfig.auth;
       const issuer = yield* Effect.try({
-        try: () => (auth.enabled ? resolveThirdPartyIssuerUrl(auth.third_party) : undefined),
+        try: () => {
+          const resolved = auth.enabled
+            ? resolveThirdPartyIssuerUrl(auth.third_party)
+            : thirdPartyIssuerUrlUnchecked(auth.third_party);
+          return resolved === undefined || resolved.length === 0 ? undefined : resolved;
+        },
         catch: (cause) =>
           new StackConfigError({
             message: cause instanceof Error ? cause.message : String(cause),
@@ -895,11 +906,16 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           const secretKey = configured(auth.secret_key);
           const configuredAnonKey = configured(auth.anon_key);
           const configuredServiceRoleKey = configured(auth.service_role_key);
-          const signingKeys = resolveConfiguredSigningKeys(
+          const configuredSigningKeys = resolveConfiguredSigningKeys(
             validatedConfig,
             projectRoot,
             context.projectEnvValues,
           );
+          const signingKeys =
+            configuredSigningKeys ??
+            (auth.signing_keys_path === undefined || auth.signing_keys_path.length === 0
+              ? undefined
+              : [DEFAULT_SIGNING_KEY]);
           const signingKey = signingKeys?.[0];
           return {
             ...(publishableKey === undefined ? {} : { publishableKey }),

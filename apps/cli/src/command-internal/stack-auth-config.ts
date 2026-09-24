@@ -15,7 +15,7 @@ interface ResolvedAuthOptions {
     readonly rpDisplayName: string;
     readonly rpOrigins: ReadonlyArray<string>;
   };
-  readonly externalProviders?: Readonly<Record<string, ResolvedAuthExternalProvider>>;
+  readonly externalProviders: Readonly<Record<string, ResolvedAuthExternalProvider>>;
 }
 
 /** Maps resolved CLI authentication policy to the Auth service. */
@@ -23,7 +23,7 @@ export const resolveAuthConfig = Effect.fn("StackAuthConfig.resolve")(
   (
     auth: CliConfig["auth"],
     localSmtp: CliConfig["local_smtp"],
-    options: ResolvedAuthOptions = {},
+    options: ResolvedAuthOptions,
   ): Effect.Effect<AuthConfig> =>
     Effect.succeed({
       databaseUrl: "postgresql://placeholder",
@@ -74,27 +74,20 @@ export const resolveAuthConfig = Effect.fn("StackAuthConfig.resolve")(
         hooks: auth.hook,
         mfa: auth.mfa,
         ...(auth.sessions === undefined ? {} : { sessions: auth.sessions }),
-        external:
-          options.externalProviders === undefined
-            ? Object.fromEntries(
-                Object.entries(auth.external).flatMap(([name, provider]) =>
-                  provider === undefined ? [] : [[name, provider]],
-                ),
-              )
-            : Object.fromEntries(
-                Object.entries(options.externalProviders).map(([name, provider]) => [
-                  name,
-                  {
-                    enabled: provider.enabled,
-                    client_id: provider.clientId,
-                    ...(provider.secret === undefined ? {} : { secret: provider.secret }),
-                    url: provider.url,
-                    redirect_uri: provider.redirectUri ?? "",
-                    skip_nonce_check: provider.skipNonceCheck,
-                    email_optional: provider.emailOptional,
-                  },
-                ]),
-              ),
+        external: Object.fromEntries(
+          Object.entries(options.externalProviders).map(([name, provider]) => [
+            name,
+            {
+              enabled: provider.enabled,
+              client_id: provider.clientId,
+              ...(provider.secret === undefined ? {} : { secret: provider.secret }),
+              url: provider.url,
+              redirect_uri: provider.redirectUri ?? "",
+              skip_nonce_check: provider.skipNonceCheck,
+              email_optional: provider.emailOptional,
+            },
+          ]),
+        ),
         web3: auth.web3,
         oauthServer: auth.oauth_server,
       },
