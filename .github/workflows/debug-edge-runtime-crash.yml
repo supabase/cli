@@ -1,0 +1,123 @@
+name: Debug Edge Runtime Crash
+
+on:
+  push:
+    branches:
+      - debug/edge-runtime-sigbus-ci-20260924
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    name: Reproduce (trace ${{ matrix.trace }})
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        trace: ["off", "on"]
+    env:
+      OUTPUT_DIR: ${{ runner.temp }}/edge-runtime-crash
+      CRASH_TRACE: ${{ matrix.trace == 'on' && '1' || '0' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Install crash debugging tools
+        run: sudo apt-get update && sudo apt-get install --yes gdb file strace
+
+      - name: Capture runner details and configure core dumps
+        id: core
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUTPUT_DIR/cores"
+          chmod 0777 "$OUTPUT_DIR/cores"
+          previous_pattern=$(sudo sysctl -n kernel.core_pattern)
+          echo "previous_pattern=$previous_pattern" >> "$GITHUB_OUTPUT"
+          {
+            uname -a
+            lscpu
+            docker info
+            df -h
+            printf '\nPrevious kernel.core_pattern: %s\n' "$previous_pattern"
+            printf 'Previous kernel.core_uses_pid: '
+            sudo sysctl -n kernel.core_uses_pid
+            if sudo sysctl -n kernel.core_pipe_limit >/dev/null 2>&1; then
+              printf 'Previous kernel.core_pipe_limit: '
+              sudo sysctl -n kernel.core_pipe_limit
+            fi
+          } > "$OUTPUT_DIR/runner-before.txt" 2>&1
+          sudo sysctl -w kernel.core_pattern=/cores/core.%e.%P.%t
+          sudo sysctl -n kernel.core_pattern | tee "$OUTPUT_DIR/core-pattern-configured.txt"
+
+      - name: Pull and verify the failing runtime image
+        run: |
+          set -euo pipefail
+          image=public.ecr.aws/supabase/edge-runtime:v1.76.2
+          expected_digest=sha256:edd22bef4477b900d5c300e287ce9b18bff9b81a0291bee14ee0b7c7b71a2899
+          docker pull "$image"
+          docker image inspect "$image" --format '{{json .RepoDigests}}' | tee "$OUTPUT_DIR/runtime-image-repodigests.json"
+          grep -Fq "$expected_digest" "$OUTPUT_DIR/runtime-image-repodigests.json"
+
+      - name: Validate core dump capture
+        run: python3 .github/scripts/edge-runtime-crash/preflight.py
+
+      - name: Reproduce offline Kong E2E failure
+        run: |
+          set -uo pipefail
+          ulimit -c unlimited
+          printf 'ulimit -c: %s\n' "$(ulimit -c)" | tee "$OUTPUT_DIR/ulimit.txt"
+          python3 .github/scripts/edge-runtime-crash/run-repro.py
+
+      - name: Capture crash diagnostics
+        if: always()
+        run: |
+          set +e
+          sudo find "$OUTPUT_DIR/cores" -maxdepth 1 -type f -exec chmod 0644 {} +
+          sudo chown -R "$(id -u):$(id -g)" "$OUTPUT_DIR/cores"
+          {
+            echo '=== Core files ==='
+            find "$OUTPUT_DIR/cores" -maxdepth 1 -type f -print -exec file {} \;
+            echo '=== Kernel log ==='
+            sudo dmesg --ctime --level=emerg,alert,crit,err,warn,notice,info
+          } > "$OUTPUT_DIR/runner-after.txt" 2>&1
+          sudo journalctl -k --no-pager >> "$OUTPUT_DIR/runner-after.txt" 2>&1
+
+      - name: Analyze first runtime core dump
+        if: always()
+        run: |
+          set -euo pipefail
+          core_file=$(find "$OUTPUT_DIR/cores" -maxdepth 1 -type f -name 'core.*' -print -quit)
+          if [[ ! -f "$OUTPUT_DIR/rootfs.tar" || -z "$core_file" ]]; then
+            echo 'No exported runtime rootfs and core dump pair to analyze.'
+            exit 0
+          fi
+          sudo bash .github/scripts/edge-runtime-crash/analyze-core.sh \
+            "$OUTPUT_DIR" "$OUTPUT_DIR/rootfs.tar" "$core_file"
+
+      - name: Restore kernel core pattern
+        if: always() && steps.core.outputs.previous_pattern != ''
+        env:
+          PREVIOUS_CORE_PATTERN: ${{ steps.core.outputs.previous_pattern }}
+        run: |
+          sudo sysctl -w "kernel.core_pattern=$PREVIOUS_CORE_PATTERN"
+          sudo sysctl -n kernel.core_pattern | tee "$OUTPUT_DIR/core-pattern-restored.txt"
+
+      - name: Upload crash artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: edge-runtime-crash-trace-${{ matrix.trace }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/edge-runtime-crash
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 6

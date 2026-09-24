@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Capture abnormal Edge Runtime exit evidence around the targeted Kong E2E test."""
+
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+def run(args, **kwargs):
+    return subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
+
+
+def invoke_docker(args):
+    return subprocess.run([REAL_DOCKER, *args]).returncode
+
+
+REAL_DOCKER = os.environ.get("REAL_DOCKER")
+OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "/tmp/edge-runtime-crash")).resolve()
+RUNTIME_NAME = re.compile(r"^supabase-serve-kong-e2e-[A-Za-z0-9_.-]+-runtime$")
+
+if not REAL_DOCKER or not Path(REAL_DOCKER).is_absolute():
+    print("REAL_DOCKER must contain the absolute path to docker", file=sys.stderr)
+    raise SystemExit(125)
+
+args = sys.argv[1:]
+if not args:
+    raise SystemExit(invoke_docker(args))
+
+if args[0] == "run":
+    try:
+        name_index = args.index("--name") + 1
+        name = args[name_index]
+    except (ValueError, IndexError):
+        name = ""
+    if RUNTIME_NAME.fullmatch(name):
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        (OUTPUT_DIR / "cores").mkdir(exist_ok=True)
+        args = [
+            "run",
+            "--ulimit",
+            "core=2147483648:2147483648",
+            "-v",
+            f"{OUTPUT_DIR / 'cores'}:/cores",
+            *args[1:],
+        ]
+        if os.environ.get("CRASH_TRACE") == "1":
+            args[1:1] = ["-e", "RUST_LOG=info,deno::cache::cache_db=trace"]
+    raise SystemExit(invoke_docker(args))
+
+if args[0] == "rm":
+    targets = [arg for arg in args[1:] if RUNTIME_NAME.fullmatch(arg)]
+    for name in targets:
+        result = run([REAL_DOCKER, "inspect", name])
+        if result.returncode:
+            continue
+        try:
+            inspected = json.loads(result.stdout)[0]
+        except (ValueError, IndexError, KeyError):
+            continue
+        state = inspected.get("State", {})
+        image = inspected.get("Config", {}).get("Image", "unknown")
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
+        evidence = OUTPUT_DIR / "containers" / safe_name
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence / "inspect.json").write_text(json.dumps(inspected, indent=2) + "\n")
+        logs = run([REAL_DOCKER, "logs", name])
+        (evidence / "logs.txt").write_text(logs.stdout + logs.stderr)
+        image_info = run([REAL_DOCKER, "image", "inspect", image])
+        (evidence / "image-inspect.json").write_text(image_info.stdout or image_info.stderr)
+        if not state.get("Running") and state.get("ExitCode", 0) >= 128:
+            rootfs_marker = OUTPUT_DIR / "crash-rootfs-captured.json"
+            if rootfs_marker.exists():
+                continue
+            rootfs_marker.write_text(
+                json.dumps(
+                    {"container": name, "image": image, "exitCode": state.get("ExitCode")},
+                    indent=2,
+                )
+                + "\n"
+            )
+            export = subprocess.run(
+                [REAL_DOCKER, "export", "--output", str(OUTPUT_DIR / "rootfs.tar"), name]
+            )
+            if export.returncode:
+                print(f"docker export failed for {name} ({export.returncode})", file=sys.stderr)
+        if state.get("ExitCode") == 135:
+            marker = OUTPUT_DIR / "first-exit-135.json"
+            if not marker.exists():
+                marker.write_text(json.dumps({"container": name, "image": image}, indent=2) + "\n")
+    raise SystemExit(invoke_docker(args))
+
+raise SystemExit(invoke_docker(args))
