@@ -23,6 +23,8 @@ import {
 } from "./services/Catalog.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { PgProveOptions, PostgresTool } from "./Tools.ts";
+import type { GatewayConfig } from "./Gateway.ts";
+export type { GatewayConfig } from "./Gateway.ts";
 export {
   DEFAULT_LOCAL_DATABASE_PASSWORD,
   DEFAULT_LOCAL_JWT_SECRET,
@@ -137,6 +139,12 @@ export interface Stack {
   };
   readonly credentials: {
     readonly get: Effect.Effect<StackCredentials | undefined, StackError>;
+  };
+  readonly gateway: {
+    readonly configure: (options: {
+      readonly tls?: GatewayConfig["tls"];
+      readonly port: number | "auto";
+    }) => Effect.Effect<{ readonly hostUrl: string; readonly runtimeUrl: string }, StackError>;
   };
   readonly composition: {
     readonly supabase: (
@@ -402,6 +410,10 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         Effect.map((current) => current?.credentials),
         Effect.mapError((cause) => failure("credentials", cause)),
       ),
+    },
+    gateway: {
+      configure: (configuration) =>
+        call("configureGateway", (rpc) => rpc.configureGateway(configuration)),
     },
     composition: {
       supabase: (

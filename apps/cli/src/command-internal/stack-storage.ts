@@ -129,14 +129,20 @@ const storageCredentialsFrom = (
     ? Effect.fail(
         new StackStorageCapabilityError({ message: "The stack exposes no Storage endpoint." }),
       )
-    : Effect.succeed({
-        baseUrl: `http://${endpoint.host}:${endpoint.port}`,
-        apiKey: serviceRoleKey,
-        localKongCa: undefined,
-      });
+    : endpoint.protocol !== "http" && endpoint.protocol !== "https"
+      ? Effect.fail(
+          new StackStorageCapabilityError({
+            message: "The stack exposes no HTTP Storage endpoint.",
+          }),
+        )
+      : Effect.succeed({
+          baseUrl: `${endpoint.protocol}://${endpoint.host}:${endpoint.port}`,
+          apiKey: serviceRoleKey,
+          localKongCa: undefined,
+        });
 };
 
-/** Resolves the composition Storage endpoint without launching the owner or any member. */
+/** Resolves the observed Storage endpoint without launching the owner or any member. */
 export const stackStorageEndpointFor = (
   stack: Stack,
 ): Effect.Effect<StorageCredentials, StackStorageUnavailableError | StackStorageCapabilityError> =>

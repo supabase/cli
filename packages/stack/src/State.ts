@@ -10,6 +10,7 @@ import {
   Schedule,
   Schema,
 } from "effect";
+import { GatewayConfig } from "./Gateway.ts";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no non-recursive directory removal operation.
 import { rmdir } from "node:fs/promises";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no OS-owned cross-process lock primitive.
@@ -68,6 +69,7 @@ export const SavedStack = Schema.Struct({
   instances: Schema.Array(SavedInstance),
   composition: Schema.Unknown,
   credentials: Schema.optionalKey(StackCredentials),
+  gateway: Schema.optionalKey(GatewayConfig),
   ports: Schema.Array(
     Schema.Struct({
       key: Schema.String,

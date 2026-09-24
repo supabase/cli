@@ -1,6 +1,8 @@
 /** JWT secret used by local development services when no secret is configured. */
 export const DEFAULT_LOCAL_JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
 
+export { DEFAULT_LOCAL_TLS_CERT, DEFAULT_LOCAL_TLS_KEY } from "./LocalTls.ts";
+
 /** Default local ES256 signing key shared with the legacy CLI. */
 export const DEFAULT_SIGNING_KEY = {
   kty: "EC",

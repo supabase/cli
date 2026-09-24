@@ -145,6 +145,7 @@ function syncStackApi(workdir: string, port: number) {
           : Effect.fail(new StackError({ operation: "get", message: "unknown instance" })),
     },
     credentials: { get: unusedSync },
+    gateway: { configure: unusedSyncFn },
     composition: {
       describe: Effect.succeed(composition),
       supabase: unusedSyncFn,

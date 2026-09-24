@@ -175,6 +175,8 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   let stopped = 0;
   let composed = 0;
+  let gatewayConfigured = 0;
+  let gatewayPort: number | "auto" | undefined;
   let catalogApplied = 0;
   let lifecycle: "stopped" | "running" = "stopped";
   let activations = new Map<string, "eager" | "lazy">();
@@ -210,6 +212,19 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     },
     credentials: {
       get: Effect.sync(() => savedCredentials),
+    },
+    gateway: {
+      configure: ({ port, tls }) =>
+        Effect.sync(() => {
+          gatewayConfigured += 1;
+          gatewayPort = port;
+          const assignedPort = port === "auto" ? 54321 : port;
+          const hostScheme = tls === undefined ? "http" : "https";
+          return {
+            hostUrl: `${hostScheme}://127.0.0.1:${assignedPort}`,
+            runtimeUrl: `http://127.0.0.1:${assignedPort}`,
+          };
+        }),
     },
     composition: {
       describe: Effect.sync(() => ({
@@ -294,6 +309,12 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     },
     get composed() {
       return composed;
+    },
+    get gatewayConfigured() {
+      return gatewayConfigured;
+    },
+    get gatewayPort() {
+      return gatewayPort;
     },
     get catalogApplied() {
       return catalogApplied;
@@ -451,6 +472,7 @@ describe("experimental stack start", () => {
       );
       expect(fixture.members.map(({ service }) => service)).toEqual(["database"]);
       expect(fixture.composed).toBe(1);
+      expect(fixture.gatewayConfigured).toBe(0);
       const repeatedOutput = mockOutput();
       yield* stackStart(flags(excluded)).pipe(
         Effect.provide(layers(root, fixture, repeatedOutput)),
@@ -467,6 +489,7 @@ describe("experimental stack start", () => {
       yield* fixture.stack.composition.stop;
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.some(({ service }) => service === "rest")).toBe(true);
+      expect(fixture.gatewayConfigured).toBe(1);
       expect(fixture.composed).toBe(2);
       yield* fixture.stack.composition.stop;
       yield* stackStart(flags(["studio"])).pipe(Effect.provide(layers(root, fixture)));
@@ -660,26 +683,39 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("skips invalid config while running and reports it after stop", () =>
+  it.live.each([
+    {
+      name: "signing-key",
+      projectId: "key-rotation-deferred",
+      changedConfig:
+        'project_id = "key-rotation-deferred"\n[auth]\nsigning_keys_path = "missing-keys.json"\n',
+      expectedError: "failed to read signing keys",
+    },
+    {
+      name: "TLS",
+      projectId: "api-tls-deferred",
+      changedConfig:
+        'project_id = "api-tls-deferred"\n[api.tls]\nenabled = true\ncert_path = "missing-cert.pem"\nkey_path = "missing-key.pem"\n',
+      expectedError: "failed to read TLS cert",
+    },
+  ] as const)("skips $name file reads while running and reports them after stop", (testCase) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({
-        prefix: "stack-start-invalid-key-rotation-",
+        prefix: `stack-start-${testCase.name}-deferred-`,
       });
       yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
       yield* fs.writeFileString(
         `${root}/supabase/config.toml`,
-        'project_id = "invalid-key-rotation"\n',
+        `project_id = "${testCase.projectId}"\n`,
       );
       const fixture = fakeStack();
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
 
-      yield* fs.writeFileString(
-        `${root}/supabase/config.toml`,
-        'project_id = "invalid-key-rotation"\n[auth]\nsigning_keys_path = "missing-keys.json"\n',
-      );
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, testCase.changedConfig);
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(1);
+      expect(fixture.gatewayConfigured).toBe(1);
       expect(fixture.stopped).toBe(0);
 
       yield* fixture.stack.composition.stop;
@@ -688,8 +724,55 @@ describe("experimental stack start", () => {
         Effect.flip,
       );
       expect(error).toMatchObject({ reason: "invalid-config" });
+      expect(error.message).toContain(testCase.expectedError);
       expect(fixture.composed).toBe(1);
+      expect(fixture.gatewayConfigured).toBe(1);
       expect(fixture.stopped).toBe(1);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("refreshes Auth template mappings only after the stack stops", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-auth-templates-" });
+      const canonicalRoot = yield* fs.realPath(root);
+      yield* fs.makeDirectory(`${root}/supabase/templates`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/templates/first.html`, "first");
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "auth-template-refresh"\n[auth.email.template.invite]\ncontent_path = "./supabase/templates/first.html"\n',
+      );
+      const fixture = fakeStack();
+
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.gatewayPort).toBe("auto");
+      const firstAuth = fixture.members.find(({ service }) => service === "auth");
+      if (firstAuth?.service !== "auth") return yield* Effect.die("Auth member missing");
+      const firstStatus = yield* firstAuth.status;
+      if (firstStatus.config.service !== "auth") return yield* Effect.die("Auth config missing");
+      expect(firstStatus.config.config.templates).toEqual([
+        { id: "invite", filePath: `${canonicalRoot}/supabase/templates/first.html` },
+      ]);
+
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "auth-template-refresh"\n[auth.email.template.invite]\ncontent_path = "./supabase/templates/second.html"\n',
+      );
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(1);
+
+      yield* fixture.stack.composition.stop;
+      yield* fs.writeFileString(`${root}/supabase/templates/second.html`, "second");
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const refreshedAuth = fixture.members.find(({ service }) => service === "auth");
+      if (refreshedAuth?.service !== "auth") return yield* Effect.die("Auth member missing");
+      const refreshedStatus = yield* refreshedAuth.status;
+      if (refreshedStatus.config.service !== "auth")
+        return yield* Effect.die("Auth config missing");
+      expect(refreshedStatus.config.config.templates).toEqual([
+        { id: "invite", filePath: `${canonicalRoot}/supabase/templates/second.html` },
+      ]);
+      expect(fixture.composed).toBe(2);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

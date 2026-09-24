@@ -42,6 +42,10 @@ type FunctionsInstance = Extract<
   Effect.Success<ReturnType<Stack["services"]["get"]>>,
   { service: "functions" }
 >;
+type RealtimeInstance = Extract<
+  Effect.Success<ReturnType<Stack["services"]["get"]>>,
+  { service: "realtime" }
+>;
 
 const functionsConfig = (): Extract<ServiceCreation, { service: "functions" }>["config"] => ({
   functionsRoot: "/project/supabase/functions",
@@ -114,6 +118,7 @@ const fixture = (
   options: {
     readonly failRestartOn?: number;
     readonly standaloneProjectRoot?: string;
+    readonly realtimeApiSource?: boolean;
     readonly savedGotrueJwtKeys?: string;
     readonly savedJwks?: string;
     readonly savedRemoteJwks?: string;
@@ -140,12 +145,18 @@ const fixture = (
       clearDistinctId: Effect.void,
     });
     let currentFunctions = functionsConfig();
+    let configuredGateway: Parameters<Stack["gateway"]["configure"]>[0] | undefined;
     let restartCount = 0;
     let destroyed = false;
     const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
       service: "database",
       config: databaseConfig,
       endpoints: { sql: { port: 54322 } },
+    };
+    const realtimeCreation: Extract<ServiceCreation, { service: "realtime" }> = {
+      service: "realtime",
+      config: { databaseUrl: "postgresql://postgres@127.0.0.1:54322/postgres" },
+      endpoints: { http: { port: 28200 } },
     };
     const functionsCreation = (): Extract<ServiceCreation, { service: "functions" }> => ({
       service: "functions",
@@ -207,6 +218,18 @@ const fixture = (
       followStatus: Stream.never,
       logs: Stream.never,
     };
+    const realtime: RealtimeInstance = {
+      ...database,
+      id: "realtime",
+      service: "realtime",
+      status: Effect.succeed(
+        observation("realtime", realtimeCreation, {
+          endpoints: [{ name: "http", protocol: "http", host: "127.0.0.1", port: 28200 }],
+        }),
+      ),
+      restart: () => Effect.void,
+      credentials: () => Effect.succeed({ apiUrl: "http://127.0.0.1:28201" }),
+    };
     const functions: FunctionsInstance = {
       id: "functions",
       service: "functions" as const,
@@ -250,9 +273,12 @@ const fixture = (
       id: "a".repeat(64),
       services: {
         list: Effect.succeed(
-          options.standaloneProjectRoot === undefined ? [database, functions] : [database],
+          options.standaloneProjectRoot === undefined
+            ? [database, functions, ...(options.realtimeApiSource === true ? [realtime] : [])]
+            : [database, ...(options.realtimeApiSource === true ? [realtime] : [])],
         ),
-        get: (id: string) => Effect.succeed(id === "database" ? database : functions),
+        get: (id: string) =>
+          Effect.succeed(id === "database" ? database : id === "realtime" ? realtime : functions),
         create: <Input extends ServiceCreationInput>(
           creation: Input,
         ): Effect.Effect<ServiceInstances[Input["service"]], StackError> => {
@@ -263,6 +289,18 @@ const fixture = (
             StackError
           >;
         },
+      },
+      gateway: {
+        configure: (configuration) =>
+          Effect.sync(() => {
+            const { port } = configuration;
+            const publicPort = typeof port === "number" ? port : 28111;
+            configuredGateway = configuration;
+            return {
+              hostUrl: `https://127.0.0.1:${publicPort}`,
+              runtimeUrl: `http://127.0.0.1:${publicPort + 1}`,
+            };
+          }),
       },
       credentials: { get: Effect.succeed(stackCredentials) },
       composition: {
@@ -339,22 +377,50 @@ const fixture = (
       get createdFunctions() {
         return createdFunctions;
       },
+      get configuredGateway() {
+        return configuredGateway;
+      },
     };
   });
 
 describe("experimental Stack Functions serve", () => {
-  it.live(
-    "delegates standalone Functions credentials to the stack and forwards local verification keys",
-    () =>
+  it.live.each([
+    {
+      name: "automatic",
+      apiPort: undefined,
+      expectedPort: "auto",
+      runtimePort: 28112,
+      realtimeApiSource: false,
+    },
+    {
+      name: "explicit",
+      apiPort: 28123,
+      expectedPort: 28123,
+      runtimePort: 28124,
+      realtimeApiSource: false,
+    },
+    {
+      name: "Realtime",
+      apiPort: undefined,
+      expectedPort: 28200,
+      runtimePort: 28201,
+      realtimeApiSource: true,
+    },
+  ] as const)(
+    "delegates standalone Functions credentials and preserves the $name API port",
+    (gatewayCase) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-standalone-" });
         yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
         yield* fs.writeFileString(
           `${root}/supabase/config.toml`,
-          'project_id = "functions-standalone"\n\n[edge_runtime]\nenabled = true\n',
+          `project_id = "functions-standalone"\n\n[edge_runtime]\nenabled = true\n${gatewayCase.apiPort === undefined ? "" : `\n[api]\nport = ${gatewayCase.apiPort}\n`}\n[api.tls]\nenabled = true\n`,
         );
-        const state = yield* fixture({ standaloneProjectRoot: root });
+        const state = yield* fixture({
+          standaloneProjectRoot: root,
+          realtimeApiSource: gatewayCase.realtimeApiSource,
+        });
         const run = yield* functionsServeStack(flags()).pipe(
           Effect.provide(state.layer),
           Effect.forkChild({ startImmediately: true }),
@@ -363,7 +429,15 @@ describe("experimental Stack Functions serve", () => {
 
         const created = state.createdFunctions;
         expect(created?.service).toBe("functions");
+        if (gatewayCase.realtimeApiSource) {
+          expect(state.configuredGateway).toBeUndefined();
+        } else {
+          expect(state.configuredGateway?.tls).toBeDefined();
+          expect(state.configuredGateway?.port).toBe(gatewayCase.expectedPort);
+        }
         if (created?.service === "functions") {
+          expect(created.config.apiUrl).toBe(`http://127.0.0.1:${gatewayCase.runtimePort}`);
+          expect(created.endpoints?.http?.port).toBe(gatewayCase.expectedPort);
           expect(created.config.jwtSecret).toBeUndefined();
           expect(created.config.publishableKey).toBeUndefined();
           expect(created.config.secretKey).toBeUndefined();

@@ -241,19 +241,23 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   if (databaseUrl === undefined) return yield* invalidConfig("The database has no runtime URL.");
   const apiSource = [...members, ...instances].find(
     (instance) =>
-      instance.service === "rest" || instance.service === "auth" || instance.service === "storage",
+      instance.service === "rest" ||
+      instance.service === "auth" ||
+      instance.service === "storage" ||
+      instance.service === "realtime",
   );
   const apiStatus = apiSource === undefined ? undefined : yield* apiSource.status;
   const savedPort = apiStatus?.endpoints.find(({ name }) => name === "http")?.port;
   const requestedPort = source.endpoints?.http?.port;
-  const port =
-    savedPort ?? (typeof requestedPort === "number" ? requestedPort : config.source.api.port);
-  const databaseAddress = URL.parse(databaseUrl);
-  if (databaseAddress === null) return yield* invalidConfig("Invalid runtime database URL.");
-  const apiUrl =
-    apiSource === undefined
-      ? `http://${databaseAddress.hostname}:${port}`
-      : (yield* apiSource.credentials({ from: "runtime" })).apiUrl;
+  const port = savedPort ?? requestedPort ?? "auto";
+  let apiUrl: string | undefined;
+  if (apiSource === undefined) {
+    const gatewayConfig = yield* config.gateway;
+    const gateway = yield* stack.gateway.configure({ ...gatewayConfig, port });
+    apiUrl = gateway.runtimeUrl;
+  } else {
+    apiUrl = (yield* apiSource.credentials({ from: "runtime" })).apiUrl;
+  }
   if (apiUrl === undefined) return yield* invalidConfig("The stack has no runtime API URL.");
   const env =
     envOverride ?? (yield* readStackFunctionsEnv(`${source.config.functionsRoot}/.env`, true));

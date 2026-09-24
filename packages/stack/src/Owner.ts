@@ -35,8 +35,9 @@ import {
   endpointPort,
   EndpointError,
   outputsFor,
-  publicUrl,
+  gatewayUrl,
 } from "./host/Endpoints.ts";
+import { routesFor } from "./host/Routes.ts";
 import {
   makeSupabaseComposition,
   SupabaseCompositionError,
@@ -59,6 +60,7 @@ import {
   DEFAULT_POSTGRES_ROOT_KEY,
 } from "./Defaults.ts";
 import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
+import { makeAuthTemplateServer } from "./AuthTemplates.ts";
 
 export class OwnerError extends Data.TaggedError("OwnerError")<{
   readonly operation: string;
@@ -80,6 +82,12 @@ type OwnerObservation = ServiceObservation<ServiceCreation> & {
 };
 
 export interface Interface {
+  readonly gateway: {
+    readonly configure: (options: {
+      readonly tls?: import("./Gateway.ts").GatewayConfig["tls"];
+      readonly port: number | "auto";
+    }) => Effect.Effect<{ readonly hostUrl: string; readonly runtimeUrl: string }, OwnerError>;
+  };
   readonly services: {
     readonly create: (
       creation: unknown,
@@ -564,6 +572,48 @@ const makeOwnerWithDependencies = (
     const register = Effect.fn("Owner.register")(function* (id: string, recipe: CatalogRecipe) {
       const initial = recipe.creation;
       const namespaceRef = yield* Ref.make<NetworkNamespace | undefined>(undefined);
+      const launch = Effect.fn("Owner.launchRecipe")(function* (
+        context: Parameters<CatalogRecipe["definition"]["launch"]>[0],
+      ) {
+        const creation = context.config;
+        if (
+          creation.service !== "auth" ||
+          creation.config.templates === undefined ||
+          creation.config.templates.length === 0
+        )
+          return yield* recipe.definition.launch(context);
+
+        const serverHost = runtime === "native" ? "127.0.0.1" : "0.0.0.0";
+        const urlHost =
+          runtime === "native"
+            ? "127.0.0.1"
+            : runtime === "docker"
+              ? "host.docker.internal"
+              : "host.containers.internal";
+        const server = yield* makeAuthTemplateServer({
+          host: serverHost,
+          port: 0,
+          projectRoot: options.saved.identity.projectRoot,
+          templates: creation.config.templates,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Scope.provide(context.scope),
+          Effect.mapError(
+            (cause) => new ServiceError({ operation: "launch", message: cause.message, cause }),
+          ),
+        );
+        return yield* recipe.definition.launch({
+          ...context,
+          config: {
+            ...creation,
+            config: {
+              ...creation.config,
+              templateBaseUrl: `http://${urlHost}:${server.port}`,
+            },
+          },
+        });
+      });
       const instance = yield* makeService(
         {
           ...recipe.definition,
@@ -577,7 +627,7 @@ const makeOwnerWithDependencies = (
                     cause,
                   }),
               ),
-              Effect.andThen(recipe.definition.launch(context)),
+              Effect.andThen(launch(context)),
               Effect.map((session) => ({
                 ...session,
                 remove: session.remove.pipe(
@@ -677,86 +727,31 @@ const makeOwnerWithDependencies = (
             !(observation.exit !== undefined && !observation.wakeEnabled),
         ),
       );
+      const backendFor = (endpointName: string) =>
+        orchestrator.acquire(id, endpointName !== "inspector").pipe(
+          Effect.flatMap(() => recipe.endpoint(endpointName)),
+          Effect.flatMap((address): Effect.Effect<BackendAddress, ProxyError> => {
+            if (address.kind === "unix") {
+              return address.path === undefined
+                ? Effect.fail(new ProxyError({ message: "Unix endpoint has no path" }))
+                : Effect.succeed({ path: `${address.path}/.s.PGSQL.${address.port}` });
+            }
+            return Effect.succeed({ host: address.host ?? "127.0.0.1", port: address.port });
+          }),
+          Effect.mapError((cause) =>
+            cause instanceof ProxyError ? cause : new ProxyError({ message: String(cause), cause }),
+          ),
+        );
       const endpointEntries = Object.fromEntries(
         endpointNames(initial).map((name) => {
-          const route = name === "http" ? apiRoute(initial.service) : undefined;
+          const route = routesFor(initial.service, name, routeKeys, backendFor);
+          const isApiEndpoint = name === "http" && apiRoute(initial.service) !== undefined;
           const endpoint: NetworkEndpoint = {
             protocol: name === "http" ? ("http" as const) : ("tcp" as const),
             port: endpointPort(initial, name),
-            backend: orchestrator.acquire(id, name !== "inspector").pipe(
-              Effect.flatMap(() => recipe.endpoint(name)),
-              Effect.flatMap((address): Effect.Effect<BackendAddress, ProxyError> => {
-                if (address.kind === "unix") {
-                  return address.path === undefined
-                    ? Effect.fail(
-                        new ProxyError({
-                          message: "Unix endpoint has no path",
-                        }),
-                      )
-                    : Effect.succeed({
-                        path: `${address.path}/.s.PGSQL.${address.port}`,
-                      });
-                }
-                return Effect.succeed({
-                  host: address.host ?? "127.0.0.1",
-                  port: address.port,
-                });
-              }),
-              Effect.mapError((cause) =>
-                cause instanceof ProxyError
-                  ? cause
-                  : new ProxyError({ message: String(cause), cause }),
-              ),
-            ),
+            backend: backendFor(name),
             enabled,
-            ...(route === undefined
-              ? {}
-              : {
-                  shared:
-                    initial.service === "realtime"
-                      ? [
-                          {
-                            prefix: "/realtime/v1/api",
-                            upstreamPrefix: "/api",
-                            upstreamHost: "realtime-dev",
-                            keyRewrite: { policy: "bearer" as const, keys: routeKeys },
-                          },
-                          {
-                            prefix: route,
-                            upstreamPrefix: "/socket",
-                            upstreamHost: "realtime-dev",
-                            keyRewrite: { policy: "query" as const, keys: routeKeys },
-                          },
-                        ]
-                      : initial.service === "storage"
-                        ? [
-                            {
-                              prefix: `${route}/s3`,
-                              upstreamPrefix: "/s3",
-                            },
-                            {
-                              prefix: route,
-                              upstreamPrefix: "/",
-                              keyRewrite: { policy: "bearer" as const, keys: routeKeys },
-                            },
-                          ]
-                        : [
-                            {
-                              prefix: route,
-                              upstreamPrefix: "/",
-                              ...(initial.service === "rest" || initial.service === "auth"
-                                ? { keyRewrite: { policy: "bearer" as const, keys: routeKeys } }
-                                : initial.service === "functions"
-                                  ? {
-                                      keyRewrite: {
-                                        policy: "sb-api-key" as const,
-                                        keys: routeKeys,
-                                      },
-                                    }
-                                  : {}),
-                            },
-                          ],
-                }),
+            ...(isApiEndpoint ? { shared: route } : route.length === 0 ? {} : { routes: route }),
           };
           return [name, endpoint];
         }),
@@ -1116,7 +1111,9 @@ const makeOwnerWithDependencies = (
                       return namespace === undefined
                         ? Effect.fail(supabaseError("Service namespace is missing"))
                         : namespace.address(endpoint, from).pipe(
-                            Effect.map(({ host, port }) => publicUrl(host, port)),
+                            Effect.map(({ host, port, protocol }) =>
+                              gatewayUrl(protocol === "https" ? "https" : "http", host, port),
+                            ),
                             Effect.mapError(supabaseError),
                           );
                     }),
@@ -1346,6 +1343,12 @@ const makeOwnerWithDependencies = (
     }).pipe(Effect.withSpan("Owner.getServing"));
 
     const owner: Interface = {
+      gateway: {
+        configure: (configuration) =>
+          network.gateway
+            .configure(configuration)
+            .pipe(Effect.mapError((cause) => errorFor("gateway.configure", cause))),
+      },
       services: {
         create: createService,
         get,

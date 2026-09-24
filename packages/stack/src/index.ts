@@ -23,6 +23,7 @@ export {
   DEFAULT_SIGNING_KEY,
 } from "./Defaults.ts";
 export type { StackCredentials, StackIdentityInput } from "./State.ts";
+export type { GatewayConfig, GatewayTlsConfig } from "./Gateway.ts";
 
 export { postgres } from "./Tools.ts";
 export { StackError } from "./Rpc.ts";
@@ -271,6 +272,21 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
     },
     credentials: {
       get: (options?: CallOptions) => run(handle.credentials.get, options),
+    },
+    gateway: {
+      configure: (
+        configuration: {
+          readonly tls?: StackEffect.GatewayConfig["tls"];
+          readonly port: number | "auto";
+        } & CallOptions,
+      ) =>
+        run(
+          handle.gateway.configure({
+            ...(configuration.tls === undefined ? {} : { tls: configuration.tls }),
+            port: configuration.port,
+          }),
+          configuration,
+        ),
     },
     composition: {
       supabase: (services: ReadonlyArray<ServiceCreation>, options?: CompositionSupabaseOptions) =>

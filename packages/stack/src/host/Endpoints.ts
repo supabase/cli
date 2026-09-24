@@ -41,7 +41,8 @@ export const apiRoute = (service: ServiceCreation["service"]): string | undefine
   }
 };
 
-export const publicUrl = (host: string, port: number) => `http://${host}:${port}`;
+export const gatewayUrl = (protocol: "http" | "https", host: string, port: number) =>
+  `${protocol}://${host}:${port}`;
 
 const postgresUrl = (
   host: string,
@@ -53,6 +54,7 @@ const postgresUrl = (
   `postgresql://${encodeURIComponent(role)}:${encodeURIComponent(password)}@${host}:${port}/${database}`;
 
 interface EndpointAddress {
+  readonly protocol: "http" | "https" | "tcp";
   readonly host: string;
   readonly port: number;
 }
@@ -70,12 +72,18 @@ export const outputsFor = (
   password: EndpointPassword,
 ): Readonly<Record<string, Effect.Effect<string, EndpointError>>> => {
   const output = (name: string) =>
-    address(name, "runtime").pipe(Effect.map(({ host, port }) => publicUrl(host, port)));
+    address(name, "runtime").pipe(
+      Effect.map(({ host, port, protocol }) =>
+        gatewayUrl(protocol === "https" ? "https" : "http", host, port),
+      ),
+    );
   const outputs: Record<string, Effect.Effect<string, EndpointError>> = {};
   if (endpointNames(creation).includes("http")) {
     outputs.url = output("http");
     outputs.hostUrl = address("http", "host").pipe(
-      Effect.map(({ host, port }) => publicUrl(host, port)),
+      Effect.map(({ host, port, protocol }) =>
+        gatewayUrl(protocol === "https" ? "https" : "http", host, port),
+      ),
     );
     outputs.runtimeUrl = output("http");
   }
@@ -110,8 +118,8 @@ export const credentialsFor = Effect.fn("Endpoints.credentialsFor")(
     Effect.gen(function* () {
       const credentials: Record<string, string> = {};
       if (endpointNames(creation).includes("http")) {
-        const { host, port } = yield* address("http", from);
-        const origin = publicUrl(host, port);
+        const { host, port, protocol } = yield* address("http", from);
+        const origin = gatewayUrl(protocol === "https" ? "https" : "http", host, port);
         credentials.url = `${origin}${apiRoute(creation.service) ?? ""}`;
         if (apiRoute(creation.service) !== undefined) credentials.apiUrl = origin;
       }

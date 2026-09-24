@@ -85,6 +85,7 @@ export interface SetupStorageStackApiOptions {
   readonly found?: boolean;
   readonly lifecycle?: "running" | "starting" | "stopping" | "stopped";
   readonly storageEndpoint?: boolean;
+  readonly storageProtocol?: "http" | "https";
   readonly storageWakeEnabled?: boolean;
   readonly storageState?:
     | "dormant"
@@ -144,7 +145,7 @@ const observation = (
   wakeEnabled: boolean,
   endpoint?: {
     readonly name: string;
-    readonly protocol: "tcp" | "http";
+    readonly protocol: "tcp" | "http" | "https";
     readonly host: string;
     readonly port: number;
   },
@@ -228,7 +229,12 @@ export function buildStorageStackApi(
     storageWakeEnabled,
     options.storageEndpoint === false
       ? undefined
-      : { name: "http", protocol: "http", host: "127.0.0.1", port: 59999 },
+      : {
+          name: "http",
+          protocol: options.storageProtocol ?? "http",
+          host: "127.0.0.1",
+          port: 59999,
+        },
     options.storageError,
   );
   const database = {
@@ -253,6 +259,7 @@ export function buildStorageStackApi(
       list: Effect.succeed(storageEnabled ? [database, storage] : [database]),
     },
     credentials: { get: Effect.succeed(stackCredentials) },
+    gateway: { configure: () => Effect.die("unused") },
     composition: {
       supabase: () => Effect.die("unused"),
       configure: () => Effect.die("unused"),

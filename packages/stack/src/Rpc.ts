@@ -4,6 +4,7 @@ import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
 import { CompositionConfig } from "./Orchestrator.ts";
 import { PgProveOptions, PostgresTool } from "./Tools.ts";
 import { StackIdentityInput } from "./State.ts";
+import { GatewayTlsConfig } from "./Gateway.ts";
 
 const Outcome = Schema.Struct({
   id: Schema.String,
@@ -31,7 +32,7 @@ export const Observation = Schema.Struct({
   endpoints: Schema.Array(
     Schema.Struct({
       name: Schema.String,
-      protocol: Schema.Literals(["tcp", "http"]),
+      protocol: Schema.Literals(["tcp", "http", "https"]),
       host: Schema.String,
       port: Schema.Int,
     }),
@@ -120,6 +121,14 @@ export const StackRpc = RpcGroup.make(
   }),
   Rpc.make("configureComposition", { payload: CompositionConfig, error: StackErrorSchema }),
   Rpc.make("getComposition", { success: CompositionConfig, error: StackErrorSchema }),
+  Rpc.make("configureGateway", {
+    payload: {
+      port: Schema.Union([Schema.Int, Schema.Literal("auto")]),
+      tls: Schema.optionalKey(GatewayTlsConfig),
+    },
+    success: Schema.Struct({ hostUrl: Schema.String, runtimeUrl: Schema.String }),
+    error: StackErrorSchema,
+  }),
   Rpc.make("startComposition", { success: Schema.Array(Observation), error: StackErrorSchema }),
   Rpc.make("stopComposition", { success: Schema.Array(Observation), error: StackErrorSchema }),
   Rpc.make("restartComposition", { success: Schema.Array(Observation), error: StackErrorSchema }),

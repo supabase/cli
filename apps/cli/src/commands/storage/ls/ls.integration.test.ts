@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { DEFAULT_LOCAL_TLS_CERT, DEFAULT_LOCAL_TLS_KEY } from "@supabase/stack/defaults";
 
 import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
@@ -307,6 +308,30 @@ describe("storage ls", () => {
         );
       }),
     );
+  });
+
+  it.live("uses configured TLS paths for an observed HTTPS stack Storage endpoint", () => {
+    const { layer, requests, out } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n[api.tls]\nenabled = true\ncert_path = "gateway-ca.pem"\nkey_path = "gateway-key.pem"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { storageProtocol: "https" },
+      files: {
+        "supabase/gateway-ca.pem": DEFAULT_LOCAL_TLS_CERT,
+        "supabase/gateway-key.pem": DEFAULT_LOCAL_TLS_KEY,
+      },
+      routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url).toBe("https://127.0.0.1:59999/storage/v1/bucket");
+      expect(requests[0]?.headers["apikey"]).toBe(
+        generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+      );
+      expect(out.stdoutText).toBe("test/\n");
+    });
   });
 
   it.live("emits a { paths } result in json mode", () => {

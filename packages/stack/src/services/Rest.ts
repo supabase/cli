@@ -24,15 +24,22 @@ export interface Creation extends Schema.Schema.Type<typeof Creation> {}
 export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   service: "rest",
   executable: "bin/postgrest",
-  ports: { http: 3000 },
+  ports: { http: 3000, admin: 3001 },
   healthPath: "/",
-  env: (creation, endpoints) => {
+  env: (creation, endpoints, container) => {
     const http = endpoints.get("http");
+    const admin = endpoints.get("admin");
     const jwtSecret = creation.config.jwks ?? creation.config.jwtSecret;
     return Effect.succeed({
       DATABASE_URL: creation.config.databaseUrl,
       PGRST_DB_URI: creation.config.databaseUrl,
       ...(http === undefined ? {} : { PGRST_SERVER_PORT: String(http.port) }),
+      ...(admin === undefined
+        ? {}
+        : {
+            PGRST_ADMIN_SERVER_HOST: container ? "0.0.0.0" : "127.0.0.1",
+            PGRST_ADMIN_SERVER_PORT: String(admin.port),
+          }),
       PGRST_DB_SCHEMAS: creation.config.schemas ?? "public,graphql_public",
       ...(creation.config.extraSearchPath === undefined
         ? {}

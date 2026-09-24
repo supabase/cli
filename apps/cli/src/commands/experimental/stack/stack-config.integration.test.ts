@@ -1,6 +1,10 @@
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
-import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
+import {
+  DEFAULT_LOCAL_TLS_CERT,
+  DEFAULT_LOCAL_TLS_KEY,
+  DEFAULT_SIGNING_KEY,
+} from "@supabase/stack/defaults";
 import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
 import { importJWK, jwtVerify } from "jose";
 import { ServiceCreationInput } from "../../../../../../packages/stack/src/services/Catalog.ts";
@@ -50,6 +54,7 @@ describe("loadStackConfig", () => {
 enabled = true
 `);
       const config = yield* load(root);
+      expect(yield* config.gateway).toEqual({ port: "auto" });
       const services = yield* config.creations("stack-defaults");
       for (const service of services) yield* Schema.decodeEffect(ServiceCreationInput)(service);
 
@@ -149,15 +154,132 @@ port = 55431
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects Auth email template content paths deferred by the stack", () =>
+  it.live("defers API TLS file reads and resolves defaults or overridden paths", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const defaultsRoot = yield* project(`project_id = "stack-config-api-tls-defaults"
+[api.tls]
+enabled = true
+`);
+      const defaults = yield* load(defaultsRoot);
+      expect(yield* defaults.gateway).toEqual({
+        port: "auto",
+        tls: { cert: DEFAULT_LOCAL_TLS_CERT, key: DEFAULT_LOCAL_TLS_KEY },
+      });
+
+      const customRoot = yield* project(
+        `project_id = "stack-config-api-tls-overrides"
+[api.tls]
+enabled = true
+cert_path = "missing/cert.pem"
+key_path = "missing/key.pem"
+`,
+        {
+          supabaseEnv:
+            "SUPABASE_API_TLS_CERT_PATH=override/cert.pem\nSUPABASE_API_TLS_KEY_PATH=override/key.pem\n",
+        },
+      );
+      const custom = yield* load(customRoot);
+      const customTls = Effect.gen(function* () {
+        yield* fs.makeDirectory(path.join(customRoot, "supabase", "override"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(customRoot, "supabase", "override", "cert.pem"),
+          "custom certificate",
+        );
+        yield* fs.writeFileString(
+          path.join(customRoot, "supabase", "override", "key.pem"),
+          "custom key",
+        );
+        return yield* custom.gateway;
+      });
+      expect(yield* customTls).toEqual({
+        port: "auto",
+        tls: { cert: "custom certificate", key: "custom key" },
+      });
+
+      const missingRoot = yield* project(`project_id = "stack-config-api-tls-missing"
+[api.tls]
+enabled = true
+cert_path = "missing/cert.pem"
+key_path = "missing/key.pem"
+`);
+      const missing = yield* load(missingRoot);
+      const exit = yield* missing.gateway.pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("failed to read TLS cert");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("resolves configured Auth template and notification files for the stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const root = yield* project(`project_id = "stack-config-auth-template"
 [auth.email.template.invite]
-content_path = "./templates/invite.html"
+content_path = "./supabase/templates/invite.html"
+[auth.email.notification.password_changed]
+enabled = true
+content_path = "./supabase/templates/password_changed.html"
+[auth.email.notification.email_changed]
+enabled = false
+content_path = "./supabase/templates/disabled.html"
 `);
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.email");
+      const canonicalRoot = yield* fs.realPath(root);
+      yield* fs.makeDirectory(path.join(root, "supabase", "templates"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(root, "supabase", "templates", "invite.html"),
+        "invite body",
+      );
+      yield* fs.writeFileString(
+        path.join(root, "supabase", "templates", "password_changed.html"),
+        "notification body",
+      );
+      const config = yield* load(root);
+      const recipes = byService(yield* config.creations("stack-auth-template"));
+      const auth = recipes.get("auth");
+      expect(auth?.service).toBe("auth");
+      if (auth?.service !== "auth") return yield* Effect.die("Auth recipe missing");
+      expect(auth.config.templates).toEqual([
+        {
+          id: "invite",
+          filePath: path.join(canonicalRoot, "supabase", "templates", "invite.html"),
+        },
+        {
+          id: "password_changed_notification",
+          filePath: path.join(canonicalRoot, "supabase", "templates", "password_changed.html"),
+        },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects missing and escaping Auth template files during creation resolution", () =>
+    Effect.gen(function* () {
+      const missingRoot = yield* project(`project_id = "stack-config-auth-template-missing"
+[auth.email.template.invite]
+content_path = "./supabase/templates/missing.html"
+`);
+      const missing = yield* load(missingRoot);
+      const missingExit = yield* missing.creations("stack-auth-template-missing").pipe(Effect.exit);
+      expect(Exit.isFailure(missingExit)).toBe(true);
+      if (Exit.isFailure(missingExit))
+        expect(String(missingExit.cause)).toContain(
+          "Invalid config for auth.email.template.invite.content_path",
+        );
+
+      const escapingRoot = yield* project(`project_id = "stack-config-auth-template-escape"
+[auth.email.template.invite]
+content_path = "../outside.html"
+`);
+      const escaping = yield* load(escapingRoot);
+      const escapingExit = yield* escaping
+        .creations("stack-auth-template-escape")
+        .pipe(Effect.exit);
+      expect(Exit.isFailure(escapingExit)).toBe(true);
+      if (Exit.isFailure(escapingExit))
+        expect(String(escapingExit.cause)).toContain("resolves outside the project root");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

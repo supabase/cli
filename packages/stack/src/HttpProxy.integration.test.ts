@@ -3,9 +3,12 @@ import { expect, it } from "@effect/vitest";
 import { Data, Deferred, Effect, Fiber, Layer, Logger, type LogLevel } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
+import { Agent as HttpsAgent } from "node:https"; // oxlint-disable-line effecttsgo/node-builtin-import -- TLS listener fixture.
+import { get as httpsGet } from "node:https"; // oxlint-disable-line effecttsgo/node-builtin-import -- TLS listener fixture.
 import { Socket } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- raw WebSocket upgrade fixture.
 import { WebSocket, WebSocketServer } from "ws";
+import { DEFAULT_LOCAL_TLS_CERT, DEFAULT_LOCAL_TLS_KEY } from "./Defaults.ts";
 import { ProxyError } from "./Proxy.ts";
 import { makeHttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
@@ -247,7 +250,9 @@ it.live("forwards raw WebSocket upgrades, subprotocols, and echo frames", () =>
           client.close();
         });
         client.once("error", (cause) =>
-          resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause }))),
+          resume(
+            Effect.fail(new HttpProxyTestError({ message: "TLS WebSocket request failed", cause })),
+          ),
         );
         return Effect.sync(() => client.close());
       }).pipe(Effect.timeout("10 seconds"));
@@ -290,6 +295,70 @@ it.live("overrides the upstream host for HTTP routes when configured", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.live("serves proxied requests over TLS with the configured certificate", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((_request, response) => response.end("tls upstream"));
+      const sockets = new WebSocketServer({ server: backend });
+      sockets.on("connection", (socket, request) => socket.send(request.url ?? "/"));
+      const backendAddress = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({
+        host: "127.0.0.1",
+        port: 0,
+        tls: { cert: DEFAULT_LOCAL_TLS_CERT, key: DEFAULT_LOCAL_TLS_KEY },
+      });
+      const tlsAgent = yield* Effect.acquireRelease(
+        Effect.sync(() => new HttpsAgent({ ca: DEFAULT_LOCAL_TLS_CERT })),
+        (agent) => Effect.sync(() => agent.destroy()),
+      );
+      yield* proxy.setRoutes([{ id: "tls", prefix: "/", target: Effect.succeed(backendAddress) }]);
+      const body = yield* Effect.callback<string, HttpProxyTestError>((resume) => {
+        const request = httpsGet(
+          { hostname: "localhost", port: proxy.port, path: "/health", ca: DEFAULT_LOCAL_TLS_CERT },
+          (response) => {
+            response.setEncoding("utf8");
+            let result = "";
+            response.on("data", (chunk: string) => (result += chunk));
+            response.on("end", () => resume(Effect.succeed(result)));
+          },
+        );
+        request.on("error", (cause) =>
+          resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause }))),
+        );
+        return Effect.sync(() => request.destroy());
+      });
+      expect(body).toBe("tls upstream");
+      const upgradePath = yield* Effect.callback<string, HttpProxyTestError>((resume) => {
+        const client = new WebSocket(`wss://localhost:${proxy.port}/socket?token=one`, {
+          agent: tlsAgent,
+        });
+        client.once("message", (message) => {
+          const value = Array.isArray(message)
+            ? Buffer.concat(message).toString()
+            : Buffer.isBuffer(message)
+              ? message.toString()
+              : new TextDecoder().decode(message);
+          resume(Effect.succeed(value));
+          client.close();
+        });
+        client.once("error", (cause) =>
+          resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause }))),
+        );
+        return Effect.sync(() => client.close());
+      }).pipe(Effect.timeout("10 seconds"));
+      expect(upgradePath).toBe("/socket?token=one");
+      yield* Effect.callback<void, HttpProxyTestError>((resume) => {
+        sockets.close((cause) =>
+          cause === undefined
+            ? resume(Effect.void)
+            : resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause }))),
+        );
+        return Effect.void;
+      });
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live("rewrites bearer and sb-api-key headers only on opted-in routes", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -299,6 +368,7 @@ it.live("rewrites bearer and sb-api-key headers only on opted-in routes", () =>
             authorization: incoming.headers.authorization,
             apikey: incoming.headers.apikey,
             sbApiKey: incoming.headers["sb-api-key"],
+            contentProfile: incoming.headers["content-profile"],
           }),
         );
       });
@@ -333,6 +403,7 @@ it.live("rewrites bearer and sb-api-key headers only on opted-in routes", () =>
           id: "storage",
           prefix: "/storage/v1",
           target: Effect.succeed(backendAddress),
+          addHeaders: { "content-profile": "public" },
           keyRewrite: { policy: "bearer", keys },
         },
         { id: "passthrough", prefix: "/raw", target: Effect.succeed(backendAddress) },
@@ -377,6 +448,18 @@ it.live("rewrites bearer and sb-api-key headers only on opted-in routes", () =>
       ).toEqual({
         authorization: "Bearer service.role.jwt",
         apikey: keys.secretKey,
+        contentProfile: "public",
+      });
+      expect(
+        yield* send("/storage/v1/object", {
+          authorization: "Bearer sb_secret_client",
+          apikey: keys.secretKey,
+          "content-profile": "private",
+        }),
+      ).toEqual({
+        authorization: "Bearer service.role.jwt",
+        apikey: keys.secretKey,
+        contentProfile: "private",
       });
       expect(
         yield* send("/storage/v1/s3/bucket/object", {
@@ -406,8 +489,13 @@ it.live("rewrites only the apikey query value on opted-in WebSocket routes", () 
       const backend = createServer();
       const sockets = new WebSocketServer({ server: backend });
       let forwardedAuthorization: string | undefined;
+      let forwardedContentProfile: string | undefined;
       sockets.on("connection", (socket, request) => {
         forwardedAuthorization = request.headers.authorization;
+        const contentProfile = request.headers["content-profile"];
+        forwardedContentProfile = Array.isArray(contentProfile)
+          ? contentProfile.join(", ")
+          : contentProfile;
         socket.send(request.url ?? "/");
       });
       const backendAddress = yield* listen(backend);
@@ -417,6 +505,7 @@ it.live("rewrites only the apikey query value on opted-in WebSocket routes", () 
           id: "realtime",
           prefix: "/realtime",
           target: Effect.succeed(backendAddress),
+          addHeaders: { "content-profile": "public" },
           keyRewrite: {
             policy: "query",
             keys: {
@@ -453,6 +542,7 @@ it.live("rewrites only the apikey query value on opted-in WebSocket routes", () 
       expect(publishableUrl).toBe(
         "/realtime/v1/websocket?apikey=anon.jwt.value&keep=a%20b&other=2",
       );
+      expect(forwardedContentProfile).toBe("public");
       expect(forwardedAuthorization).toBe("Bearer original-client-token");
       const secretUrl = yield* connect("?apikey=sb_secret_example&keep=a%20b");
       expect(secretUrl).toBe("/realtime/v1/websocket?apikey=service.role.jwt&keep=a%20b");

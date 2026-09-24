@@ -59,13 +59,21 @@ capabilities do not reserve public listener ports, and the Functions inspector
 reserves a private port only when debugging is enabled. Service settings belong
 in the materialized definition only when the local runtime implements them;
 hosted-only database network restrictions, SSL enforcement, vault, REST
-auto-exposure, and Storage Analytics settings are excluded. API TLS is locally
-meaningful but unsupported by the stack gateway, so it is excluded too.
+auto-exposure, and Storage Analytics settings are excluded. The shared API
+gateway can terminate TLS on its host listener while retaining a separate HTTP
+runtime listener for workloads.
 Analytics' Vector port is assigned by the runtime rather than stored as a
 service setting.
 
 Disabling a capability releases its automatic port assignment; re-enabling it may
 select a new port.
+
+Service endpoints with their own ports can also contribute routes to the shared
+gateway while retaining their independently assigned ports. Auth's email-template
+listener uses an ephemeral port scoped to the Auth launch; its URL is injected
+only into that launch and regenerated after restart. The listener binds to
+loopback for native Auth and all interfaces for container Auth. Native Auth
+reaches it over loopback, while containers use the runtime's host gateway name.
 
 Stack handles are lightweight identity-scoped clients. Creating or opening one
 does not launch a Supervisor. Successful stop drains ingress, removes every

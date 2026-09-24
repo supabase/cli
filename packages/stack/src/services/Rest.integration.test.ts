@@ -166,6 +166,13 @@ describe("service catalog", () => {
           const publicAddress = yield* restNamespace.address("http", "host");
           yield* rest.start;
           yield* rest.ready;
+          const adminEndpoint = yield* restRecipe.endpoint("admin");
+          const adminResponse = yield* client.execute(
+            HttpClientRequest.get(
+              "http://" + adminEndpoint.host + ":" + adminEndpoint.port + "/live",
+            ),
+          );
+          expect(adminResponse.status).toBe(200);
           const token = yield* Effect.tryPromise(() =>
             new SignJWT({ role: "anon" })
               .setProtectedHeader({ alg: "HS256", typ: "JWT" })
@@ -263,6 +270,7 @@ describe("service catalog", () => {
         yield* rest.start;
         yield* rest.ready;
         const endpoint = yield* restRecipe.endpoint("http");
+        const adminEndpoint = yield* restRecipe.endpoint("admin");
         const token = yield* Effect.tryPromise(() =>
           new SignJWT({ role: "anon" })
             .setProtectedHeader({ alg: "HS256", typ: "JWT" })
@@ -278,6 +286,12 @@ describe("service catalog", () => {
         const responseBody = yield* response.text;
         expect(response.status).toBe(200);
         expect(responseBody).toContain("catalog-native");
+        const adminResponse = yield* client.execute(
+          HttpClientRequest.get(
+            "http://" + adminEndpoint.host + ":" + adminEndpoint.port + "/live",
+          ),
+        );
+        expect(adminResponse.status).toBe(200);
         yield* rest.stop;
         yield* database.stop;
       }),
