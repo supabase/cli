@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Ref, Schema, Stream } from "effect";
+import { Cause, Effect, FileSystem, Layer, Ref, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeService } from "../Service.ts";
 import { bundleServeMainTemplate } from "../../tests/serve-main-bundler.ts";
@@ -176,7 +176,15 @@ for (const runtime of ["native", "docker"] as const) {
             config: recipe.creation,
           });
           yield* instance.start;
-          yield* instance.ready;
+          yield* instance.ready.pipe(
+            Effect.catchCause((cause) =>
+              Ref.get(logs).pipe(
+                Effect.flatMap((text) =>
+                  Effect.die(`${Cause.pretty(cause)}\nStartup logs:\n${text}`),
+                ),
+              ),
+            ),
+          );
           const endpoint = yield* recipe.endpoint("http");
           const base = `http://${endpoint.host}:${endpoint.port}`;
           const response = yield* client.execute(HttpClientRequest.get(`${base}/hello`));
