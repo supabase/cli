@@ -54,6 +54,9 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         MAX_HEADER_LENGTH: String(creation.config.maxHeaderLength ?? 4096),
         ERL_AFLAGS:
           creation.config.ipVersion === "IPv6" ? "-proto_dist inet6_tcp" : "-proto_dist inet_tcp",
+        // The stack database is reachable only over IPv4; unset, Realtime prefers IPv6 for
+        // dual-stack hosts such as Docker Desktop's host.docker.internal.
+        DB_IP_VERSION: "ipv4",
         RUN_JANITOR: "true",
         ...(rpc === undefined
           ? {}

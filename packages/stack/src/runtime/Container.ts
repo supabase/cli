@@ -40,6 +40,8 @@ interface ContainerSpec {
   }>;
   readonly workingDir?: string;
   readonly ports?: ReadonlyArray<number>;
+  /** Seconds `docker stop` waits before SIGKILL. Omitted means 10. */
+  readonly stopGraceSeconds?: number;
 }
 
 export interface ContainerProcess {
@@ -52,6 +54,8 @@ export interface ContainerProcess {
   readonly exitCode: Effect.Effect<number, ContainerError>;
   readonly stdin: Sink.Sink<void, Uint8Array, never, ContainerError>;
   readonly stop: Effect.Effect<void, ContainerError>;
+  readonly discard: Effect.Effect<void, ContainerError>;
+  readonly kill: Effect.Effect<void, ContainerError>;
   readonly remove: Effect.Effect<void, ContainerError>;
 }
 
@@ -62,6 +66,7 @@ export class ContainerLaunchError extends Data.TaggedError("ContainerLaunchError
 
 export interface ContainerRuntime {
   readonly prepare: (image: string) => Effect.Effect<void, ContainerError>;
+  readonly prepareImage: (image: string) => Effect.Effect<string, ContainerError>;
   readonly launch: (
     spec: ContainerSpec,
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
@@ -174,12 +179,13 @@ export const makeContainerRuntime = (options: {
       image: string,
       mirrors: ReadonlyArray<string>,
       primaryError: ContainerError,
-    ): Effect.Effect<void, ContainerError> => {
+    ): Effect.Effect<string, ContainerError> => {
       const [mirror, ...rest] = mirrors;
       if (mirror === undefined) return Effect.fail(primaryError);
       return Effect.gen(function* () {
         if (!(yield* present(mirror))) yield* pull(mirror);
         yield* Ref.update(mirrored, (map) => new Map(map).set(image, mirror));
+        return mirror;
       }).pipe(
         Effect.tap(() => Effect.logInfo(`Pulled image from mirror ${mirror}`)),
         Effect.tapError((cause) => Effect.logWarning(`Image mirror ${mirror} failed`, cause)),
@@ -187,7 +193,7 @@ export const makeContainerRuntime = (options: {
       );
     };
 
-    const prepare = Effect.fn("Container.prepare")(function* (image: string) {
+    const prepareImage = Effect.fn("Container.prepareImage")(function* (image: string) {
       // A mirror chosen earlier may have been pruned since; launches follow the primary again.
       const usePrimary = Ref.update(mirrored, (map) => {
         if (!map.has(image)) return map;
@@ -198,13 +204,17 @@ export const makeContainerRuntime = (options: {
       const mirrors = options.imageMirrors?.(image) ?? [];
       // Presence is rechecked per attempt: a concurrent prepare may land the image during backoff.
       const attempt = Effect.gen(function* () {
-        if (yield* present(image)) return yield* usePrimary;
-        yield* pull(image).pipe(
-          Effect.andThen(usePrimary),
+        if (yield* present(image)) {
+          yield* usePrimary;
+          return image;
+        }
+        return yield* pull(image).pipe(
+          Effect.as(image),
+          Effect.tap(() => usePrimary),
           Effect.catch((primaryError) => fromMirror(image, mirrors, primaryError)),
         );
       });
-      yield* attempt.pipe(
+      return yield* attempt.pipe(
         Effect.tapError((error) =>
           rateLimited(error)
             ? Effect.logWarning(`Registry rate-limited the pull of ${image}`)
@@ -213,6 +223,9 @@ export const makeContainerRuntime = (options: {
         Effect.retry({ schedule: pullBackoff, times: PULL_MAX_RETRIES, while: rateLimited }),
       );
     });
+    const prepare = Effect.fn("Container.prepare")((image: string) =>
+      prepareImage(image).pipe(Effect.asVoid),
+    );
 
     const launch = Effect.fn("Container.launch")(function* (
       spec: ContainerSpec,
@@ -311,7 +324,24 @@ export const makeContainerRuntime = (options: {
           const removed = yield* Ref.make(false);
           const stop = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-            yield* run(["stop", "--time", "10", id]);
+            const grace =
+              spec.stopGraceSeconds !== undefined &&
+              Number.isInteger(spec.stopGraceSeconds) &&
+              spec.stopGraceSeconds > 0 &&
+              spec.stopGraceSeconds <= 60
+                ? String(spec.stopGraceSeconds)
+                : "10";
+            yield* run(["stop", "--time", grace, id]);
+            yield* Ref.set(stopped, true);
+          });
+          const discard = Effect.gen(function* () {
+            if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
+            yield* run(["stop", "--time", "0", id]);
+            yield* Ref.set(stopped, true);
+          });
+          const kill = Effect.gen(function* () {
+            if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
+            yield* run(["kill", id]);
             yield* Ref.set(stopped, true);
           });
           const remove = Effect.gen(function* () {
@@ -334,6 +364,8 @@ export const makeContainerRuntime = (options: {
             exitCode: Effect.fail(errorFor("wait", "Container did not start")),
             stdin: Sink.fail(errorFor("stdin", "Container did not start")),
             stop,
+            discard,
+            kill,
             remove,
           };
           let owned = partial;
@@ -419,5 +451,5 @@ export const makeContainerRuntime = (options: {
         }),
       );
     });
-    return { prepare, launch, launchTool: (spec) => launch(spec, true) };
+    return { prepare, prepareImage, launch, launchTool: (spec) => launch(spec, true) };
   });

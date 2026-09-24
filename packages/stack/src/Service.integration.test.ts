@@ -5,6 +5,7 @@ import {
   ServiceDestroyed,
   ServiceError,
   ServiceLaunchError,
+  ServiceStaleLaunch,
   type RuntimeSession,
   type ServiceDefinition,
   type ServiceInstance,
@@ -890,7 +891,7 @@ describe("service kernel", () => {
     ),
   );
 
-  it.live("cleans an exact runtime after an unexpected exit during health", () =>
+  it.live("fails readiness with the crash error and cleans the exact runtime", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fixture = yield* makeFixture;
@@ -918,7 +919,13 @@ describe("service kernel", () => {
         yield* open(plan.removeGate);
         yield* Fiber.join(stopping);
         yield* Fiber.join(stopped);
-        expect(Exit.isFailure(yield* Fiber.await(ready))).toBe(true);
+        const result = yield* Fiber.await(ready);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const failure = result.cause.reasons.find(Cause.isFailReason);
+          expect(failure?.error).toBeInstanceOf(ServiceError);
+          expect(failure?.error).toMatchObject({ operation: "process", message: "crashed" });
+        }
         expect((yield* fixture.service.get).lifecycle).toBe("stopped");
         expect((yield* Ref.get(plan.state)).removed).toBe(true);
         expect((yield* fixture.service.get).wakeEnabled).toBe(false);
@@ -1001,7 +1008,12 @@ describe("service kernel", () => {
           yield* Deferred.await(first.removeStarted);
           yield* open(first.removeGate);
           yield* Fiber.join(stopping);
-          expect(Exit.isFailure(yield* Fiber.await(oldReady))).toBe(true);
+          const stale = yield* Fiber.await(oldReady);
+          expect(Exit.isFailure(stale)).toBe(true);
+          if (Exit.isFailure(stale))
+            expect(stale.cause.reasons.find(Cause.isFailReason)?.error).toBeInstanceOf(
+              ServiceStaleLaunch,
+            );
 
           yield* open(second.launchGate);
           yield* fixture.service.start;
