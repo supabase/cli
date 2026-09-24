@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Effect, Exit, Ref } from "effect";
+import { Deferred, Effect, Exit, Fiber, Ref } from "effect";
 import { makeDockerHelperRegistry } from "./DockerHelperRegistry.ts";
 
 it.effect("opens a helper once and closes it with the host scope", () =>
@@ -11,7 +11,7 @@ it.effect("opens a helper once and closes it with the host scope", () =>
       Effect.gen(function* () {
         const registry = yield* makeDockerHelperRegistry("owner-one");
         const open = Ref.updateAndGet(opened, (count) => count + 1).pipe(
-          Effect.map((count) => ({ id: `helper-${String(count)}`, created: true })),
+          Effect.map((count) => `helper-${String(count)}`),
         );
         const close = (id: string) => Ref.update(closed, (ids) => [...ids, id]);
         yield* registry.use("volume", open, close, (id) => Ref.update(seen, (ids) => [...ids, id]));
@@ -30,7 +30,7 @@ it.effect("keeps the helper when a command fails", () =>
     const opened = yield* Ref.make(0);
     const registry = yield* makeDockerHelperRegistry("owner-one");
     const open = Ref.updateAndGet(opened, (count) => count + 1).pipe(
-      Effect.map((count) => ({ id: `helper-${String(count)}`, created: true })),
+      Effect.map((count) => `helper-${String(count)}`),
     );
     const close = (_id: string) => Effect.void;
     const failed = yield* registry
@@ -43,20 +43,27 @@ it.effect("keeps the helper when a command fails", () =>
   }),
 );
 
-it.effect("does not remove a helper this process did not create", () =>
+it.effect("closes an interrupted helper after releasing the registry gate", () =>
   Effect.gen(function* () {
+    const opened = yield* Ref.make(0);
     const closed = yield* Ref.make<Array<string>>([]);
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const registry = yield* makeDockerHelperRegistry("owner-one");
-        yield* registry.use(
-          "volume",
-          Effect.succeed({ id: "adopted", created: false }),
-          (id) => Ref.update(closed, (ids) => [...ids, id]),
-          (id) => Effect.succeed(id),
-        );
-      }),
+    const entered = yield* Deferred.make<void>();
+    const registry = yield* makeDockerHelperRegistry("owner-one");
+    const open = Ref.updateAndGet(opened, (count) => count + 1).pipe(
+      Effect.map((count) => `helper-${String(count)}`),
     );
-    expect(yield* Ref.get(closed)).toEqual([]);
+    const close = (id: string) => Ref.update(closed, (ids) => [...ids, id]);
+    const interrupted = yield* registry
+      .use("volume", open, close, () =>
+        Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+      )
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(entered);
+    const exit = yield* Fiber.interrupt(interrupted).pipe(Effect.andThen(Fiber.await(interrupted)));
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(yield* Ref.get(closed)).toEqual(["helper-1"]);
+
+    const replacement = yield* registry.use("volume", open, close, (id) => Effect.succeed(id));
+    expect(replacement).toBe("helper-2");
   }),
 );

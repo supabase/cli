@@ -1,10 +1,4 @@
-import { Effect, Ref, Scope, Semaphore } from "effect";
-
-interface DockerHelperHandle {
-  readonly id: string;
-  /** False when this process found a helper another process already created. */
-  readonly created: boolean;
-}
+import { Cause, Effect, Exit, Ref, Scope, Semaphore } from "effect";
 
 export interface DockerHelperRegistry {
   /** Identifies helpers owned by one host process. */
@@ -12,7 +6,7 @@ export interface DockerHelperRegistry {
   /** Runs `body` with the helper for `key`, opening it once per host lifetime. */
   readonly use: <A, E>(
     key: string,
-    open: Effect.Effect<DockerHelperHandle, E>,
+    open: Effect.Effect<string, E>,
     close: (id: string) => Effect.Effect<void, E>,
     body: (id: string) => Effect.Effect<A, E>,
   ) => Effect.Effect<A, E>;
@@ -48,35 +42,40 @@ export const makeDockerHelperRegistry = (
     );
     const use = <A, E>(
       key: string,
-      open: Effect.Effect<DockerHelperHandle, E>,
+      open: Effect.Effect<string, E>,
       close: (id: string) => Effect.Effect<void, E>,
       body: (id: string) => Effect.Effect<A, E>,
-    ): Effect.Effect<A, E> =>
-      gate.withPermit(
+    ): Effect.Effect<A, E> => {
+      const operation = gate.withPermit(
         Effect.gen(function* () {
           const current = yield* Ref.get(helpers);
           const existing = current.get(key);
           const id =
             existing?.id ??
-            (yield* open.pipe(
-              Effect.tap((opened) =>
-                Ref.update(helpers, (map) => {
-                  const next = new Map(map);
-                  next.set(key, {
-                    id: opened.id,
-                    close: (helperId) =>
-                      (opened.created ? close(helperId) : Effect.void).pipe(
-                        Effect.catch((cause) => Effect.logError(cause)),
-                      ),
-                  });
-                  return next;
-                }),
+            (yield* Effect.uninterruptibleMask((restore) =>
+              restore(open).pipe(
+                Effect.flatMap((id) =>
+                  Ref.update(helpers, (map) => {
+                    const next = new Map(map);
+                    next.set(key, {
+                      id,
+                      close: (helperId) =>
+                        close(helperId).pipe(Effect.catch((cause) => Effect.logError(cause))),
+                    });
+                    return next;
+                  }).pipe(Effect.as(id)),
+                ),
               ),
-              Effect.map((opened) => opened.id),
             ));
           return yield* body(id);
         }),
       );
+      return operation.pipe(
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause) ? drop(key) : Effect.void,
+        ),
+      );
+    };
     const drop = (key: string): Effect.Effect<void> =>
       gate.withPermit(
         Effect.gen(function* () {
