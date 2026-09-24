@@ -87,7 +87,7 @@ const composeStack = Effect.fn("DbDiffStackCacheE2e.composeStack")(function* (
           .pipe(
             Effect.catchIf(
               (cause) => Predicate.isTagged(cause.reason, "NotFound"),
-              () => Effect.succeed(undefined),
+              () => Effect.void,
             ),
           );
         if (markerText === undefined) return undefined;
