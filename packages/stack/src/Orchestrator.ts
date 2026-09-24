@@ -590,13 +590,17 @@ const makeOrchestrator = Effect.gen(function* () {
     operation: "start" | "stop" | "destroy",
     ids: ReadonlyArray<string>,
     action: (id: string) => Effect.Effect<void, OrchestratorError | LifecycleError>,
+    concurrency: 1 | "unbounded" = 1,
   ): Effect.fn.Return<ReadonlyArray<CoreObservation>, OrchestratorError | LifecycleError> {
     return yield* Effect.gen(function* () {
-      const outcomes = yield* Effect.forEach(ids, (id) =>
-        action(id).pipe(
-          Effect.exit,
-          Effect.map((result) => ({ id, result })),
-        ),
+      const outcomes = yield* Effect.forEach(
+        ids,
+        (id) =>
+          action(id).pipe(
+            Effect.exit,
+            Effect.map((result) => ({ id, result })),
+          ),
+        { concurrency },
       );
       if (outcomes.some(({ result }) => Exit.isFailure(result)))
         return yield* new OrchestratorError({
@@ -652,7 +656,8 @@ const makeOrchestrator = Effect.gen(function* () {
             Effect.exit,
           ),
         );
-      const outcomes = yield* Effect.forEach(
+      return yield* settle(
+        "start",
         order,
         (id) => {
           const completion = completions.get(id);
@@ -699,20 +704,9 @@ const makeOrchestrator = Effect.gen(function* () {
           });
           return action.pipe(
             Effect.onExit((result) => Deferred.succeed(completion, result).pipe(Effect.asVoid)),
-            Effect.exit,
-            Effect.map((result) => ({ id, result })),
           );
         },
-        { concurrency: "unbounded" },
-      );
-      if (outcomes.some(({ result }) => Exit.isFailure(result)))
-        return yield* new OrchestratorError({
-          operation: "start",
-          message: "Composition start had failures",
-          outcomes,
-        });
-      return yield* Effect.forEach(order, (id) =>
-        node(id).pipe(Effect.flatMap((instance) => instance.core.get)),
+        "unbounded",
       );
     },
   );
