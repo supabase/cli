@@ -8,9 +8,7 @@ import {
   Effect,
   Exit,
   Fiber,
-  FileSystem,
   Option,
-  Path,
   Ref,
   Sink,
   Stream,
@@ -18,7 +16,6 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { HttpClient } from "effect/unstable/http";
-import * as ContainerSentinel from "../ContainerSentinel.ts";
 import { ContainerLaunchError, makeContainerRuntime, type ContainerProcess } from "./Container.ts";
 
 const image = "oven/bun:1.4.1-slim";
@@ -32,7 +29,7 @@ describe("container process adapter", () => {
   it.live("recognizes a cached pinned image without pulling", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const runtime = yield* makeContainerRuntime({ engine: "docker" });
+      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
       yield* runtime.prepare(image);
       const repositoryDigest = yield* repoDigest(delegate, image);
       const digest = repositoryDigest.slice(repositoryDigest.indexOf("@") + 1);
@@ -40,7 +37,7 @@ describe("container process adapter", () => {
       const pinnedImage = `${image}@${digest}`;
       const pullAttempted = yield* Ref.make(false);
       const spawner = makePullFailureSpawner(delegate, pullAttempted);
-      yield* makeContainerRuntime({ engine: "docker" }).pipe(
+      yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
         Effect.flatMap((runtime) => runtime.prepare(pinnedImage)),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
@@ -55,7 +52,7 @@ describe("container process adapter", () => {
       const token = yield* crypto.randomUUIDv4;
       const pullAttempted = yield* Ref.make(false);
       const spawner = makePullFailureSpawner(delegate, pullAttempted);
-      const result = yield* makeContainerRuntime({ engine: "docker" }).pipe(
+      const result = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
         Effect.flatMap((runtime) =>
           runtime.prepare(`supabase-prepare-regression:${token}`).pipe(Effect.exit),
         ),
@@ -71,7 +68,7 @@ describe("container process adapter", () => {
     Effect.gen(function* () {
       const id = yield* Effect.scoped(
         Effect.gen(function* () {
-          const runtime = yield* makeContainerRuntime({ engine: "docker" });
+          const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
           yield* runtime.prepare(image);
           const process = yield* runtime.launch({
             image,
@@ -105,7 +102,7 @@ describe("container process adapter", () => {
     Effect.gen(function* () {
       const id = yield* Effect.scoped(
         Effect.gen(function* () {
-          const runtime = yield* makeContainerRuntime({ engine: "docker" });
+          const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
           yield* runtime.prepare(image);
           const process = yield* runtime.launchTool({
             image,
@@ -138,52 +135,12 @@ describe("container process adapter", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live.skipIf(process.platform === "win32")(
-    "labels managed containers with the active host generation",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "container-generation-" });
-          const stackRoot = path.join(root, "stack");
-          yield* fs.makeDirectory(stackRoot);
-          const stackId = `container-generation-${yield* crypto.randomUUIDv4}`;
-          const sentinel = yield* ContainerSentinel.start({
-            directory: stackRoot,
-            stackId,
-            engine: "docker",
-          });
-          if (sentinel === undefined)
-            return yield* new ContainerTestError({ message: "Unix sentinel was not started" });
-          const runtime = yield* makeContainerRuntime({ engine: "docker" }).pipe(
-            Effect.provideService(ContainerSentinel.Service, { owner: sentinel.owner }),
-          );
-          yield* runtime.prepare(image);
-          const process = yield* runtime.launch({
-            image,
-            stackId,
-            instanceId: "generation-label",
-            env: {},
-            args: ["-e", "setInterval(() => {}, 1000)"],
-          });
-          const label = yield* inspectLabel(process.id, "com.supabase.host-generation");
-          expect(label).toBe(sentinel.owner.generation);
-          yield* process.stop;
-          yield* process.remove;
-          expect(yield* exists(process.id)).toBe(false);
-          yield* sentinel.close;
-        }),
-      ).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.live(
     "publishes two private ports and keeps the second service alive after the first stops",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const runtime = yield* makeContainerRuntime({ engine: "docker" });
+          const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
           yield* runtime.prepare(image);
           const launch = (instanceId: string, marker: string) =>
             runtime.launch({
@@ -220,7 +177,7 @@ describe("container process adapter", () => {
   it.live("returns cleanup authority when container start fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const runtime = yield* makeContainerRuntime({ engine: "docker" });
+        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
         yield* runtime.prepare(image);
         const result = yield* runtime
           .launch({
@@ -248,7 +205,7 @@ describe("container process adapter", () => {
   it.live("keeps exit observation shared after a caller cancels its wait", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const runtime = yield* makeContainerRuntime({ engine: "docker" });
+        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
         yield* runtime.prepare(image);
         const process = yield* runtime.launch({
           image,
@@ -279,7 +236,7 @@ describe("container process adapter", () => {
       yield* Effect.ensuring(
         Effect.scoped(
           Effect.gen(function* () {
-            const runtime = yield* makeContainerRuntime({ engine: "docker" });
+            const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
             yield* runtime.prepare(image);
             const process = yield* runtime.launch({
               image,
@@ -311,7 +268,7 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -348,7 +305,7 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -390,7 +347,7 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -434,7 +391,7 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -473,7 +430,7 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -520,7 +477,7 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -564,7 +521,7 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -617,7 +574,7 @@ describe("container process adapter", () => {
       yield* Effect.ensuring(
         Effect.scoped(
           Effect.gen(function* () {
-            const runtime = yield* makeContainerRuntime({ engine: "docker" });
+            const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
             yield* runtime.prepare(image);
             const result = yield* runtime
               .launch({
@@ -658,7 +615,7 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker" });
+              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
               yield* runtime.prepare(image);
               return yield* runtime
                 .launch({
@@ -698,7 +655,7 @@ describe("container process adapter", () => {
       const spawner = makePendingCreateSpawner(delegate, started, release, present);
       const result = yield* Effect.scoped(
         Effect.gen(function* () {
-          const runtime = yield* makeContainerRuntime({ engine: "docker" });
+          const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
           yield* runtime.prepare(image);
           const launch = yield* runtime
             .launch({
@@ -1077,31 +1034,6 @@ const exists = (id: string) =>
       }),
     );
     return Number(yield* child.exitCode) === 0;
-  });
-
-const inspectLabel = (id: string, label: string) =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const child = yield* spawner.spawn(
-      ChildProcess.make(
-        "docker",
-        ["inspect", "--format", `{{ index .Config.Labels "${label}" }}`, id],
-        { stdin: "ignore" },
-      ),
-    );
-    const [stdout, stderr, code] = yield* Effect.all(
-      [
-        child.stdout.pipe(Stream.decodeText, Stream.mkString),
-        child.stderr.pipe(Stream.decodeText, Stream.mkString),
-        child.exitCode,
-      ],
-      { concurrency: "unbounded" },
-    );
-    if (Number(code) !== 0)
-      return yield* new ContainerTestError({
-        message: `docker inspect failed: ${stderr.trim() || String(code)}`,
-      });
-    return stdout.trim();
   });
 
 const removeExternally = (id: string) =>

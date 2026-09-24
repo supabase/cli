@@ -14,7 +14,6 @@ import {
 import { ChildProcess } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import type { ContainerRuntime } from "../runtime/Container.ts";
-import * as ContainerSentinel from "../ContainerSentinel.ts";
 import type { DatabaseRuntime } from "../services/Database.ts";
 
 const HELPER_IMAGE =
@@ -333,30 +332,11 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
 
       const engineCommand = Effect.fn("DockerDatabaseStorage.engineCommand")(
-        (
-          args: ReadonlyArray<string>,
-          trackOwner = false,
-        ): Effect.Effect<string, DockerDatabaseStorageError> =>
+        (args: ReadonlyArray<string>): Effect.Effect<string, DockerDatabaseStorageError> =>
           Effect.scoped(
             Effect.gen(function* () {
-              const owner = trackOwner ? options.container?.owner : undefined;
-              const command =
-                owner === undefined
-                  ? ChildProcess.make(options.runtime, args, { stdin: "ignore" })
-                  : ChildProcess.make(
-                      "/bin/sh",
-                      [
-                        "-c",
-                        ContainerSentinel.mutationLeaseScript,
-                        "supabase-db-engine-command",
-                        owner.mutationFifoPath,
-                        options.runtime,
-                        ...args,
-                      ],
-                      { stdin: "ignore", detached: true },
-                    );
               const child = yield* options.spawner
-                .spawn(command)
+                .spawn(ChildProcess.make(options.runtime, args, { stdin: "ignore" }))
                 .pipe(Effect.mapError((cause) => errorFor("engine", cause)));
               const [stdout, stderr, code] = yield* Effect.all(
                 [
@@ -436,7 +416,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             const current = yield* Ref.get(helperId);
             if (current !== undefined) {
               // Keep the owned identity until the remote container is gone.
-              yield* engineCommand(["rm", "-f", current], true).pipe(
+              yield* engineCommand(["rm", "-f", current]).pipe(
                 Effect.catchTag("DockerDatabaseStorageError", (cause) =>
                   /no such container/iu.test(cause.message) ? Effect.void : Effect.fail(cause),
                 ),
@@ -456,32 +436,32 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
       const acquireHelper = Effect.fn("DockerDatabaseStorage.acquireHelper")(
         (mounts: ReadonlyArray<DatabaseStorageMount>) =>
-          Effect.gen(function* () {
-            const current = yield* Ref.get(helperId);
-            if (current !== undefined && (yield* Ref.get(helperCleanupPending)))
-              yield* removeHelper();
-            const active = yield* Ref.get(helperId);
-            if (active !== undefined) return active;
-            if (options.container === undefined)
-              return yield* errorFor("helper", "Container runtime is unavailable");
-            if (
-              mounts.some(
-                (mount) => mount.source === options.cacheRoot && mount.target === "/cache",
+          Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              const current = yield* Ref.get(helperId);
+              if (current !== undefined && (yield* Ref.get(helperCleanupPending)))
+                yield* removeHelper();
+              const active = yield* Ref.get(helperId);
+              if (active !== undefined) return active;
+              if (options.container === undefined)
+                return yield* errorFor("helper", "Container runtime is unavailable");
+              if (
+                mounts.some(
+                  (mount) => mount.source === options.cacheRoot && mount.target === "/cache",
+                )
               )
-            )
-              yield* options.fs
-                .makeDirectory(options.cacheRoot, { recursive: true })
-                .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
-            yield* options.container.prepare(HELPER_IMAGE);
-            const token = yield* options.crypto.randomUUIDv4.pipe(
-              Effect.mapError((cause) => errorFor("helper", cause)),
-            );
-            const name = `supabase-db-helper-${token}`;
-            // Register the deterministic owned name before the remote create starts so an
-            // interrupted docker run can still be removed by the same scope.
-            yield* Ref.set(helperId, name);
-            const created = yield* engineCommand(
-              [
+                yield* options.fs
+                  .makeDirectory(options.cacheRoot, { recursive: true })
+                  .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
+              yield* restore(options.container.prepare(HELPER_IMAGE));
+              const token = yield* options.crypto.randomUUIDv4.pipe(
+                Effect.mapError((cause) => errorFor("helper", cause)),
+              );
+              const name = `supabase-db-helper-${token}`;
+              // Register the deterministic owned name before the remote create starts so an
+              // interrupted docker run can still be removed by the same scope.
+              yield* Ref.set(helperId, name);
+              const created = yield* engineCommand([
                 "run",
                 "-d",
                 "--name",
@@ -492,24 +472,19 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 `com.supabase.stack=${options.stackId}`,
                 "--label",
                 `com.supabase.instance=${options.instanceId}`,
-                ...(options.container.owner === undefined
-                  ? []
-                  : [
-                      "--label",
-                      `com.supabase.host-generation=${options.container.owner.generation}`,
-                    ]),
+                "--label",
+                `com.supabase.stack-root=${options.path.resolve(options.root)}`,
                 ...mountArgs(mounts),
                 HELPER_IMAGE,
                 "/bin/sh",
                 "-c",
                 "trap : TERM INT; while :; do sleep 3600; done",
-              ],
-              true,
-            );
-            if (!/^[a-f0-9]{12,64}$/u.test(created))
-              return yield* errorFor("helper", "Docker returned an invalid helper identity");
-            return name;
-          }),
+              ]);
+              if (!/^[a-f0-9]{12,64}$/u.test(created))
+                return yield* errorFor("helper", "Docker returned an invalid helper identity");
+              return name;
+            }),
+          ),
       );
 
       const runHelper = Effect.fn("DockerDatabaseStorage.helper")((
@@ -522,12 +497,10 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           yield* removeHelper();
         });
         const operation = Effect.uninterruptibleMask((restore) =>
-          restore(
-            Effect.gen(function* () {
-              const id = yield* acquireHelper(mounts);
-              return yield* engineCommand(["exec", id, "/bin/sh", "-c", command]);
-            }),
-          ).pipe(
+          Effect.gen(function* () {
+            const id = yield* restore(acquireHelper(mounts));
+            return yield* restore(engineCommand(["exec", id, "/bin/sh", "-c", command]));
+          }).pipe(
             Effect.onExit((exit) =>
               Exit.isFailure(exit) ? Effect.uninterruptible(cleanupAfterFailure) : Effect.void,
             ),

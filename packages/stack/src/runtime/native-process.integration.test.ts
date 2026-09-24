@@ -858,6 +858,93 @@ describe("native process group cleanup", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live.skipIf(process.platform === "win32")(
+    "does not lose a workload when launch is interrupted during the fd5 handshake",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const handshake = yield* Deferred.make<number>();
+          const ready = yield* Deferred.make<void>();
+          const releaseHandshake = yield* Deferred.make<void>();
+          let ownedGroup: number | undefined;
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              if (ownedGroup === undefined) return;
+              try {
+                process.kill(-ownedGroup, "SIGKILL");
+              } catch {
+                // The child scope may already have reaped this exact test group.
+              }
+            }),
+          );
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              const child = yield* delegate.spawn(command);
+              if (
+                !ChildProcess.isStandardCommand(command) ||
+                !command.args.some((argument) => argument.includes("native-launcher"))
+              )
+                return child;
+              yield* child.stdout.pipe(
+                Stream.decodeText,
+                Stream.splitLines,
+                Stream.filter((line) => line === "native-workload-ready"),
+                Stream.runHead,
+                Effect.andThen(Deferred.succeed(ready, undefined)),
+                Effect.forkScoped,
+              );
+              return ChildProcessSpawner.makeHandle({
+                pid: child.pid,
+                exitCode: child.exitCode,
+                isRunning: child.isRunning,
+                kill: child.kill,
+                stdin: child.stdin,
+                stdout: Stream.empty,
+                stderr: child.stderr,
+                all: child.all,
+                getInputFd: child.getInputFd,
+                getOutputFd: (fd) =>
+                  fd === 5
+                    ? child.getOutputFd(fd).pipe(
+                        Stream.tap((bytes) =>
+                          Effect.gen(function* () {
+                            ownedGroup = Number(new TextDecoder().decode(bytes).trim());
+                            yield* Deferred.succeed(handshake, ownedGroup);
+                            yield* Deferred.await(releaseHandshake);
+                          }),
+                        ),
+                      )
+                    : child.getOutputFd(fd),
+                unref: child.unref,
+              });
+            }),
+          );
+          const launch = yield* Effect.forkChild(
+            Effect.scoped(
+              spawnNativeProcess(
+                {
+                  executable: process.execPath,
+                  args: [
+                    "-e",
+                    "process.on('SIGTERM', () => {}); process.stdout.write('native-workload-ready\\n'); setInterval(() => {}, 1000)",
+                  ],
+                  gracefulStopTimeout: "100 millis",
+                },
+                defaultNativeProcessLauncher(),
+              ),
+            ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+          );
+          const groupId = yield* Deferred.await(handshake);
+          yield* Deferred.await(ready);
+          yield* Effect.sync(() => launch.interruptUnsafe());
+          yield* Deferred.succeed(releaseHandshake, undefined);
+          yield* Fiber.await(launch);
+          expect(yield* assertExited(groupId)).toBe(true);
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ),
+  );
+
   it.live("keeps the shared exit observation alive after a canceled waiter", () =>
     withMockedTargetKill(
       Effect.gen(function* () {

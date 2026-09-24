@@ -482,7 +482,7 @@ export const makeDatabase = (
     const container: ContainerRuntime | undefined =
       options.runtime === "native"
         ? undefined
-        : yield* makeContainerRuntime({ engine: options.runtime });
+        : yield* makeContainerRuntime({ engine: options.runtime, root: options.root });
     const storage: DockerDatabaseStorage | undefined =
       options.runtime === "native"
         ? undefined
@@ -633,7 +633,6 @@ export const makeDatabase = (
 
     const prepare = Effect.fn("Database.prepare")(
       function* (input: DatabaseConfig) {
-        if (storage !== undefined) yield* storage.prepare(postgresVersion(input.version));
         const markerPath = path.join(instanceRoot, ".supabase-database-ready.json");
         const hasMarker = yield* fs.exists(markerPath);
         if (hasMarker) {
@@ -669,6 +668,10 @@ export const makeDatabase = (
       ): Effect.Effect<RuntimeSession, ServiceError | ServiceLaunchError> =>
         Effect.gen(function* () {
           const config = { ...context.config, version: postgresVersion(context.config.version) };
+          if (storage !== undefined)
+            yield* storage
+              .prepare(config.version)
+              .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
           const dataPath = path.join(instanceRoot, "data");
           const dataMount =
             storage === undefined

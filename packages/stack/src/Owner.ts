@@ -16,7 +16,7 @@ import {
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as Network from "./Network.ts";
-import * as ContainerSentinel from "./ContainerSentinel.ts";
+import * as Container from "./runtime/Container.ts";
 import type { NetworkBinding, NetworkNamespace } from "./Network.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { CompositionConfig, RegisteredInstance } from "./Orchestrator.ts";
@@ -64,7 +64,6 @@ export interface OwnerOptions {
   readonly state: State.Interface;
   readonly root: string;
   readonly cacheRoot: string;
-  readonly containerOwner?: ContainerSentinel.Owner;
 }
 
 export class Service extends Context.Service<Service, Interface>()("@supabase/stack/Owner") {}
@@ -279,7 +278,6 @@ const makeOwnerWithDependencies = (
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(HttpClient.HttpClient, http),
         Effect.provideService(Scope.Scope, ownerScope),
-        Effect.provideService(ContainerSentinel.Service, { owner: options.containerOwner }),
       );
 
     const getRecipe = (id: string) =>
@@ -951,6 +949,15 @@ const makeOwnerWithDependencies = (
       "destroyNamespace",
       orchestrator.destroyNamespace.pipe(
         Effect.andThen(network.release),
+        Effect.andThen(
+          options.saved.runtime === "native"
+            ? Effect.void
+            : Container.removeStackContainers({
+                engine: options.saved.runtime,
+                stackId: options.saved.id,
+                root: options.root,
+              }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        ),
         Effect.andThen(options.state.remove(options.saved.id)),
       ),
     ).pipe(Effect.withSpan("Owner.destroyNamespace"));

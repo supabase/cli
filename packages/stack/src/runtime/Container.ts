@@ -17,7 +17,6 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as ContainerSentinel from "../ContainerSentinel.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
@@ -63,7 +62,6 @@ export class ContainerLaunchError extends Data.TaggedError("ContainerLaunchError
 }> {}
 
 export interface ContainerRuntime {
-  readonly owner?: ContainerSentinel.Owner | undefined;
   readonly prepare: (image: string) => Effect.Effect<void, ContainerError>;
   readonly launch: (
     spec: ContainerSpec,
@@ -100,6 +98,7 @@ const mountField = (key: string, value: string) => {
 /** Captures the selected local engine; each launch owns one exact container. */
 export const makeContainerRuntime = (options: {
   readonly engine: "docker" | "podman";
+  readonly root: string;
 }): Effect.Effect<
   ContainerRuntime,
   never,
@@ -110,41 +109,23 @@ export const makeContainerRuntime = (options: {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
-    const ownerService = yield* Effect.serviceOption(ContainerSentinel.Service);
-    const sentinelOwner = Option.getOrUndefined(ownerService)?.owner;
+    const stackRoot = path.resolve(options.root);
 
     const command = (
       args: ReadonlyArray<string>,
-      trackOwner: boolean,
       commandOptions: {
         readonly stdin?: "ignore" | "pipe";
         readonly forceKillAfter?: Duration.Input;
       } = {},
-    ) => {
-      if (!trackOwner || sentinelOwner === undefined)
-        return ChildProcess.make(options.engine, args, commandOptions);
-      return ChildProcess.make(
-        "/bin/sh",
-        [
-          "-c",
-          ContainerSentinel.mutationLeaseScript,
-          "supabase-engine-command",
-          sentinelOwner.mutationFifoPath,
-          options.engine,
-          ...args,
-        ],
-        { ...commandOptions, detached: true },
-      );
-    };
+    ) => ChildProcess.make(options.engine, args, { stdin: "ignore", ...commandOptions });
 
     const run = Effect.fn("Container.command")(function* (
       args: ReadonlyArray<string>,
       commandOptions: { readonly timeout?: Duration.Input } = { timeout: "30 seconds" },
-      trackOwner = false,
     ) {
       return yield* Effect.scoped(
         Effect.gen(function* () {
-          const child = yield* spawner.spawn(command(args, trackOwner));
+          const child = yield* spawner.spawn(command(args));
           const tail = (stream: typeof child.stdout) =>
             stream.pipe(
               Stream.decodeText,
@@ -232,9 +213,8 @@ export const makeContainerRuntime = (options: {
         `com.supabase.stack=${spec.stackId}`,
         "--label",
         `com.supabase.instance=${spec.instanceId}`,
-        ...(sentinelOwner === undefined
-          ? []
-          : ["--label", `com.supabase.host-generation=${sentinelOwner.generation}`]),
+        "--label",
+        `com.supabase.stack-root=${stackRoot}`,
         "--env-file",
         envPath,
         ...(spec.mounts ?? []).flatMap((mount) => [
@@ -259,7 +239,7 @@ export const makeContainerRuntime = (options: {
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           // Creation must settle before cleanup can safely run.
-          const creation = yield* run(args, { timeout: undefined }, true).pipe(
+          const creation = yield* run(args, { timeout: undefined }).pipe(
             Effect.mapError(
               (error) =>
                 new ContainerError({
@@ -318,16 +298,14 @@ export const makeContainerRuntime = (options: {
           });
           const stop = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-            yield* run(["stop", "--time", "10", name], {}, true).pipe(
+            yield* run(["stop", "--time", "10", name]).pipe(
               Effect.catchTag("ContainerError", reconcileAbsent),
             );
             yield* Ref.set(stopped, true);
           });
           const remove = Effect.gen(function* () {
             if (yield* Ref.get(removed)) return;
-            yield* run(["rm", name], {}, true).pipe(
-              Effect.catchTag("ContainerError", reconcileAbsent),
-            );
+            yield* run(["rm", name]).pipe(Effect.catchTag("ContainerError", reconcileAbsent));
             yield* Ref.set(stopped, true);
             yield* Ref.set(removed, true);
           });
@@ -365,14 +343,14 @@ export const makeContainerRuntime = (options: {
               const attached = interactive
                 ? yield* spawner
                     .spawn(
-                      command(["start", "--attach", "--interactive", name], true, {
+                      command(["start", "--attach", "--interactive", name], {
                         stdin: "pipe",
                         forceKillAfter: "5 seconds",
                       }),
                     )
                     .pipe(Effect.mapError((cause) => errorFor("start", cause)))
                 : undefined;
-              if (!interactive) yield* run(["start", name], {}, true);
+              if (!interactive) yield* run(["start", name]);
               const wait: Effect.Effect<number, ContainerError> =
                 attached === undefined
                   ? run(["wait", name], {}).pipe(
@@ -433,5 +411,74 @@ export const makeContainerRuntime = (options: {
         }),
       );
     });
-    return { owner: sentinelOwner, prepare, launch, launchTool: (spec) => launch(spec, true) };
+    return { prepare, launch, launchTool: (spec) => launch(spec, true) };
   });
+
+export const removeStackContainers = Effect.fn("Container.removeStackContainers")(
+  (options: {
+    readonly engine: "docker" | "podman";
+    readonly stackId: string;
+    readonly root: string;
+  }) =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const stackRoot = options.root;
+      const run = Effect.fn("Container.runCleanupCommand")(function* (args: ReadonlyArray<string>) {
+        return yield* Effect.scoped(
+          Effect.gen(function* () {
+            const child = yield* spawner.spawn(
+              ChildProcess.make(options.engine, args, {
+                stdin: "ignore",
+                stdout: "pipe",
+                stderr: "pipe",
+              }),
+            );
+            const [stdout, stderr, code] = yield* Effect.all(
+              [
+                child.stdout.pipe(Stream.decodeText, Stream.mkString),
+                child.stderr.pipe(Stream.decodeText, Stream.mkString),
+                child.exitCode,
+              ],
+              { concurrency: "unbounded" },
+            );
+            if (Number(code) !== 0)
+              return yield* errorFor(
+                args[0] ?? "cleanup",
+                stderr.trim() || `Engine exited with ${code}`,
+              );
+            return stdout.trim();
+          }),
+        ).pipe(
+          Effect.timeout("30 seconds"),
+          Effect.mapError((cause) =>
+            cause instanceof ContainerError ? cause : errorFor(args[0] ?? "cleanup", cause),
+          ),
+        );
+      });
+      const filters = [
+        "--filter",
+        `label=com.supabase.stack=${options.stackId}`,
+        "--filter",
+        `label=com.supabase.stack-root=${stackRoot}`,
+      ];
+      const list = () => run(["ps", "--all", "--quiet", "--no-trunc", ...filters]);
+      const ids = (yield* list()).split("\n").filter((id) => id.length > 0);
+      yield* Effect.forEach(
+        ids,
+        (id) =>
+          run(["rm", "--force", id]).pipe(
+            Effect.catchTag("ContainerError", (failure) =>
+              run(["ps", "--all", "--quiet", "--no-trunc", "--filter", `id=${id}`]).pipe(
+                Effect.flatMap((present) =>
+                  present.length === 0 ? Effect.void : Effect.fail(failure),
+                ),
+              ),
+            ),
+          ),
+        { concurrency: 1, discard: true },
+      );
+      const remaining = yield* list();
+      if (remaining.length > 0)
+        return yield* errorFor("cleanup", `Stack containers remain: ${remaining}`);
+    }),
+);

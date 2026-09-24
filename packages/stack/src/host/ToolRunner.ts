@@ -3,12 +3,14 @@ import {
   Crypto,
   Data,
   Effect,
+  Exit,
   FileSystem,
   Layer,
   Path,
   Schema,
   Sink,
   Stream,
+  Ref,
 } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no non-recursive directory removal operation.
 import { rmdir } from "node:fs/promises";
@@ -68,25 +70,57 @@ const makeToolRunner = (options: {
     const container =
       options.runtime === "native"
         ? undefined
-        : yield* makeContainerRuntime({ engine: options.runtime });
+        : yield* makeContainerRuntime({ engine: options.runtime, root: options.root });
     const jobsRoot = path.join(options.root, "jobs");
     yield* fs
       .makeDirectory(jobsRoot, { recursive: true, mode: 0o700 })
       .pipe(Effect.mapError(failure));
 
-    const cleanup = Effect.tryPromise({ try: () => rmdir(jobsRoot), catch: failure }).pipe(
-      Effect.catch((cause) => {
-        const code =
-          typeof cause.cause === "object" && cause.cause !== null && "code" in cause.cause
-            ? cause.cause.code
-            : undefined;
-        return code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST"
-          ? Effect.void
-          : Effect.fail(cause);
-      }),
-    );
+    const nativeCleanup = yield* Ref.make(new Map<string, Effect.Effect<void, ToolError>>());
+    const cleanupNative = (jobId: string) =>
+      Ref.get(nativeCleanup).pipe(
+        Effect.flatMap((entries) => {
+          const cleanup = entries.get(jobId);
+          if (cleanup === undefined) return Effect.void;
+          return cleanup.pipe(
+            Effect.tap(() =>
+              Ref.update(nativeCleanup, (current) => {
+                const next = new Map(current);
+                next.delete(jobId);
+                return next;
+              }),
+            ),
+          );
+        }),
+      );
+
+    const cleanup = Effect.gen(function* () {
+      const entries = yield* Ref.get(nativeCleanup);
+      const results = yield* Effect.forEach(
+        entries.keys(),
+        (jobId) => cleanupNative(jobId).pipe(Effect.exit),
+        { concurrency: 1 },
+      );
+      const failureResult = results.find(Exit.isFailure);
+      if (failureResult !== undefined) return yield* Effect.failCause(failureResult.cause);
+      yield* Effect.tryPromise({ try: () => rmdir(jobsRoot), catch: failure }).pipe(
+        Effect.catch((cause) => {
+          const code =
+            typeof cause.cause === "object" && cause.cause !== null && "code" in cause.cause
+              ? cause.cause.code
+              : undefined;
+          return code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST"
+            ? Effect.void
+            : Effect.fail(cause);
+        }),
+      );
+    });
 
     const run = Effect.fn("ToolRunner.run")(function* <E, R>(input: ToolInput<E, R>) {
+      yield* fs
+        .makeDirectory(jobsRoot, { recursive: true, mode: 0o700 })
+        .pipe(Effect.mapError(failure));
+      const jobId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(failure));
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const tool = yield* Schema.decodeEffect(PostgresTool)(input.tool).pipe(
@@ -95,7 +129,6 @@ const makeToolRunner = (options: {
           if (tool.command !== "pg_prove" && input.pgProve !== undefined)
             return yield* failure("pgProve options require the pg_prove tool");
           const version = postgresVersion(String(tool.major));
-          const jobId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(failure));
           const directory = yield* fs
             .makeTempDirectoryScoped({ directory: jobsRoot, prefix: `${jobId}-` })
             .pipe(Effect.mapError(failure));
@@ -121,7 +154,15 @@ const makeToolRunner = (options: {
                 },
                 undefined,
                 { stackId: options.stackId, workloadId: jobId },
-              ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+              ).pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                Effect.tap((child) =>
+                  Ref.update(nativeCleanup, (entries) =>
+                    new Map(entries).set(jobId, child.kill.pipe(Effect.mapError(failure))),
+                  ),
+                ),
+                Effect.uninterruptible,
+              );
               return {
                 stdin: child.stdin.pipe(Sink.mapError(failure)),
                 stdout: child.stdout.pipe(Stream.mapError(failure)),
@@ -143,14 +184,7 @@ const makeToolRunner = (options: {
                 workingDir: input.pgProve?.workingDir,
                 mounts: input.pgProve?.mounts.map((mount) => ({ ...mount, readOnly: true })),
               })
-              .pipe(
-                Effect.catchTag("ContainerLaunchError", (error) =>
-                  error.process.stop.pipe(
-                    Effect.andThen(error.process.remove),
-                    Effect.andThen(Effect.fail(error.failure)),
-                  ),
-                ),
-              );
+              .pipe(Effect.catchTag("ContainerLaunchError", (error) => Effect.fail(error.failure)));
             return {
               stdin: child.stdin.pipe(Sink.mapError(failure)),
               stdout: child.stdout.pipe(Stream.mapError(failure)),
@@ -184,6 +218,10 @@ const makeToolRunner = (options: {
           );
           return { jobId, exitCode };
         }),
+      ).pipe(
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit) ? cleanupNative(jobId) : cleanupNative(jobId).pipe(Effect.ignore),
+        ),
       );
     });
     return { run, cleanup } satisfies Interface;

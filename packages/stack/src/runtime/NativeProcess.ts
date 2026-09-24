@@ -298,5 +298,8 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
       isRunning: mapError(handle.isRunning),
       kill: killProcess(),
     } satisfies NativeProcess;
-  }).pipe(Effect.mapError((error) => mapProcessError(error, spec)));
+  }).pipe(
+    Effect.uninterruptible,
+    Effect.mapError((error) => mapProcessError(error, spec)),
+  );
 });

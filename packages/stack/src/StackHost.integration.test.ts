@@ -16,6 +16,7 @@ import {
 } from "effect";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import { ChildProcessSpawner } from "effect/unstable/process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration observes exact listener closure.
 import * as Net from "node:net";
 import { acquireHost, launchHost } from "./HostProcess.ts";
@@ -111,6 +112,14 @@ const inProcessRuntime = (
   owner: Parameters<typeof makeRuntime>[0],
   state: State.Interface,
   root: string,
+  options?: {
+    readonly container?: {
+      readonly engine: "docker" | "podman";
+      readonly stackId: string;
+      readonly root: string;
+    };
+    readonly spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  },
 ) =>
   Effect.gen(function* () {
     const acquired = yield* acquireHost(state, "stack");
@@ -122,7 +131,7 @@ const inProcessRuntime = (
         runtime: "native",
       }),
     );
-    const runtime = yield* makeRuntime(
+    const runtimeEffect = makeRuntime(
       owner,
       {
         stackId: "stack",
@@ -132,7 +141,13 @@ const inProcessRuntime = (
       },
       acquired.server,
       acquired.closeConnections,
+      options?.container,
     ).pipe(Effect.provideService(ToolRunner.Service, Context.get(toolContext, ToolRunner.Service)));
+    const runtime = yield* options?.spawner === undefined
+      ? runtimeEffect
+      : runtimeEffect.pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.spawner),
+        );
     yield* runtime.serve;
     return { runtime, port: acquired.port };
   });

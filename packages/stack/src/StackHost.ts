@@ -6,12 +6,12 @@ import {
   Deferred,
   Effect,
   Exit,
+  FileSystem,
   Fiber,
   Layer,
   Option,
   Queue,
   Ref,
-  Schedule,
   Scope,
   Semaphore,
   Stream,
@@ -30,7 +30,7 @@ import { StackError, StackRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
 import { makeToolAttachments, type ToolAttachmentPayload } from "./host/ToolAttachments.ts";
 import * as ToolRunner from "./host/ToolRunner.ts";
-import * as ContainerSentinel from "./ContainerSentinel.ts";
+import * as Container from "./runtime/Container.ts";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { CatalogLog } from "./services/Catalog.ts";
 
@@ -130,8 +130,11 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
     endpoint: HostEndpoint,
     server: HttpServer.HttpServer["Service"],
     closeConnections: Effect.Effect<void>,
-    sentinel?: ContainerSentinel.Handle,
-    containerEngine?: "docker" | "podman",
+    container?: {
+      readonly engine: "docker" | "podman";
+      readonly stackId: string;
+      readonly root: string;
+    },
   ): Effect.Effect<
     StackHostRuntime,
     never,
@@ -140,6 +143,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
     Effect.gen(function* () {
       const scope = yield* Scope.Scope;
       const runner = yield* ToolRunner.Service;
+      const childSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const attachments = yield* makeToolAttachments({
         admit: owner.getServing.pipe(
           Effect.flatMap(isOpen),
@@ -153,7 +157,6 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
       const current = yield* Ref.make<
         { destroy: boolean; fiber: Fiber.Fiber<void, StackError> } | undefined
       >(undefined);
-      const sentinelFailed = yield* Ref.make(false);
       const watchResponse = (
         response: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
         closed: Deferred.Deferred<void>,
@@ -184,35 +187,22 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                     response === undefined ? undefined : yield* Deferred.make<void>();
                   if (response !== undefined && responseClosedSignal !== undefined)
                     yield* watchResponse(response, responseClosedSignal);
-                  let sentinelCloseStarted = false;
                   let retiringAfterDestroyFailure = false;
-                  const closeSentinel = Effect.gen(function* () {
-                    if (sentinel === undefined) return;
-                    const sentinelAlreadyFailed = yield* Ref.get(sentinelFailed);
-                    sentinelCloseStarted = true;
-                    yield* sentinel.close.pipe(
-                      Effect.mapError((cause) => stackError("shutdown", cause)),
-                      Effect.catchIf(
-                        () => sentinelAlreadyFailed,
-                        () => Effect.void,
-                      ),
-                    );
-                  });
                   const removeOwned =
-                    containerEngine === undefined
+                    container === undefined
                       ? Effect.void
-                      : ContainerSentinel.removeOwned({
-                          engine: containerEngine,
-                          stackId: endpoint.stackId,
-                          ...(sentinel === undefined
-                            ? {}
-                            : { generation: sentinel.owner.generation }),
-                        }).pipe(Effect.mapError((cause) => stackError("shutdown", cause)));
+                      : Container.removeStackContainers(container).pipe(
+                          Effect.provideService(
+                            ChildProcessSpawner.ChildProcessSpawner,
+                            childSpawner,
+                          ),
+                          Effect.mapError((cause) => stackError("shutdown", cause)),
+                        );
                   const stopOwned = Effect.gen(function* () {
                     yield* attachments.stopAll;
+                    yield* runner.cleanup;
                     yield* owner.namespace.stop;
                     yield* removeOwned;
-                    yield* closeSentinel;
                   });
                   const finish = Effect.gen(function* () {
                     if (response !== undefined) {
@@ -239,14 +229,11 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                       yield* attachments.stopAll;
                       yield* runner.cleanup;
                       yield* owner.namespace.destroy;
-                      yield* removeOwned;
-                      yield* closeSentinel;
                     }).pipe(Effect.exit);
                     if (Exit.isSuccess(destroyExit)) {
                       yield* finish;
                       return;
                     }
-                    if (sentinelCloseStarted) return yield* Effect.failCause(destroyExit.cause);
                     const stopExit = yield* stopOwned.pipe(Effect.exit);
                     if (Exit.isFailure(stopExit)) {
                       const describeCause = (cause: Cause.Cause<unknown>) => {
@@ -288,17 +275,13 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                   }).pipe(
                     Effect.mapError((cause) => stackError("shutdown", cause)),
                     Effect.catchCause((cause) =>
-                      Ref.get(sentinelFailed).pipe(
-                        Effect.flatMap((failed) => {
-                          if (failed || sentinelCloseStarted || retiringAfterDestroyFailure)
-                            return Effect.failCause(cause);
-                          return owner.setDraining(false).pipe(
+                      retiringAfterDestroyFailure
+                        ? Effect.failCause(cause)
+                        : owner.setDraining(false).pipe(
                             Effect.mapError((reset) => stackError("shutdown", reset)),
                             Effect.andThen(gate.withPermits(1)(Ref.set(current, undefined))),
                             Effect.andThen(Effect.failCause(cause)),
-                          );
-                        }),
-                      ),
+                          ),
                     ),
                   );
                   const fiber = yield* Effect.forkIn(cleanup, scope);
@@ -436,25 +419,6 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
       });
       const serve: Effect.Effect<void, never, Scope.Scope> = server.serve(application);
 
-      if (sentinel !== undefined)
-        yield* Effect.forkScoped(
-          sentinel.failure.pipe(
-            Effect.catch((cause) =>
-              Effect.logError("Container sentinel exited", cause).pipe(
-                Effect.andThen(Ref.set(sentinelFailed, true)),
-                Effect.andThen(owner.setDraining(true)),
-                Effect.andThen(
-                  Effect.suspend(() =>
-                    Ref.get(current).pipe(
-                      Effect.flatMap((active) => shutdown(active?.destroy ?? false)),
-                    ),
-                  ).pipe(Effect.retry({ schedule: Schedule.spaced("1 second") })),
-                ),
-                Effect.andThen(Deferred.succeed(exit, undefined)),
-              ),
-            ),
-          ),
-        );
       return { endpoint, serve, shutdown, closeConnections, exit };
     }),
 );
@@ -475,39 +439,32 @@ export const runStackHost = Effect.fn("StackHost.run")(
           const stateContext = yield* Layer.build(State.layer({ root: options.stateRoot }));
           const state = Context.get(stateContext, State.Service);
           const path = yield* Path.Path;
+          const fs = yield* FileSystem.FileSystem;
           const saved = yield* state.read(options.stackId);
           if (saved === undefined) return yield* hostError("startup", "Stack is not registered");
           const acquired = yield* acquireHost(state, options.stackId);
+          const dataRootPath = path.join(options.stateRoot, saved.id, "data");
+          yield* fs.makeDirectory(dataRootPath, { recursive: true });
+          const dataRoot = yield* fs.realPath(dataRootPath);
           if (saved.runtime !== "native")
-            yield* ContainerSentinel.removeOwned({
+            yield* Container.removeStackContainers({
               engine: saved.runtime,
               stackId: saved.id,
+              root: dataRoot,
             }).pipe(Effect.mapError((cause) => hostError("startup-cleanup", cause)));
-          const sentinel =
-            saved.runtime === "native"
-              ? undefined
-              : yield* ContainerSentinel.start({
-                  directory: path.join(options.stateRoot, saved.id),
-                  stackId: saved.id,
-                  engine: saved.runtime,
-                });
-          const sentinelLayer = Layer.succeed(ContainerSentinel.Service, {
-            owner: sentinel?.owner,
-          });
           const services = yield* Layer.build(
             Layer.merge(
               Owner.layer({
                 saved,
-                root: path.join(options.stateRoot, saved.id, "data"),
+                root: dataRoot,
                 cacheRoot: options.cacheRoot,
-                containerOwner: sentinel?.owner,
               }),
               ToolRunner.layer({
                 stackId: saved.id,
-                root: path.join(options.stateRoot, saved.id, "data"),
+                root: dataRoot,
                 cacheRoot: options.cacheRoot,
                 runtime: saved.runtime,
-              }).pipe(Layer.provide(sentinelLayer)),
+              }),
             ).pipe(Layer.provide(Layer.succeed(State.Service, state))),
           );
           const owner = Context.get(services, Owner.Service);
@@ -522,8 +479,9 @@ export const runStackHost = Effect.fn("StackHost.run")(
             endpoint,
             acquired.server,
             acquired.closeConnections,
-            sentinel,
-            saved.runtime === "native" ? undefined : saved.runtime,
+            saved.runtime === "native"
+              ? undefined
+              : { engine: saved.runtime, stackId: saved.id, root: dataRoot },
           ).pipe(
             Effect.provideService(ToolRunner.Service, Context.get(services, ToolRunner.Service)),
           );

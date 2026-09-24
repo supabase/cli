@@ -289,7 +289,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
       const container =
         options.runtime === "native"
           ? undefined
-          : yield* makeContainerRuntime({ engine: options.runtime });
+          : yield* makeContainerRuntime({ engine: options.runtime, root: options.root });
       const deps: ProcessDependencies = { fs, path, crypto, client, spawner, container };
       switch (creation.service) {
         case "rest":
