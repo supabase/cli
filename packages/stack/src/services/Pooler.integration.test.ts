@@ -91,6 +91,62 @@ describe("service catalog", () => {
             expect(rows[0]?.value).toBe(1);
             yield* pooler.stop;
           }
+          const tenant = "catalog-native-pooler";
+          const nativeDatabaseUrl = `postgresql://supabase_admin:postgres@${databaseEndpoint.host}:${databaseEndpoint.port}/_supabase`;
+          const poolerRecipe = yield* makeServiceRecipe(
+            {
+              service: "pooler",
+              config: {
+                databaseUrl: nativeDatabaseUrl,
+                jwtSecret: secret,
+                tenant,
+                poolMode: "transaction",
+              },
+            },
+            options(root),
+          );
+          const pooler = yield* makeService(poolerRecipe.definition, {
+            id: "pooler-native",
+            config: poolerRecipe.creation,
+          });
+          yield* pooler.start;
+          yield* pooler.ready;
+          const sqlEndpoint = yield* poolerRecipe.endpoint("sql");
+          if (sqlEndpoint.kind !== "tcp" || sqlEndpoint.host === undefined)
+            return yield* new ProxyError({ message: "Native Pooler did not expose TCP" });
+          const poolerLayer = yield* Layer.build(
+            PgClient.layer({
+              host: sqlEndpoint.host,
+              port: sqlEndpoint.port,
+              database: "postgres",
+              username: `supabase_admin.${tenant}`,
+              password: Redacted.make("postgres"),
+            }),
+          );
+          const sql = Context.get(poolerLayer, PgClient.PgClient);
+          const rows = yield* sql.unsafe<{ readonly value: number }>("SELECT 1 AS value");
+          expect(rows[0]?.value).toBe(1);
+          yield* pooler.stop;
+          yield* pooler.start;
+          yield* pooler.ready;
+          const restartedEndpoint = yield* poolerRecipe.endpoint("sql");
+          if (restartedEndpoint.kind !== "tcp" || restartedEndpoint.host === undefined)
+            return yield* new ProxyError({ message: "Restarted native Pooler did not expose TCP" });
+          const restartedPoolerLayer = yield* Layer.build(
+            PgClient.layer({
+              host: restartedEndpoint.host,
+              port: restartedEndpoint.port,
+              database: "postgres",
+              username: `supabase_admin.${tenant}`,
+              password: Redacted.make("postgres"),
+            }),
+          );
+          const restartedSql = Context.get(restartedPoolerLayer, PgClient.PgClient);
+          const restartedRows = yield* restartedSql.unsafe<{ readonly value: number }>(
+            "SELECT 1 AS value",
+          );
+          expect(restartedRows[0]?.value).toBe(1);
+          yield* pooler.stop;
           yield* database.stop;
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
