@@ -63,6 +63,7 @@ export interface CreateOptions extends StackLocations {
 /** Opens a previously registered stack. */
 export interface OpenOptions extends StackLocations {
   readonly id: string;
+  readonly startOwner?: boolean;
 }
 
 const failure = (operation: string, cause: unknown): StackError =>
@@ -455,12 +456,14 @@ export const create = Effect.fn("Stack.create")(
   Effect.mapError((cause) => failure("create", cause)),
 );
 
-/** Opens saved definitions without starting or reconstructing live services. */
+/** Opens saved definitions and optionally starts the detached owner without starting services. */
 export const open = Effect.fn("Stack.open")(
   function* (options: OpenOptions) {
     const state = yield* stateFor(options.stateRoot);
     const saved = yield* state.read(options.id);
     if (saved === undefined) return yield* failure("open", "Stack does not exist");
+    if (options.startOwner)
+      yield* Effect.scoped(launchHost(state, { ...options, stackId: saved.id }));
     return yield* makeHandle(state, saved, options);
   },
   Effect.mapError((cause) => failure("open", cause)),

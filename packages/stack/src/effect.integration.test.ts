@@ -57,6 +57,40 @@ it.live("registers and discovers saved definitions without inventing live observ
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
+it.live("starts the owner on opt-in reopen without starting saved services", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-open-owner-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* create(options);
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        const mail = yield* stack.services.create({ service: "mail", config: {} });
+        yield* stack.stop;
+
+        const offline = yield* open({ ...options, id: stack.id });
+        expect(offline.id).toBe(stack.id);
+        expect(Exit.isFailure(yield* Effect.exit(mail.status))).toBe(true);
+
+        const reopened = yield* open({ ...options, id: stack.id, startOwner: true });
+        expect(reopened.id).toBe(stack.id);
+        const observation = yield* (yield* reopened.services.get(mail.id)).status;
+        expect(observation.lifecycle).toBe("stopped");
+      }),
+      Effect.exit(stack.destroy).pipe(
+        Effect.map((exit) => {
+          expect(Exit.isSuccess(exit)).toBe(true);
+        }),
+      ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 const resetDataStory = (runtime: "native" | "docker") =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
