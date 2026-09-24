@@ -1,7 +1,6 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option, Stdio } from "effect";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
 import { vi } from "vitest";
 
 import {
@@ -31,22 +30,21 @@ import { configDiff } from "./diff.handler.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-diff-int-");
 
+// A past mtime for "untouched file" checks, so a rewrite within the same millisecond still shows.
+const BACKDATED_MTIME_SECONDS = 1_577_836_800;
+
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
 const BRANCH_REF = "cccccccccccccccccccc";
 
-function writeConfig(toml: string): string {
-  const dir = join(tempRoot.current, "supabase");
-  mkdirSync(dir, { recursive: true });
-  const path = join(dir, "config.toml");
-  writeFileSync(path, toml);
-  return path;
-}
+const writeProjectFile = Effect.fnUntraced(function* (name: string, contents: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(tempRoot.current, "supabase");
+  yield* fs.makeDirectory(dir, { recursive: true });
+  yield* fs.writeFileString(path.join(dir, name), contents);
+});
 
-function writeProjectEnv(dotenv: string): void {
-  const dir = join(tempRoot.current, "supabase");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, ".env"), dotenv);
-}
+const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 /** Schema-valid v2 project-config body whose managed values all sit at the local schema
  *  defaults, so an empty config.toml diffs clean against it. */
@@ -99,12 +97,12 @@ interface SetupOpts {
 }
 
 function setup(opts: SetupOpts = {}) {
-  if (opts.toml !== undefined) {
-    writeConfig(opts.toml);
-  }
-  if (opts.dotenv !== undefined) {
-    writeProjectEnv(opts.dotenv);
-  }
+  const projectFiles = Layer.effectDiscard(
+    Effect.all([
+      opts.toml === undefined ? Effect.void : writeProjectFile("config.toml", opts.toml),
+      opts.dotenv === undefined ? Effect.void : writeProjectFile(".env", opts.dotenv),
+    ]),
+  ).pipe(Layer.provide(BunServices.layer));
   const out = mockOutput({ format: opts.format ?? "text" });
   const api = mockCommandPlatformApi({
     handler: (request) => {
@@ -150,6 +148,7 @@ function setup(opts: SetupOpts = {}) {
       goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
       ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
     }),
+    projectFiles,
   );
   return { layer, out, api, telemetry, linkedProjectCache, processControl };
 }
@@ -164,16 +163,19 @@ describe("config diff integration", () => {
     const { layer, out, processControl, telemetry, linkedProjectCache } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
     });
-    const configPath = join(tempRoot.current, "supabase", "config.toml");
-    const before = {
-      mtimeMs: statSync(configPath).mtimeMs,
-      contents: readFileSync(configPath, "utf8"),
-    };
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const configPath = path.join(tempRoot.current, "supabase", "config.toml");
+      yield* fs.utimes(configPath, BACKDATED_MTIME_SECONDS, BACKDATED_MTIME_SECONDS);
+      const before = {
+        mtime: (yield* fs.stat(configPath)).mtime,
+        contents: yield* fs.readFileString(configPath),
+      };
       yield* configDiff(noFlags);
 
-      expect(statSync(configPath).mtimeMs).toBe(before.mtimeMs);
-      expect(readFileSync(configPath, "utf8")).toBe(before.contents);
+      expect((yield* fs.stat(configPath)).mtime).toEqual(before.mtime);
+      expect(yield* fs.readFileString(configPath)).toBe(before.contents);
 
       expect(out.stderrText).toContain(`Comparing against project ${VALID_REF} using base config`);
       expect(out.stderrText).toContain(
@@ -335,7 +337,7 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       yield* configDiff(noFlags);
       const success = out.messages.find((message) => message.type === "success");
-      const serialized = JSON.stringify(success);
+      const serialized = yield* jsonText(success);
       expect(serialized).not.toContain("shh");
       expect(serialized).not.toContain("whmac-sha256");
       expect(success?.message).toContain("masked by the API");
@@ -414,16 +416,21 @@ describe("config diff integration", () => {
   it.live("branch-name resolution uses the linked PARENT, not a branch ref in project-ref", () => {
     // project-ref holds the branch's own ref; linked-project.json recovers the parent, which the
     // parent-scoped branches endpoint requires.
-    const temp = join(tempRoot.current, "supabase", ".temp");
-    mkdirSync(temp, { recursive: true });
-    writeFileSync(join(temp, "project-ref"), BRANCH_REF);
-    writeFileSync(join(temp, "linked-project.json"), JSON.stringify({ ref: VALID_REF }));
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       linked: false,
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temp = path.join(tempRoot.current, "supabase", ".temp");
+      yield* fs.makeDirectory(temp, { recursive: true });
+      yield* fs.writeFileString(path.join(temp, "project-ref"), BRANCH_REF);
+      yield* fs.writeFileString(
+        path.join(temp, "linked-project.json"),
+        yield* jsonText({ ref: VALID_REF }),
+      );
       yield* configDiff({ ...noFlags, projectRef: Option.some("staging") });
       const urls = api.requests.map((request) => request.url);
       expect(urls.some((url) => url.includes(`/v1/projects/${VALID_REF}/branches/staging`))).toBe(
@@ -474,10 +481,12 @@ describe("config diff integration", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigDiffBranchNotFoundError");
-      expect(rendered).toContain('Branch \\"ghost\\" not found');
-      expect(rendered).toContain("supabase branches list");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigDiffBranchNotFoundError");
+        expect(causeText).toContain('Branch "ghost" not found');
+        expect(causeText).toContain("supabase branches list");
+      }
       // Telemetry still flushes on failure; the linked-project cache stays untouched since no
       // ref resolved.
       expect(telemetry.flushed).toBe(true);
@@ -495,7 +504,9 @@ describe("config diff integration", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigDiffBranchResolveStatusError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigDiffBranchResolveStatusError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -504,11 +515,13 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigDiffLoadConfigError");
-      // loadCliConfig probes both config.toml and config.json, so the message names both.
-      expect(rendered).toContain("supabase/config.toml or supabase/config.json: file not found");
-      expect(rendered).toContain("supabase init");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigDiffLoadConfigError");
+        // loadCliConfig probes both config.toml and config.json, so the message names both.
+        expect(causeText).toContain("supabase/config.toml or supabase/config.json: file not found");
+        expect(causeText).toContain("supabase init");
+      }
       expect(api.requests).toHaveLength(0);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -516,31 +529,37 @@ describe("config diff integration", () => {
 
   it.live(
     "does not climb to an ancestor project's config when --workdir names a subdirectory with no config of its own",
-    () => {
-      // The ancestor (tempRoot) genuinely has a config.toml and the subdirectory genuinely has
-      // none, so this exercises a real climb, not a tautology.
-      writeConfig('project_id = "test"\n');
-      const sub = join(tempRoot.current, "nested", "dir");
-      mkdirSync(sub, { recursive: true });
-      const { layer, api, telemetry } = setup({ workdir: sub, explicitWorkdir: true });
-      return Effect.gen(function* () {
-        const exit = yield* configDiff(noFlags).pipe(Effect.exit);
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // The ancestor (tempRoot) genuinely has a config.toml and the subdirectory genuinely has
+        // none, so this exercises a real climb, not a tautology.
+        const sub = path.join(tempRoot.current, "nested", "dir");
+        yield* fs.makeDirectory(sub, { recursive: true });
+        const { layer, api, telemetry } = setup({
+          toml: 'project_id = "test"\n',
+          workdir: sub,
+          explicitWorkdir: true,
+        });
+        const exit = yield* configDiff(noFlags).pipe(Effect.exit, Effect.provide(layer));
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigDiffLoadConfigError");
-        expect(rendered).toContain("file not found");
-        // An explicit workdir skips the ancestor-search "supabase init" hint; it names the
-        // resolved directory and the flag/env var to change instead.
-        expect(rendered).not.toContain("supabase init");
-        expect(rendered).toContain("--workdir/SUPABASE_WORKDIR");
-        expect(rendered).toContain(sub);
-        // The ancestor has a valid project, so the message also hints at it via the "Did you
-        // mean" enrichment.
-        expect(rendered).toContain(`Did you mean --workdir ${tempRoot.current}?`);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigDiffLoadConfigError");
+          expect(causeText).toContain("file not found");
+          // An explicit workdir skips the ancestor-search "supabase init" hint; it names the
+          // resolved directory and the flag/env var to change instead.
+          expect(causeText).not.toContain("supabase init");
+          expect(causeText).toContain("--workdir/SUPABASE_WORKDIR");
+          expect(causeText).toContain(sub);
+          // The ancestor has a valid project, so the message also hints at it via the "Did you
+          // mean" enrichment.
+          expect(causeText).toContain(`Did you mean --workdir ${tempRoot.current}?`);
+        }
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(
@@ -550,9 +569,11 @@ describe("config diff integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configDiff(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigDiffLoadConfigError");
-        expect(rendered).not.toContain("Did you mean");
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigDiffLoadConfigError");
+          expect(causeText).not.toContain("Did you mean");
+        }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },
@@ -560,47 +581,53 @@ describe("config diff integration", () => {
 
   it.live(
     "an explicit --workdir naming a directory that does not exist at all fails before any config load",
-    () => {
-      const missing = join(tempRoot.current, "does-not-exist");
-      const { layer, api } = setup({ workdir: missing, explicitWorkdir: true });
-      return Effect.gen(function* () {
-        const exit = yield* configDiff(noFlags).pipe(Effect.exit);
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const missing = path.join(tempRoot.current, "does-not-exist");
+        const { layer, api } = setup({ workdir: missing, explicitWorkdir: true });
+        const exit = yield* configDiff(noFlags).pipe(Effect.exit, Effect.provide(layer));
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigDiffWorkdirError");
-        expect(rendered).toContain("failed to change workdir: chdir");
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigDiffWorkdirError");
+          expect(causeText).toContain("failed to change workdir: chdir");
+        }
         expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer));
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(
     "a defaulted workdir still resolves a config.json project root above a config-less subdirectory",
-    () => {
-      const dir = join(tempRoot.current, "supabase");
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, "config.json"), JSON.stringify({ project_id: "test" }));
-      const sub = join(tempRoot.current, "nested", "dir");
-      mkdirSync(sub, { recursive: true });
-      const { layer, api } = setup({ workdir: sub, explicitWorkdir: false });
-      return Effect.gen(function* () {
-        yield* configDiff(noFlags);
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeProjectFile("config.json", yield* jsonText({ project_id: "test" }));
+        const sub = path.join(tempRoot.current, "nested", "dir");
+        yield* fs.makeDirectory(sub, { recursive: true });
+        const { layer, api } = setup({ workdir: sub, explicitWorkdir: false });
+        yield* configDiff(noFlags).pipe(Effect.provide(layer));
         expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(true);
         expect(api.requests).not.toHaveLength(0);
-      }).pipe(Effect.provide(layer));
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("a malformed config aborts before any network call, even with a branch target", () => {
     const { layer, api, telemetry } = setup({ toml: "not [valid toml\n" });
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       const exit = yield* configDiff({ ...noFlags, projectRef: Option.some("staging") }).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
       // The message names the actual file that failed to parse, workdir-relative regardless of
       // invocation cwd.
-      expect(JSON.stringify(exit)).toContain(`failed to parse ${join("supabase", "config.toml")}`);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain(
+          `failed to parse ${path.join("supabase", "config.toml")}`,
+        );
+      }
       expect(api.requests).toHaveLength(0);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -609,9 +636,14 @@ describe("config diff integration", () => {
   it.live("a malformed config file fails as a parse error", () => {
     const { layer } = setup({ toml: "not [valid toml\n" });
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(`failed to parse ${join("supabase", "config.toml")}`);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain(
+          `failed to parse ${path.join("supabase", "config.toml")}`,
+        );
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -629,7 +661,9 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigDiffLoadConfigError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigDiffLoadConfigError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -638,7 +672,9 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigDiffReadNetworkError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigDiffReadNetworkError");
+      }
       // Telemetry still flushes even on failure.
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -664,10 +700,14 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ProjectConfigParseError");
-      expect(rendered).toContain("Could not read the project config");
-      expect(rendered).toContain("suggestion");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectConfigParseError");
+        expect(causeText).toContain("Could not read the project config");
+        expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+          suggestion: expect.any(String),
+        });
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -703,11 +743,13 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigDiffReadStatusError");
-      // 403 gets a purpose-written message naming the project instead of the raw status/body dump.
-      expect(rendered).toContain("Access denied");
-      expect(rendered).toContain(VALID_REF);
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigDiffReadStatusError");
+        // 403 gets a purpose-written message naming the project instead of the raw status/body dump.
+        expect(causeText).toContain("Access denied");
+        expect(causeText).toContain(VALID_REF);
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -719,9 +761,11 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigDiffReadStatusError");
-      expect(rendered).toContain("supabase login");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigDiffReadStatusError");
+        expect(causeText).toContain("supabase login");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -735,11 +779,13 @@ describe("config diff integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configDiff(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigDiffReadStatusError");
-        expect(rendered).toContain(`Could not read configuration for project ${VALID_REF}`);
-        expect(rendered).toContain("supabase projects list");
-        expect(rendered).toContain(DEFAULT_API_URL);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigDiffReadStatusError");
+          expect(causeText).toContain(`Could not read configuration for project ${VALID_REF}`);
+          expect(causeText).toContain("supabase projects list");
+          expect(causeText).toContain(DEFAULT_API_URL);
+        }
       }).pipe(Effect.provide(layer));
     },
   );
@@ -752,7 +798,9 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain('unexpected status 500: {\\"message\\":\\"boom\\"}');
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain('unexpected status 500: {"message":"boom"}');
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -810,11 +858,13 @@ describe("config diff integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configDiff(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigDiffOutputFlagUnsupportedError");
-        expect(rendered).toContain(
-          "the -o/--output flag is not supported by config diff; use --output-format json|stream-json instead.",
-        );
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigDiffOutputFlagUnsupportedError");
+          expect(causeText).toContain(
+            "the -o/--output flag is not supported by config diff; use --output-format json|stream-json instead.",
+          );
+        }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     };
@@ -830,7 +880,9 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigDiffReadNetworkError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigDiffReadNetworkError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -915,20 +967,22 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("the config file is read relative to --workdir, not the invoking directory", () => {
-    // The ambient cwd points at a directory with no supabase/ project at all, so only
-    // cliSettings.workdir can resolve it.
-    const elsewhere = join(tempRoot.current, "unrelated-cwd");
-    mkdirSync(elsewhere, { recursive: true });
-    const { layer, out } = setup({
-      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
-      cwd: elsewhere,
-    });
-    return Effect.gen(function* () {
-      yield* configDiff(noFlags);
+  it.live("the config file is read relative to --workdir, not the invoking directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // The ambient cwd points at a directory with no supabase/ project at all, so only
+      // cliSettings.workdir can resolve it.
+      const elsewhere = path.join(tempRoot.current, "unrelated-cwd");
+      yield* fs.makeDirectory(elsewhere, { recursive: true });
+      const { layer, out } = setup({
+        toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
+        cwd: elsewhere,
+      });
+      yield* configDiff(noFlags).pipe(Effect.provide(layer));
       expect(out.stdoutText).toContain("api.max_rows [update]");
-    }).pipe(Effect.provide(layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live("hostile names cannot inject ANSI or forge output lines in text mode", () => {
     // [remotes.*] names are unconstrained TOML keys an attacker could control, so escape bytes
@@ -1044,9 +1098,11 @@ describe("config diff integration", () => {
           projectRef: Option.some("somebranch"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigDiffBranchNotLinkedError");
-        expect(rendered).toContain('\\"somebranch\\"');
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigDiffBranchNotLinkedError");
+          expect(causeText).toContain('"somebranch"');
+        }
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
         expect(linkedProjectCache.cachedRef).toBeUndefined();
@@ -1065,10 +1121,12 @@ describe("config diff integration", () => {
         projectRef: Option.some("somebranch"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigDiffParentRefInvalidError");
-      expect(rendered).toContain('\\"somebranch\\"');
-      expect(rendered).toContain("Relink the parent project");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigDiffParentRefInvalidError");
+        expect(causeText).toContain('"somebranch"');
+        expect(causeText).toContain("Relink the parent project");
+      }
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -1084,9 +1142,11 @@ describe("config diff integration", () => {
         projectRef: Option.some("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigDiffBranchNotReadyError");
-      expect(rendered).toContain("has no project ref yet");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigDiffBranchNotReadyError");
+        expect(causeText).toContain("has no project ref yet");
+      }
       expect(api.requests.some((request) => request.url.includes("/v2/projects/"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -1138,9 +1198,11 @@ describe("config diff -o/--output wrapper wiring", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(configDiffHandler(noFlags));
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigDiffOutputFlagUnsupportedError");
-      expect(rendered).not.toContain("InvalidOutputFormatError");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigDiffOutputFlagUnsupportedError");
+        expect(causeText).not.toContain("InvalidOutputFormatError");
+      }
       expect(api.requests).toHaveLength(0);
     }).pipe(
       Effect.provide(
