@@ -15,18 +15,14 @@ const realtimeEnv = (ipVersion: Creation["config"]["ipVersion"]) =>
     true,
   );
 
-it.effect("pins the database socket family to IPv4 unless IPv6 is configured", () =>
+it.effect("connects to the database over IPv4 whichever family Realtime binds", () =>
   Effect.gen(function* () {
     expect(yield* realtimeEnv(undefined)).toMatchObject({
       DB_IP_VERSION: "ipv4",
       ERL_AFLAGS: "-proto_dist inet_tcp",
     });
-    expect(yield* realtimeEnv("IPv4")).toMatchObject({
-      DB_IP_VERSION: "ipv4",
-      ERL_AFLAGS: "-proto_dist inet_tcp",
-    });
     expect(yield* realtimeEnv("IPv6")).toMatchObject({
-      DB_IP_VERSION: "ipv6",
+      DB_IP_VERSION: "ipv4",
       ERL_AFLAGS: "-proto_dist inet6_tcp",
     });
   }),
