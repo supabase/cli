@@ -34,6 +34,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       const http = endpoints.get("http");
       const rpc = endpoints.get("rpc");
       const jwt = creation.config.jwtSecret ?? localJwtSecret;
+      const ipv6 = creation.config.ipVersion === "IPv6";
       return {
         DATABASE_URL: creation.config.databaseUrl,
         ...(http === undefined ? {} : { PORT: String(http.port) }),
@@ -52,8 +53,10 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         APP_NAME: "realtime",
         SEED_SELF_HOST: "true",
         MAX_HEADER_LENGTH: String(creation.config.maxHeaderLength ?? 4096),
-        ERL_AFLAGS:
-          creation.config.ipVersion === "IPv6" ? "-proto_dist inet6_tcp" : "-proto_dist inet_tcp",
+        ERL_AFLAGS: ipv6 ? "-proto_dist inet6_tcp" : "-proto_dist inet_tcp",
+        // Unset, Realtime prefers IPv6 for dual-stack hosts such as Docker Desktop's
+        // host.docker.internal, which containers cannot route over IPv6.
+        DB_IP_VERSION: ipv6 ? "ipv6" : "ipv4",
         RUN_JANITOR: "true",
         ...(rpc === undefined
           ? {}
