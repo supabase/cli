@@ -235,6 +235,18 @@ describe("test new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("rejects a name that escapes into a sibling directory sharing the tests prefix", () => {
+    const { layer, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const exit = yield* Effect.exit(testNew(flags("../tests2/x")));
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(yield* fs.exists(path.join(workdir, "supabase", "tests2"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("flushes telemetry via ensuring", () => {
     const { layer, telemetry } = setup();
     return Effect.gen(function* () {

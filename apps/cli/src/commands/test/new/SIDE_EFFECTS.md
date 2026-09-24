@@ -14,7 +14,8 @@
 
 The parent directory `<workdir>/supabase/tests/` is created if missing. A name whose path,
 with `..` segments collapsed, lands outside that directory is rejected before any
-directory or file is created. The check is on the path text and does not resolve symlinks.
+directory or file is created. The check is on the path text: an existing symlink under
+`supabase/tests` is followed on purpose, so shared test folders keep working.
 
 ## API Routes
 
@@ -60,8 +61,7 @@ Emits the same success payload as a final NDJSON `result` event.
 - Native TypeScript port (Phase 1+); no Go proxy.
 - **Path-traversal hardening (TS-only):** the name is rejected before any write if
   `<workdir>/supabase/tests/<name>_test.sql` lands outside the tests directory once
-  `..` segments are collapsed. The check is on the path text and does not resolve
-  symlinks. Nothing is created — no file and no parent directory.
-  This has no effect on legitimate names (names, optionally with subdirectories, that
-  stay inside `supabase/tests`) and only closes the
-  arbitrary-write vector (CWE-22) when the name is attacker/template-controlled.
+  `..` segments are collapsed. Nothing is created — no file and no parent directory.
+  Existing symlinks under `supabase/tests` are followed on purpose (shared test
+  folders), so the check blocks `..` traversal only. Names that stay inside
+  `supabase/tests`, optionally with subdirectories, are unaffected.
