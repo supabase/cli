@@ -9,7 +9,7 @@ import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 
 const options = (root: string) => ({
-  stackId: "catalog-test",
+  stackId: "catalog-pooler",
   instanceId: "instance",
   root,
   cacheRoot: "/tmp/supabase-stack-artifacts",
@@ -75,23 +75,28 @@ describe("service catalog", () => {
                 id: `pooler-${runtime}-${poolMode}`,
                 config: poolerRecipe.creation,
               });
-              yield* pooler.start;
-              yield* pooler.ready;
-              const sqlEndpoint = yield* poolerRecipe.endpoint("sql");
-              if (sqlEndpoint.kind !== "tcp" || sqlEndpoint.host === undefined)
-                return yield* new ProxyError({ message: "Pooler did not expose TCP" });
-              const poolerLayer = yield* Layer.build(
-                PgClient.layer({
-                  host: sqlEndpoint.host,
-                  port: sqlEndpoint.port,
-                  database: "postgres",
-                  username: `supabase_admin.${tenant}`,
-                  password: Redacted.make("postgres"),
-                }),
-              );
-              const sql = Context.get(poolerLayer, PgClient.PgClient);
-              const rows = yield* sql.unsafe<{ readonly value: number }>("SELECT 1 AS value");
-              expect(rows[0]?.value).toBe(1);
+              for (const phase of runtime === "native" ? ["start", "restart"] : ["start"]) {
+                if (phase === "restart") {
+                  yield* pooler.stop;
+                }
+                yield* pooler.start;
+                yield* pooler.ready;
+                const sqlEndpoint = yield* poolerRecipe.endpoint("sql");
+                if (sqlEndpoint.kind !== "tcp" || sqlEndpoint.host === undefined)
+                  return yield* new ProxyError({ message: "Pooler did not expose TCP" });
+                const poolerLayer = yield* Layer.build(
+                  PgClient.layer({
+                    host: sqlEndpoint.host,
+                    port: sqlEndpoint.port,
+                    database: "postgres",
+                    username: `supabase_admin.${tenant}`,
+                    password: Redacted.make("postgres"),
+                  }),
+                );
+                const sql = Context.get(poolerLayer, PgClient.PgClient);
+                const rows = yield* sql.unsafe<{ readonly value: number }>("SELECT 1 AS value");
+                expect(rows[0]?.value).toBe(1);
+              }
               yield* pooler.stop;
             }
           }

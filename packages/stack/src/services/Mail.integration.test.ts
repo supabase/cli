@@ -6,7 +6,7 @@ import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 
 const options = (root: string) => ({
-  stackId: "catalog-test",
+  stackId: "catalog-mail",
   instanceId: "instance",
   root,
   cacheRoot: `${root}/cache`,

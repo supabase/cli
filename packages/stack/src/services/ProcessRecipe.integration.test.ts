@@ -94,6 +94,8 @@ describe("ProcessRecipe launch cleanup", () => {
                 });
               yield* Ref.set(active, 0);
             }),
+            discard: Effect.void,
+            kill: Effect.void,
             remove: Effect.gen(function* () {
               if (yield* Ref.getAndSet(startupRemoveFailed, false))
                 return yield* new ContainerError({

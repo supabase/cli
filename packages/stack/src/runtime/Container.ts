@@ -40,6 +40,8 @@ interface ContainerSpec {
   }>;
   readonly workingDir?: string;
   readonly ports?: ReadonlyArray<number>;
+  /** Seconds `docker stop` waits before SIGKILL. Omitted means 10. */
+  readonly stopGraceSeconds?: number;
 }
 
 export interface ContainerProcess {
@@ -53,6 +55,8 @@ export interface ContainerProcess {
   readonly exitCode: Effect.Effect<number, ContainerError>;
   readonly stdin: Sink.Sink<void, Uint8Array, never, ContainerError>;
   readonly stop: Effect.Effect<void, ContainerError>;
+  readonly discard: Effect.Effect<void, ContainerError>;
+  readonly kill: Effect.Effect<void, ContainerError>;
   readonly remove: Effect.Effect<void, ContainerError>;
 }
 
@@ -338,9 +342,28 @@ export const makeContainerRuntime = (options: {
           });
           const stop = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-            yield* run(["stop", "--time", "10", name]).pipe(
+            const grace =
+              spec.stopGraceSeconds !== undefined &&
+              Number.isInteger(spec.stopGraceSeconds) &&
+              spec.stopGraceSeconds > 0 &&
+              spec.stopGraceSeconds <= 60
+                ? String(spec.stopGraceSeconds)
+                : "10";
+            yield* run(["stop", "--time", grace, name]).pipe(
               Effect.catchTag("ContainerError", reconcileAbsent),
             );
+            yield* Ref.set(stopped, true);
+          });
+          const discard = Effect.gen(function* () {
+            if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
+            yield* run(["stop", "--time", "0", name]).pipe(
+              Effect.catchTag("ContainerError", reconcileAbsent),
+            );
+            yield* Ref.set(stopped, true);
+          });
+          const kill = Effect.gen(function* () {
+            if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
+            yield* run(["kill", name]).pipe(Effect.catchTag("ContainerError", reconcileAbsent));
             yield* Ref.set(stopped, true);
           });
           const remove = Effect.gen(function* () {
@@ -367,6 +390,8 @@ export const makeContainerRuntime = (options: {
             exitCode: Effect.fail(errorFor("wait", "Container did not start")),
             stdin: Sink.fail(errorFor("stdin", "Container did not start")),
             stop,
+            discard,
+            kill,
             remove,
           };
           let owned = partial;
