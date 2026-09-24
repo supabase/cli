@@ -456,11 +456,15 @@ describe("stack start (compiled e2e)", () => {
             "DB_URL",
             "ANON_KEY",
             "SERVICE_ROLE_KEY",
+            "PUBLISHABLE_KEY",
+            "SECRET_KEY",
             "API_URL",
           ]);
           expect(variables.DB_URL).toMatch(
             /^postgresql:\/\/supabase_admin:.+@.+:\d+\/postgres(?:\?.*)?$/u,
           );
+          expect(variables.PUBLISHABLE_KEY).toMatch(/^sb_publishable_.+$/u);
+          expect(variables.SECRET_KEY).toMatch(/^sb_secret_.+$/u);
 
           const dotenv = yield* runSupabaseEffect(
             ["stack", "status", "--env", "--stack-id", idText, "--output-format", "text"],

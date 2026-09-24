@@ -152,8 +152,12 @@ it.effect(
       const configured = yield* resolveStackIdentity(
         DEFAULT_LOCAL_JWT_SECRET,
         {
-          gotrueJwtKeys: JSON.stringify([DEFAULT_SIGNING_KEY]),
-          publicSigningKeys: JSON.stringify([publicSigningKey]),
+          gotrueJwtKeys: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))([
+            DEFAULT_SIGNING_KEY,
+          ]),
+          publicSigningKeys: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))([
+            publicSigningKey,
+          ]),
           anonKey,
           serviceRoleKey,
           anonKeyIsOverride: false,
