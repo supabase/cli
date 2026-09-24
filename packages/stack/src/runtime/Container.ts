@@ -10,6 +10,7 @@ import {
   Option,
   Path,
   Ref,
+  Schedule,
   Schema,
   Scope,
   Sink,
@@ -81,6 +82,13 @@ const errorFor = (operation: string, cause: unknown) =>
     cause,
   });
 
+const rateLimited = (error: ContainerError) =>
+  /toomanyrequests|too many requests|rate limit|rate exceeded/iu.test(error.message);
+
+const PULL_MAX_RETRIES = 4;
+
+const pullBackoff = Schedule.exponential("2 seconds").pipe(Schedule.jittered);
+
 const PublishedPorts = Schema.Record(
   Schema.String,
   Schema.NullOr(
@@ -101,7 +109,8 @@ const mountField = (key: string, value: string) => {
 /**
  * Captures the selected local engine; each launch owns one exact container. An image whose pull
  * fails is pulled from the first of its `imageMirrors` that succeeds, and launches of it then use
- * that mirror reference. When every mirror fails, the primary pull error is reported.
+ * that mirror reference. When every mirror fails, the primary pull error is reported; a
+ * rate-limited primary retries the whole chain with backoff.
  */
 export const makeContainerRuntime = (options: {
   readonly engine: "docker" | "podman";
@@ -192,15 +201,26 @@ export const makeContainerRuntime = (options: {
         next.delete(image);
         return next;
       });
-      if (yield* present(image)) {
-        yield* usePrimary;
-        return image;
-      }
       const mirrors = options.imageMirrors?.(image) ?? [];
-      return yield* pull(image).pipe(
-        Effect.as(image),
-        Effect.tap(() => usePrimary),
-        Effect.catch((primaryError) => fromMirror(image, mirrors, primaryError)),
+      // Presence is rechecked per attempt: a concurrent prepare may land the image during backoff.
+      const attempt = Effect.gen(function* () {
+        if (yield* present(image)) {
+          yield* usePrimary;
+          return image;
+        }
+        return yield* pull(image).pipe(
+          Effect.as(image),
+          Effect.tap(() => usePrimary),
+          Effect.catch((primaryError) => fromMirror(image, mirrors, primaryError)),
+        );
+      });
+      return yield* attempt.pipe(
+        Effect.tapError((error) =>
+          rateLimited(error)
+            ? Effect.logWarning(`Registry rate-limited the pull of ${image}`)
+            : Effect.void,
+        ),
+        Effect.retry({ schedule: pullBackoff, times: PULL_MAX_RETRIES, while: rateLimited }),
       );
     });
     const prepare = Effect.fn("Container.prepare")((image: string) =>

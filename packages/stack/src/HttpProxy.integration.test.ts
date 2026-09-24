@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Fiber, Layer, Logger } from "effect";
+import { Data, Deferred, Effect, Fiber, Layer, Logger, type LogLevel } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { Socket } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
@@ -35,19 +35,32 @@ class HttpProxyTestError extends Data.TaggedError("HttpProxyTestError")<{
   readonly cause?: unknown;
 }> {}
 
-const captureErrors = (lines: Array<string>) =>
+const captureLogs = (levels: ReadonlyArray<LogLevel.LogLevel>) => (lines: Array<string>) =>
   Logger.layer([
     Logger.make(({ logLevel, message }) => {
-      if (logLevel === "Error")
+      if (levels.some((level) => level === logLevel))
         lines.push((Array.isArray(message) ? message : [message]).map(String).join(" "));
     }),
   ]);
 
-const request = (port: number, path: string, body: Uint8Array) =>
+const captureErrors = captureLogs(["Error"]);
+
+/** Upstream that resets its first `drops` accepted connections without responding. */
+const droppingBackend = (drops: number) => {
+  let connections = 0;
+  const server = createServer((_request, response) => response.end("recovered"));
+  server.on("connection", (socket) => {
+    connections += 1;
+    if (connections <= drops) socket.destroy();
+  });
+  return { server, connections: () => connections };
+};
+
+const request = (port: number, path: string, body: Uint8Array, method: "GET" | "POST" = "POST") =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
-      HttpClientRequest.post(`http://127.0.0.1:${port}${path}`).pipe(
+      HttpClientRequest.make(method)(`http://127.0.0.1:${port}${path}`).pipe(
         HttpClientRequest.bodyUint8Array(body),
       ),
     );
@@ -293,6 +306,108 @@ it.live("returns a gateway error naming the route and cause when a target cannot
   ).pipe(
     Effect.provide(
       Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(logs)),
+    ),
+  );
+});
+
+it.live("retries a bodyless request once when the upstream drops the connection unanswered", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const backend = droppingBackend(1);
+      const address = yield* listen(backend.server);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "functions", prefix: "/", target: Effect.succeed(address) }]);
+      const client = yield* HttpClient.HttpClient;
+      const response = yield* client.get(`http://127.0.0.1:${proxy.port}/hello`);
+      expect(response.status).toBe(200);
+      expect(yield* response.text).toBe("recovered");
+      expect(backend.connections()).toBe(2);
+      // The only log is the retry warning; the masked failure never reaches the error level.
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toContain("Route functions GET upstream failed before responding");
+      expect(logs[0]).toMatch(/ECONNRESET|socket hang up/u);
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeHttpClient.layerNodeHttp,
+        NodeServices.layer,
+        captureLogs(["Error", "Warn"])(logs),
+      ),
+    ),
+  );
+});
+
+it.live("does not replay a request with a body when the upstream drops the connection", () => {
+  const errors: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const backend = droppingBackend(1);
+      const address = yield* listen(backend.server);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "functions", prefix: "/", target: Effect.succeed(address) }]);
+      const response = yield* request(
+        proxy.port,
+        "/hello",
+        new TextEncoder().encode("payload"),
+        "GET",
+      );
+      expect(response.status).toBe(502);
+      expect(backend.connections()).toBe(1);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("Route functions request failed");
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(errors)),
+    ),
+  );
+});
+
+it.live(
+  "does not replay a bodyless non-idempotent request when the upstream drops the connection",
+  () => {
+    const errors: Array<string> = [];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const backend = droppingBackend(1);
+        const address = yield* listen(backend.server);
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        yield* proxy.setRoutes([{ id: "functions", prefix: "/", target: Effect.succeed(address) }]);
+        const response = yield* request(proxy.port, "/hello", new Uint8Array());
+        expect(response.status).toBe(502);
+        expect(backend.connections()).toBe(1);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain("Route functions request failed");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(errors)),
+      ),
+    );
+  },
+);
+
+it.live("gives up after a single retry when the upstream keeps dropping connections", () => {
+  const errors: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const backend = droppingBackend(Number.POSITIVE_INFINITY);
+      const address = yield* listen(backend.server);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "functions", prefix: "/", target: Effect.succeed(address) }]);
+      const client = yield* HttpClient.HttpClient;
+      const response = yield* client.get(`http://127.0.0.1:${proxy.port}/hello`);
+      expect(response.status).toBe(502);
+      expect(yield* response.text).toBe("Bad Gateway");
+      expect(backend.connections()).toBe(2);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("Route functions request failed");
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(errors)),
     ),
   );
 });
