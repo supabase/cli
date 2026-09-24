@@ -13,20 +13,30 @@ on:
         description: Immutable CLI source commit to benchmark
         required: true
         type: string
-        default: e5bd7156a11d065ae55a760aa98e007e1e93eb5c
+        default: 4cebcf8779ef8ba983f38632eb4c48a86c5e829e
       legacy_version:
         description: Published CLI version used for the legacy baseline
         required: true
         type: string
         default: 2.117.0
+      legacy_registry:
+        description: Legacy baseline image registry
+        required: true
+        type: choice
+        options:
+          - default
+          - ghcr.io
+        default: default
       case_set:
-        description: Benchmark all cases, eager stack cases, or only Docker stack cases
+        description: Benchmark all cases or a focused set of new or Docker stack cases
         required: true
         type: choice
         options:
           - all
           - eager
           - docker-stack
+          - new
+          - legacy-stack
         default: all
       samples:
         description: Independent samples per supported case
@@ -62,7 +72,7 @@ jobs:
       - name: Check out benchmark source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.source_sha || 'e5bd7156a11d065ae55a760aa98e007e1e93eb5c' }}
+          ref: ${{ inputs.source_sha || '4cebcf8779ef8ba983f38632eb4c48a86c5e829e' }}
           persist-credentials: false
           submodules: false
 
@@ -136,7 +146,7 @@ jobs:
         platform:
           - linux-x64
           - macos-arm64
-        case: ${{ fromJSON((inputs.case_set || 'all') == 'eager' && '["stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-eager","stack-new-docker-eager-pooler"]' || (inputs.case_set || 'all') == 'docker-stack' && '["stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler"]' || '["stack-new-native-default","stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler","schema-new-native","schema-new-docker","schema-legacy-docker"]') }}
+        case: ${{ fromJSON((inputs.case_set || 'all') == 'eager' && '["stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-eager","stack-new-docker-eager-pooler"]' || (inputs.case_set || 'all') == 'docker-stack' && '["stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler"]' || (inputs.case_set || 'all') == 'new' && '["stack-new-native-default","stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","schema-new-native","schema-new-docker"]' || (inputs.case_set || 'all') == 'legacy-stack' && '["stack-legacy-docker-default","stack-legacy-docker-eager-pooler"]' || '["stack-new-native-default","stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler","schema-new-native","schema-new-docker","schema-legacy-docker"]') }}
         sample: ${{ fromJSON(github.event_name == 'push' && '[1]' || inputs.samples == '1' && '[1]' || inputs.samples == '3' && '[1,2,3]' || '[1,2,3,4,5]') }}
         exclude:
           - platform: macos-arm64
@@ -173,6 +183,7 @@ jobs:
           BENCHMARK_CASE: ${{ matrix.case }}
           BENCHMARK_SAMPLE: ${{ matrix.sample }}
           LEGACY_VERSION: ${{ inputs.legacy_version || '2.117.0' }}
+          LEGACY_REGISTRY: ${{ inputs.legacy_registry || 'default' }}
         run: |
           mkdir -p "$RUNNER_TEMP/benchmark-bin" "benchmark-results"
           tar -xzf "$RUNNER_TEMP/compiled-cli/compiled-cli.tar.gz" -C "$RUNNER_TEMP/benchmark-bin"
@@ -197,6 +208,7 @@ jobs:
               "sample": int(os.environ["BENCHMARK_SAMPLE"]),
               "runner_label": os.environ["BENCHMARK_RUNNER_LABEL"],
               "legacy_cli_version": os.environ["LEGACY_VERSION"],
+              "legacy_image_registry": os.environ["LEGACY_REGISTRY"],
               "image_os": os.environ.get("ImageOS", "unknown"),
               "image_version": os.environ.get("ImageVersion", "unknown"),
               "architecture": platform.machine(),
@@ -246,6 +258,7 @@ jobs:
           BENCHMARK_PLATFORM: ${{ matrix.platform }}
           COMPILED_CLI: ${{ runner.temp }}/benchmark-bin/supabase
           LEGACY_CLI: ${{ runner.temp }}/legacy-cli/node_modules/.bin/supabase
+          SUPABASE_INTERNAL_IMAGE_REGISTRY: ${{ contains(matrix.case, 'legacy') && inputs.legacy_registry == 'ghcr.io' && 'ghcr.io' || '' }}
         run: |
           set -o pipefail
           case "$BENCHMARK_CASE" in

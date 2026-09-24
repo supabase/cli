@@ -820,6 +820,19 @@ def cleanup_phase(cli: Path, implementation: str, project: Path, project_id: str
     return results
 
 
+def legacy_image_registry_metadata(implementation: str, env: dict[str, str]) -> dict[str, Any]:
+    if implementation != "legacy":
+        return {"applicable": False, "effective_registry": None, "override": None}
+    override = env.get("SUPABASE_INTERNAL_IMAGE_REGISTRY") or None
+    effective_registry = override.lower() if override else "public.ecr.aws"
+    return {
+        "applicable": True,
+        "effective_registry": effective_registry,
+        "override": override,
+        "fallback_registries": None if override else ["public.ecr.aws", "ghcr.io", "docker.io"],
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cli", required=True, type=Path, help="Compiled CLI or pinned legacy executable")
@@ -892,6 +905,7 @@ def main() -> int:
         "started_at": now(),
         "case": {"implementation": args.implementation, "runtime": args.runtime, "mode": args.mode, "sample": args.sample},
         "cli": {"path": str(cli), "version_command": None},
+        "environment": {"legacy_image_registry": legacy_image_registry_metadata(args.implementation, env)},
         "host": {"system": platform.platform(), "os": platform.system(), "release": platform.release(), "machine": platform.machine(), "cpu_count": os.cpu_count(), "python": platform.python_version()},
         "paths": {"root": str(root), "home": str(home), "project_cold": str(project_cold), "project_cached": str(project_cached)},
         "preflight": {"dockerless": dockerless_probe, "docker_images": docker_images_before},

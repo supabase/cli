@@ -12,11 +12,17 @@ its output, and its outcome. Failed measurements remain part of the dataset.
 ## Running
 
 Use the workflow's manual inputs to select the source revision, released CLI
-version, case set, and sample count. The `eager` case set runs the new CLI's
+version, legacy image registry, case set, and sample count. The default registry
+uses the released CLI's configured image source; `ghcr.io` selects the mirror
+for legacy cases. The selection is recorded in runner metadata so mirror-backed
+legacy baselines remain distinguishable. The `eager` case set runs the new CLI's
 native and Docker eager modes, including pooler variants; macOS runs the native
 cases and Linux runs both runtimes. The `docker-stack` case set limits a run to
-the five Linux Docker stack cases. Run a single sample first to validate a new CLI revision
-or harness change, then collect five independent samples. Do not combine smoke
+the five Linux Docker stack cases. The `new` case set runs all six new stack
+modes and both new schema modes: 12 platform/case groups across Linux and macOS.
+The `legacy-stack` case set runs the two legacy Docker stack modes on Linux.
+Run a single sample first to validate a new CLI revision or harness change, then
+collect five independent samples. Do not combine smoke
 samples with the final campaign or resume a campaign after changing its source,
 artifacts, fixtures, or harness.
 
