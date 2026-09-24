@@ -2,13 +2,7 @@ import { endpointReports } from "../stack-endpoints.format.ts";
 import { readStackFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
-import type {
-  ServiceCreation,
-  ServiceCreationInput,
-  Stack,
-  StackCredentials,
-  StackIdentityInput,
-} from "@supabase/stack/effect";
+import type { ServiceCreationInput, Stack, StackIdentityInput } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
   OutputFlag,
@@ -192,49 +186,6 @@ const selectedCreations = (
     return !exclusions.includes(capability);
   });
 
-const identityBindingMatches = (creation: ServiceCreation, active: StackCredentials): boolean => {
-  switch (creation.service) {
-    case "database":
-      return Redacted.value(creation.config.jwtSecret) === active.jwtSecret;
-    case "rest":
-    case "realtime":
-      return creation.config.jwtSecret === active.jwtSecret && creation.config.jwks === active.jwks;
-    case "auth":
-      return (
-        creation.config.jwtSecret === active.jwtSecret &&
-        creation.config.gotrueJwtKeys === active.gotrueJwtKeys
-      );
-    case "storage":
-      return (
-        creation.config.jwtSecret === active.jwtSecret &&
-        creation.config.jwks === active.jwks &&
-        creation.config.anonKey === active.anonKey &&
-        creation.config.serviceRoleKey === active.serviceRoleKey
-      );
-    case "functions":
-      return (
-        creation.config.jwtSecret === active.jwtSecret &&
-        creation.config.jwks === active.jwks &&
-        creation.config.anonKey === active.anonKey &&
-        creation.config.serviceRoleKey === active.serviceRoleKey &&
-        creation.config.publishableKey === active.publishableKey &&
-        creation.config.secretKey === active.secretKey
-      );
-    case "studio":
-      return (
-        creation.config.jwtSecret === active.jwtSecret &&
-        creation.config.anonKey === active.anonKey &&
-        creation.config.serviceRoleKey === active.serviceRoleKey &&
-        creation.config.publishableKey === active.publishableKey &&
-        creation.config.secretKey === active.secretKey
-      );
-    case "pooler":
-      return creation.config.jwtSecret === active.jwtSecret;
-    default:
-      return true;
-  }
-};
-
 const compose = (
   stack: Stack,
   creations: ReadonlyArray<ServiceCreationInput>,
@@ -385,18 +336,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           message: "The configured Postgres root key conflicts with the saved stack credentials",
         });
     }
-    const identityChanged =
-      savedCredentials !== undefined &&
-      (savedCredentials.configuredJwtSecret !== identity.configuredJwtSecret ||
-        savedCredentials.configuredSigningKeys !== identity.configuredSigningKeys ||
-        savedCredentials.configuredPublishableKey !== identity.configuredPublishableKey ||
-        savedCredentials.configuredSecretKey !== identity.configuredSecretKey ||
-        savedCredentials.configuredAnonKey !== identity.configuredAnonKey ||
-        savedCredentials.configuredServiceRoleKey !== identity.configuredServiceRoleKey ||
-        savedCredentials.remoteJwks !== (identity.remoteJwks ?? "[]"));
-    const staleIdentity =
-      savedCredentials !== undefined &&
-      currentStatuses.some((status) => !identityBindingMatches(status.config, savedCredentials));
     if (requested.some(({ service }) => service === "storage"))
       yield* fs
         .makeDirectory(
@@ -429,8 +368,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           ),
         );
     const initialComposition = composition.members.length === 0;
-    const compositionChanged =
-      !sameKinds(currentInstances, requested) || identityChanged || staleIdentity;
+    const serviceKindsChanged = !sameKinds(currentInstances, requested);
     for (const instance of currentInstances) {
       const creation = requested.find(({ service }) => service === instance.service);
       if (creation === undefined) continue;
@@ -452,12 +390,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           suggestion: "Keep the saved endpoint and version settings, or destroy the stack.",
         });
     }
-    const reuseIds: Array<string> = compositionChanged
-      ? currentInstances
-          .filter((instance) => requested.some((creation) => creation.service === instance.service))
-          .map(({ id }) => id)
-      : [];
-    if (compositionChanged) {
+    const reuseIds: Array<string> = currentInstances
+      .filter((instance) => requested.some((creation) => creation.service === instance.service))
+      .map(({ id }) => id);
+    if (serviceKindsChanged) {
       const currentKinds = new Set(currentInstances.map(({ service }) => service));
       for (const creation of requested) {
         if (currentKinds.has(creation.service)) continue;
@@ -487,12 +423,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       }
     }
     const starting = yield* output.task("Starting local Supabase stack...");
-    const members = compositionChanged
-      ? yield* compose(stack, requested, reuseIds, identity).pipe(
-          Effect.tapError((error) => starting.fail(error.message)),
-          Effect.mapError(stackError),
-        )
-      : currentInstances;
+    const members = yield* compose(stack, requested, reuseIds, identity).pipe(
+      Effect.tapError((error) => starting.fail(error.message)),
+      Effect.mapError(stackError),
+    );
     const initialCleanupComplete = yield* Ref.make(!initialComposition);
     if (initialComposition) {
       const existingIds = new Set(existingServices.map(({ id }) => id));
@@ -610,7 +544,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         Effect.tapError((error) => starting.fail(error.message)),
         Effect.mapError(stackError),
       );
-    } else if (compositionChanged) {
+    } else if (serviceKindsChanged) {
       yield* catalog
         .apply({
           target: {

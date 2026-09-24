@@ -324,19 +324,20 @@ const makeOwnerWithDependencies = (
                 "rootKey") ||
               (overrides.databasePassword !== undefined &&
                 overrides.databasePassword !== saved.databasePassword &&
-                "databasePassword");
+                "databasePassword") ||
+              (identity === undefined &&
+                overrides.jwtSecret !== undefined &&
+                overrides.jwtSecret !== saved.jwtSecret &&
+                "jwtSecret");
             if (conflict !== false && conflict !== undefined)
               return yield* errorFor(
                 "credentials",
                 `Credential override ${conflict} conflicts with the saved stack value`,
               );
             const jwtSecret =
-              overrides.jwtSecret ??
-              (identity !== undefined &&
-              identity.configuredJwtSecret === undefined &&
-              saved.configuredJwtSecret !== undefined
-                ? DEFAULT_LOCAL_JWT_SECRET
-                : saved.jwtSecret);
+              identity === undefined
+                ? saved.jwtSecret
+                : (overrides.jwtSecret ?? DEFAULT_LOCAL_JWT_SECRET);
             const resolvedIdentity = yield* resolveStackIdentity(jwtSecret, identity, saved);
             const next: StackCredentials = {
               ...saved,
@@ -353,12 +354,8 @@ const makeOwnerWithDependencies = (
               next.gotrueJwtKeys !== saved.gotrueJwtKeys ||
               next.publicSigningKeys !== saved.publicSigningKeys ||
               next.remoteJwks !== saved.remoteJwks ||
-              next.configuredJwtSecret !== saved.configuredJwtSecret ||
-              next.configuredSigningKeys !== saved.configuredSigningKeys ||
-              next.configuredPublishableKey !== saved.configuredPublishableKey ||
-              next.configuredSecretKey !== saved.configuredSecretKey ||
-              next.configuredAnonKey !== saved.configuredAnonKey ||
-              next.configuredServiceRoleKey !== saved.configuredServiceRoleKey;
+              next.anonKeyIsOverride !== saved.anonKeyIsOverride ||
+              next.serviceRoleKeyIsOverride !== saved.serviceRoleKeyIsOverride;
             if (identityChanged) {
               const savedComposition = yield* Schema.decodeUnknownEffect(
                 Orchestrator.CompositionConfig,

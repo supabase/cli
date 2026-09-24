@@ -31,16 +31,12 @@ export const StackIdentityInput = Schema.Struct({
   publishableKey: Schema.optionalKey(Schema.String),
   secretKey: Schema.optionalKey(Schema.String),
   anonKey: Schema.optionalKey(Schema.String),
+  anonKeyIsOverride: Schema.optionalKey(Schema.Boolean),
   serviceRoleKey: Schema.optionalKey(Schema.String),
+  serviceRoleKeyIsOverride: Schema.optionalKey(Schema.Boolean),
   gotrueJwtKeys: Schema.optionalKey(Schema.String),
   publicSigningKeys: Schema.optionalKey(Schema.String),
   remoteJwks: Schema.optionalKey(Schema.String),
-  configuredJwtSecret: Schema.optionalKey(Schema.String),
-  configuredSigningKeys: Schema.optionalKey(Schema.String),
-  configuredPublishableKey: Schema.optionalKey(Schema.String),
-  configuredSecretKey: Schema.optionalKey(Schema.String),
-  configuredAnonKey: Schema.optionalKey(Schema.String),
-  configuredServiceRoleKey: Schema.optionalKey(Schema.String),
 });
 export interface StackIdentityInput extends Schema.Schema.Type<typeof StackIdentityInput> {}
 
@@ -56,12 +52,8 @@ export const StackCredentials = Schema.Struct({
   gotrueJwtKeys: Schema.String,
   publicSigningKeys: Schema.String,
   remoteJwks: Schema.String,
-  configuredJwtSecret: Schema.optionalKey(Schema.String),
-  configuredSigningKeys: Schema.optionalKey(Schema.String),
-  configuredPublishableKey: Schema.optionalKey(Schema.String),
-  configuredSecretKey: Schema.optionalKey(Schema.String),
-  configuredAnonKey: Schema.optionalKey(Schema.String),
-  configuredServiceRoleKey: Schema.optionalKey(Schema.String),
+  anonKeyIsOverride: Schema.Boolean,
+  serviceRoleKeyIsOverride: Schema.Boolean,
 });
 export interface StackCredentials extends Schema.Schema.Type<typeof StackCredentials> {}
 

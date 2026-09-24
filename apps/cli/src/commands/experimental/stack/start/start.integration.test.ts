@@ -231,6 +231,7 @@ const fakeStack = () => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   let stopped = 0;
   let composed = 0;
+  let catalogApplied = 0;
   let lifecycle: "stopped" | "running" = "stopped";
   const memberStatuses = new Map<
     string,
@@ -248,6 +249,8 @@ const fakeStack = () => {
     gotrueJwtKeys: "[]",
     publicSigningKeys: "[]",
     remoteJwks: "[]",
+    anonKeyIsOverride: false,
+    serviceRoleKeyIsOverride: false,
   };
   const stack: Stack = {
     id: "a".repeat(64),
@@ -296,6 +299,8 @@ const fakeStack = () => {
             gotrueJwtKeys: options?.identity?.gotrueJwtKeys ?? "[]",
             publicSigningKeys: "[]",
             remoteJwks: options?.identity?.remoteJwks ?? "[]",
+            anonKeyIsOverride: options?.identity?.anonKeyIsOverride ?? false,
+            serviceRoleKeyIsOverride: options?.identity?.serviceRoleKeyIsOverride ?? false,
             ...options?.identity,
           };
           members = creations.map((creation) => {
@@ -335,6 +340,12 @@ const fakeStack = () => {
     },
     get composed() {
       return composed;
+    },
+    get catalogApplied() {
+      return catalogApplied;
+    },
+    applyCatalog() {
+      catalogApplied += 1;
     },
     get savedCredentials() {
       return savedCredentials;
@@ -379,7 +390,9 @@ const layers = (
     api,
     Layer.succeed(ExperimentalFlag, false),
     Layer.succeed(CliArgs, { args: ["stack", "start"] }),
-    Layer.succeed(StackCatalogSetup, { apply: () => Effect.void }),
+    Layer.succeed(StackCatalogSetup, {
+      apply: () => Effect.sync(() => fixture.applyCatalog()),
+    }),
     Layer.succeed(DbConnection, { connect: () => Effect.scoped(Effect.succeed(session)) }),
     Layer.succeed(YesFlag, false),
     Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
@@ -609,7 +622,7 @@ describe("experimental stack start", () => {
       const fixture = fakeStack();
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(1);
-      const savedKeys = fixture.savedCredentials.configuredSigningKeys;
+      const savedKeys = fixture.savedCredentials.gotrueJwtKeys;
       const savedJwks = fixture.savedCredentials.jwks;
       const savedAnonKey = fixture.savedCredentials.anonKey;
 
@@ -618,17 +631,39 @@ describe("experimental stack start", () => {
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.stopped).toBe(0);
       expect(fixture.composed).toBe(1);
-      expect(fixture.savedCredentials.configuredSigningKeys).toBe(savedKeys);
+      expect(fixture.savedCredentials.gotrueJwtKeys).toBe(savedKeys);
       expect(fixture.savedCredentials.jwks).toBe(savedJwks);
       expect(fixture.savedCredentials.anonKey).toBe(savedAnonKey);
 
       yield* fixture.stack.composition.stop;
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(2);
-      expect(fixture.savedCredentials.configuredSigningKeys).not.toBe(savedKeys);
+      expect(fixture.savedCredentials.gotrueJwtKeys).not.toBe(savedKeys);
       expect(fixture.savedCredentials.jwks).not.toBe(savedJwks);
       expect(fixture.savedCredentials.anonKey).not.toBe(savedAnonKey);
       expect(fixture.members.find(({ service }) => service === "auth")?.service).toBe("auth");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("recomposes a stopped stack with its existing IDs without rerunning catalog setup", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-stopped-restart-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "stopped-restart"\n');
+      const fixture = fakeStack();
+
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const firstIds = fixture.members.map(({ id }) => id);
+      expect(fixture.composed).toBe(1);
+      expect(fixture.catalogApplied).toBe(1);
+
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      expect(fixture.composed).toBe(2);
+      expect(fixture.members.map(({ id }) => id)).toEqual(firstIds);
+      expect(fixture.catalogApplied).toBe(1);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

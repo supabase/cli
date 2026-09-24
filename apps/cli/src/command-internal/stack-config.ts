@@ -76,15 +76,11 @@ interface StackStartConfig {
     {
       readonly publishableKey?: string;
       readonly secretKey?: string;
-      readonly configuredPublishableKey?: string;
-      readonly configuredSecretKey?: string;
-      readonly configuredJwtSecret?: string;
       readonly anonKey?: string;
       readonly serviceRoleKey?: string;
-      readonly configuredAnonKey?: string;
-      readonly configuredServiceRoleKey?: string;
+      readonly anonKeyIsOverride: boolean;
+      readonly serviceRoleKeyIsOverride: boolean;
       readonly gotrueJwtKeys?: string;
-      readonly configuredSigningKeys?: string;
       readonly publicSigningKeys?: string;
       readonly remoteJwks?: string;
     },
@@ -906,25 +902,24 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           );
           const signingKey = signingKeys?.[0];
           return {
-            ...(publishableKey === undefined
-              ? {}
-              : { publishableKey, configuredPublishableKey: publishableKey }),
-            ...(secretKey === undefined ? {} : { secretKey, configuredSecretKey: secretKey }),
+            ...(publishableKey === undefined ? {} : { publishableKey }),
+            ...(secretKey === undefined ? {} : { secretKey }),
             ...(configuredAnonKey === undefined
               ? signingKey === undefined
                 ? {}
                 : { anonKey: generateAsymmetricGoJwt(signingKey, "anon") }
-              : { anonKey: configuredAnonKey, configuredAnonKey }),
+              : { anonKey: configuredAnonKey }),
             ...(configuredServiceRoleKey === undefined
               ? signingKey === undefined
                 ? {}
                 : { serviceRoleKey: generateAsymmetricGoJwt(signingKey, "service_role") }
-              : { serviceRoleKey: configuredServiceRoleKey, configuredServiceRoleKey }),
+              : { serviceRoleKey: configuredServiceRoleKey }),
+            anonKeyIsOverride: configuredAnonKey !== undefined,
+            serviceRoleKeyIsOverride: configuredServiceRoleKey !== undefined,
             ...(signingKeys === undefined
               ? {}
               : {
                   gotrueJwtKeys: encodeJwkArray(signingKeys),
-                  configuredSigningKeys: encodeJwkArray(signingKeys),
                   publicSigningKeys: encodeJwkArray(signingKeys.map(toPublicJwk)),
                 }),
           };
@@ -949,7 +944,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         const refreshedRemoteJwks = yield* remoteJwks;
         return {
           ...configuredKeys,
-          ...(configuredJwtSecret === undefined ? {} : { configuredJwtSecret }),
           ...(refreshedRemoteJwks === undefined ? {} : { remoteJwks: refreshedRemoteJwks }),
         };
       });

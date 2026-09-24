@@ -116,28 +116,20 @@ it.live("forwards and rotates saved identity across composed services in one own
           endpoints: { http: { port: "auto" as const } },
         },
       ];
-      const identity = (
-        suffix: string,
-        keys: string,
-        configuredJwtSecret?: string,
-      ): State.StackIdentityInput => ({
+      const identity = (suffix: string, keys: string): State.StackIdentityInput => ({
         publishableKey: `publishable-${suffix}`,
         secretKey: `secret-${suffix}`,
         anonKey: `anon-${suffix}`,
         serviceRoleKey: `service-role-${suffix}`,
         gotrueJwtKeys: keys,
         publicSigningKeys: "[]",
-        configuredSigningKeys: keys,
-        ...(configuredJwtSecret === undefined ? {} : { configuredJwtSecret }),
-        configuredPublishableKey: `publishable-${suffix}`,
-        configuredSecretKey: `secret-${suffix}`,
-        configuredAnonKey: `anon-${suffix}`,
-        configuredServiceRoleKey: `service-role-${suffix}`,
+        anonKeyIsOverride: true,
+        serviceRoleKeyIsOverride: true,
       });
       const customJwtSecret = "custom-owner-rotation-jwt-secret-long-enough";
       const services = servicesFor(customJwtSecret);
       const first = yield* owner.composition.supabase(services, {
-        identity: identity("one", "[]", customJwtSecret),
+        identity: identity("one", "[]"),
       });
       const ids = first.map(({ id }) => id);
       const creationFor = (entries: typeof first, service: string) =>
@@ -230,7 +222,7 @@ it.live("forwards and rotates saved identity across composed services in one own
 
       yield* owner.composition.stop;
       const third = yield* owner.composition.supabase(servicesFor(customJwtSecret), {
-        identity: identity("three", "[]", customJwtSecret),
+        identity: identity("three", "[]"),
         reuseIds: ids,
       });
       const thirdCredentials = yield* state
@@ -241,6 +233,14 @@ it.live("forwards and rotates saved identity across composed services in one own
         anonKey: "anon-three",
         publishableKey: "publishable-three",
       });
+
+      const credentialConflict = yield* owner.composition
+        .supabase(servicesFor("different-owner-jwt-secret-long-enough"), { reuseIds: ids })
+        .pipe(Effect.flip);
+      expect(credentialConflict.message).toContain("Credential override jwtSecret conflicts");
+      expect(
+        (yield* state.read(stack.id).pipe(Effect.map((saved) => saved?.credentials)))?.jwtSecret,
+      ).toBe(customJwtSecret);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

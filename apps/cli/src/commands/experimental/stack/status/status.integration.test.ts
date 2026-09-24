@@ -34,6 +34,8 @@ const savedCredentials: StackCredentials = {
   gotrueJwtKeys: "[]",
   publicSigningKeys: "[]",
   remoteJwks: "[]",
+  anonKeyIsOverride: false,
+  serviceRoleKeyIsOverride: false,
 };
 const database: ServiceCreation = {
   service: "database",

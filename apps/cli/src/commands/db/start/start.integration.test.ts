@@ -1669,6 +1669,8 @@ describe("db start stack backend", () => {
           gotrueJwtKeys: "[]",
           publicSigningKeys: "[]",
           remoteJwks: "[]",
+          anonKeyIsOverride: false,
+          serviceRoleKeyIsOverride: false,
         }),
       },
       composition: {

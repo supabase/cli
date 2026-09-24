@@ -161,6 +161,8 @@ const fixture = (
       gotrueJwtKeys: "[]",
       publicSigningKeys: encodeTestJwkArray([savedSigningKey]),
       remoteJwks: "[]",
+      anonKeyIsOverride: false,
+      serviceRoleKeyIsOverride: false,
     };
     const temporaryFunctions: FunctionsInstance = {
       id: "temporary-functions",
