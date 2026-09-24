@@ -6,6 +6,7 @@ import {
   DEFAULT_LOCAL_JWT_SECRET,
   DEFAULT_POSTGRES_ROOT_KEY,
 } from "@supabase/stack/defaults";
+import { postgresVersion } from "@supabase/stack/internal/postgres-artifact";
 import type {
   ServiceCreation,
   ServiceCreationInput,
@@ -54,6 +55,7 @@ const session: DbSession = {
 const instance = (
   creation: ServiceCreation,
   id: string,
+  state: { lifecycle: "stopped" | "running"; wakeEnabled: boolean },
 ): ServiceInstances[ServiceCreation["service"]] => {
   const status = (config: ServiceCreation) => ({
     id,
@@ -62,7 +64,7 @@ const instance = (
         ? [{ name: "sql", protocol: "tcp" as const, host: "127.0.0.1", port: 23456 }]
         : [],
     config,
-    lifecycle: "stopped" as const,
+    lifecycle: state.lifecycle,
     health: undefined,
     error: undefined,
     cleanupError: undefined,
@@ -70,33 +72,50 @@ const instance = (
     currentOperation: undefined,
     launchId: undefined,
     intentRevision: 0,
-    wakeEnabled: false,
+    wakeEnabled: state.wakeEnabled,
     registered: true,
   });
   const base = {
     id,
-    start: Effect.void,
+    start: Effect.sync(() => {
+      state.lifecycle = "running";
+      state.wakeEnabled = false;
+    }),
     ready: Effect.void,
-    stop: Effect.void,
+    stop: Effect.sync(() => {
+      state.lifecycle = "stopped";
+      state.wakeEnabled = false;
+    }),
     restart: () => Effect.void,
     destroy: Effect.void,
     prepare: Effect.void,
-    status: Effect.succeed(status(creation)),
+    status: Effect.sync(() => status(creation)),
     followStatus: Stream.empty,
     logs: Stream.empty,
     credentials: () => Effect.succeed({}),
   } satisfies Omit<ServiceInstance, "service">;
   switch (creation.service) {
-    case "database":
+    case "database": {
+      let current: Extract<ServiceCreation, { service: "database" }> = creation;
       return {
         ...base,
         service: "database",
+        restart: (input?: Parameters<ServiceInstances["database"]["restart"]>[0]) =>
+          Effect.sync(() => {
+            if (input?.config.version !== undefined)
+              current = {
+                ...current,
+                config: { ...current.config, version: input.config.version },
+              };
+          }),
+        status: Effect.sync(() => status(current)),
         credentials: () =>
           Effect.succeed({ databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres" }),
         saveSnapshot: () => Effect.die("unused"),
         restoreSnapshot: () => Effect.die("unused"),
         resetData: Effect.die("unused"),
       };
+    }
     case "rest":
       return { ...base, service: "rest" };
     case "auth":
@@ -114,6 +133,7 @@ const instance = (
         service: "functions",
         restart: (input?: Parameters<ServiceInstances["functions"]["restart"]>[0]) =>
           Effect.sync(() => {
+            state.lifecycle = "running";
             if (input !== undefined) current = { ...current, config: input.config };
           }),
         status: Effect.sync(() => status(current)),
@@ -152,6 +172,16 @@ const fakeStack = () => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   let stopped = 0;
   let composed = 0;
+  let activations = new Map<string, "eager" | "lazy">();
+  const states = new Map<string, { lifecycle: "stopped" | "running"; wakeEnabled: boolean }>();
+  const makeInstance = (creation: ServiceCreation, id: string) => {
+    const state: { lifecycle: "stopped" | "running"; wakeEnabled: boolean } = {
+      lifecycle: "stopped",
+      wakeEnabled: false,
+    };
+    states.set(id, state);
+    return instance(creation, id, state);
+  };
   const stack: Stack = {
     id: "a".repeat(64),
     services: {
@@ -173,21 +203,37 @@ const fakeStack = () => {
     },
     composition: {
       describe: Effect.sync(() => ({
-        members: members.map(({ id }) => ({ id, activation: "eager" as const })),
+        members: members.map(({ id }) => ({ id, activation: activations.get(id) ?? "eager" })),
         dependencies: [],
       })),
       supabase: (creations: ReadonlyArray<ServiceCreationInput>) =>
         Effect.sync(() => {
           composed += 1;
           members = creations.map((creation) =>
-            instance(requireConcreteCreation(creation), `${creation.service}-member`),
+            makeInstance(requireConcreteCreation(creation), `${creation.service}-member`),
           );
+          activations = new Map(members.map(({ id }) => [id, "eager"]));
           return members;
         }),
-      configure: () => Effect.void,
-      start: Effect.succeed([]),
+      configure: ({ members: configured }) =>
+        Effect.sync(() => {
+          activations = new Map(configured.map(({ id, activation }) => [id, activation]));
+        }),
+      start: Effect.sync(() => {
+        for (const [id, activation] of activations) {
+          const state = states.get(id);
+          if (state === undefined) continue;
+          state.lifecycle = activation === "eager" ? "running" : "stopped";
+          state.wakeEnabled = activation === "lazy";
+        }
+        return [];
+      }),
       stop: Effect.sync(() => {
         stopped += 1;
+        for (const state of states.values()) {
+          state.lifecycle = "stopped";
+          state.wakeEnabled = false;
+        }
         return [];
       }),
       restart: Effect.succeed([]),
@@ -213,7 +259,12 @@ const fakeStack = () => {
 const layers = (root: string, fixture: ReturnType<typeof fakeStack>, output = mockOutput()) => {
   const telemetry = mockTelemetryStateTracked();
   const target = Layer.succeed(StackTargetResolver, {
-    resolve: () => Effect.succeed({ projectRoot: root, runtime: "native" as const }),
+    resolve: () =>
+      Effect.succeed({
+        projectRoot: root,
+        runtime: "native" as const,
+        ...(fixture.composed === 0 ? {} : { id: fixture.stack.id }),
+      }),
   });
   const api = Layer.succeed(StackApi, {
     create: () => Effect.succeed(fixture.stack),
@@ -336,15 +387,19 @@ describe("experimental stack start", () => {
       );
       expect(fixture.members.map(({ service }) => service)).toEqual(["database"]);
       expect(fixture.composed).toBe(1);
+      yield* fixture.stack.composition.stop;
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.some(({ service }) => service === "rest")).toBe(true);
       expect(fixture.composed).toBe(2);
+      yield* fixture.stack.composition.stop;
       yield* stackStart(flags(["studio"])).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.some(({ service }) => service === "studio")).toBe(false);
       expect(fixture.stopped).toBe(2);
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.some(({ service }) => service === "studio")).toBe(true);
-      expect(fixture.stopped).toBe(3);
+      yield* fixture.stack.composition.stop;
       yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(5);
     }).pipe(Effect.provide(BunServices.layer)),
@@ -364,6 +419,7 @@ describe("experimental stack start", () => {
 
       yield* stackStart(flags(["functions"])).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.some(({ service }) => service === "functions")).toBe(false);
+      yield* fixture.stack.composition.stop;
 
       yield* fs.writeFileString(
         `${root}/supabase/functions/.env`,
@@ -399,14 +455,7 @@ describe("experimental stack start", () => {
         `${root}/supabase/functions/.env`,
         "CUSTOM_VALUE=changed\nSUPABASE_SERVICE_ROLE_KEY=ignored-again\n",
       );
-      const changedEnv = yield* stackStart(flags()).pipe(
-        Effect.provide(layers(root, fixture)),
-        Effect.flip,
-      );
-      expect(changedEnv).toBeInstanceOf(StackCommandStartError);
-      if (!(changedEnv instanceof StackCommandStartError))
-        return yield* Effect.die("Expected a stack configuration error");
-      expect(changedEnv.reason).toBe("invalid-config");
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.find(({ service }) => service === "database")?.id).toBe(databaseId);
       const refreshed = fixture.members.find(({ service }) => service === "functions");
       if (refreshed?.service !== "functions") return yield* Effect.die("Functions missing");
@@ -414,6 +463,43 @@ describe("experimental stack start", () => {
       const refreshedStatus = yield* refreshed.status;
       if (refreshedStatus.config.service === "functions")
         expect(refreshedStatus.config.config.env).toEqual({ CUSTOM_VALUE: "hello" });
+
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const restartedStatus = yield* refreshed.status;
+      expect(restartedStatus.lifecycle).toBe("stopped");
+      expect(restartedStatus.wakeEnabled).toBe(true);
+      if (restartedStatus.config.service === "functions")
+        expect(restartedStatus.config.config.env).toEqual({ CUSTOM_VALUE: "changed" });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("matches a Postgres major alias to the saved pinned database version", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-postgres-alias-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "start-postgres-alias"\n[db]\nmajor_version = 17\n[edge_runtime]\nenabled = false\n',
+      );
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const database = fixture.members.find(({ service }) => service === "database");
+      if (database?.service !== "database") return yield* Effect.die("Database missing");
+      const observed = yield* database.status;
+      if (observed.config.service !== "database")
+        return yield* Effect.die("Database config missing");
+      const pinnedVersion = postgresVersion("17");
+      expect(pinnedVersion).not.toBe("17");
+      yield* database.restart({
+        config: { ...observed.config.config, version: pinnedVersion },
+      });
+      yield* fixture.stack.composition.stop;
+
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.members.find(({ service }) => service === "database")?.id).toBe(database.id);
+      expect(fixture.composed).toBe(1);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -449,17 +535,19 @@ describe("experimental stack start", () => {
         const fixture = fakeStack();
         yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
         expect(fixture.composed).toBe(1);
+        yield* fixture.stack.composition.stop;
 
         yield* fs.writeFileString(
           `${root}/supabase/config.toml`,
           `project_id = "${name}"\n${changed}`,
         );
+        const stoppedBeforeRetry = fixture.stopped;
         const error = yield* stackStart(flags(["studio"])).pipe(
           Effect.provide(layers(root, fixture)),
           Effect.flip,
         );
         expect(error).toMatchObject({ reason: "invalid-config" });
-        expect(fixture.stopped).toBe(0);
+        expect(fixture.stopped).toBe(stoppedBeforeRetry);
         expect(fixture.composed).toBe(1);
       }
     }).pipe(Effect.provide(BunServices.layer)),

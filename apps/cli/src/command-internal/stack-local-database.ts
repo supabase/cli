@@ -1,5 +1,6 @@
 import { Data, Effect, FileSystem, Option, Path, Redacted } from "effect";
 import type { DatabaseInstance, ServiceCreationInput, Stack } from "@supabase/stack/effect";
+import { postgresVersion } from "@supabase/stack/internal/postgres-artifact";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -255,7 +256,8 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
     const status = yield* currentDatabase.status.pipe(Effect.mapError(startFailed));
     if (
       status.config.service === "database" &&
-      status.config.config.version.split(".")[0] !== databaseCreation.config.version.split(".")[0]
+      postgresVersion(status.config.config.version) !==
+        postgresVersion(databaseCreation.config.version)
     )
       return yield* startFailed({
         message: "The requested database version does not match the saved stack binding",

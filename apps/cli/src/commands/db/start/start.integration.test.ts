@@ -1750,24 +1750,27 @@ describe("db start stack backend", () => {
     });
   });
 
-  it.live("resumes the existing database without replacing its composition", () => {
-    const { layer, out, catalogApplied } = setup({ recordCatalog: true });
-    const fixture = stackFixture(true);
-    return Effect.gen(function* () {
-      yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            layer,
-            stackBackendLayer("stack"),
-            stackLayer(tempRoot.current, fixture, true),
+  it.live(
+    "resumes the existing database when its pinned version matches the configured major",
+    () => {
+      const { layer, out, catalogApplied } = setup({ recordCatalog: true });
+      const fixture = stackFixture(true);
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              layer,
+              stackBackendLayer("stack"),
+              stackLayer(tempRoot.current, fixture, true),
+            ),
           ),
-        ),
-      );
-      expect(fixture.state.running).toBe(true);
-      expect(catalogApplied).toEqual([]);
-      expect(out.stderrText).not.toContain("already running");
-    });
-  });
+        );
+        expect(fixture.state.running).toBe(true);
+        expect(catalogApplied).toEqual([]);
+        expect(out.stderrText).not.toContain("already running");
+      });
+    },
+  );
 
   it.live("rejects a different database major when resuming the saved stack", () => {
     const { layer, catalogApplied } = setup({ recordCatalog: true });
