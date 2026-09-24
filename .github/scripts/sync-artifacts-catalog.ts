@@ -271,7 +271,7 @@ export async function planArtifactCatalogUpdate(input: {
           release.status === "missing"
             ? `${pin.service}:${pin.version} has no published slim image and native release.`
             : release.status === "unmirrored"
-              ? `${pin.service}:${pin.version} on ${DEST_REGISTRY} does not match the GHCR digest.`
+              ? `${pin.service}:${pin.version} is not on ${DEST_REGISTRY} under the GHCR digest.`
               : `${pin.service}:${pin.version} publication check failed.`,
         blocking: true,
       });
@@ -302,7 +302,28 @@ export async function planArtifactCatalogUpdate(input: {
 
 type Probe = "published" | "missing" | "lookup-failed";
 
-async function probeManifest(reference: string): Promise<{ probe: Probe; digest?: string }> {
+interface ManifestProbe {
+  readonly probe: Probe;
+  readonly digest?: string;
+}
+
+/** A pin is published only when GHCR, the ECR Public mirror, and the native release all agree. */
+export function publicationFrom(input: {
+  readonly manifest: ManifestProbe;
+  readonly mirror: ManifestProbe;
+  readonly native: Probe;
+}): ReleasePublication {
+  const { manifest, mirror, native } = input;
+  if (manifest.probe === "lookup-failed" || native === "lookup-failed") {
+    return { status: "lookup-failed" };
+  }
+  if (manifest.probe === "missing" || native === "missing") return { status: "missing" };
+  if (mirror.probe === "lookup-failed") return { status: "lookup-failed" };
+  if (mirror.digest !== manifest.digest) return { status: "unmirrored" };
+  return { status: "published", digest: manifest.digest };
+}
+
+async function probeManifest(reference: string): Promise<ManifestProbe> {
   const proc = Bun.spawn(["regctl", "manifest", "head", reference], {
     stdout: "pipe",
     stderr: "pipe",
@@ -357,13 +378,7 @@ async function lookupPublication(service: string, version: string): Promise<Rele
     probeManifest(`${DEST_REGISTRY}/${service}:${version}`),
     probeNativeRelease(service, version),
   ]);
-  if (manifest.probe === "lookup-failed" || native === "lookup-failed") {
-    return { status: "lookup-failed" };
-  }
-  if (manifest.probe === "missing" || native === "missing") return { status: "missing" };
-  if (mirror.probe === "lookup-failed") return { status: "lookup-failed" };
-  if (mirror.digest !== manifest.digest) return { status: "unmirrored" };
-  return { status: "published", digest: manifest.digest };
+  return publicationFrom({ manifest, mirror, native });
 }
 
 async function main(argv: ReadonlyArray<string>): Promise<void> {

@@ -4,6 +4,7 @@ import { InvalidPayloadError } from "./slim-mirror-payload.ts";
 import {
   CATALOG_PATH,
   planArtifactCatalogUpdate,
+  publicationFrom,
   type ReleasePublication,
 } from "./sync-artifacts-catalog.ts";
 
@@ -103,8 +104,7 @@ FROM postgrest/postgrest:v16.3 AS postgrest
     expect(plan.skipped).toEqual([
       {
         alias: "pg",
-        reason:
-          "postgres:17.6.1.171 on public.ecr.aws/supabase/cli does not match the GHCR digest.",
+        reason: "postgres:17.6.1.171 is not on public.ecr.aws/supabase/cli under the GHCR digest.",
         blocking: true,
       },
     ]);
@@ -130,6 +130,29 @@ FROM postgrest/postgrest:v16.3 AS postgrest
         publication: async () => published(),
       }),
     ).rejects.toThrow(InvalidPayloadError);
+  });
+});
+
+describe("publicationFrom", () => {
+  const ghcr = { probe: "published", digest: DIGEST_B } as const;
+
+  test("publishes only when the ECR Public mirror serves the GHCR digest", () => {
+    expect(publicationFrom({ manifest: ghcr, mirror: ghcr, native: "published" })).toEqual(
+      published(DIGEST_B),
+    );
+    expect(
+      publicationFrom({ manifest: ghcr, mirror: { probe: "missing" }, native: "published" }),
+    ).toEqual({ status: "unmirrored" });
+    expect(
+      publicationFrom({
+        manifest: ghcr,
+        mirror: { probe: "published", digest: `sha256:${"c".repeat(64)}` },
+        native: "published",
+      }),
+    ).toEqual({ status: "unmirrored" });
+    expect(
+      publicationFrom({ manifest: ghcr, mirror: { probe: "lookup-failed" }, native: "published" }),
+    ).toEqual({ status: "lookup-failed" });
   });
 });
 
