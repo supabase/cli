@@ -6,5 +6,5 @@ export const compileOptions = {
   minify: true,
   bytecode: true,
   bytecodeDepth: 2,
-  format: "esm" as const,
+  format: "esm",
 } as const satisfies Partial<Bun.BuildConfig>;
