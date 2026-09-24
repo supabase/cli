@@ -1,6 +1,7 @@
 import {
   Cause,
   Crypto,
+  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -202,10 +203,22 @@ const publishLogs = Effect.fn("ProcessRecipe.publishLogs")((
   );
 });
 
+const startupTimeoutSeconds = 60;
 const startupOutputTailLines = 20;
+const startupOutputLineChars = 1_000;
 
-const withRecentOutput = (summary: string, outputTail: ReadonlyArray<string>) =>
-  outputTail.length === 0 ? summary : `${summary}. Recent output:\n${outputTail.join("\n")}`;
+type StartupOutput = Readonly<Record<CatalogLog["stream"], ReadonlyArray<string>>>;
+
+const clipLine = (line: string) =>
+  line.length > startupOutputLineChars ? `…${line.slice(-startupOutputLineChars)}` : line;
+
+const withRecentOutput = (summary: string, output: StartupOutput) =>
+  [
+    summary,
+    ...(["stdout", "stderr"] as const)
+      .filter((name) => output[name].length > 0)
+      .map((name) => `Recent ${name}:\n${output[name].join("\n")}`),
+  ].join("\n");
 
 const awaitStartup = Effect.fn("ProcessRecipe.awaitStartup")(
   (
@@ -217,21 +230,21 @@ const awaitStartup = Effect.fn("ProcessRecipe.awaitStartup")(
     },
     logs: PubSub.PubSub<CatalogLog>,
   ): Effect.Effect<
-    Readonly<{ readonly code: number; readonly outputTail: ReadonlyArray<string> }>,
+    Readonly<{ readonly code: number; readonly output: StartupOutput }>,
     ServiceError
   > =>
     Effect.gen(function* () {
-      const tail = yield* Ref.make<ReadonlyArray<string>>([]);
-      const appendLines = (lines: ReadonlyArray<string>) =>
-        Ref.update(tail, (current) =>
-          [...current, ...lines.filter((line) => line.trim().length > 0)].slice(
-            -startupOutputTailLines,
-          ),
-        );
       const collect = Effect.fnUntraced(function* (
         stream: Stream.Stream<Uint8Array, NativeProcessError | ContainerError>,
         name: CatalogLog["stream"],
+        tail: Ref.Ref<ReadonlyArray<string>>,
       ) {
+        const appendLines = (lines: ReadonlyArray<string>) =>
+          Ref.update(tail, (current) =>
+            [...current, ...lines.filter((line) => line.trim().length > 0).map(clipLine)].slice(
+              -startupOutputTailLines,
+            ),
+          );
         const partial = yield* Ref.make("");
         // The unterminated last line is flushed on interruption so a timeout still reports it.
         yield* stream.pipe(
@@ -241,36 +254,45 @@ const awaitStartup = Effect.fn("ProcessRecipe.awaitStartup")(
             Ref.modify(partial, (rest): [ReadonlyArray<string>, string] => {
               const lines = `${rest}${text}`.split(/\r?\n/);
               const next = lines.pop() ?? "";
-              return [lines, next];
+              return [lines, next.slice(-(startupOutputLineChars + 1))];
             }).pipe(Effect.flatMap(appendLines)),
           ),
           Effect.ensuring(Ref.get(partial).pipe(Effect.flatMap((rest) => appendLines([rest])))),
         );
       });
+      const stdout = yield* Ref.make<ReadonlyArray<string>>([]);
+      const stderr = yield* Ref.make<ReadonlyArray<string>>([]);
       const completed = yield* Effect.all(
-        [collect(process.stdout, "stdout"), collect(process.stderr, "stderr"), process.exitCode],
+        [
+          collect(process.stdout, "stdout", stdout),
+          collect(process.stderr, "stderr", stderr),
+          process.exitCode,
+        ],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError((cause) => serviceError("launch", cause)),
-        Effect.timeoutOption("60 seconds"),
+        Effect.timeoutOption(Duration.seconds(startupTimeoutSeconds)),
       );
-      const outputTail = yield* Ref.get(tail);
+      const output = { stdout: yield* Ref.get(stdout), stderr: yield* Ref.get(stderr) };
       if (Option.isNone(completed))
         return yield* serviceError(
           "launch",
-          withRecentOutput(`${service} startup timed out after 60 seconds`, outputTail),
+          withRecentOutput(
+            `${service} startup timed out after ${startupTimeoutSeconds} seconds`,
+            output,
+          ),
         );
-      return { code: Number(completed.value[2]), outputTail };
+      return { code: Number(completed.value[2]), output };
     }),
 );
 
 const startupFailure = (
   service: ServiceKind,
-  result: { readonly code: number; readonly outputTail: ReadonlyArray<string> },
+  result: { readonly code: number; readonly output: StartupOutput },
 ): ServiceError =>
   serviceError(
     "launch",
-    withRecentOutput(`${service} startup exited with ${result.code}`, result.outputTail),
+    withRecentOutput(`${service} startup exited with ${result.code}`, result.output),
   );
 
 const readiness = Effect.fn("ProcessRecipe.readiness")(

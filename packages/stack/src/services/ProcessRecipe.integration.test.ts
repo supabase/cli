@@ -11,6 +11,9 @@ import * as Realtime from "./Realtime.ts";
 
 const encode = (text: string) => new TextEncoder().encode(text);
 
+const poolTimeout =
+  "** (DBConnection.ConnectionError) connection not available and request was dropped from queue";
+
 const postgrexFailure =
   '[error] Postgrex.Protocol ("db_conn_1") failed to connect: ** (DBConnection.ConnectionError) tcp connect (host.docker.internal:54322): network is unreachable - :enetunreach';
 
@@ -30,6 +33,8 @@ const startupContainer = (tool: {
       exitCode: tool.exitCode,
       stdin: Sink.drain,
       stop: Effect.void,
+      discard: Effect.void,
+      kill: Effect.void,
       remove: Effect.void,
     }),
 });
@@ -74,9 +79,7 @@ describe("process recipe startup", () => {
               postgrexFailure.slice(0, 60),
               `${postgrexFailure.slice(60)}\n`,
             ),
-            stderr: Stream.make(
-              "** (DBConnection.ConnectionError) connection not available and request was dropped from queue\n",
-            ),
+            stderr: Stream.make(`${poolTimeout}\n`),
             exitCode: Effect.succeed(1),
           }),
         );
@@ -85,9 +88,33 @@ describe("process recipe startup", () => {
 
         expect(error.message).toContain("realtime startup exited with 1");
         expect(error.message).toContain(postgrexFailure);
-        expect(error.message).toContain(
-          "** (DBConnection.ConnectionError) connection not available and request was dropped from queue",
+        expect(error.message).toContain(poolTimeout);
+      }),
+    ).pipe(Effect.provide(platform)),
+  );
+
+  it.effect("keeps the stderr error when later stdout exceeds the tail", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stderrWritten = yield* Deferred.make<void>();
+        const noise = Array.from({ length: 30 }, (_, index) => `[info] shutdown step ${index}\n`);
+        const realtime = yield* realtimeService(
+          startupContainer({
+            stdout: Stream.fromEffectDrain(Deferred.await(stderrWritten)).pipe(
+              Stream.concat(Stream.fromIterable(noise)),
+            ),
+            stderr: Stream.make(`${poolTimeout}\n`).pipe(
+              Stream.concat(Stream.fromEffectDrain(Deferred.succeed(stderrWritten, undefined))),
+            ),
+            exitCode: Effect.succeed(1),
+          }),
         );
+
+        const error = yield* Effect.flip(realtime.start);
+
+        expect(error.message).toContain(poolTimeout);
+        expect(error.message).toContain("[info] shutdown step 29");
+        expect(error.message).not.toContain("[info] shutdown step 9\n");
       }),
     ).pipe(Effect.provide(platform)),
   );
@@ -102,7 +129,9 @@ describe("process recipe startup", () => {
             startupContainer({
               stdout: Stream.make(
                 `${postgrexFailure}\n`,
-                "[info] Retrying database connection",
+                "[info] ",
+                "x".repeat(5_000),
+                " Retrying database connection",
               ).pipe(
                 Stream.concat(Stream.fromEffectDrain(Deferred.succeed(running, undefined))),
                 Stream.concat(Stream.never),
@@ -120,7 +149,9 @@ describe("process recipe startup", () => {
 
           expect(error.message).toContain("realtime startup timed out after 60 seconds");
           expect(error.message).toContain(postgrexFailure);
-          expect(error.message).toContain("[info] Retrying database connection");
+          expect(error.message).toContain("x Retrying database connection");
+          expect(error.message).not.toContain("[info] x");
+          expect(error.message.length).toBeLessThan(2_000);
         }),
       ).pipe(Effect.provide(platform)),
   );
