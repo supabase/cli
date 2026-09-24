@@ -122,7 +122,9 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
       return yield* new ResetLocalDbNotRunningError({ message: "The local stack is not running." });
     const catalog = yield* Effect.serviceOption(StackCatalogSetup);
     if (Option.isNone(catalog)) return yield* resetFailed("stack catalog setup is unavailable");
-    yield* loadStackConfig(workdir).pipe(Effect.mapError((cause) => resetFailed(cause.message)));
+    const config = yield* loadStackConfig(workdir).pipe(
+      Effect.mapError((cause) => resetFailed(cause.message)),
+    );
     const toml = yield* readDbToml(fs, path, workdir);
     const databaseStatus = yield* opened.value.database.status.pipe(
       Effect.mapError((cause) => resetFailed(`failed to inspect stack: ${cause.message}`)),
@@ -143,11 +145,18 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
           ),
         ),
     );
-    const databaseServices = members.flatMap((member) =>
+    const composed = members.flatMap((member) =>
       member.service === "auth" || member.service === "storage" || member.service === "realtime"
         ? [member.service]
         : [],
     );
+    // A database-only composition is the `db start` overlay, which provisions schemas from config;
+    // a full stack keeps its saved members so `stack start --exclude` choices hold.
+    const databaseServices = members.every((member) => member.service === "database")
+      ? (["auth", "realtime", "storage"] as const).filter(
+          (service) => config.source[service].enabled,
+        )
+      : composed;
     yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
     yield* opened.value.stack.composition.stop.pipe(
       Effect.mapError((cause) => resetFailed(`failed to stop local stack: ${cause.message}`)),

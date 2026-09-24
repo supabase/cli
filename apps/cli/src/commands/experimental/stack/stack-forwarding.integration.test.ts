@@ -80,6 +80,7 @@ vector_port = 59001
               expect(yield* realtimeSpec().env(service, new Map(), container)).toMatchObject({
                 MAX_HEADER_LENGTH: "8192",
                 ERL_AFLAGS: "-proto_dist inet6_tcp",
+                DB_IP_VERSION: "ipv4",
               });
               break;
             case "storage":

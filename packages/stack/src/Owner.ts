@@ -58,6 +58,7 @@ import {
   DEFAULT_LOCAL_JWT_SECRET,
   DEFAULT_POSTGRES_ROOT_KEY,
 } from "./Defaults.ts";
+import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
 
 export class OwnerError extends Data.TaggedError("OwnerError")<{
   readonly operation: string;
@@ -200,10 +201,17 @@ const makeOwnerWithDependencies = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const http = yield* HttpClient.HttpClient;
     const ownerScope = yield* Scope.Scope;
+    const helperOwnerId = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) => errorFor("identity", cause)),
+    );
+    const helpers = yield* makeDockerHelperRegistry(helperOwnerId);
     const recipes = yield* Ref.make(new Map<string, CatalogRecipe>());
     const instances = yield* Ref.make(new Map<string, ServiceInstance<ServiceCreation>>());
     const namespaces = yield* Ref.make(new Map<string, NetworkNamespace>());
-    const composition = yield* Ref.make<CompositionConfig>({ members: [], dependencies: [] });
+    const composition = yield* Ref.make<CompositionConfig>({
+      members: [],
+      dependencies: [],
+    });
     const registryGate = yield* Semaphore.make(1);
     const compositionGate = yield* Semaphore.make(1);
     const draining = yield* Ref.make(false);
@@ -444,9 +452,10 @@ const makeOwnerWithDependencies = (
             break;
         }
       }
-      return yield* Schema.decodeUnknownEffect(ServiceCreation)({ ...creation, config }).pipe(
-        Effect.mapError((cause) => errorFor("credentials", cause)),
-      );
+      return yield* Schema.decodeUnknownEffect(ServiceCreation)({
+        ...creation,
+        config,
+      }).pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
     });
 
     const removeCreation = (id: string) =>
@@ -498,6 +507,7 @@ const makeOwnerWithDependencies = (
         root: options.root,
         cacheRoot: options.cacheRoot,
         runtime,
+        helpers,
       }).pipe(Effect.mapError((cause) => errorFor("recipe", cause)));
     const recipeReady = (input: unknown, id: string) =>
       recipeFor(input, id).pipe(
@@ -560,7 +570,12 @@ const makeOwnerWithDependencies = (
           launch: (context) =>
             persistCreation(id, context.config).pipe(
               Effect.mapError(
-                (cause) => new ServiceError({ operation: "state", message: cause.message, cause }),
+                (cause) =>
+                  new ServiceError({
+                    operation: "state",
+                    message: cause.message,
+                    cause,
+                  }),
               ),
               Effect.andThen(recipe.definition.launch(context)),
               Effect.map((session) => ({
@@ -571,7 +586,11 @@ const makeOwnerWithDependencies = (
                       Effect.flatMap((value) => value?.close ?? Effect.void),
                       Effect.mapError(
                         (cause) =>
-                          new ServiceError({ operation: "close", message: cause.message, cause }),
+                          new ServiceError({
+                            operation: "close",
+                            message: cause.message,
+                            cause,
+                          }),
                       ),
                     ),
                   ),
@@ -610,7 +629,11 @@ const makeOwnerWithDependencies = (
                   Effect.flatMap((value) => value?.release ?? Effect.void),
                   Effect.mapError(
                     (cause) =>
-                      new ServiceError({ operation: "release", message: cause.message, cause }),
+                      new ServiceError({
+                        operation: "release",
+                        message: cause.message,
+                        cause,
+                      }),
                   ),
                 ),
               ),
@@ -618,7 +641,11 @@ const makeOwnerWithDependencies = (
                 removeInstance(id).pipe(
                   Effect.mapError(
                     (cause) =>
-                      new ServiceError({ operation: "state", message: cause.message, cause }),
+                      new ServiceError({
+                        operation: "state",
+                        message: cause.message,
+                        cause,
+                      }),
                   ),
                 ),
               ),
@@ -632,7 +659,10 @@ const makeOwnerWithDependencies = (
               Effect.flatMap((isDraining) =>
                 isDraining && ["start", "arm", "restart", "storage"].includes(operation)
                   ? Effect.fail(
-                      new ServiceError({ operation: "draining", message: "Owner is draining" }),
+                      new ServiceError({
+                        operation: "draining",
+                        message: "Owner is draining",
+                      }),
                     )
                   : orchestrator.admissionFor(id)(operation, transition),
               ),
@@ -658,10 +688,19 @@ const makeOwnerWithDependencies = (
               Effect.flatMap((address): Effect.Effect<BackendAddress, ProxyError> => {
                 if (address.kind === "unix") {
                   return address.path === undefined
-                    ? Effect.fail(new ProxyError({ message: "Unix endpoint has no path" }))
-                    : Effect.succeed({ path: `${address.path}/.s.PGSQL.${address.port}` });
+                    ? Effect.fail(
+                        new ProxyError({
+                          message: "Unix endpoint has no path",
+                        }),
+                      )
+                    : Effect.succeed({
+                        path: `${address.path}/.s.PGSQL.${address.port}`,
+                      });
                 }
-                return Effect.succeed({ host: address.host ?? "127.0.0.1", port: address.port });
+                return Effect.succeed({
+                  host: address.host ?? "127.0.0.1",
+                  port: address.port,
+                });
               }),
               Effect.mapError((cause) =>
                 cause instanceof ProxyError
@@ -758,7 +797,12 @@ const makeOwnerWithDependencies = (
             name,
             value.pipe(
               Effect.mapError(
-                (cause) => new ServiceError({ operation: "output", message: cause.message, cause }),
+                (cause) =>
+                  new ServiceError({
+                    operation: "output",
+                    message: cause.message,
+                    cause,
+                  }),
               ),
             ),
           ],
@@ -779,7 +823,12 @@ const makeOwnerWithDependencies = (
         startAt: (revision, inputs, wake, guard) =>
           getCreation(id).pipe(
             Effect.mapError(
-              (cause) => new ServiceError({ operation: "get", message: cause.message, cause }),
+              (cause) =>
+                new ServiceError({
+                  operation: "get",
+                  message: cause.message,
+                  cause,
+                }),
             ),
             Effect.flatMap((creation) => mergeInputs(creation, inputs)),
             Effect.flatMap((candidate) => instance.startAt(revision, candidate, wake, guard)),
@@ -787,7 +836,12 @@ const makeOwnerWithDependencies = (
         restart: (revision, inputs, candidate, guard) =>
           getCreation(id).pipe(
             Effect.mapError(
-              (cause) => new ServiceError({ operation: "get", message: cause.message, cause }),
+              (cause) =>
+                new ServiceError({
+                  operation: "get",
+                  message: cause.message,
+                  cause,
+                }),
             ),
             Effect.flatMap((creation) => restartCreation(creation, candidate)),
             Effect.flatMap((creation) => mergeInputs(creation, inputs)),
@@ -795,12 +849,22 @@ const makeOwnerWithDependencies = (
           ),
         bind: namespace.bind.pipe(
           Effect.mapError(
-            (cause) => new ServiceError({ operation: "bind", message: cause.message, cause }),
+            (cause) =>
+              new ServiceError({
+                operation: "bind",
+                message: cause.message,
+                cause,
+              }),
           ),
         ),
         close: namespace.close.pipe(
           Effect.mapError(
-            (cause) => new ServiceError({ operation: "close", message: cause.message, cause }),
+            (cause) =>
+              new ServiceError({
+                operation: "close",
+                message: cause.message,
+                cause,
+              }),
           ),
           Effect.tap(() =>
             instance.get.pipe(
@@ -839,7 +903,12 @@ const makeOwnerWithDependencies = (
         orchestrator.register(registered).pipe(
           Effect.catch((cause) => namespace.release.pipe(Effect.andThen(Effect.fail(cause)))),
           Effect.mapError(
-            (cause) => new ServiceError({ operation: "register", message: String(cause), cause }),
+            (cause) =>
+              new ServiceError({
+                operation: "register",
+                message: String(cause),
+                cause,
+              }),
           ),
         ),
       );
@@ -881,7 +950,11 @@ const makeOwnerWithDependencies = (
               return namespace === undefined
                 ? Effect.fail(errorFor("status", "Service namespace is missing"))
                 : namespace.bindings.pipe(
-                    Effect.map((endpoints) => ({ ...value, config: creation, endpoints })),
+                    Effect.map((endpoints) => ({
+                      ...value,
+                      config: creation,
+                      endpoints,
+                    })),
                     Effect.mapError((cause) => errorFor("status", cause)),
                   );
             }),
@@ -915,7 +988,11 @@ const makeOwnerWithDependencies = (
                 .storage(
                   action.pipe(
                     Effect.mapError(
-                      (cause) => new ServiceError({ operation: "storage", message: String(cause) }),
+                      (cause) =>
+                        new ServiceError({
+                          operation: "storage",
+                          message: String(cause),
+                        }),
                     ),
                   ),
                 )
@@ -1019,7 +1096,10 @@ const makeOwnerWithDependencies = (
                 get: (id) => get(id).pipe(Effect.mapError(supabaseError)),
                 status: (id) =>
                   observation(id).pipe(
-                    Effect.map(({ lifecycle, wakeEnabled }) => ({ lifecycle, wakeEnabled })),
+                    Effect.map(({ lifecycle, wakeEnabled }) => ({
+                      lifecycle,
+                      wakeEnabled,
+                    })),
                     Effect.mapError(supabaseError),
                   ),
                 create: (creation) => createService(creation).pipe(Effect.mapError(supabaseError)),
@@ -1127,7 +1207,9 @@ const makeOwnerWithDependencies = (
                     value.service === "database"
                       ? Effect.succeed(Redacted.value(value.config.databasePassword))
                       : Effect.fail(
-                          new EndpointError({ message: "Credentials require a database" }),
+                          new EndpointError({
+                            message: "Credentials require a database",
+                          }),
                         ),
                   ),
                   Effect.mapError((cause) =>
@@ -1269,7 +1351,10 @@ const makeOwnerWithDependencies = (
         get,
         list: Ref.get(recipes).pipe(
           Effect.map((values) =>
-            [...values].map(([id, recipe]) => ({ id, creation: recipe.creation })),
+            [...values].map(([id, recipe]) => ({
+              id,
+              creation: recipe.creation,
+            })),
           ),
           Effect.mapError((cause) => errorFor("list", cause)),
         ),
@@ -1335,5 +1420,10 @@ export const layer = (options: Omit<OwnerOptions, "state">) =>
     }),
   ).pipe(
     Layer.provide(Layer.fresh(Orchestrator.layer)),
-    Layer.provide(Network.layer({ stackId: options.saved.id, runtime: options.saved.runtime })),
+    Layer.provide(
+      Network.layer({
+        stackId: options.saved.id,
+        runtime: options.saved.runtime,
+      }),
+    ),
   );

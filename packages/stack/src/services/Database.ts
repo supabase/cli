@@ -53,6 +53,7 @@ import type { StackId } from "../identity/StackId.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeDatabaseSnapshots } from "./DatabaseSnapshot.ts";
+import type { DockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 import {
   makeDockerDatabaseStorage,
   type DockerDatabaseStorage,
@@ -64,6 +65,8 @@ export const DatabaseConfig = Schema.Struct({
   jwtSecret: Schema.Redacted(Schema.String),
   jwtExpiry: Schema.Finite,
   healthTimeoutMs: Schema.optionalKey(Schema.Finite),
+  /** When 0, the database is disposable and can use reduced-durability settings. */
+  stopGraceSeconds: Schema.optionalKey(Schema.Finite),
   rootKey: Schema.optionalKey(Schema.Redacted(Schema.String)),
   settings: Schema.optionalKey(
     Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Finite, Schema.Boolean])),
@@ -106,6 +109,8 @@ export interface DatabaseOptions {
   readonly root: string;
   readonly cacheRoot: string;
   readonly runtime: DatabaseRuntime;
+  /** Reuses one volume helper across databases in this host. */
+  readonly helpers?: DockerHelperRegistry;
 }
 
 export interface DatabaseComponent {
@@ -140,6 +145,19 @@ const errorFor = (operation: string, cause: unknown): ServiceError =>
         message: cause instanceof Error ? cause.message : String(cause),
         cause,
       });
+
+const postgresArguments = (config: DatabaseConfig): Array<string> => {
+  const configured = new Set(Object.keys(config.settings ?? {}).map((key) => key.toLowerCase()));
+  const settings = Object.entries(config.settings ?? {}).flatMap(([key, value]) => [
+    "-c",
+    `${key}=${String(value)}`,
+  ]);
+  // Shadow databases are discarded, so they can use reduced-durability settings.
+  if (config.stopGraceSeconds === 0)
+    for (const setting of ["fsync=off", "synchronous_commit=off", "full_page_writes=off"])
+      if (!configured.has(setting.slice(0, setting.indexOf("=")))) settings.push("-c", setting);
+  return settings;
+};
 
 const databaseError = (operation: string, cause: unknown): DatabaseError =>
   new DatabaseError({
@@ -381,10 +399,15 @@ const publishLogs = Effect.fn("Database.publishLogs")((
   });
 });
 
-const runtimeFromContainer = (process: ContainerProcess): RuntimeSession => ({
+const runtimeFromContainer = (process: ContainerProcess, discard: boolean): RuntimeSession => ({
   health: Effect.void,
   exit: processExit(process.exitCode),
   stop: process.stop.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
+  ...(discard
+    ? {
+        discard: process.discard.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
+      }
+    : {}),
   remove: process.remove.pipe(Effect.mapError((cause) => errorFor("remove", cause))),
 });
 
@@ -545,6 +568,7 @@ export const makeDatabase = (
             crypto,
             container,
             spawner,
+            ...(options.helpers === undefined ? {} : { helpers: options.helpers }),
           }).pipe(Effect.mapError((cause) => databaseError("storage", cause)));
 
     const snapshots = (version: string) =>
@@ -713,6 +737,90 @@ export const makeDatabase = (
       Effect.mapError((cause) => errorFor("prepare", cause)),
     );
 
+    const openDatabaseContainer = Effect.fn("Database.openContainer")(function* (
+      context: ServiceInstanceContext<DatabaseConfig>,
+    ) {
+      const config = {
+        ...context.config,
+        version: postgresVersion(context.config.version),
+        rootKey: context.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
+      };
+      const dataPath = path.join(instanceRoot, "data");
+      const dataMount =
+        storage === undefined
+          ? yield* fs.makeDirectory(dataPath, { recursive: true, mode: 0o700 }).pipe(
+              Effect.mapError((cause) => errorFor("launch", cause)),
+              Effect.as({
+                source: dataPath,
+                target: "/var/lib/postgresql/data",
+                readOnly: false,
+              }),
+            )
+          : yield* storage
+              .mount(config.version)
+              .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
+      const rootKeyPath = path.join(instanceRoot, "pgsodium_root.key");
+      yield* fs
+        .writeFileString(rootKeyPath, Redacted.value(config.rootKey), {
+          mode: options.runtime === "native" ? 0o600 : 0o644,
+        })
+        .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
+      const settings = postgresArguments(config);
+      const selectedContainer = container;
+      if (selectedContainer === undefined)
+        return yield* errorFor("launch", "Container runtime is unavailable");
+      const image = yield* resolveArtifact({
+        service: "database",
+        version: config.version,
+      }).pipe(Effect.mapError((cause) => errorFor("launch", cause)));
+      if (
+        storage === undefined ||
+        (yield* storage.needsDataChown.pipe(Effect.mapError((cause) => errorFor("launch", cause))))
+      ) {
+        yield* dataCommand(config.version, ["chown", "100:101", "/var/lib/postgresql/data"]);
+      }
+      const launched = selectedContainer
+        .launch({
+          image: image.image,
+          stackId: String(options.stackId),
+          instanceId: options.instanceId,
+          env: {
+            PGDATA: "/var/lib/postgresql/data",
+            PGSODIUM_KEY_FILE: "/etc/postgresql-custom/pgsodium_root.key",
+            POSTGRES_USER: "supabase_admin",
+            POSTGRES_DB: "postgres",
+            POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
+          },
+          args: ["-p", "5432", "-c", "listen_addresses=*", ...settings],
+          mounts: [
+            dataMount,
+            {
+              source: rootKeyPath,
+              target: "/etc/postgresql-custom/pgsodium_root.key",
+              readOnly: true,
+            },
+          ],
+          ports: [5432],
+          ...(config.stopGraceSeconds === undefined
+            ? {}
+            : { stopGraceSeconds: config.stopGraceSeconds }),
+        })
+        .pipe(
+          Effect.catchTag("ContainerLaunchError", ({ failure, process }) =>
+            Effect.fail(
+              new ServiceLaunchError({
+                failure: errorFor("launch", failure),
+                runtime: runtimeFromContainer(process, false),
+              }),
+            ),
+          ),
+          Effect.mapError((cause) =>
+            cause instanceof ServiceLaunchError ? cause : errorFor("launch", cause),
+          ),
+        );
+      return yield* launched.pipe(Scope.provide(context.scope));
+    });
+
     const launch = Effect.fn("Database.launch")(
       (
         context: ServiceInstanceContext<DatabaseConfig>,
@@ -720,33 +828,21 @@ export const makeDatabase = (
         Effect.gen(function* () {
           const rootError = nativePostgresRootError(options.runtime, process.getuid?.());
           if (rootError !== undefined) return yield* errorFor("launch", rootError);
-          const config = { ...context.config, version: postgresVersion(context.config.version) };
+          const config = {
+            ...context.config,
+            version: postgresVersion(context.config.version),
+            rootKey: context.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
+          };
           const dataPath = path.join(instanceRoot, "data");
-          const dataMount =
-            storage === undefined
-              ? yield* fs.makeDirectory(dataPath, { recursive: true, mode: 0o700 }).pipe(
-                  Effect.mapError((cause) => errorFor("launch", cause)),
-                  Effect.as({
-                    source: dataPath,
-                    target: "/var/lib/postgresql/data",
-                    readOnly: false,
-                  }),
-                )
-              : yield* storage
-                  .mount(config.version)
-                  .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
-          const rootKey = config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY);
-          const rootKeyPath = path.join(instanceRoot, "pgsodium_root.key");
-          yield* fs
-            .writeFileString(rootKeyPath, Redacted.value(rootKey), {
-              mode: options.runtime === "native" ? 0o600 : 0o644,
-            })
-            .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
-          const settings = Object.entries(config.settings ?? {}).flatMap(([key, value]) => [
-            "-c",
-            `${key}=${String(value)}`,
-          ]);
+          const settings = postgresArguments(config);
           if (options.runtime === "native") {
+            yield* fs
+              .makeDirectory(dataPath, { recursive: true, mode: 0o700 })
+              .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
+            const rootKeyPath = path.join(instanceRoot, "pgsodium_root.key");
+            yield* fs
+              .writeFileString(rootKeyPath, Redacted.value(config.rootKey), { mode: 0o600 })
+              .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
             // PostgreSQL limits Unix socket paths to 103 bytes, independently of the user's state root.
             const socketPath = yield* Effect.acquireRelease(
               fs.makeTempDirectory({ directory: "/tmp", prefix: "supabase-pg-" }),
@@ -766,7 +862,7 @@ export const makeDatabase = (
               config,
               dataPath,
               socketPath,
-              rootKeyPath ?? path.join(dataPath, "pgsodium_root.key"),
+              rootKeyPath,
               settings,
               context,
               String(options.stackId),
@@ -802,68 +898,16 @@ export const makeDatabase = (
               ),
             } satisfies RuntimeSession;
           }
-          const image = yield* resolveArtifact({
-            service: "database",
-            version: config.version,
-          }).pipe(Effect.mapError((cause) => errorFor("launch", cause)));
-          const selectedContainer = container;
-          if (selectedContainer === undefined)
-            return yield* errorFor("launch", "Container runtime is unavailable");
-          if (
-            storage === undefined ||
-            (yield* storage.needsDataChown.pipe(
-              Effect.mapError((cause) => errorFor("launch", cause)),
-            ))
-          )
-            yield* dataCommand(config.version, ["chown", "100:101", "/var/lib/postgresql/data"]);
-          const launched = yield* selectedContainer
-            .launch({
-              image: image.image,
-              stackId: String(options.stackId),
-              instanceId: options.instanceId,
-              env: {
-                PGDATA: "/var/lib/postgresql/data",
-                PGSODIUM_KEY_FILE:
-                  rootKeyPath === undefined
-                    ? "/var/lib/postgresql/data/pgsodium_root.key"
-                    : "/etc/postgresql-custom/pgsodium_root.key",
-                POSTGRES_USER: "supabase_admin",
-                POSTGRES_DB: "postgres",
-                POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
-              },
-              args: ["-p", "5432", "-c", "listen_addresses=*", ...settings],
-              mounts: [
-                dataMount,
-                {
-                  source: rootKeyPath,
-                  target: "/etc/postgresql-custom/pgsodium_root.key",
-                  readOnly: true,
-                },
-              ],
-              ports: [5432],
-            })
-            .pipe(
-              Effect.catchTag("ContainerLaunchError", ({ failure, process }) =>
-                Effect.fail(
-                  new ServiceLaunchError({
-                    failure: errorFor("launch", failure),
-                    runtime: runtimeFromContainer(process),
-                  }),
-                ),
-              ),
-              Effect.mapError((cause) =>
-                cause instanceof ServiceLaunchError ? cause : errorFor("launch", cause),
-              ),
-              Scope.provide(context.scope),
-            );
+          const launched = yield* openDatabaseContainer(context);
           const port = launched.ports[5432];
           if (port === undefined)
             return yield* errorFor("launch", "Container did not publish PostgreSQL");
           const selectedEndpoint: BackendEndpoint = { kind: "tcp", host: "127.0.0.1", port };
           yield* Ref.set(endpoint, selectedEndpoint);
           yield* publishLogs(launched, logs, context.scope);
+          const session = runtimeFromContainer(launched, config.stopGraceSeconds === 0);
           return {
-            ...runtimeFromContainer(launched),
+            ...session,
             health: health(
               selectedEndpoint,
               config,
@@ -886,9 +930,7 @@ export const makeDatabase = (
                         .pipe(Effect.mapError((cause) => errorFor("health", cause))),
               },
             ),
-            remove: runtimeFromContainer(launched).remove.pipe(
-              Effect.tap(() => Ref.set(endpoint, undefined)),
-            ),
+            remove: session.remove.pipe(Effect.tap(() => Ref.set(endpoint, undefined))),
           } satisfies RuntimeSession;
         }),
     );

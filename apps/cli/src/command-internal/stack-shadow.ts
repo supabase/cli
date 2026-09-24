@@ -89,6 +89,8 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
         jwtSecret: Redacted.make(input.jwtSecret),
         jwtExpiry: input.jwtExpiry,
         healthTimeoutMs: input.healthTimeoutSeconds * 1_000,
+        // The disposable shadow can skip durability work; an explicit stop still checkpoints.
+        stopGraceSeconds: 0,
         ...(input.rootKey === undefined ? {} : { rootKey: Redacted.make(input.rootKey) }),
         settings: dbSettings,
       },
@@ -107,6 +109,11 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
   );
   const output = yield* Output;
   const cache = Result.isSuccess(cacheResolution) ? cacheResolution.success : undefined;
+  const startReady = (db: DatabaseInstance) =>
+    Effect.gen(function* () {
+      yield* db.start;
+      yield* db.ready;
+    });
   if (Result.isFailure(cacheResolution))
     yield* output.raw(
       `Warning: stack shadow cache unavailable: ${causeMessage(cacheResolution.failure)}; continuing uncached.\n`,
@@ -115,32 +122,27 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
   let restored = false;
   if (cache !== undefined) {
     const warmAttempt = yield* Effect.result(
-      database
-        .restoreSnapshot(cache.key)
-        .pipe(
-          Effect.flatMap((restoredSnapshot) =>
-            restoredSnapshot
-              ? database.start.pipe(Effect.andThen(database.ready), Effect.as(true))
-              : Effect.succeed(false),
-          ),
-        ),
+      Effect.gen(function* () {
+        const restoredSnapshot = yield* database.restoreSnapshot(cache.key);
+        if (!restoredSnapshot) return false;
+        yield* startReady(database);
+        return true;
+      }),
     );
     if (Result.isSuccess(warmAttempt)) {
       restored = warmAttempt.success;
-      if (!restored) {
-        yield* database.start;
-        yield* database.ready;
-      }
+      if (!restored) yield* startReady(database);
     } else {
-      yield* output.raw("Warning: cached stack shadow baseline unusable; recreating.\n", "stderr");
+      yield* output.raw(
+        `Warning: cached stack shadow baseline unusable (${causeMessage(warmAttempt.failure)}); recreating.\n`,
+        "stderr",
+      );
       yield* database.destroy;
       database = yield* createDatabase();
-      yield* database.start;
-      yield* database.ready;
+      yield* startReady(database);
     }
   } else {
-    yield* database.start;
-    yield* database.ready;
+    yield* startReady(database);
   }
   const catalog = yield* StackCatalogSetup;
   if (!restored)
@@ -175,7 +177,7 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
       const published = yield* Effect.result(
         database.stop.pipe(Effect.flatMap(() => database.saveSnapshot(cache.key))),
       );
-      yield* database.start.pipe(Effect.andThen(database.ready));
+      yield* startReady(database);
       if (Result.isSuccess(published)) {
         snapshotKey = cache.key;
       } else {
