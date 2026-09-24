@@ -1,4 +1,5 @@
 import {
+  Cause,
   Clock,
   Context,
   Data,
@@ -45,6 +46,24 @@ export class OrchestratorError extends Data.TaggedError("OrchestratorError")<{
     readonly result: Exit.Exit<void, OrchestratorError | LifecycleError>;
   }>;
 }> {}
+
+/** Summarizes a failure cause as one line per error, including its nested error causes. */
+export const causeMessage = (cause: Cause.Cause<unknown>): string =>
+  Cause.prettyErrors(cause)
+    .map((error) => {
+      const parts: Array<string> = [];
+      const visited = new Set<Error>();
+      let current: unknown = error;
+      while (current instanceof Error && !visited.has(current)) {
+        visited.add(current);
+        const text = current.message || current.name;
+        // Wrappers often copy their cause's message; keep the chain but not the repeat.
+        if (parts.at(-1) !== text) parts.push(text);
+        current = current.cause;
+      }
+      return parts.join(": ");
+    })
+    .join("; ") || "interrupted";
 
 type CoreObservation = ServiceObservation<unknown>;
 

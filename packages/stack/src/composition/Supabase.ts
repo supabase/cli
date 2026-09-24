@@ -1,5 +1,5 @@
-import { Cause, Data, Effect, Exit, Schema } from "effect";
-import type { CompositionConfig } from "../Orchestrator.ts";
+import { Data, Effect, Exit, Schema } from "effect";
+import { causeMessage, type CompositionConfig } from "../Orchestrator.ts";
 import type { Observation } from "../Rpc.ts";
 import { ServiceCreation } from "../services/Catalog.ts";
 import type { StackIdentityInput } from "../State.ts";
@@ -56,11 +56,6 @@ export interface SupabaseCompositionOptions {
 
 const compositionError = (message: string, cause?: unknown) =>
   new SupabaseCompositionError({ message, cause });
-
-const causeMessage = (cause: Cause.Cause<unknown>) =>
-  Cause.prettyErrors(cause)
-    .map((error) => error.message)
-    .join("; ") || "interrupted";
 
 const compositionErrorFrom = (cause: unknown) =>
   cause instanceof SupabaseCompositionError

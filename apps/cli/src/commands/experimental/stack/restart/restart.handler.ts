@@ -7,26 +7,22 @@ import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts
 import {
   StackApi,
   StackTargetResolver,
+  failedOutcomesDetail,
   rejectStackOutput,
   validateStackTarget,
 } from "../stack.shared.ts";
 import { StackCommandRestartError } from "./restart.errors.ts";
 import type { StackRestartFlags } from "./restart.command.ts";
 
-const runtimeError = (cause: StackError) =>
-  new StackCommandRestartError({
+const runtimeError = (cause: StackError) => {
+  const detail = failedOutcomesDetail(cause);
+  return new StackCommandRestartError({
     reason: "unknown",
     message: cause.message,
-    ...(cause.outcomes === undefined
-      ? {}
-      : {
-          detail: cause.outcomes
-            .filter((outcome) => !outcome.succeeded)
-            .map((outcome) => `${outcome.id}: ${outcome.error ?? "failed"}`)
-            .join("\n"),
-        }),
+    ...(detail === undefined ? {} : { detail }),
     cause,
   });
+};
 
 export const stackRestart = Effect.fn("experimental.stack.restart")(function* (
   flags: StackRestartFlags,

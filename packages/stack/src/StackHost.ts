@@ -1,6 +1,5 @@
 import { NodeHttpServerRequest, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import {
-  Cause,
   Context,
   Data,
   Deferred,
@@ -66,7 +65,7 @@ const stackError = (operation: string, cause: unknown): StackError => {
       outcomes: orchestration.outcomes.map(({ id, result }) => ({
         id,
         succeeded: Exit.isSuccess(result),
-        ...(Exit.isFailure(result) ? { error: Cause.pretty(result.cause) } : {}),
+        ...(Exit.isFailure(result) ? { error: Orchestrator.causeMessage(result.cause) } : {}),
       })),
     });
   }

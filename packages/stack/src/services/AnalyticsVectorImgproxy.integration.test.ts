@@ -87,8 +87,7 @@ describe("service catalog", () => {
           yield* fs.writeFileString(
             `${root}/vector.yaml`,
             "sources:\n  dummy:\n    type: demo_logs\n    format: syslog\n    interval: 60\n" +
-              "sinks:\n  print:\n    type: console\n    inputs: [dummy]\n    encoding:\n      codec: json\n" +
-              "api:\n  enabled: true\n  address: 0.0.0.0:9001\n",
+              "sinks:\n  print:\n    type: console\n    inputs: [dummy]\n    encoding:\n      codec: json\n",
           );
           const vector = yield* makeService(vectorRecipe.definition, {
             id: "vector",

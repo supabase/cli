@@ -185,7 +185,11 @@ it.live("preserves composition outcomes over RPC", () =>
         root: `${root}/data`,
         cacheRoot: "/tmp/supabase-stack-artifacts",
       });
-      const failed = new OrchestratorError({ operation: "start", message: "member failed" });
+      const failed = new OrchestratorError({
+        operation: "start",
+        message: "member failed",
+        cause: new Error("member failed", { cause: new Error("EACCES: permission denied") }),
+      });
       const delayedOwner = {
         ...owner,
         composition: {
@@ -213,7 +217,7 @@ it.live("preserves composition outcomes over RPC", () =>
       if (!("outcomes" in error)) return yield* Effect.die("Missing composition outcomes");
       expect(error.outcomes).toEqual([
         { id: "healthy", succeeded: true },
-        { id: "failed", succeeded: false, error: expect.stringContaining("member failed") },
+        { id: "failed", succeeded: false, error: "member failed: EACCES: permission denied" },
       ]);
       yield* client.shutdown({ destroy: false });
     }),
