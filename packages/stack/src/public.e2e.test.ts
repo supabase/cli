@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { open, postgres } from "./effect.ts";
 import * as PromiseStack from "./index.ts";
 import { assertOwnerExited, captureOwnerPid } from "../tests/owner.ts";
+import { destroyTestStack } from "../tests/stack-cleanup.ts";
 
 for (const runtime of ["node", "bun"] as const) {
   it.live(
@@ -91,9 +92,9 @@ it.live(
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
           const pid = yield* captureOwnerPid(locations, stack.id);
-          yield* stack.destroy;
+          yield* destroyTestStack(stack);
           yield* assertOwnerExited(pid);
-        }).pipe(Effect.catchCause(Effect.die)),
+        }).pipe(Effect.orDie),
       );
       const mail = yield* stack.services.get(identity.instanceId);
       expect((yield* mail.status).lifecycle).toBe("running");
@@ -377,9 +378,9 @@ it.live(
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
           const pid = yield* captureOwnerPid(locations, owner.id);
-          yield* owner.destroy;
+          yield* destroyTestStack(owner);
           yield* assertOwnerExited(pid);
-        }).pipe(Effect.catchCause(Effect.die)),
+        }).pipe(Effect.orDie),
       );
       yield* Effect.addFinalizer(() =>
         Effect.tryPromise(() => stack.close()).pipe(

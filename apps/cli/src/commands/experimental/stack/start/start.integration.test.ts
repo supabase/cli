@@ -326,6 +326,7 @@ const layers = (
         projectRoot: root,
         ...(existing ? { id: fixture.stack.id } : {}),
         runtime: "native" as const,
+        hostRunning: false,
       }),
   });
   const api = Layer.succeed(StackApi, {

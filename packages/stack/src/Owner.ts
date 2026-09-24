@@ -16,6 +16,7 @@ import {
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as Network from "./Network.ts";
+import * as Container from "./runtime/Container.ts";
 import type { NetworkBinding, NetworkNamespace } from "./Network.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { CompositionConfig, RegisteredInstance } from "./Orchestrator.ts";
@@ -1335,6 +1336,15 @@ const makeOwnerWithDependencies = (
       "destroyNamespace",
       orchestrator.destroyNamespace.pipe(
         Effect.andThen(network.release),
+        Effect.andThen(
+          options.saved.runtime === "native"
+            ? Effect.void
+            : Container.removeStackContainers({
+                engine: options.saved.runtime,
+                stackId: options.saved.id,
+                root: options.root,
+              }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        ),
         Effect.andThen(options.state.remove(options.saved.id)),
       ),
     ).pipe(Effect.withSpan("Owner.destroyNamespace"));

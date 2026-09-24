@@ -141,6 +141,13 @@ const runtimeFromContainer = (process: ContainerProcess): RuntimeSession => ({
   remove: process.remove.pipe(Effect.mapError((cause) => serviceError("remove", cause))),
 });
 
+const runtimeFromNative = (process: NativeProcess): RuntimeSession => ({
+  health: Effect.void,
+  exit: processExit(process.exitCode),
+  stop: process.kill.pipe(Effect.mapError((cause) => serviceError("stop", cause))),
+  remove: Effect.void,
+});
+
 interface NativePortReservation {
   readonly port: number;
   readonly server: Net.Server;
@@ -499,16 +506,20 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               readonly endpoints: ReadonlyMap<string, ServiceEndpoint>;
             }
           | undefined;
-        let reusableEndpoints: ReadonlyMap<string, ServiceEndpoint> | undefined;
         if (spec.startup.length > 0) {
           const startupScope = yield* Scope.fork(context.scope, "sequential");
-          const reservation = yield* reserveEndpoints(
-            spec.nativeStartupEnv === undefined ? startupScope : context.scope,
-          );
-          if (spec.nativeStartupEnv === undefined) {
-            yield* Scope.close(reservation.portScope, Exit.void);
-            reusableEndpoints = reservation.endpoints;
-          }
+          const reservation =
+            spec.nativeStartupEnv === undefined
+              ? undefined
+              : yield* reserveEndpoints(context.scope);
+          const startupEndpoints =
+            reservation?.endpoints ??
+            new Map(
+              portNames.map(([name]) => [
+                name,
+                { kind: "tcp" as const, host: "127.0.0.1", port: 0 },
+              ]),
+            );
           for (const [index, process] of spec.startup.entries()) {
             const startupProcess = yield* spawnNativeProcess(
               {
@@ -516,7 +527,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
                 args: process.args,
                 env: yield* (spec.nativeStartupEnv ?? spec.env)(
                   context.config,
-                  reservation.endpoints,
+                  startupEndpoints,
                   false,
                 ),
                 cwd: artifactRoot,
@@ -531,15 +542,20 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
               Effect.mapError((cause) => serviceError("launch", cause)),
             );
-            const result = yield* awaitStartup(context.config.service, startupProcess, logs);
-            if (result.code !== 0) {
-              yield* Scope.close(reservation.portScope, Exit.void);
-              yield* Scope.close(startupScope, Exit.void);
-              return yield* startupFailure(context.config.service, result);
-            }
+            const result = yield* awaitStartup(context.config.service, startupProcess, logs).pipe(
+              Effect.mapError(
+                (failure) =>
+                  new ServiceLaunchError({ failure, runtime: runtimeFromNative(startupProcess) }),
+              ),
+            );
+            if (result.code !== 0)
+              return yield* new ServiceLaunchError({
+                failure: startupFailure(context.config.service, result),
+                runtime: runtimeFromNative(startupProcess),
+              });
           }
           yield* Scope.close(startupScope, Exit.void);
-          if (spec.nativeStartupEnv !== undefined) reusableReservation = reservation;
+          reusableReservation = reservation;
         }
 
         const deadline = (yield* Clock.currentTimeMillis) + startupTimeoutSeconds * 1_000;
@@ -560,9 +576,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           }
           const attemptScope = yield* Scope.fork(context.scope, "sequential");
           const heldReservation = firstAttempt ? reusableReservation : undefined;
-          const reuse = firstAttempt
-            ? (heldReservation?.endpoints ?? reusableEndpoints)
-            : undefined;
+          const reuse = firstAttempt ? heldReservation?.endpoints : undefined;
           firstAttempt = false;
           const reservation =
             reuse === undefined ? yield* reserveEndpoints(attemptScope) : undefined;
@@ -591,7 +605,6 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
             Effect.mapError((cause) => serviceError("launch", cause)),
           );
-
           if (spec.nativeReadinessOutput === undefined) {
             yield* Ref.set(endpoints, selected);
             yield* publishLogs(native, logs, attemptScope);
@@ -753,14 +766,42 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             mounts: yield* spec.mounts(context.config, { container: true }),
           })
           .pipe(
-            Effect.mapError((cause) => serviceError("launch", cause)),
+            Effect.catchTag("ContainerLaunchError", ({ failure, process }) =>
+              Effect.fail(
+                new ServiceLaunchError({
+                  failure: serviceError("launch", failure),
+                  runtime: runtimeFromContainer(process),
+                }),
+              ),
+            ),
+            Effect.mapError((cause) =>
+              cause instanceof ServiceLaunchError ? cause : serviceError("launch", cause),
+            ),
             Scope.provide(context.scope),
           );
-        const result = yield* awaitStartup(context.config.service, startupProcess, logs);
-        yield* startupProcess.remove.pipe(
-          Effect.mapError((cause) => serviceError("launch", cause)),
+        const result = yield* awaitStartup(context.config.service, startupProcess, logs).pipe(
+          Effect.mapError(
+            (failure) =>
+              new ServiceLaunchError({
+                failure,
+                runtime: runtimeFromContainer(startupProcess),
+              }),
+          ),
         );
-        if (result.code !== 0) return yield* startupFailure(context.config.service, result);
+        yield* startupProcess.remove.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServiceLaunchError({
+                failure: serviceError("launch", cause),
+                runtime: runtimeFromContainer(startupProcess),
+              }),
+          ),
+        );
+        if (result.code !== 0)
+          return yield* new ServiceLaunchError({
+            failure: startupFailure(context.config.service, result),
+            runtime: runtimeFromContainer(startupProcess),
+          });
       }
       const launched = yield* deps.container
         .launch({
@@ -791,7 +832,10 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       for (const [name, endpoint] of containerDesired) {
         const published = launched.ports[endpoint.port];
         if (published === undefined)
-          return yield* serviceError("launch", `Container did not publish ${name}`);
+          return yield* new ServiceLaunchError({
+            failure: serviceError("launch", `Container did not publish ${name}`),
+            runtime: runtimeFromContainer(launched),
+          });
         selected.set(name, { kind: "tcp", host: "127.0.0.1", port: published });
       }
       yield* Ref.set(endpoints, selected);

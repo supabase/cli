@@ -27,6 +27,7 @@ import { stdinLayer } from "../shared/runtime/stdin.layer.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import { ExperimentalFlag, YesFlag } from "./global-flags.ts";
 import { stackStart } from "../commands/experimental/stack/start/start.handler.ts";
+import { destroyTestStacks } from "../../tests/helpers/stack-cleanup.ts";
 
 const projectConfig = `
 project_id = "stack-storage-native-integration"
@@ -174,18 +175,8 @@ describe("native stack Storage gateway", () => {
           }),
           Effect.gen(function* () {
             const api = yield* StackApi;
-            const stateRoot = path.join(root, "stacks");
-            const registered = yield* api.discover({ stateRoot });
-            yield* Effect.forEach(registered, ({ definition }) =>
-              api
-                .open({
-                  id: definition.id,
-                  stateRoot,
-                  cacheRoot: path.join(root, "cache"),
-                })
-                .pipe(Effect.flatMap((stack) => stack.destroy)),
-            );
-          }).pipe(Effect.catch((cause) => Effect.die(cause))),
+            yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
+          }),
         ).pipe(Effect.provide(layers));
       }).pipe(Effect.provide(BunServices.layer)),
     { timeout: 180_000 },

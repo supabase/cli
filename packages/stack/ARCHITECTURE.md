@@ -456,11 +456,11 @@ stateDiagram-v2
     Exited --> [*]
 ```
 
-During Starting, acquire the exclusive stack lease, load the instance definitions and saved resources needed for normal restart, construct components and open the control endpoint. The lease is held by an operating-system locking primitive whose ownership ends with the process; an on-disk PID/endpoint file is only discovery metadata and never proves an active owner. A competing launcher connects to the winning owner. Startup does not replay interrupted operations or scan for orphaned resources. Existing runtime or port conflicts are reported rather than automatically adopted or removed, including leftover containers from a previous host. No resource adoption or orphan cleanup is added after owner death.
+During Starting, acquire the exclusive stack lease, load the instance definitions and saved resources needed for normal restart, construct components and open the control endpoint. The lease is held by an operating-system locking primitive whose ownership ends with the process; an on-disk PID/endpoint file is only discovery metadata and never proves an active owner. A competing launcher connects to the winning owner. For a container stack, remove containers labeled with this stack and its canonical data root before accepting work. This is cleanup of proven-owned workloads, not adoption or replay of interrupted operations. Other runtime or port conflicts remain errors.
 
 During Serving, keep the owner alive independently of callers. Sleeping instances still need its public listeners. This is process lifetime management, not automatic service restart or continuous reconciliation.
 
-Where the platform delivers SIGTERM or SIGINT to the host, treat it as the same graceful shutdown request as `host.stop`. Repeated shutdown requests join that shutdown; they do not pre-empt executing transitions. Forced termination remains outside the graceful-shutdown guarantee.
+Where the platform delivers SIGTERM or SIGINT to the host, treat it as the same graceful shutdown request as `host.stop`. Repeated shutdown requests join that shutdown; they do not pre-empt executing transitions. On Unix, native launchers stop their process groups when the host pipe closes. Graceful shutdown stops owned services and tools, then synchronously removes containers labeled with the stack and canonical data root before the host exits. Forced termination may require manual cleanup.
 
 During Draining:
 
@@ -471,11 +471,13 @@ During Draining:
 5. For destruction, remove proven-owned data and metadata after shutdown.
 6. Send the outcome, close the control endpoint and release ownership.
 
-Public whole-stack `stop` and `destroy` complete only after acknowledged cleanup and confirmed owner-process exit. The client captures the live owner PID from the validated identity endpoint or readiness handshake, completes and closes the shutdown RPC, then performs bounded process-existence checks. An absent PID confirms exit; a permission-denied probe remains inconclusive until the deadline. Failure to confirm exit is a `shutdown-exit` error carrying the PID in its message, even when workload cleanup has already succeeded. This does not require persisted PID records or forceful termination. Caller cancellation ends its wait without cancelling admitted owner cleanup.
+**Successful whole-stack shutdown.** `stack.stop()` reports success only after admitted work settles, every owned live service and tool workload has stopped (including native processes, descendants and containers labeled with this stack and data root), stack listeners close, the shutdown RPC is acknowledged, and the detached host's exit is confirmed. If workload cleanup cannot be confirmed, stop fails and the live host retains ownership for inspection and retry; the stack is not reported stopped. If cleanup succeeds but host exit cannot be confirmed, stop also fails, though the host may already have exited. A delivered SIGTERM or SIGINT follows this cleanup path. Stop preserves stack definitions, service data, caches and saved port assignments. `destroy` follows the same live-workload cleanup, then removes only proven-owned persistent data.
+
+The client captures the live owner PID from the validated identity endpoint or readiness handshake, completes and closes the shutdown RPC, then performs bounded process-existence checks. An absent PID confirms exit; a permission-denied probe remains inconclusive until the deadline. Failure to confirm exit is a `shutdown-exit` error carrying the PID in its message, even when workload cleanup has already succeeded. This does not require persisted PID records or forceful termination. Caller cancellation ends its wait without cancelling admitted owner cleanup.
 
 Callers must not start or restart the same stack concurrently with whole-stack shutdown. In particular, replacing an owner between identity lookup and the shutdown request is outside this guarantee. Parallel stacks with separate identities remain independent. Client disposal and Effect scope closure do not implicitly stop a detached stack; disposable fixtures register explicit destruction.
 
-On cleanup failure, retain the host so callers can inspect the current observations and error. Returning to Serving does not undo completed cleanup. Unexpected host death is outside the supported normal stop/start lifecycle: there is no automatic recovery, orphan reconciliation or resumption of interrupted operations. Leftover resources may require manual cleanup. A lost control response is reported as uncertain; do not blindly retry a mutation.
+Returning to Serving after cleanup failure does not undo completed cleanup. Unexpected host death does not resume interrupted operations or restore live service state. The next host startup sweeps containers owned by that stack and data root without removing volumes or saved definitions. A forced host termination does not guarantee immediate container cleanup. A lost control response is reported as uncertain; do not blindly retry a mutation.
 
 ### Request lifetime is separate from execution lifetime
 
@@ -592,11 +594,11 @@ The endpoint renderer produces host-facing or stack-runtime-facing connection va
 | Runtime            | Report the launched workload's backend address                                                        |
 | Networking/proxy   | Render reachable connection values, bind listeners, route traffic and attribute activity to instances |
 
-Mutable files live under the stack namespace; container resources carry equivalent identity labels. Shared immutable artifact caches and host-wide port coordination are justified exceptions. User-requested exports can live at their chosen destination.
+Mutable files live under the stack namespace; container resources carry equivalent identity labels. Each managed container is addressed by its unique preassigned launch name for its whole owned lifetime; renaming a managed container is outside the lifecycle contract. Shared immutable artifact caches and host-wide port coordination are justified exceptions. User-requested exports can live at their chosen destination.
 
 The StackHost serializes updates to saved instance definitions, composition wiring and resource assignments. Lifecycle, health, active operations, runtime handles and errors remain in the live instance observation. There is no durable lifecycle/operation journal, projected capability state or duplicate stack lifecycle state.
 
-Persistence supports reopening normally stopped instances, not reconstructing interrupted execution after owner loss. Do not infer current runtime state from saved configuration. When the host is absent or unreachable, expose the saved definitions and ports separately from unavailable live observations. Crash recovery, automatic orphan cleanup, resource adoption, interrupted-operation replay and private-format migration machinery are outside scope.
+Persistence supports reopening normally stopped instances, not reconstructing interrupted execution after owner loss. Do not infer current runtime state from saved configuration. When the host is absent or unreachable, expose the saved definitions and ports separately from unavailable live observations. Container cleanup after owner loss uses live daemon labels, not persisted process state; service recovery, resource adoption, interrupted-operation replay and private-format migration machinery are outside scope.
 
 ### Durable stack layout
 

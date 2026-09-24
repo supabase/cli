@@ -16,6 +16,7 @@ import {
 } from "effect";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import { ChildProcessSpawner } from "effect/unstable/process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration observes exact listener closure.
 import * as Net from "node:net";
 import { acquireHost, launchHost } from "./HostProcess.ts";
@@ -111,6 +112,14 @@ const inProcessRuntime = (
   owner: Parameters<typeof makeRuntime>[0],
   state: State.Interface,
   root: string,
+  options?: {
+    readonly container?: {
+      readonly engine: "docker" | "podman";
+      readonly stackId: string;
+      readonly root: string;
+    };
+    readonly spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  },
 ) =>
   Effect.gen(function* () {
     const acquired = yield* acquireHost(state, "stack");
@@ -122,7 +131,7 @@ const inProcessRuntime = (
         runtime: "native",
       }),
     );
-    const runtime = yield* makeRuntime(
+    const runtimeEffect = makeRuntime(
       owner,
       {
         stackId: "stack",
@@ -132,7 +141,13 @@ const inProcessRuntime = (
       },
       acquired.server,
       acquired.closeConnections,
+      options?.container,
     ).pipe(Effect.provideService(ToolRunner.Service, Context.get(toolContext, ToolRunner.Service)));
+    const runtime = yield* options?.spawner === undefined
+      ? runtimeEffect
+      : runtimeEffect.pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.spawner),
+        );
     yield* runtime.serve;
     return { runtime, port: acquired.port };
   });
@@ -257,6 +272,193 @@ it.live("keeps serving when namespace shutdown fails", () =>
       const failure = yield* client.shutdown({ destroy: false }).pipe(Effect.flip);
       expect("operation" in failure).toBe(true);
       expect((yield* client.listServices()).length).toBe(0);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("reports destroy and fallback stop failures together", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-destroy-failure-" });
+      const state = yield* stateFor(`${root}/state`);
+      const saved = {
+        id: "stack",
+        runtime: "native" as const,
+        identity: { projectRoot: root, branchContext: "main", stackName: "host-destroy-failure" },
+        instances: [],
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      };
+      yield* state.save(saved);
+      const owner = yield* ownerFor({
+        saved,
+        state,
+        root: `${root}/data`,
+        cacheRoot: "/tmp/supabase-stack-artifacts",
+      });
+      const failureWithOutcome = (
+        operation: "destroy" | "stop",
+        message: string,
+        id: string,
+        reason: string,
+      ) =>
+        new OwnerError({
+          operation,
+          message,
+          cause: new OrchestratorError({
+            operation,
+            message,
+            outcomes: [
+              {
+                id,
+                result: Exit.fail(new OrchestratorError({ operation, message: reason })),
+              },
+            ],
+          }),
+        });
+      const failedOwner = {
+        ...owner,
+        namespace: {
+          ...owner.namespace,
+          destroy: Effect.fail(
+            failureWithOutcome(
+              "destroy",
+              "Namespace destroy had failures",
+              "database-destroy",
+              "data removal refused",
+            ),
+          ),
+          stop: Effect.fail(
+            failureWithOutcome(
+              "stop",
+              "Composition stop had failures",
+              "database-stop",
+              "process stop refused",
+            ),
+          ),
+        },
+      };
+      const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
+      const client = yield* clientFor(runtime.endpoint.port);
+      const failure = yield* client.shutdown({ destroy: true }).pipe(Effect.flip);
+      expect(failure.message).toContain("Namespace destroy had failures");
+      expect(failure.message).toContain("database-destroy:");
+      expect(failure.message).toContain("data removal refused");
+      expect(failure.message).toContain("fallback stop failed: Composition stop had failures");
+      expect(failure.message).toContain("database-stop:");
+      expect(failure.message).toContain("process stop refused");
+      expect("outcomes" in failure).toBe(true);
+      if (!("outcomes" in failure)) return yield* Effect.die("shutdown outcomes were missing");
+      expect(failure.outcomes).toEqual(
+        expect.arrayContaining([
+          {
+            id: "database-destroy",
+            succeeded: false,
+            error: expect.stringContaining("data removal refused"),
+          },
+          {
+            id: "database-stop",
+            succeeded: false,
+            error: expect.stringContaining("process stop refused"),
+          },
+        ]),
+      );
+      expect(yield* Deferred.isDone(runtime.exit)).toBe(false);
+      expect(yield* owner.getServing).toBe(true);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("rejects destroy while stop is in flight", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-stop-join-" });
+      const state = yield* stateFor(`${root}/state`);
+      const saved = {
+        id: "stack",
+        runtime: "native" as const,
+        identity: { projectRoot: root, branchContext: "main", stackName: "host-stop-join" },
+        instances: [],
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      };
+      yield* state.save(saved);
+      const owner = yield* ownerFor({
+        saved,
+        state,
+        root: `${root}/data`,
+        cacheRoot: "/tmp/supabase-stack-artifacts",
+      });
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const delayedOwner = {
+        ...owner,
+        namespace: {
+          ...owner.namespace,
+          stop: Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(owner.namespace.stop),
+          ),
+        },
+      };
+      const { runtime } = yield* inProcessRuntime(delayedOwner, state, root);
+      const stop = yield* Effect.forkScoped(runtime.shutdown(false));
+      yield* Deferred.await(entered);
+      const rejected = yield* runtime.shutdown(true).pipe(Effect.flip);
+      expect(rejected.message).toContain("Shutdown mode is already selected");
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(stop);
+      yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("retains ownership when namespace shutdown defects and retries cleanup", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-drain-defect-" });
+      const state = yield* stateFor(`${root}/state`);
+      const saved = {
+        id: "stack",
+        runtime: "native" as const,
+        identity: { projectRoot: root, branchContext: "main", stackName: "host-drain-defect" },
+        instances: [],
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      };
+      yield* state.save(saved);
+      const owner = yield* ownerFor({
+        saved,
+        state,
+        root: `${root}/data`,
+        cacheRoot: "/tmp/supabase-stack-artifacts",
+      });
+      const failStop = yield* Ref.make(true);
+      const failedOwner = {
+        ...owner,
+        namespace: {
+          ...owner.namespace,
+          stop: Effect.gen(function* () {
+            if (yield* Ref.getAndSet(failStop, false)) return yield* Effect.die("cleanup failed");
+            yield* owner.namespace.stop;
+          }),
+        },
+      };
+      const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
+      const client = yield* clientFor(runtime.endpoint.port);
+      const failure = yield* runtime.shutdown(false).pipe(Effect.exit);
+      expect(Exit.isFailure(failure)).toBe(true);
+      if (Exit.isFailure(failure)) expect(Cause.pretty(failure.cause)).toContain("cleanup failed");
+      const http = yield* HttpClient.HttpClient;
+      expect((yield* http.get(`http://127.0.0.1:${runtime.endpoint.port}/identity`)).status).toBe(
+        200,
+      );
+      expect(yield* owner.getServing).toBe(true);
+      expect((yield* client.listServices()).length).toBe(0);
+      yield* runtime.shutdown(false);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

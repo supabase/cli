@@ -22,12 +22,17 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["**/*.integration.test.ts"],
+          hookTimeout: 120_000,
           testTimeout: 30_000,
+          // Integration workers start real service processes and containers.
+          maxWorkers: 2,
+          sequence: { groupOrder: 1 },
         },
       },
       {
         test: {
           name: "e2e",
+          hookTimeout: 120_000,
           include: ["**/*.e2e.test.ts"],
         },
       },

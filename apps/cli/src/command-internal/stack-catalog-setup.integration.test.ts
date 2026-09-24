@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { create, postgres } from "@supabase/stack/effect";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { stackCatalogSetupLayer, StackCatalogSetup } from "./stack-catalog-setup.ts";
+import { destroyTestStack } from "../../../../packages/stack/tests/stack-cleanup.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 const jwtSecret = "stack-catalog-setup-integration-secret";
@@ -125,7 +126,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                     expect((yield* instance.status).lifecycle).toBe("stopped");
                 }
               }),
-            (stack) => stack.destroy,
+            destroyTestStack,
           );
         }),
       ).pipe(

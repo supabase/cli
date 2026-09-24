@@ -318,6 +318,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
           ? undefined
           : yield* makeContainerRuntime({
               engine: options.runtime,
+              root: options.root,
               imageMirrors: slimImageMirrors,
             });
       const deps: ProcessDependencies = { fs, path, crypto, client, spawner, container };

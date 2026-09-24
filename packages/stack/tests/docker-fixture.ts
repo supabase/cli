@@ -67,7 +67,14 @@ export const makeDockerDatabaseRoot = Effect.fn("DockerTest.makeDatabaseRoot")(
           const removed = yield* runDocker(["volume", "rm", volume]);
           if (removed.code !== 0 && !/no such volume|not found/iu.test(removed.output))
             return yield* Effect.die(`Docker volume cleanup failed: ${removed.output}`);
-        }).pipe(Effect.andThen(cleanupDockerRoot(root)), Effect.catchCause(Effect.die)),
+        }).pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              if (yield* fs.exists(root)) yield* cleanupDockerRoot(root);
+            }),
+          ),
+          Effect.catchCause(Effect.die),
+        ),
       );
       return root;
     }),

@@ -129,6 +129,7 @@ supportedArchitectures:
     - win32
 
 patchedDependencies:
+  "@effect/vitest@4.0.0-rc.112": patches/@effect__vitest@4.0.0-rc.112.patch
   "@libpg-query/parser@17.6.10": patches/@libpg-query__parser@17.6.10.patch
 
 virtualStoreType: global

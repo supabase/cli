@@ -552,7 +552,11 @@ export const makeDatabase = (
     const container: ContainerRuntime | undefined =
       options.runtime === "native"
         ? undefined
-        : yield* makeContainerRuntime({ engine: options.runtime, imageMirrors: slimImageMirrors });
+        : yield* makeContainerRuntime({
+            engine: options.runtime,
+            root: options.root,
+            imageMirrors: slimImageMirrors,
+          });
     const storage: DockerDatabaseStorage | undefined =
       options.runtime === "native"
         ? undefined
@@ -707,7 +711,6 @@ export const makeDatabase = (
       function* (input: DatabaseConfig) {
         const rootError = nativePostgresRootError(options.runtime, process.getuid?.());
         if (rootError !== undefined) return yield* errorFor("prepare", rootError);
-        if (storage !== undefined) yield* storage.prepare(postgresVersion(input.version));
         const markerPath = path.join(instanceRoot, ".supabase-database-ready.json");
         const hasMarker = yield* fs.exists(markerPath);
         if (hasMarker) {
@@ -833,6 +836,10 @@ export const makeDatabase = (
             version: postgresVersion(context.config.version),
             rootKey: context.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
           };
+          if (storage !== undefined)
+            yield* storage
+              .prepare(config.version)
+              .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
           const dataPath = path.join(instanceRoot, "data");
           const settings = postgresArguments(config);
           if (options.runtime === "native") {

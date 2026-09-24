@@ -1,4 +1,18 @@
-import { Crypto, Deferred, Effect, Fiber, Layer, Match, Ref, Scope, Schema, Stream } from "effect";
+import {
+  Cause,
+  Crypto,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Match,
+  Option,
+  Ref,
+  Scope,
+  Schema,
+  Stream,
+} from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
@@ -205,16 +219,42 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     );
   const shutdown = Effect.fn("Stack.shutdown")(function* (destroy: boolean) {
     const operation = destroy ? "destroy" : "shutdown";
-    const endpoint = yield* Effect.scoped(
+    const { endpoint, shutdownExit } = yield* Effect.scoped(
       Effect.gen(function* () {
         const endpoint = yield* endpointFor(destroy);
-        yield* clientFor(endpoint.port).pipe(
+        const shutdownExit = yield* clientFor(endpoint.port).pipe(
           Effect.provideService(HttpClient.HttpClient, http),
           Effect.flatMap((rpc) => rpc.shutdown({ destroy })),
+          Effect.exit,
         );
-        return endpoint;
+        return { endpoint, shutdownExit };
       }),
     ).pipe(Effect.mapError((cause) => failure(operation, cause)));
+    if (Exit.isFailure(shutdownExit)) {
+      const shutdownFailure = Option.match(Cause.findErrorOption(shutdownExit.cause), {
+        onNone: () => failure(operation, Cause.pretty(shutdownExit.cause)),
+        onSome: (cause) => failure(operation, cause),
+      });
+      if (!destroy) return yield* shutdownFailure;
+      const exitResult = yield* waitForOwnerExit(endpoint.pid).pipe(
+        Effect.mapError((cause) => failure("shutdown-exit", cause)),
+        Effect.exit,
+      );
+      if (Exit.isFailure(exitResult)) {
+        const exitFailure = Option.match(Cause.findErrorOption(exitResult.cause), {
+          onNone: () => failure("shutdown-exit", Cause.pretty(exitResult.cause)),
+          onSome: (cause) => failure("shutdown-exit", cause),
+        });
+        const exitStatus = exitFailure.message.includes("still running")
+          ? "Owner is still running after failed destroy"
+          : "Owner exit was not confirmed after failed destroy";
+        return yield* new StackError({
+          ...shutdownFailure,
+          message: `${shutdownFailure.message}; ${exitStatus}; exit probe: ${exitFailure.message}`,
+        });
+      }
+      return yield* shutdownFailure;
+    }
     yield* waitForOwnerExit(endpoint.pid).pipe(
       Effect.mapError((cause) => failure("shutdown-exit", cause)),
     );
