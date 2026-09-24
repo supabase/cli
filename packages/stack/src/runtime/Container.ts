@@ -10,6 +10,7 @@ import {
   Option,
   Path,
   Ref,
+  Schedule,
   Schema,
   Scope,
   Sink,
@@ -65,6 +66,7 @@ export class ContainerLaunchError extends Data.TaggedError("ContainerLaunchError
 
 export interface ContainerRuntime {
   readonly prepare: (image: string) => Effect.Effect<void, ContainerError>;
+  readonly prepareImage: (image: string) => Effect.Effect<string, ContainerError>;
   readonly launch: (
     spec: ContainerSpec,
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
@@ -79,6 +81,13 @@ const errorFor = (operation: string, cause: unknown) =>
     message: cause instanceof Error ? cause.message : String(cause),
     cause,
   });
+
+const rateLimited = (error: ContainerError) =>
+  /toomanyrequests|too many requests|rate limit|rate exceeded/iu.test(error.message);
+
+const PULL_MAX_RETRIES = 4;
+
+const pullBackoff = Schedule.exponential("2 seconds").pipe(Schedule.jittered);
 
 const PublishedPorts = Schema.Record(
   Schema.String,
@@ -100,7 +109,8 @@ const mountField = (key: string, value: string) => {
 /**
  * Captures the selected local engine; each launch owns one exact container. An image whose pull
  * fails is pulled from the first of its `imageMirrors` that succeeds, and launches of it then use
- * that mirror reference. When every mirror fails, the primary pull error is reported.
+ * that mirror reference. When every mirror fails, the primary pull error is reported; a
+ * rate-limited primary retries the whole chain with backoff.
  */
 export const makeContainerRuntime = (options: {
   readonly engine: "docker" | "podman";
@@ -169,12 +179,13 @@ export const makeContainerRuntime = (options: {
       image: string,
       mirrors: ReadonlyArray<string>,
       primaryError: ContainerError,
-    ): Effect.Effect<void, ContainerError> => {
+    ): Effect.Effect<string, ContainerError> => {
       const [mirror, ...rest] = mirrors;
       if (mirror === undefined) return Effect.fail(primaryError);
       return Effect.gen(function* () {
         if (!(yield* present(mirror))) yield* pull(mirror);
         yield* Ref.update(mirrored, (map) => new Map(map).set(image, mirror));
+        return mirror;
       }).pipe(
         Effect.tap(() => Effect.logInfo(`Pulled image from mirror ${mirror}`)),
         Effect.tapError((cause) => Effect.logWarning(`Image mirror ${mirror} failed`, cause)),
@@ -182,7 +193,7 @@ export const makeContainerRuntime = (options: {
       );
     };
 
-    const prepare = Effect.fn("Container.prepare")(function* (image: string) {
+    const prepareImage = Effect.fn("Container.prepareImage")(function* (image: string) {
       // A mirror chosen earlier may have been pruned since; launches follow the primary again.
       const usePrimary = Ref.update(mirrored, (map) => {
         if (!map.has(image)) return map;
@@ -190,13 +201,31 @@ export const makeContainerRuntime = (options: {
         next.delete(image);
         return next;
       });
-      if (yield* present(image)) return yield* usePrimary;
       const mirrors = options.imageMirrors?.(image) ?? [];
-      yield* pull(image).pipe(
-        Effect.andThen(usePrimary),
-        Effect.catch((primaryError) => fromMirror(image, mirrors, primaryError)),
+      // Presence is rechecked per attempt: a concurrent prepare may land the image during backoff.
+      const attempt = Effect.gen(function* () {
+        if (yield* present(image)) {
+          yield* usePrimary;
+          return image;
+        }
+        return yield* pull(image).pipe(
+          Effect.as(image),
+          Effect.tap(() => usePrimary),
+          Effect.catch((primaryError) => fromMirror(image, mirrors, primaryError)),
+        );
+      });
+      return yield* attempt.pipe(
+        Effect.tapError((error) =>
+          rateLimited(error)
+            ? Effect.logWarning(`Registry rate-limited the pull of ${image}`)
+            : Effect.void,
+        ),
+        Effect.retry({ schedule: pullBackoff, times: PULL_MAX_RETRIES, while: rateLimited }),
       );
     });
+    const prepare = Effect.fn("Container.prepare")((image: string) =>
+      prepareImage(image).pipe(Effect.asVoid),
+    );
 
     const launch = Effect.fn("Container.launch")(function* (
       spec: ContainerSpec,
@@ -422,5 +451,5 @@ export const makeContainerRuntime = (options: {
         }),
       );
     });
-    return { prepare, launch, launchTool: (spec) => launch(spec, true) };
+    return { prepare, prepareImage, launch, launchTool: (spec) => launch(spec, true) };
   });

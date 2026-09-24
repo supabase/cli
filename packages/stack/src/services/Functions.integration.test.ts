@@ -1,7 +1,8 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Ref, Schema, Stream } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { Effect, FileSystem, Layer, Ref, Schedule, Schema, Stream } from "effect";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { makeService } from "../Service.ts";
 import { bundleServeMainTemplate } from "../../tests/serve-main-bundler.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
@@ -18,6 +19,31 @@ const dockerOptions = (root: string) => ({
   ...options(root),
   runtime: "docker" as const,
 });
+
+// CI occasionally drops the first connection to a fresh container with no response. The notice
+// goes to stderr because vitest hides console output from passing tests.
+const getFunction = (client: HttpClient.HttpClient, url: string) =>
+  client.execute(HttpClientRequest.get(url)).pipe(
+    Effect.retry(
+      Schedule.recurs(1).pipe(
+        Schedule.setInputType<HttpClientError.HttpClientError>(),
+        Schedule.while(({ input }) => input.reason._tag === "TransportError"),
+        Schedule.tap(({ input }) =>
+          Effect.sync(() => process.stderr.write(`Retrying ${url} after ${input.message}\n`)),
+        ),
+      ),
+    ),
+  );
+
+const dockerInfo = Effect.scoped(
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make("docker", ["info"], { stdout: "pipe", stderr: "pipe" }),
+    );
+    return yield* Stream.mkString(Stream.decodeText(child.all));
+  }),
+).pipe(Effect.orElseSucceed(() => "docker info unavailable"));
 
 describe("service catalog", () => {
   it.live("serves a standalone Functions bootstrap over HTTP", () =>
@@ -75,8 +101,9 @@ describe("service catalog", () => {
         yield* instance.start;
         yield* instance.ready;
         const endpoint = yield* recipe.endpoint("http");
-        const response = yield* client.execute(
-          HttpClientRequest.get("http://" + endpoint.host + ":" + endpoint.port + "/hello"),
+        const response = yield* getFunction(
+          client,
+          "http://" + endpoint.host + ":" + endpoint.port + "/hello",
         );
         expect(response.status).toBe(200);
         expect(yield* response.json).toEqual(
@@ -103,6 +130,96 @@ describe("service catalog", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
+
+  const ancestors = [
+    {
+      name: "a package.json with an unreadable sibling",
+      setup: (fs: FileSystem.FileSystem, root: string) =>
+        Effect.gen(function* () {
+          yield* fs.writeFileString(`${root}/package.json`, '{"name":"home","private":true}');
+          yield* fs.makeDirectory(`${root}/unreadable`);
+          yield* fs.chmod(`${root}/unreadable`, 0o000);
+          yield* Effect.addFinalizer(() =>
+            fs.chmod(`${root}/unreadable`, 0o755).pipe(Effect.ignore),
+          );
+        }),
+    },
+    {
+      name: "a Deno workspace that includes the project functions",
+      setup: (fs: FileSystem.FileSystem, root: string) =>
+        fs.writeFileString(`${root}/deno.json`, '{"workspace":["./project/supabase/functions"]}'),
+    },
+  ];
+  for (const ancestor of ancestors)
+    it.live(
+      `boots below ${ancestor.name} and keeps shared functions deno.json imports`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const client = yield* HttpClient.HttpClient;
+            const temporaryRoot = `${process.cwd()}/tmp`;
+            yield* fs.makeDirectory(temporaryRoot, { recursive: true });
+            const root = yield* fs.makeTempDirectoryScoped({
+              directory: temporaryRoot,
+              prefix: "functions-ancestor-",
+            });
+            yield* ancestor.setup(fs, root);
+            const functionsRoot = `${root}/project/supabase/functions`;
+            yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
+            yield* fs.makeDirectory(`${functionsRoot}/_shared`, { recursive: true });
+            yield* fs.writeFileString(
+              `${functionsRoot}/deno.json`,
+              '{"imports":{"shared-message":"./_shared/message.ts"}}',
+            );
+            yield* fs.writeFileString(
+              `${functionsRoot}/_shared/message.ts`,
+              'export const message = "shared";',
+            );
+            yield* fs.writeFileString(
+              `${functionsRoot}/hello/index.ts`,
+              'import { message } from "shared-message"; Deno.serve(() => new Response(message));',
+            );
+            const recipe = yield* makeServiceRecipe(
+              {
+                service: "functions",
+                config: {
+                  functionsRoot,
+                  bootstrap: yield* bundleServeMainTemplate,
+                  verifyJwt: false,
+                },
+              },
+              {
+                ...options(root),
+                stackId: "d".repeat(64),
+                instanceId: "ancestor",
+                cacheRoot: "/tmp/supabase-stack-artifacts",
+              },
+            );
+            const logs = yield* Ref.make("");
+            yield* recipe.logs.pipe(
+              Stream.runForEach(({ bytes }) =>
+                Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
+              ),
+              Effect.forkScoped({ startImmediately: true }),
+            );
+            const instance = yield* makeService(recipe.definition, {
+              id: "ancestor",
+              config: recipe.creation,
+            });
+            yield* instance.start;
+            yield* instance.ready.pipe(
+              Effect.tapError(() => Ref.get(logs).pipe(Effect.flatMap(Effect.logError))),
+            );
+            const endpoint = yield* recipe.endpoint("http");
+            const response = yield* client.get(`http://${endpoint.host}:${endpoint.port}/hello`);
+            expect(response.status, yield* Ref.get(logs)).toBe(200);
+            expect(yield* response.text).toBe("shared");
+            yield* instance.stop;
+          }),
+        ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      { timeout: 120_000 },
+    );
 });
 
 for (const runtime of ["native", "docker"] as const) {
@@ -186,32 +303,42 @@ for (const runtime of ["native", "docker"] as const) {
             id: "configured",
             config: recipe.creation,
           });
-          yield* instance.start;
-          yield* instance.ready;
-          const endpoint = yield* recipe.endpoint("http");
-          const base = `http://${endpoint.host}:${endpoint.port}`;
-          const response = yield* client.execute(HttpClientRequest.get(`${base}/hello`));
-          const responseText = yield* response.text;
-          expect(response.status, `${yield* Ref.get(logs)}\n${responseText}`).toBe(200);
-          const body = yield* Schema.decodeEffect(
-            Schema.fromJsonString(
-              Schema.Struct({
-                message: Schema.String,
-                local: Schema.String,
-                shared: Schema.String,
-                asset: Schema.String,
+          yield* Effect.gen(function* () {
+            yield* instance.start;
+            yield* instance.ready;
+            const endpoint = yield* recipe.endpoint("http");
+            const base = `http://${endpoint.host}:${endpoint.port}`;
+            const response = yield* getFunction(client, `${base}/hello`);
+            const responseText = yield* response.text;
+            expect(response.status, responseText).toBe(200);
+            const body = yield* Schema.decodeEffect(
+              Schema.fromJsonString(
+                Schema.Struct({
+                  message: Schema.String,
+                  local: Schema.String,
+                  shared: Schema.String,
+                  asset: Schema.String,
+                }),
+              ),
+            )(responseText);
+            expect(body).toEqual({
+              message: "custom entrypoint",
+              local: "function",
+              shared: "shared",
+              asset: "static content",
+            });
+            expect((yield* client.get(`${base}/disabled`)).status).toBe(404);
+            expect((yield* client.get(`${base}/locked`)).status).toBe(401);
+            yield* instance.stop;
+          }).pipe(
+            Effect.tapCause(() =>
+              Effect.gen(function* () {
+                yield* Effect.logError(`Functions ${runtime} logs:\n${yield* Ref.get(logs)}`);
+                if (runtime === "docker")
+                  yield* Effect.logError(`docker info:\n${yield* dockerInfo}`);
               }),
             ),
-          )(responseText);
-          expect(body).toEqual({
-            message: "custom entrypoint",
-            local: "function",
-            shared: "shared",
-            asset: "static content",
-          });
-          expect((yield* client.get(`${base}/disabled`)).status).toBe(404);
-          expect((yield* client.get(`${base}/locked`)).status).toBe(401);
-          yield* instance.stop;
+          );
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     { timeout: 120_000 },

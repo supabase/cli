@@ -13,12 +13,10 @@ import {
 } from "effect";
 import { ChildProcess } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
+import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import type { ContainerRuntime } from "../runtime/Container.ts";
 import type { DatabaseRuntime } from "../services/Database.ts";
 import type { DockerHelperRegistry } from "./DockerHelperRegistry.ts";
-
-const HELPER_IMAGE =
-  "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
 
 const Marker = Schema.Struct({
   backend: Schema.Literals(["docker", "host"]),
@@ -110,6 +108,9 @@ const errorFor = (operation: string, cause: unknown) =>
       });
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+
+const withSnapshotLock = (root: string, command: string): string =>
+  `set -eu; /usr/bin/busybox mkdir -p ${shellQuote(root)}; exec 9>${shellQuote(`${root}/.lock`)}; attempt=0; until lock_error=$(/usr/bin/busybox flock -n 9 2>&1); do if [ -n "$lock_error" ]; then echo "$lock_error" >&2; exit 1; fi; if [ "$attempt" -ge 120 ]; then echo 'Timed out waiting for database snapshot lock' >&2; exit 1; fi; attempt=$((attempt + 1)); /usr/bin/busybox sleep 1; done; /usr/bin/sh -eu -c ${shellQuote(command)}`;
 
 const parseMajor = (version: string): number | undefined => {
   const major = Number(version.trim().split(".")[0]);
@@ -504,6 +505,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         });
 
       const helperId = yield* Ref.make<string | undefined>(undefined);
+      const helperImage = yield* Ref.make<string | undefined>(undefined);
       const helperCleanupPending = yield* Ref.make(false);
       const operationLock = yield* Semaphore.make(1);
       const ownerScope = yield* Scope.Scope;
@@ -536,6 +538,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 ),
               );
               yield* Ref.set(helperId, undefined);
+              yield* Ref.set(helperImage, undefined);
               yield* Ref.set(helperCleanupPending, false);
             }
           }),
@@ -545,11 +548,24 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         ownerScope,
         removeHelper().pipe(Effect.catch((cause) => Effect.logError(cause))),
       );
+      const imageForVersion = (version: string, fallback: boolean) =>
+        resolveArtifact({ service: "database", version: postgresVersion(version) }).pipe(
+          Effect.map(({ image }) => image),
+          Effect.catchTag("ArtifactError", (cause) =>
+            fallback
+              ? resolveArtifact({ service: "database" }).pipe(Effect.map(({ image }) => image))
+              : Effect.fail(cause),
+          ),
+          Effect.mapError((cause) => errorFor("helper", cause)),
+        );
       const acquireHelper = Effect.fn("DockerDatabaseStorage.acquireHelper")(
-        (mounts: ReadonlyArray<DatabaseStorageMount>) =>
+        (mounts: ReadonlyArray<DatabaseStorageMount>, image: string) =>
           Effect.gen(function* () {
             const current = yield* Ref.get(helperId);
-            if (current !== undefined && (yield* Ref.get(helperCleanupPending)))
+            if (
+              current !== undefined &&
+              ((yield* Ref.get(helperCleanupPending)) || (yield* Ref.get(helperImage)) !== image)
+            )
               yield* removeHelper();
             const active = yield* Ref.get(helperId);
             if (active !== undefined) return active;
@@ -563,7 +579,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               yield* options.fs
                 .makeDirectory(options.cacheRoot, { recursive: true })
                 .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
-            yield* options.container.prepare(HELPER_IMAGE);
+            const preparedImage = yield* options.container
+              .prepareImage(image)
+              .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
             const token = yield* options.crypto.randomUUIDv4.pipe(
               Effect.mapError((cause) => errorFor("helper", cause)),
             );
@@ -571,6 +589,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             // Register the deterministic owned name before the remote create starts so an
             // interrupted docker run can still be removed by the same scope.
             yield* Ref.set(helperId, name);
+            yield* Ref.set(helperImage, image);
             const created = yield* engineCommand([
               "run",
               "-d",
@@ -583,7 +602,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               "--label",
               `com.supabase.instance=${options.instanceId}`,
               ...mountArgs(mounts),
-              HELPER_IMAGE,
+              preparedImage,
               "/bin/sh",
               "-c",
               "trap : TERM INT; while :; do sleep 3600; done",
@@ -595,17 +614,20 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
 
       const missingContainer = (message: string) => /no such (?:container|object)/iu.test(message);
-      const volumeHelperKey = (mounts: ReadonlyArray<DatabaseStorageMount>): string | undefined => {
+      const volumeHelperKey = (
+        mounts: ReadonlyArray<DatabaseStorageMount>,
+        image: string,
+      ): string | undefined => {
         if (options.helpers === undefined) return undefined;
         if (mounts.length === 0 || mounts.some((mount) => (mount.type ?? "bind") !== "volume"))
           return undefined;
-        return mounts
+        return `${image}\0${mounts
           .map(
             (mount) =>
               `${mount.source}\0${mount.target}\0${mount.volumeSubpath ?? ""}\0${mount.readOnly ? "ro" : "rw"}`,
           )
           .sort()
-          .join("\n");
+          .join("\n")}`;
       };
       const closeSharedHelper = (id: string) =>
         engineCommand(["rm", "-f", id]).pipe(
@@ -618,6 +640,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       const openSharedHelper = (
         mounts: ReadonlyArray<DatabaseStorageMount>,
         key: string,
+        image: string,
         ownerId: string,
       ) =>
         Effect.gen(function* () {
@@ -649,7 +672,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           }
           if (options.container === undefined)
             return yield* errorFor("helper", "Container runtime is unavailable");
-          yield* options.container.prepare(HELPER_IMAGE);
+          const preparedImage = yield* options.container
+            .prepareImage(image)
+            .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
           return yield* Effect.uninterruptibleMask((restore) =>
             restore(
               engineCommand([
@@ -664,7 +689,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 "--label",
                 `com.supabase.stack=${options.stackId}`,
                 ...mountArgs(mounts),
-                HELPER_IMAGE,
+                preparedImage,
                 "/bin/sh",
                 "-c",
                 "trap : TERM INT; while :; do sleep 3600; done",
@@ -688,44 +713,50 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       const runHelper = Effect.fn("DockerDatabaseStorage.helper")((
         command: string,
         mounts: ReadonlyArray<DatabaseStorageMount>,
+        version: string,
+        fallback = false,
       ): Effect.Effect<string, DockerDatabaseStorageError> => {
-        const sharedKey = volumeHelperKey(mounts);
-        if (sharedKey !== undefined && options.helpers !== undefined) {
-          const helpers = options.helpers;
-          const exec = (id: string) => engineCommand(["exec", id, "/bin/sh", "-c", command]);
-          const open = openSharedHelper(mounts, sharedKey, helpers.ownerId);
-          return helpers.use(sharedKey, open, closeSharedHelper, exec).pipe(
-            Effect.catchTag("DockerDatabaseStorageError", (cause) =>
-              /no such container|is not running/iu.test(cause.message)
-                ? helpers
-                    .drop(sharedKey)
-                    .pipe(Effect.andThen(helpers.use(sharedKey, open, closeSharedHelper, exec)))
-                : Effect.fail(cause),
-            ),
-            Effect.mapError((cause) => errorFor("helper", cause)),
-          );
-        }
         const cleanupAfterFailure = Effect.gen(function* () {
           if ((yield* Ref.get(helperId)) === undefined) return;
           yield* Ref.set(helperCleanupPending, true);
           yield* removeHelper();
         });
-        const operation = Effect.uninterruptibleMask((restore) =>
-          restore(
-            Effect.gen(function* () {
-              const id = yield* acquireHelper(mounts);
-              return yield* engineCommand(["exec", id, "/bin/sh", "-c", command]);
-            }),
-          ).pipe(
-            Effect.onExit((exit) =>
-              Exit.isFailure(exit) ? Effect.uninterruptible(cleanupAfterFailure) : Effect.void,
-            ),
-            Effect.mapError((cause) => errorFor("mount", cause)),
-          ),
+        return imageForVersion(version, fallback).pipe(
+          Effect.flatMap((image) => {
+            const sharedKey = volumeHelperKey(mounts, image);
+            if (sharedKey !== undefined && options.helpers !== undefined) {
+              const helpers = options.helpers;
+              const exec = (id: string) => engineCommand(["exec", id, "/bin/sh", "-c", command]);
+              const open = openSharedHelper(mounts, sharedKey, image, helpers.ownerId);
+              return helpers.use(sharedKey, open, closeSharedHelper, exec).pipe(
+                Effect.catchTag("DockerDatabaseStorageError", (cause) =>
+                  /no such container|is not running/iu.test(cause.message)
+                    ? helpers
+                        .drop(sharedKey)
+                        .pipe(Effect.andThen(helpers.use(sharedKey, open, closeSharedHelper, exec)))
+                    : Effect.fail(cause),
+                ),
+                Effect.mapError((cause) => errorFor("helper", cause)),
+              );
+            }
+            const operation = Effect.uninterruptibleMask((restore) =>
+              restore(
+                Effect.gen(function* () {
+                  const id = yield* acquireHelper(mounts, image);
+                  return yield* engineCommand(["exec", id, "/bin/sh", "-c", command]);
+                }),
+              ).pipe(
+                Effect.onExit((exit) =>
+                  Exit.isFailure(exit) ? Effect.uninterruptible(cleanupAfterFailure) : Effect.void,
+                ),
+                Effect.mapError((cause) => errorFor("mount", cause)),
+              ),
+            );
+            return operationLock
+              .withPermit(operation)
+              .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
+          }),
         );
-        return operationLock
-          .withPermit(operation)
-          .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
       });
 
       const getMarker = Effect.gen(function* () {
@@ -801,6 +832,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                   { source: options.instanceRoot, target: "/instance", readOnly: false },
                   { source: options.cacheRoot, target: "/cache", readOnly: false },
                 ],
+                version,
               );
               if (major.trim() !== majorVersion(version))
                 return yield* errorFor(
@@ -818,6 +850,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             const major = yield* runHelper(
               `set -eu; if [ ! -f ${shellQuote(`${store}/data/PG_VERSION`)} ]; then echo 'Initialized PostgreSQL data is missing PG_VERSION' >&2; exit 1; fi; cat ${shellQuote(`${store}/data/PG_VERSION`)}`,
               [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
+              version,
             );
             if (major.trim() !== majorVersion(version))
               return yield* errorFor(
@@ -828,6 +861,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             yield* runHelper(
               `set -eu; mkdir -p ${shellQuote(`${store}/data`)} ${shellQuote(`${cache}/entries`)} ${shellQuote(`${cache}/stages`)}; chown -R 100:101 ${shellQuote(store)}`,
               [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
+              version,
             );
           }
         }).pipe(Effect.mapError((cause) => errorFor("prepare", cause))),
@@ -867,12 +901,13 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               yield* runHelper(
                 `set -eu; if [ ! -f ${shellQuote(versionFile)} ]; then echo 'Database readiness requires PG_VERSION' >&2; exit 1; fi; actual=$(cat ${shellQuote(versionFile)}); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Database PostgreSQL major does not match requested version' >&2; exit 1; fi`,
                 snapshotPaths(marker).mounts,
+                version,
               );
             }
             yield* writeMarker({ ...marker, initialized: true });
           }).pipe(Effect.mapError((cause) => errorFor("ready", cause))),
       );
-      const removeData = Effect.fn("DockerDatabaseStorage.removeData")((_version: string) =>
+      const removeData = Effect.fn("DockerDatabaseStorage.removeData")((version: string) =>
         Effect.gen(function* () {
           const markerOption = yield* getMarkerForRemoval;
           if (Option.isNone(markerOption)) return;
@@ -881,11 +916,15 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             yield* runHelper(
               `set -eu; rm -rf /instance/data /instance/.supabase-restore-*; mkdir -p /instance/data; chown 100:101 /instance/data`,
               snapshotPaths(marker).mounts,
+              version,
+              true,
             );
           } else {
             yield* runHelper(
               `set -eu; rm -rf ${shellQuote(`/store/${marker.namespace}/data`)}; mkdir -p ${shellQuote(`/store/${marker.namespace}/data`)}; chown 100:101 ${shellQuote(`/store/${marker.namespace}/data`)}`,
               [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
+              version,
+              true,
             );
           }
           yield* options.fs
@@ -896,7 +935,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           yield* writeMarker({ ...marker, initialized: false });
         }).pipe(Effect.mapError((cause) => errorFor("reset", cause))),
       );
-      const destroyData = Effect.fn("DockerDatabaseStorage.destroyData")((_version: string) =>
+      const destroyData = Effect.fn("DockerDatabaseStorage.destroyData")((version: string) =>
         Effect.gen(function* () {
           const present = yield* getMarkerIfPresent;
           const markerOption = Option.isSome(present) ? present : yield* getMarkerForRemoval;
@@ -906,6 +945,8 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             yield* runHelper(
               `set -eu; rm -rf /instance/data /instance/.supabase-restore-* /instance/.supabase-database-ready.json`,
               snapshotPaths(marker).mounts,
+              version,
+              true,
             );
             yield* removeHelper();
           } else {
@@ -919,9 +960,12 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               ),
             );
             if (volumeExists)
-              yield* runHelper(`set -eu; rm -rf ${shellQuote(`/store/${marker.namespace}`)}`, [
-                { source: marker.volume, target: "/store", readOnly: false, type: "volume" },
-              ]);
+              yield* runHelper(
+                `set -eu; rm -rf ${shellQuote(`/store/${marker.namespace}`)}`,
+                [{ source: marker.volume, target: "/store", readOnly: false, type: "volume" }],
+                version,
+                true,
+              );
             yield* removeHelper();
           }
         }).pipe(Effect.mapError((cause) => errorFor("destroy", cause))),
@@ -1006,12 +1050,13 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             });
             const cacheOwnership =
               store.backend === "host"
-                ? `; owner=$(stat -c "%u:%g" /cache); mkdir -p /cache/stack-database-snapshots-helper; chown "$owner" /cache/stack-database-snapshots-helper; chown -R "$owner" ${root}`
+                ? `; owner=$(/usr/bin/busybox stat -c "%u:%g" /cache); /usr/bin/busybox mkdir -p /cache/stack-database-snapshots-helper; /usr/bin/busybox chown "$owner" /cache/stack-database-snapshots-helper; /usr/bin/busybox chown -R "$owner" ${root}`
                 : "";
-            yield* runHelper(
-              `set -eu; mkdir -p ${root}; flock -x -w 120 ${shellQuote(`${root}/.lock`)} sh -eu -c ${shellQuote(`set -eu; mkdir -p ${root}/entries ${root}/stages; find ${root}/stages -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; find ${root}/entries -mindepth 1 -maxdepth 1 -name '*.retired' -exec rm -rf -- {} +; trap 'rm -rf ${stage}${cacheOwnership}' EXIT; if [ -e ${source}/postmaster.pid ]; then echo 'Cannot save a running database snapshot' >&2; exit 1; fi; if [ ! -f ${source}/PG_VERSION ]; then echo 'Cannot save snapshot: PG_VERSION is missing' >&2; exit 1; fi; actual=$(cat ${source}/PG_VERSION); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Cannot save snapshot: PostgreSQL major does not match requested version' >&2; exit 1; fi; bad=$(find ${source} \\( ! -type f ! -type d \\) -print -quit); if [ -n "$bad" ]; then echo "Cannot save snapshot: unsupported filesystem entry $bad" >&2; exit 1; fi; rm -rf ${stage}; mkdir -p ${stage}; cp -a --reflink=auto ${source} ${stage}/data; printf '%s' ${shellQuote(descriptor)} > ${stage}/descriptor.json; if [ -e ${target} ]; then rm -rf ${target}.retired; mv ${target} ${target}.retired; if ! mv ${stage} ${target}; then mv ${target}.retired ${target}; exit 1; fi; else mv ${stage} ${target}; fi; rm -rf ${target}.retired; touch ${target}; find ${root}/entries -mindepth 1 -maxdepth 1 -type d ! -name ${digest} ! -name '*.retired' -printf '%T@ %p\\n' | sort -rn | tail -n +3 | cut -d' ' -f2- | xargs -r rm -rf`)}; rm -rf ${shellQuote(stage)}`,
-              paths.mounts,
+            const command = withSnapshotLock(
+              root,
+              `set -eu; /usr/bin/busybox mkdir -p ${shellQuote(`${root}/entries`)} ${shellQuote(`${root}/stages`)}; /usr/bin/busybox find ${shellQuote(`${root}/stages`)} -mindepth 1 -maxdepth 1 -exec /usr/bin/busybox rm -rf -- {} +; /usr/bin/busybox find ${shellQuote(`${root}/entries`)} -mindepth 1 -maxdepth 1 -name '*.retired' -exec /usr/bin/busybox rm -rf -- {} +; trap '/usr/bin/busybox rm -rf ${stage}${cacheOwnership}' EXIT; if [ -e ${shellQuote(`${source}/postmaster.pid`)} ]; then echo 'Cannot save a running database snapshot' >&2; exit 1; fi; if [ ! -f ${shellQuote(`${source}/PG_VERSION`)} ]; then echo 'Cannot save snapshot: PG_VERSION is missing' >&2; exit 1; fi; actual=$(/usr/bin/busybox cat ${shellQuote(`${source}/PG_VERSION`)}); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Cannot save snapshot: PostgreSQL major does not match requested version' >&2; exit 1; fi; bad=$(/usr/bin/busybox find ${shellQuote(source)} \\( ! -type f ! -type d \\) -print -quit); if [ -n "$bad" ]; then echo "Cannot save snapshot: unsupported filesystem entry $bad" >&2; exit 1; fi; /usr/bin/busybox rm -rf ${shellQuote(stage)}; /usr/bin/busybox mkdir -p ${shellQuote(stage)}; /usr/local/bin/cp -a --reflink=auto ${shellQuote(source)} ${shellQuote(`${stage}/data`)}; printf '%s' ${shellQuote(descriptor)} > ${shellQuote(`${stage}/descriptor.json`)}; if [ -e ${shellQuote(target)} ]; then /usr/bin/busybox rm -rf ${shellQuote(`${target}.retired`)}; /usr/bin/busybox mv ${shellQuote(target)} ${shellQuote(`${target}.retired`)}; if ! /usr/bin/busybox mv ${shellQuote(stage)} ${shellQuote(target)}; then /usr/bin/busybox mv ${shellQuote(`${target}.retired`)} ${shellQuote(target)}; exit 1; fi; else /usr/bin/busybox mv ${shellQuote(stage)} ${shellQuote(target)}; fi; /usr/bin/busybox rm -rf ${shellQuote(`${target}.retired`)}; /usr/bin/busybox touch ${shellQuote(target)}; /usr/bin/busybox find ${shellQuote(`${root}/entries`)} -mindepth 1 -maxdepth 1 -type d ! -name ${shellQuote(digest)} ! -name '*.retired' -exec /usr/bin/busybox stat -c '%y %n' {} + | /usr/bin/busybox sort -r | /usr/bin/busybox tail -n +3 | /usr/bin/busybox cut -d ' ' -f 4- | /usr/bin/busybox xargs -r /usr/bin/busybox rm -rf`,
             );
+            yield* runHelper(command, paths.mounts, version);
           }).pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
       );
       const restoreSnapshot = Effect.fn("DockerDatabaseStorage.restoreSnapshot")(
@@ -1040,15 +1085,18 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               profile: "supabase",
               keyDigest: digest,
             });
-            const targetSetup = store.initialized ? `test -d ${data}` : `mkdir -p ${data}`;
+            const targetSetup = store.initialized
+              ? `test -d ${shellQuote(data)}`
+              : `/usr/bin/busybox mkdir -p ${shellQuote(data)}`;
             const cacheOwnership =
               store.backend === "host"
-                ? `; owner=$(stat -c "%u:%g" /cache); mkdir -p /cache/stack-database-snapshots-helper; chown "$owner" /cache/stack-database-snapshots-helper; chown -R "$owner" ${root}`
+                ? `; owner=$(/usr/bin/busybox stat -c "%u:%g" /cache); /usr/bin/busybox mkdir -p /cache/stack-database-snapshots-helper; /usr/bin/busybox chown "$owner" /cache/stack-database-snapshots-helper; /usr/bin/busybox chown -R "$owner" ${root}`
                 : "";
-            const result = yield* runHelper(
-              `set -eu; mkdir -p ${root}; flock -x -w 120 ${shellQuote(`${root}/.lock`)} sh -eu -c ${shellQuote(`set -eu; mkdir -p ${root}/entries ${root}/stages; find ${root}/stages -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; find ${root}/entries -mindepth 1 -maxdepth 1 -name '*.retired' -exec rm -rf -- {} +; trap 'rm -rf ${stage}${cacheOwnership}' EXIT; if ! ${targetSetup}; then echo 'Initialized restore target data directory is missing' >&2; exit 1; fi; bad=$(find ${data} -mindepth 1 -print -quit); if [ -n "$bad" ]; then echo NONEMPTY; exit 0; fi; if [ ! -d ${source} ]; then echo MISS; exit 0; fi; if [ ! -f ${source}/descriptor.json ]; then echo 'Snapshot descriptor is missing' >&2; exit 1; fi; actual=$(cat ${source}/descriptor.json); expected=${shellQuote(descriptor)}; if [ "$actual" != "$expected" ]; then echo 'Snapshot descriptor does not match requested identity' >&2; exit 1; fi; bad=$(find ${source}/data \\( ! -type f ! -type d \\) -print -quit); if [ -n "$bad" ]; then echo "Snapshot contains unsupported filesystem entry $bad" >&2; exit 1; fi; if [ -e ${source}/data/postmaster.pid ]; then echo 'Snapshot contains postmaster.pid' >&2; exit 1; fi; rm -rf ${stage}; cp -a --reflink=auto ${source}/data ${stage}; actual=$(cat ${stage}/PG_VERSION); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Snapshot PostgreSQL major does not match requested version' >&2; exit 1; fi; ${store.backend === "host" ? `chown -R 100:101 ${stage};` : ""} rmdir ${data}; mv ${stage} ${data}; touch ${source}; echo HIT`)}; rm -rf ${shellQuote(stage)}`,
-              paths.mounts,
+            const command = withSnapshotLock(
+              root,
+              `set -eu; /usr/bin/busybox mkdir -p ${shellQuote(`${root}/entries`)} ${shellQuote(`${root}/stages`)}; /usr/bin/busybox find ${shellQuote(`${root}/stages`)} -mindepth 1 -maxdepth 1 -exec /usr/bin/busybox rm -rf -- {} +; /usr/bin/busybox find ${shellQuote(`${root}/entries`)} -mindepth 1 -maxdepth 1 -name '*.retired' -exec /usr/bin/busybox rm -rf -- {} +; trap '/usr/bin/busybox rm -rf ${stage}${cacheOwnership}' EXIT; if ! ${targetSetup}; then echo 'Initialized restore target data directory is missing' >&2; exit 1; fi; bad=$(/usr/bin/busybox find ${shellQuote(data)} -mindepth 1 -print -quit); if [ -n "$bad" ]; then echo NONEMPTY; exit 0; fi; if [ ! -d ${shellQuote(source)} ]; then echo MISS; exit 0; fi; if [ ! -f ${shellQuote(`${source}/descriptor.json`)} ]; then echo 'Snapshot descriptor is missing' >&2; exit 1; fi; actual=$(/usr/bin/busybox cat ${shellQuote(`${source}/descriptor.json`)}); expected=${shellQuote(descriptor)}; if [ "$actual" != "$expected" ]; then echo 'Snapshot descriptor does not match requested identity' >&2; exit 1; fi; bad=$(/usr/bin/busybox find ${shellQuote(`${source}/data`)} \\( ! -type f ! -type d \\) -print -quit); if [ -n "$bad" ]; then echo "Snapshot contains unsupported filesystem entry $bad" >&2; exit 1; fi; if [ -e ${shellQuote(`${source}/data/postmaster.pid`)} ]; then echo 'Snapshot contains postmaster.pid' >&2; exit 1; fi; /usr/bin/busybox rm -rf ${shellQuote(stage)}; /usr/local/bin/cp -a --reflink=auto ${shellQuote(`${source}/data`)} ${shellQuote(stage)}; actual=$(/usr/bin/busybox cat ${shellQuote(`${stage}/PG_VERSION`)}); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Snapshot PostgreSQL major does not match requested version' >&2; exit 1; fi; ${store.backend === "host" ? `/usr/bin/busybox chown -R 100:101 ${shellQuote(stage)};` : ""} /usr/bin/busybox rmdir ${shellQuote(data)}; /usr/bin/busybox mv ${shellQuote(stage)} ${shellQuote(data)}; /usr/bin/busybox touch ${shellQuote(source)}; echo HIT`,
             );
+            const result = yield* runHelper(command, paths.mounts, version);
             if (result === "MISS") return false;
             if (result === "NONEMPTY")
               return yield* errorFor("restore", "Restore target data directory must be empty");
