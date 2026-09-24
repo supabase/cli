@@ -6932,7 +6932,7 @@ snapshots:
       '@babel/helper-globals': 7.29.7
       '@babel/parser': 7.29.8
       '@babel/template': 7.29.7
-      '@babel/types': 7.29.8
+      '@babel/types': 7.28.5
       debug: 4.4.3(supports-color@7.2.0)
     transitivePeerDependencies:
       - supports-color
