@@ -1,6 +1,3 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
@@ -39,23 +36,25 @@ function mockSession(opts: { readonly failUpsertAt?: number } = {}) {
   return { session, calls };
 }
 
-function writeMigrations(dir: string): ReadonlyArray<PulledMigration> {
+const writeMigrations = Effect.fnUntraced(function* (dir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const migrations: ReadonlyArray<PulledMigration> = [
-    { path: join(dir, "20240101000000_a.sql"), version: "20240101000000" },
-    { path: join(dir, "20240101000001_b.sql"), version: "20240101000001" },
+    { path: path.join(dir, "20240101000000_a.sql"), version: "20240101000000" },
+    { path: path.join(dir, "20240101000001_b.sql"), version: "20240101000001" },
   ];
-  writeFileSync(migrations[0]!.path, "create table a ();");
-  writeFileSync(migrations[1]!.path, "create table b ();");
+  yield* fs.writeFileString(migrations[0]!.path, "create table a ();");
+  yield* fs.writeFileString(migrations[1]!.path, "create table b ();");
   return migrations;
-}
+});
 
 describe("updateMigrationHistory", () => {
   it.effect("wraps the upserts in one BEGIN + N upserts + COMMIT transaction", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = mkdtempSync(join(tmpdir(), "pull-sync-"));
-      const migrations = writeMigrations(dir);
+      const dir = yield* fs.makeTempDirectory({ prefix: "pull-sync-" });
+      const migrations = yield* writeMigrations(dir);
       const out = mockOutput();
       const { session, calls } = mockSession();
 
@@ -75,8 +74,8 @@ describe("updateMigrationHistory", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = mkdtempSync(join(tmpdir(), "pull-sync-"));
-      const migrations = writeMigrations(dir);
+      const dir = yield* fs.makeTempDirectory({ prefix: "pull-sync-" });
+      const migrations = yield* writeMigrations(dir);
       const out = mockOutput();
       const { session, calls } = mockSession({ failUpsertAt: 2 });
 

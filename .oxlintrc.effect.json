@@ -16,6 +16,7 @@
     "!apps/cli/src/commands/db/diff/**",
     "!apps/cli/src/commands/db/dump/**",
     "!apps/cli/src/commands/db/lint/**",
+    "!apps/cli/src/commands/db/pull/**",
     "!apps/cli/src/commands/db/push/**",
     "!apps/cli/src/commands/db/query/**",
     "!apps/cli/src/commands/db/reset/**",
