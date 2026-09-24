@@ -2,7 +2,12 @@ import { endpointReports } from "../stack-endpoints.format.ts";
 import { readStackFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
-import type { ServiceCreation, Stack, StackError } from "@supabase/stack/effect";
+import {
+  nativePostgresRootError,
+  type ServiceCreation,
+  type Stack,
+  type StackError,
+} from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
   OutputFlag,
@@ -217,6 +222,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           }),
       ),
     );
+    const selectedRuntime = target.runtime ?? defaultStackRuntime(runtime);
+    const rootError = nativePostgresRootError(selectedRuntime, process.getuid?.());
+    if (rootError !== undefined)
+      return yield* new StackCommandStartError({ reason: "lifecycle", message: rootError });
     const stateRoot = path.join(settings.supabaseHome, "stacks");
     const cacheRoot = path.join(settings.supabaseHome, "cache", "stack");
     const stack =
@@ -226,7 +235,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               projectRoot: target.projectRoot,
               stateRoot,
               cacheRoot,
-              runtime: target.runtime ?? defaultStackRuntime(runtime),
+              runtime: selectedRuntime,
               ...(target.name === undefined ? {} : { name: target.name }),
             })
             .pipe(Effect.mapError(stackError))
