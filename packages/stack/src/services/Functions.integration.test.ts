@@ -94,7 +94,7 @@ describe("service catalog", () => {
   );
 
   it.live(
-    "boots the native bootstrap below an ancestor package.json with unreadable siblings",
+    "boots below an ancestor package.json and keeps shared functions deno.json imports",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -114,9 +114,18 @@ describe("service catalog", () => {
           );
           const functionsRoot = `${root}/project/supabase/functions`;
           yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
+          yield* fs.makeDirectory(`${functionsRoot}/_shared`, { recursive: true });
+          yield* fs.writeFileString(
+            `${functionsRoot}/deno.json`,
+            '{"imports":{"shared-message":"./_shared/message.ts"}}',
+          );
+          yield* fs.writeFileString(
+            `${functionsRoot}/_shared/message.ts`,
+            'export const message = "shared";',
+          );
           yield* fs.writeFileString(
             `${functionsRoot}/hello/index.ts`,
-            'Deno.serve(() => new Response("hello"));',
+            'import { message } from "shared-message"; Deno.serve(() => new Response(message));',
           );
           const recipe = yield* makeServiceRecipe(
             {
@@ -152,7 +161,7 @@ describe("service catalog", () => {
           const endpoint = yield* recipe.endpoint("http");
           const response = yield* client.get(`http://${endpoint.host}:${endpoint.port}/hello`);
           expect(response.status, yield* Ref.get(logs)).toBe(200);
-          expect(yield* response.text).toBe("hello");
+          expect(yield* response.text).toBe("shared");
           yield* instance.stop;
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
