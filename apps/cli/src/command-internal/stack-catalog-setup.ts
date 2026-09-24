@@ -1,7 +1,7 @@
 import { Context, Data, Effect, FileSystem, Layer, Path } from "effect";
 import {
   type DatabaseInstance,
-  type ServiceCreation,
+  type ServiceCreationInput,
   type ServiceInstance,
   type Stack,
 } from "@supabase/stack/effect";
@@ -60,7 +60,6 @@ export interface StackCatalogSetupInput {
     readonly stack: Stack;
     readonly database: DatabaseInstance;
     readonly databaseServices: ReadonlyArray<DatabaseService>;
-    readonly jwtSecret: string;
   };
   readonly overlay: StackCatalogOverlay;
 }
@@ -102,16 +101,14 @@ const credential = (
 const serviceDefinition = (
   service: DatabaseService,
   credentials: ServiceCredentials,
-  jwtSecret: string,
   storagePath: string,
-): Extract<ServiceCreation, { readonly service: DatabaseService }> => {
+): Extract<ServiceCreationInput, { readonly service: DatabaseService }> => {
   switch (service) {
     case "auth":
       return {
         service,
         config: {
           databaseUrl: credentials.authDatabaseUrl,
-          jwtSecret,
         },
         endpoints: {},
       };
@@ -121,7 +118,6 @@ const serviceDefinition = (
         config: {
           databaseUrl: credentials.storageDatabaseUrl,
           filePath: storagePath,
-          jwtSecret,
         },
         endpoints: {},
       };
@@ -130,7 +126,6 @@ const serviceDefinition = (
         service,
         config: {
           databaseUrl: credentials.databaseUrl,
-          jwtSecret,
         },
         endpoints: {},
       };
@@ -184,9 +179,7 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         (service) =>
           Effect.acquireUseRelease(
             input.target.stack.services
-              .create(
-                serviceDefinition(service, serviceCredentials, input.target.jwtSecret, storagePath),
-              )
+              .create(serviceDefinition(service, serviceCredentials, storagePath))
               .pipe(Effect.mapError(catalogError)),
             startTemporaryService,
             destroyTemporaryService,

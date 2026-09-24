@@ -32,7 +32,7 @@ describe("service catalog", () => {
         yield* fs.makeDirectory(functionsRoot + "/hello", { recursive: true });
         yield* fs.writeFileString(
           functionsRoot + "/hello/index.ts",
-          "Deno.serve(() => Response.json({ custom: Deno.env.get('CUSTOM_ENV'), root: Deno.env.get('SUPABASE_INTERNAL_FUNCTIONS_ROOT'), port: Deno.env.get('EDGE_RUNTIME_PORT'), url: Deno.env.get('SUPABASE_URL'), db: Deno.env.get('SUPABASE_DB_URL'), jwt: Deno.env.get('SUPABASE_INTERNAL_JWT_SECRET'), anon: Deno.env.get('SUPABASE_ANON_KEY'), service: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') }));",
+          "Deno.serve(() => Response.json({ custom: Deno.env.get('CUSTOM_ENV'), root: Deno.env.get('SUPABASE_INTERNAL_FUNCTIONS_ROOT'), port: Deno.env.get('EDGE_RUNTIME_PORT'), url: Deno.env.get('SUPABASE_URL'), db: Deno.env.get('SUPABASE_DB_URL'), jwt: Deno.env.get('SUPABASE_INTERNAL_JWT_SECRET'), jwks: Deno.env.get('SUPABASE_JWKS'), anon: Deno.env.get('SUPABASE_ANON_KEY'), service: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'), publishable: Deno.env.get('SUPABASE_PUBLISHABLE_KEYS'), secret: Deno.env.get('SUPABASE_SECRET_KEYS') }));",
         );
         const bootstrap = yield* bundleServeMainTemplate;
         const recipe = yield* makeServiceRecipe(
@@ -44,6 +44,11 @@ describe("service catalog", () => {
               databaseUrl: "postgres://functions-db",
               apiUrl: "http://functions-api",
               jwtSecret: "functions-jwt-secret",
+              jwks: "functions-jwks",
+              anonKey: "active-anon-key",
+              serviceRoleKey: "active-service-role-key",
+              publishableKey: "active-publishable-key",
+              secretKey: "active-secret-key",
               env: {
                 CUSTOM_ENV: "custom-value",
                 SUPABASE_INTERNAL_FUNCTIONS_ROOT: "overridden-root",
@@ -53,6 +58,9 @@ describe("service catalog", () => {
                 SUPABASE_INTERNAL_JWT_SECRET: "overridden-jwt",
                 SUPABASE_ANON_KEY: "overridden-anon",
                 SUPABASE_SERVICE_ROLE_KEY: "overridden-service",
+                SUPABASE_JWKS: "overridden-jwks",
+                SUPABASE_INTERNAL_PUBLISHABLE_KEY: "overridden-publishable",
+                SUPABASE_INTERNAL_SECRET_KEY: "overridden-secret",
               },
               verifyJwt: false,
               inspector: true,
@@ -77,8 +85,11 @@ describe("service catalog", () => {
             port: "9000",
             url: "http://functions-api",
             db: "postgres://functions-db",
-            anon: expect.stringMatching(/^ey/u),
-            service: expect.stringMatching(/^ey/u),
+            jwks: "functions-jwks",
+            anon: "active-anon-key",
+            service: "active-service-role-key",
+            publishable: '{"default":"active-publishable-key"}',
+            secret: '{"default":"active-secret-key"}',
           }),
         );
         const inspector = yield* recipe.endpoint("inspector");

@@ -24,6 +24,18 @@ export interface HttpRoute {
   readonly target: Effect.Effect<BackendAddress, ProxyError, Scope.Scope>;
   readonly upstreamPrefix?: string;
   readonly upstreamHost?: string;
+  readonly keyRewrite?: HttpRouteKeyRewrite;
+}
+
+/** Configures Supabase API-key rewriting for one HTTP route. */
+interface HttpRouteKeyRewrite {
+  readonly policy: "bearer" | "query" | "sb-api-key";
+  readonly keys: {
+    readonly publishableKey: string;
+    readonly secretKey: string;
+    readonly anonKey: string;
+    readonly serviceRoleKey: string;
+  };
 }
 
 export interface HttpProxy {
@@ -53,19 +65,83 @@ const headersFor = (headers: IncomingMessage["headers"]) =>
     ),
   );
 
-const upstreamHeadersFor = (headers: IncomingMessage["headers"], route: HttpRoute) => ({
-  ...headersFor(headers),
-  ...(route.upstreamHost === undefined ? {} : { host: route.upstreamHost }),
-});
+const headerValue = (value: string | ReadonlyArray<string> | undefined) =>
+  value === undefined ? undefined : typeof value === "string" ? value : value.join(", ");
+
+const bearerValueFor = (headers: IncomingMessage["headers"], keys: HttpRouteKeyRewrite["keys"]) => {
+  const authorization = headerValue(headers.authorization);
+  if (authorization !== undefined && !authorization.startsWith("Bearer sb_")) return authorization;
+  const apiKey = headerValue(headers.apikey);
+  if (apiKey === undefined) return undefined;
+  if (apiKey === keys.secretKey) return `Bearer ${keys.serviceRoleKey}`;
+  if (apiKey === keys.publishableKey) return `Bearer ${keys.anonKey}`;
+  return apiKey;
+};
+
+const upstreamHeadersFor = (headers: IncomingMessage["headers"], route: HttpRoute) => {
+  const result: Record<string, string | string[]> = {
+    ...headersFor(headers),
+    ...(route.upstreamHost === undefined ? {} : { host: route.upstreamHost }),
+  };
+  const keyRewrite = route.keyRewrite;
+  if (keyRewrite?.policy === "bearer") {
+    const value = bearerValueFor(headers, keyRewrite.keys);
+    if (value === undefined) delete result.authorization;
+    else result.authorization = value;
+  } else if (keyRewrite?.policy === "sb-api-key") {
+    const value = bearerValueFor(headers, keyRewrite.keys);
+    if (value === undefined) delete result["sb-api-key"];
+    else result["sb-api-key"] = value;
+  }
+  return result;
+};
+
+const decodeQuery = (value: string) => {
+  try {
+    return decodeURIComponent(value.replace(/\+/gu, " "));
+  } catch {
+    return value;
+  }
+};
+
+const queryValueFor = (value: string, keys: HttpRouteKeyRewrite["keys"]) =>
+  value === keys.secretKey
+    ? keys.serviceRoleKey
+    : value === keys.publishableKey
+      ? keys.anonKey
+      : value;
 
 const pathFor = (request: IncomingMessage, route: HttpRoute) => {
   const input = request.url ?? "/";
-  if (route.upstreamPrefix === undefined) return input;
   const queryAt = input.indexOf("?");
   const pathname = queryAt < 0 ? input : input.slice(0, queryAt);
   const query = queryAt < 0 ? "" : input.slice(queryAt);
   const suffix = route.prefix === "/" ? pathname : pathname.slice(route.prefix.length);
-  return `${route.upstreamPrefix.replace(/\/$/u, "")}${suffix.startsWith("/") ? suffix : `/${suffix}`}${query}`;
+  const path =
+    route.upstreamPrefix === undefined
+      ? pathname
+      : `${route.upstreamPrefix.replace(/\/$/u, "")}${suffix.startsWith("/") ? suffix : `/${suffix}`}`;
+  return `${path}${rewriteQuery(query, route)}`;
+};
+
+const rewriteQuery = (query: string, route: HttpRoute) => {
+  if (route.keyRewrite?.policy !== "query" || query.length === 0) return query;
+  const { keys } = route.keyRewrite;
+  return query
+    .slice(1)
+    .split("&")
+    .map((parameter) => {
+      const separator = parameter.indexOf("=");
+      const name = separator < 0 ? parameter : parameter.slice(0, separator);
+      if (decodeQuery(name) !== "apikey") return parameter;
+      const rawValue = separator < 0 ? "" : parameter.slice(separator + 1);
+      const replacement = queryValueFor(decodeQuery(rawValue), keys);
+      return replacement === decodeQuery(rawValue)
+        ? parameter
+        : `${name}=${encodeURIComponent(replacement)}`;
+    })
+    .join("&")
+    .replace(/^/u, "?");
 };
 
 const pathnameFor = (url: string) => url.split("?", 1)[0] || "/";

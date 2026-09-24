@@ -1,8 +1,10 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
+import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
 import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
-import { Crypto, Effect, Data, FileSystem, Path, Redacted, SchemaIssue } from "effect";
+import { Crypto, Effect, Data, FileSystem, Path, Redacted, Schema, SchemaIssue } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 
 import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
@@ -14,6 +16,7 @@ declare const SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 import {
   decryptAuthSecret,
   resolveJwtSecret,
+  resolveConfiguredSigningKeys,
   envOverride,
   envOverrideApiMaxRows,
   envOverrideAuthPasswordRequirements,
@@ -32,17 +35,26 @@ import {
   resolveAuthCaptcha,
   resolveAuthEmail,
   resolveAuthEmailSmtp,
+  resolveAuthExternalUrl,
   resolveAuthExternalProviders,
   resolveAuthHooks,
   resolveAuthMfa,
   resolveAuthSms,
   resolveDbSettingsEnvOverrides,
   resolveGotrueOAuthServer,
+  resolveGotruePasskeyWebauthn,
   resolveGotrueRateLimit,
   resolveGotrueSessions,
   resolveGotrueWeb3,
   strToArr,
 } from "./local-config-values.ts";
+import { generateAsymmetricGoJwt } from "./go-jwt.ts";
+import {
+  resolveRemoteJwks,
+  resolveThirdPartyIssuerUrl,
+  thirdPartyIssuerUrlUnchecked,
+  toPublicJwk,
+} from "../shared/auth/jwks.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -65,6 +77,21 @@ interface StackStartConfig {
   readonly source: CliConfig;
   readonly projectEnvValues: Readonly<Record<string, string>>;
   readonly document?: Record<string, unknown>;
+  readonly remoteJwks: Effect.Effect<string | undefined, StackConfigError>;
+  readonly identity: Effect.Effect<
+    {
+      readonly publishableKey?: string;
+      readonly secretKey?: string;
+      readonly anonKey?: string;
+      readonly serviceRoleKey?: string;
+      readonly anonKeyIsOverride: boolean;
+      readonly serviceRoleKeyIsOverride: boolean;
+      readonly gotrueJwtKeys?: string;
+      readonly publicSigningKeys?: string;
+      readonly remoteJwks?: string;
+    },
+    StackConfigError
+  >;
 }
 
 type StackConfigEffect = Effect.Effect<
@@ -75,6 +102,8 @@ type StackConfigEffect = Effect.Effect<
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const encodeJwkArray = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.Unknown)));
 
 const withoutUndefined = (value: unknown): unknown => {
   if (Redacted.isRedacted(value)) return value;
@@ -254,83 +283,6 @@ const resolveAuthOverrides = (
           sender_name: smtp.senderName,
         };
   const resolvedSms = resolveAuthSms(authDocument, auth.sms, env);
-  const thirdParty = {
-    firebase: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
-        auth.third_party.firebase.enabled,
-        "auth.third_party.firebase.enabled",
-        env,
-      ),
-      project_id: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
-        auth.third_party.firebase.project_id,
-        env,
-      ),
-    },
-    auth0: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
-        auth.third_party.auth0.enabled,
-        "auth.third_party.auth0.enabled",
-        env,
-      ),
-      tenant: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
-        auth.third_party.auth0.tenant,
-        env,
-      ),
-      tenant_region: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
-        auth.third_party.auth0.tenant_region,
-        env,
-      ),
-    },
-    aws_cognito: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
-        auth.third_party.aws_cognito.enabled,
-        "auth.third_party.aws_cognito.enabled",
-        env,
-      ),
-      user_pool_id: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
-        auth.third_party.aws_cognito.user_pool_id,
-        env,
-      ),
-      user_pool_region: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
-        auth.third_party.aws_cognito.user_pool_region,
-        env,
-      ),
-    },
-    clerk: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
-        auth.third_party.clerk.enabled,
-        "auth.third_party.clerk.enabled",
-        env,
-      ),
-      domain: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
-        auth.third_party.clerk.domain,
-        env,
-      ),
-    },
-    workos: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
-        auth.third_party.workos.enabled,
-        "auth.third_party.workos.enabled",
-        env,
-      ),
-      issuer_url: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
-        auth.third_party.workos.issuer_url,
-        env,
-      ),
-    },
-  };
   return {
     ...auth,
     enabled: envOverrideBool("SUPABASE_AUTH_ENABLED", auth.enabled, "auth.enabled", env),
@@ -406,7 +358,6 @@ const resolveAuthOverrides = (
     external: externalResolved,
     web3: resolveGotrueWeb3(auth.web3, env),
     oauth_server: resolveGotrueOAuthServer(auth.oauth_server, env),
-    third_party: thirdParty,
   };
 };
 
@@ -612,11 +563,89 @@ const resolveEffectiveCliConfig = (
     "auth.enabled",
     env,
   );
+  const thirdParty = {
+    firebase: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
+        config.auth.third_party.firebase.enabled,
+        "auth.third_party.firebase.enabled",
+        env,
+      ),
+      project_id: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
+        config.auth.third_party.firebase.project_id,
+        env,
+      ),
+    },
+    auth0: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
+        config.auth.third_party.auth0.enabled,
+        "auth.third_party.auth0.enabled",
+        env,
+      ),
+      tenant: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
+        config.auth.third_party.auth0.tenant,
+        env,
+      ),
+      tenant_region: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
+        config.auth.third_party.auth0.tenant_region,
+        env,
+      ),
+    },
+    aws_cognito: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
+        config.auth.third_party.aws_cognito.enabled,
+        "auth.third_party.aws_cognito.enabled",
+        env,
+      ),
+      user_pool_id: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
+        config.auth.third_party.aws_cognito.user_pool_id,
+        env,
+      ),
+      user_pool_region: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
+        config.auth.third_party.aws_cognito.user_pool_region,
+        env,
+      ),
+    },
+    clerk: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
+        config.auth.third_party.clerk.enabled,
+        "auth.third_party.clerk.enabled",
+        env,
+      ),
+      domain: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
+        config.auth.third_party.clerk.domain,
+        env,
+      ),
+    },
+    workos: {
+      enabled: envOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
+        config.auth.third_party.workos.enabled,
+        "auth.third_party.workos.enabled",
+        env,
+      ),
+      issuer_url: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
+        config.auth.third_party.workos.issuer_url,
+        env,
+      ),
+    },
+  };
   // JWT security settings apply to non-Auth workloads too, so resolve them
   // regardless of whether the Auth capability is enabled.
   const authResolved = {
     ...(authEnabled ? resolveAuthOverrides(config.auth, document, env) : config.auth),
     enabled: authEnabled,
+    third_party: thirdParty,
     jwt_issuer: envOverride("SUPABASE_AUTH_JWT_ISSUER", config.auth.jwt_issuer, env),
     signing_keys_path: envOverride(
       "SUPABASE_AUTH_SIGNING_KEYS_PATH",
@@ -693,11 +722,6 @@ const resolveEffectiveCliConfig = (
 };
 
 const unsupportedConfigPaths = [
-  { path: "auth.third_party", active: (config: CliConfig) => config.auth.enabled },
-  { path: "auth.publishable_key", active: (config: CliConfig) => config.auth.enabled },
-  { path: "auth.secret_key", active: (config: CliConfig) => config.auth.enabled },
-  { path: "auth.anon_key", active: (config: CliConfig) => config.auth.enabled },
-  { path: "auth.service_role_key", active: (config: CliConfig) => config.auth.enabled },
   { path: "api.tls", active: (config: CliConfig) => config.api.enabled },
   { path: "analytics.gcp_project_id", active: (config: CliConfig) => config.analytics.enabled },
   {
@@ -767,8 +791,6 @@ const configValidationError = (config: CliConfig): string | undefined => {
       if (notification.enabled && notification.content_path !== "")
         return `auth.email.notification.${name}.content_path requires template serving, which is not supported by the experimental stack`;
   }
-  if (config.auth.enabled && config.auth.signing_keys_path !== undefined)
-    return "auth.signing_keys_path is unsupported by the experimental stack";
   for (const { path, active } of unsupportedConfigPaths) {
     if (!active(config)) continue;
     const value = pathValue(config, path);
@@ -835,8 +857,112 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       if (validationError !== undefined)
         return yield* new StackConfigError({ message: validationError });
 
-      const authConfig = yield* resolveAuthConfig(validatedConfig.auth, validatedConfig.local_smtp);
+      const externalProviders = yield* Effect.try({
+        try: () =>
+          resolveAuthExternalProviders(
+            section(context.loaded?.document, "auth"),
+            validatedConfig.auth.external,
+            context.projectEnvValues,
+          ),
+        catch: (cause) =>
+          new StackConfigError({
+            message: cause instanceof Error ? cause.message : "invalid auth provider config",
+          }),
+      });
+      const authConfig = yield* resolveAuthConfig(
+        validatedConfig.auth,
+        validatedConfig.local_smtp,
+        {
+          authExternalUrl: resolveAuthExternalUrl(
+            context.loaded?.document,
+            context.projectEnvValues,
+          ),
+          apiExternalUrl: validatedConfig.api.external_url,
+          externalProviders,
+          ...resolveGotruePasskeyWebauthn(context.loaded?.document, context.projectEnvValues),
+        },
+      );
       const path = yield* Path.Path;
+      const auth = validatedConfig.auth;
+      const issuer = yield* Effect.try({
+        try: () => {
+          const resolved = auth.enabled
+            ? resolveThirdPartyIssuerUrl(auth.third_party)
+            : thirdPartyIssuerUrlUnchecked(auth.third_party);
+          return resolved === undefined || resolved.length === 0 ? undefined : resolved;
+        },
+        catch: (cause) =>
+          new StackConfigError({
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+      const localIdentity = Effect.try({
+        try: () => {
+          const configured = (value: string | undefined) =>
+            value === undefined || value === ""
+              ? undefined
+              : decryptAuthSecret(value, context.projectEnvValues);
+          const publishableKey = configured(auth.publishable_key);
+          const secretKey = configured(auth.secret_key);
+          const configuredAnonKey = configured(auth.anon_key);
+          const configuredServiceRoleKey = configured(auth.service_role_key);
+          const configuredSigningKeys = resolveConfiguredSigningKeys(
+            validatedConfig,
+            projectRoot,
+            context.projectEnvValues,
+          );
+          const signingKeys =
+            configuredSigningKeys ??
+            (auth.signing_keys_path === undefined || auth.signing_keys_path.length === 0
+              ? undefined
+              : [DEFAULT_SIGNING_KEY]);
+          const signingKey = signingKeys?.[0];
+          return {
+            ...(publishableKey === undefined ? {} : { publishableKey }),
+            ...(secretKey === undefined ? {} : { secretKey }),
+            ...(configuredAnonKey === undefined
+              ? signingKey === undefined
+                ? {}
+                : { anonKey: generateAsymmetricGoJwt(signingKey, "anon") }
+              : { anonKey: configuredAnonKey }),
+            ...(configuredServiceRoleKey === undefined
+              ? signingKey === undefined
+                ? {}
+                : { serviceRoleKey: generateAsymmetricGoJwt(signingKey, "service_role") }
+              : { serviceRoleKey: configuredServiceRoleKey }),
+            anonKeyIsOverride: configuredAnonKey !== undefined,
+            serviceRoleKeyIsOverride: configuredServiceRoleKey !== undefined,
+            ...(signingKeys === undefined
+              ? {}
+              : {
+                  gotrueJwtKeys: encodeJwkArray(signingKeys),
+                  publicSigningKeys: encodeJwkArray(signingKeys.map(toPublicJwk)),
+                }),
+          };
+        },
+        catch: (cause) =>
+          new StackConfigError({
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+      const remoteJwks = Effect.gen(function* () {
+        return issuer === undefined
+          ? undefined
+          : encodeJwkArray(
+              yield* resolveRemoteJwks(issuer).pipe(
+                Effect.provide(FetchHttpClient.layer),
+                Effect.mapError((cause) => new StackConfigError({ message: cause.message })),
+              ),
+            );
+      });
+      const identity = Effect.gen(function* () {
+        const configuredKeys = yield* localIdentity;
+        const refreshedRemoteJwks = yield* remoteJwks;
+        return {
+          ...configuredKeys,
+          ...(refreshedRemoteJwks === undefined ? {} : { remoteJwks: refreshedRemoteJwks }),
+        };
+      });
       const functionEnvironments = Object.fromEntries(
         yield* Effect.forEach(Object.entries(validatedConfig.functions), ([name, config]) =>
           resolveCliConfigSubtree(
@@ -1244,6 +1370,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         creations: createCreations,
         source: validatedConfig,
         projectEnvValues: context.projectEnvValues,
+        remoteJwks,
+        identity,
         ...(context.loaded?.document === undefined ? {} : { document: context.loaded.document }),
       };
     }),

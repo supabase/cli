@@ -1,5 +1,5 @@
 import type { ServiceCreation, Stack } from "@supabase/stack/effect";
-import { DateTime, Effect, Equal, Fiber, Option, Path, Stream, type Scope } from "effect";
+import { DateTime, Effect, Equal, Fiber, Option, Path, Schema, Stream, type Scope } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -19,6 +19,9 @@ import { FunctionsServeStackError } from "./serve.errors.ts";
 type Instance = Effect.Success<ReturnType<Stack["services"]["get"]>>;
 type FunctionsInstance = Extract<Instance, { readonly service: "functions" }>;
 type FunctionsCreation = Extract<ServiceCreation, { readonly service: "functions" }>;
+
+const JwkArray = Schema.fromJsonString(Schema.Array(Schema.Unknown));
+const JwksDocument = Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.Unknown) }));
 
 const runtimeError = (cause: { readonly message: string }) =>
   cause instanceof FunctionsServeStackError
@@ -207,7 +210,25 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   const databaseStatus = yield* database.status;
   if (databaseStatus.config.service !== "database")
     return yield* invalidConfig("Invalid saved database configuration.");
+  const identity = yield* stack.credentials.get;
+  if (identity === undefined) return yield* invalidConfig("The stack has no saved credentials.");
   const config = yield* loadStackConfig(settings.workdir);
+  const refreshedJwks = yield* config.remoteJwks.pipe(
+    Effect.catch((cause) =>
+      output
+        .raw(
+          `Unable to refresh third-party JWKS: ${cause.message}. Using local signing keys.\n`,
+          "stderr",
+        )
+        .pipe(Effect.as(undefined)),
+    ),
+  );
+  const savedRemoteKeys = yield* Schema.decodeEffect(JwkArray)(identity.remoteJwks);
+  const savedJwks = yield* Schema.decodeEffect(JwksDocument)(identity.jwks);
+  const localKeys = savedJwks.keys.slice(savedRemoteKeys.length);
+  const remoteKeys =
+    refreshedJwks === undefined ? [] : yield* Schema.decodeEffect(JwkArray)(refreshedJwks);
+  const jwks = yield* Schema.encodeEffect(JwksDocument)({ keys: [...remoteKeys, ...localKeys] });
   const creations = yield* config.creations(stack.id);
   const source = creations.find(
     (creation): creation is FunctionsCreation => creation.service === "functions",
@@ -236,10 +257,12 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   if (apiUrl === undefined) return yield* invalidConfig("The stack has no runtime API URL.");
   const env =
     envOverride ?? (yield* readStackFunctionsEnv(`${source.config.functionsRoot}/.env`, true));
+  const { jwtSecret: _jwtSecret, ...sourceConfig } = source.config;
   const creation: FunctionsCreation = {
     ...source,
     config: {
-      ...source.config,
+      ...sourceConfig,
+      jwks,
       apiUrl,
       databaseUrl,
       env: { ...env, ...source.config.env, ...envOverride },

@@ -46,10 +46,9 @@ entrypoints, import maps and static files are forwarded to the worker bootstrap.
 are relative to `supabase/` and must remain within the project; Docker mounts that project read-only.
 The inspector port is retained as an endpoint intent and does not enable debugging by itself.
 After an explicit stack stop, start applies changed Functions env values, per-function settings,
-files root, and JWT verification by restarting the existing Functions member before composition
-start. A stopped lazy member briefly launches and stops again so lazy activation is retained; its
-identity and endpoints stay unchanged. Running start calls do not refresh Functions from changed
-project files; stop the stack and start it again to apply those changes.
+files root, and JWT verification when it updates the saved composition. Existing service identities,
+endpoints, and lazy activation are retained. Running start calls do not refresh Functions from
+changed project files; stop the stack and start it again to apply those changes.
 
 ## Service selection
 

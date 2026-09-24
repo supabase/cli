@@ -1,6 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
-import { Effect, Exit, Layer, Schema } from "effect";
+import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
+import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
+import { importJWK, jwtVerify } from "jose";
 import { ServiceCreationInput } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
@@ -13,10 +15,25 @@ const load = (projectRoot: string) =>
     Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
   );
 
-const project = (contents: string) =>
-  createStackConfigProject(contents).pipe(
+const project = (contents: string, options: Parameters<typeof createStackConfigProject>[1] = {}) =>
+  createStackConfigProject(contents, options).pipe(
     Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
   );
+
+const publicJwkSchema = Schema.Struct({
+  kty: Schema.Literal("EC"),
+  kid: Schema.String,
+  crv: Schema.Literal("P-256"),
+  x: Schema.String,
+  y: Schema.String,
+});
+
+const remoteJwkSchema = Schema.Struct({
+  kty: Schema.String,
+  kid: Schema.String,
+  n: Schema.String,
+  e: Schema.String,
+});
 
 const byService = (services: ReadonlyArray<Schema.Schema.Type<typeof ServiceCreationInput>>) =>
   new Map(services.map((service) => [service.service, service]));
@@ -37,6 +54,11 @@ enabled = true
       for (const service of services) yield* Schema.decodeEffect(ServiceCreationInput)(service);
 
       const recipes = byService(services);
+      const identity = yield* config.identity;
+      expect(identity.anonKey).toBeUndefined();
+      expect(identity.serviceRoleKey).toBeUndefined();
+      expect(identity.gotrueJwtKeys).toBeUndefined();
+      expect(identity.publicSigningKeys).toBeUndefined();
       const database = recipes.get("database");
       expect(
         database?.service === "database" ? database.config.rootKey : undefined,
@@ -139,12 +161,12 @@ content_path = "./templates/invite.html"
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects Auth third-party providers deferred by the stack", () =>
+  it.live("validates enabled Auth third-party providers", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-auth-third-party"
 [auth.third_party.firebase]
 enabled = true
-project_id = "firebase-project"
+project_id = ""
 `);
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -152,24 +174,103 @@ project_id = "firebase-project"
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects signing-key files only when Auth is enabled", () =>
+  it.live("loads an empty signing-key file and skips it when Auth is disabled", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const enabled = yield* project(`project_id = "stack-config-signing-keys"
 [auth]
 signing_keys_path = "./keys.json"
 `);
-      const enabledExit = yield* load(enabled).pipe(Effect.exit);
-      expect(Exit.isFailure(enabledExit)).toBe(true);
-      if (Exit.isFailure(enabledExit))
-        expect(String(enabledExit.cause)).toContain("auth.signing_keys_path");
+      yield* fs.writeFileString(path.join(enabled, "supabase", "keys.json"), "[]");
+      const enabledConfig = yield* load(enabled);
+      const identity = yield* enabledConfig.identity;
+      expect(identity.gotrueJwtKeys).toBe("[]");
+      expect(identity.publicSigningKeys).toBe("[]");
 
       const disabled = yield* project(`project_id = "stack-config-disabled-signing-keys"
 [auth]
 enabled = false
-signing_keys_path = "./keys.json"
+signing_keys_path = "./missing-keys.json"
 `);
-      const disabledExit = yield* load(disabled).pipe(Effect.exit);
-      expect(Exit.isSuccess(disabledExit)).toBe(true);
+      const disabledConfig = yield* load(disabled);
+      const disabledIdentity = yield* disabledConfig.identity;
+      const jwks = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(publicJwkSchema)))(
+        disabledIdentity.publicSigningKeys ?? "[]",
+      );
+      expect(jwks).toHaveLength(1);
+      expect(jwks[0]?.kid).toBe(DEFAULT_SIGNING_KEY.kid);
+      expect(disabledIdentity.publicSigningKeys).not.toContain('"d"');
+      const publicJwk = jwks[0];
+      if (publicJwk === undefined) return yield* Effect.die("The default public JWK is missing.");
+      const publicKey = yield* Effect.promise(() => importJWK(publicJwk, "ES256"));
+      for (const [token, role] of [
+        [disabledIdentity.anonKey, "anon"],
+        [disabledIdentity.serviceRoleKey, "service_role"],
+      ] as const) {
+        expect(token).toBeDefined();
+        const verified = yield* Effect.promise(() =>
+          jwtVerify(token ?? "", publicKey, { algorithms: ["ES256"] }),
+        );
+        expect(verified.payload.role).toBe(role);
+      }
+
+      const envDisabled = yield* project(
+        `project_id = "stack-config-env-disabled-signing-keys"\n[auth]\nenabled = false\n`,
+        { supabaseEnv: "SUPABASE_AUTH_SIGNING_KEYS_PATH=./missing-keys.json\n" },
+      );
+      const envIdentity = yield* (yield* load(envDisabled)).identity;
+      expect(envIdentity.publicSigningKeys).toBe(disabledIdentity.publicSigningKeys);
+      expect(envIdentity.anonKey).toBeDefined();
+      expect(envIdentity.serviceRoleKey).toBeDefined();
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("fetches third-party JWKS while Auth is disabled", () =>
+    Effect.gen(function* () {
+      const paths: string[] = [];
+      const remoteKey = { kty: "RSA", kid: "remote-key", n: "Ag", e: "AQAB" };
+      const server = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          Bun.serve({
+            port: 0,
+            fetch(request) {
+              const url = new URL(request.url);
+              paths.push(url.pathname);
+              if (url.pathname === "/.well-known/openid-configuration")
+                return Response.json({ jwks_uri: `${url.origin}/jwks` });
+              if (url.pathname === "/jwks") return Response.json({ keys: [remoteKey] });
+              return new Response(null, { status: 404 });
+            },
+          }),
+        ),
+        (server) => Effect.promise(() => server.stop(true)),
+      );
+      if (server.port === undefined) return yield* Effect.die("The JWKS server has no TCP port.");
+      const root = yield* project(
+        `project_id = "stack-config-disabled-third-party"\n[auth]\nenabled = false\n`,
+        {
+          supabaseEnv: `SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED=true\nSUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL=http://127.0.0.1:${server.port}\n`,
+        },
+      );
+      const config = yield* load(root);
+      const identity = yield* config.identity;
+      const remoteJwks = yield* Schema.decodeEffect(
+        Schema.fromJsonString(Schema.Array(remoteJwkSchema)),
+      )(identity.remoteJwks ?? "[]");
+      expect(remoteJwks).toEqual([remoteKey]);
+      expect(paths).toEqual(["/.well-known/openid-configuration", "/jwks"]);
+
+      const emptyIssuer = yield* project(`project_id = "stack-config-disabled-empty-issuer"
+[auth]
+enabled = false
+[auth.third_party.workos]
+enabled = true
+issuer_url = ""
+`);
+      const emptyIssuerIdentity = yield* (yield* load(emptyIssuer)).identity;
+      expect(emptyIssuerIdentity.remoteJwks).toBeUndefined();
+      expect(paths).toEqual(["/.well-known/openid-configuration", "/jwks"]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -216,18 +317,6 @@ s3_secret_key = "env(S3_SECRET_KEY)"
       expect(services.some((service) => service.service === "database")).toBe(true);
     }).pipe(Effect.provide(BunServices.layer));
   });
-
-  it.live("still rejects an unresolved auth service role key", () =>
-    Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-auth-key"
-[auth]
-service_role_key = "env(SUPABASE_AUTH_SERVICE_ROLE_KEY)"
-`);
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.service_role_key");
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
 
   it.live("rejects OrioleDB and ignores its inactive S3 settings", () =>
     Effect.gen(function* () {

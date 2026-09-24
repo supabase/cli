@@ -11,6 +11,7 @@ import type {
   ServiceCreation,
   ServiceInstance,
   Stack,
+  StackCredentials,
 } from "@supabase/stack/effect";
 
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
@@ -18,6 +19,7 @@ import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.
 import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.service.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
+import { generateGoJwt } from "../../src/command-internal/go-jwt.ts";
 import { YesFlag } from "../../src/command-internal/global-flags.ts";
 import { StackApi } from "../../src/command-internal/stack-api.ts";
 import { stackBackendLayer } from "../../src/command-internal/stack-backend.ts";
@@ -97,6 +99,22 @@ export interface SetupStorageStackApiOptions {
 
 const STORAGE_STACK_ID = "e".repeat(64);
 export const STORAGE_TEST_JWT_SECRET = "storage-test-jwt-secret-with-at-least-32-chars";
+const stackCredentials = {
+  jwtSecret: STORAGE_TEST_JWT_SECRET,
+  postgresRootKey: "a".repeat(64),
+  databasePassword: "postgres",
+  publishableKey: "sb_publishable_storage_test",
+  secretKey: "sb_secret_storage_test",
+  anonKey: generateGoJwt(STORAGE_TEST_JWT_SECRET, "anon"),
+  serviceRoleKey: generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+  jwks: JSON.stringify({
+    keys: [{ kty: "oct", k: Buffer.from(STORAGE_TEST_JWT_SECRET).toString("base64url") }],
+  }),
+  gotrueJwtKeys: "[]",
+  remoteJwks: "[]",
+  anonKeyIsOverride: false,
+  serviceRoleKeyIsOverride: false,
+} satisfies StackCredentials;
 const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
   service: "database",
   config: {
@@ -112,6 +130,7 @@ const storageCreation: Extract<ServiceCreation, { service: "storage" }> = {
   config: {
     databaseUrl: "postgresql://placeholder",
     jwtSecret: STORAGE_TEST_JWT_SECRET,
+    serviceRoleKey: stackCredentials.serviceRoleKey,
     filePath: "/tmp/storage",
   },
   endpoints: { http: { port: 59999 } },
@@ -233,7 +252,7 @@ export function buildStorageStackApi(
         id === database.id ? Effect.succeed(database) : Effect.succeed(storage),
       list: Effect.succeed(storageEnabled ? [database, storage] : [database]),
     },
-    credentials: { get: Effect.die("unused") },
+    credentials: { get: Effect.succeed(stackCredentials) },
     composition: {
       supabase: () => Effect.die("unused"),
       configure: () => Effect.die("unused"),

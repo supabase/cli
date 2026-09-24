@@ -10,6 +10,7 @@ import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
 export const Config = Schema.Struct({
   databaseUrl: Schema.String,
   jwtSecret: Schema.optionalKey(Schema.String),
+  jwks: Schema.optionalKey(Schema.String),
   dbEncryptionKey: Schema.optionalKey(Schema.String),
   secretKeyBase: Schema.optionalKey(Schema.String),
   ipVersion: Schema.optionalKey(Schema.Literals(["IPv4", "IPv6"])),
@@ -49,6 +50,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         DB_NAME: db.database,
         DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
         API_JWT_SECRET: jwt,
+        ...(creation.config.jwks === undefined ? {} : { API_JWT_JWKS: creation.config.jwks }),
         METRICS_JWT_SECRET: jwt,
         DB_ENC_KEY: creation.config.dbEncryptionKey ?? DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
         SECRET_KEY_BASE: creation.config.secretKeyBase ?? DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,

@@ -43,14 +43,21 @@ const captureErrors = (lines: Array<string>) =>
     }),
   ]);
 
-const request = (port: number, path: string, body: Uint8Array) =>
+const request = (
+  port: number,
+  path: string,
+  body: Uint8Array,
+  headers: Readonly<Record<string, string>> = {},
+) =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
-    const response = yield* client.execute(
+    const outgoing = Object.entries(headers).reduce(
+      (current, [name, value]) => current.pipe(HttpClientRequest.setHeader(name, value)),
       HttpClientRequest.post(`http://127.0.0.1:${port}${path}`).pipe(
         HttpClientRequest.bodyUint8Array(body),
       ),
     );
+    const response = yield* client.execute(outgoing);
     return { status: response.status, body: new Uint8Array(yield* response.arrayBuffer) };
   });
 
@@ -265,6 +272,186 @@ it.live("overrides the upstream host for HTTP routes when configured", () =>
         Effect.provide(NodeHttpClient.layerNodeHttp),
       );
       expect(new TextDecoder().decode(response.body)).toBe("realtime-dev");
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("rewrites bearer and sb-api-key headers only on opted-in routes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((incoming, response) => {
+        response.end(
+          JSON.stringify({
+            authorization: incoming.headers.authorization,
+            apikey: incoming.headers.apikey,
+            sbApiKey: incoming.headers["sb-api-key"],
+          }),
+        );
+      });
+      const backendAddress = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      const keys = {
+        publishableKey: "sb_publishable_example",
+        secretKey: "sb_secret_example",
+        anonKey: "anon.jwt.value",
+        serviceRoleKey: "service.role.jwt",
+      };
+      yield* proxy.setRoutes([
+        {
+          id: "bearer",
+          prefix: "/bearer",
+          target: Effect.succeed(backendAddress),
+          keyRewrite: { policy: "bearer", keys },
+        },
+        {
+          id: "sb-api-key",
+          prefix: "/functions",
+          target: Effect.succeed(backendAddress),
+          keyRewrite: { policy: "sb-api-key", keys },
+        },
+        {
+          id: "storage-s3",
+          prefix: "/storage/v1/s3",
+          upstreamPrefix: "/s3",
+          target: Effect.succeed(backendAddress),
+        },
+        {
+          id: "storage",
+          prefix: "/storage/v1",
+          target: Effect.succeed(backendAddress),
+          keyRewrite: { policy: "bearer", keys },
+        },
+        { id: "passthrough", prefix: "/raw", target: Effect.succeed(backendAddress) },
+      ]);
+      const send = (path: string, headers: Readonly<Record<string, string>>) =>
+        request(proxy.port, path, new Uint8Array(), headers).pipe(
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+          Effect.map(({ body }) => JSON.parse(new TextDecoder().decode(body))),
+        );
+
+      expect(
+        yield* send("/bearer", {
+          authorization: "Bearer sb_publishable_client",
+          apikey: keys.publishableKey,
+        }),
+      ).toEqual({ authorization: "Bearer anon.jwt.value", apikey: keys.publishableKey });
+      expect(
+        yield* send("/bearer", {
+          authorization: "Bearer custom-client-token",
+          apikey: keys.secretKey,
+        }),
+      ).toEqual({ authorization: "Bearer custom-client-token", apikey: keys.secretKey });
+      expect(yield* send("/bearer", { apikey: "unrecognized-client-key" })).toEqual({
+        authorization: "unrecognized-client-key",
+        apikey: "unrecognized-client-key",
+      });
+      expect(
+        yield* send("/functions", {
+          authorization: "Bearer sb_secret_client",
+          apikey: keys.secretKey,
+        }),
+      ).toEqual({
+        authorization: "Bearer sb_secret_client",
+        apikey: keys.secretKey,
+        sbApiKey: "Bearer service.role.jwt",
+      });
+      expect(
+        yield* send("/storage/v1/object", {
+          authorization: "Bearer sb_secret_client",
+          apikey: keys.secretKey,
+        }),
+      ).toEqual({
+        authorization: "Bearer service.role.jwt",
+        apikey: keys.secretKey,
+      });
+      expect(
+        yield* send("/storage/v1/s3/bucket/object", {
+          authorization: "AWS4-HMAC-SHA256 Credential=client",
+          apikey: keys.secretKey,
+        }),
+      ).toEqual({
+        authorization: "AWS4-HMAC-SHA256 Credential=client",
+        apikey: keys.secretKey,
+      });
+      expect(
+        yield* send("/raw", {
+          authorization: "Bearer sb_publishable_client",
+          apikey: keys.publishableKey,
+        }),
+      ).toEqual({
+        authorization: "Bearer sb_publishable_client",
+        apikey: keys.publishableKey,
+      });
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("rewrites only the apikey query value on opted-in WebSocket routes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer();
+      const sockets = new WebSocketServer({ server: backend });
+      let forwardedAuthorization: string | undefined;
+      sockets.on("connection", (socket, request) => {
+        forwardedAuthorization = request.headers.authorization;
+        socket.send(request.url ?? "/");
+      });
+      const backendAddress = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([
+        {
+          id: "realtime",
+          prefix: "/realtime",
+          target: Effect.succeed(backendAddress),
+          keyRewrite: {
+            policy: "query",
+            keys: {
+              publishableKey: "sb_publishable_example",
+              secretKey: "sb_secret_example",
+              anonKey: "anon.jwt.value",
+              serviceRoleKey: "service.role.jwt",
+            },
+          },
+        },
+      ]);
+      const connect = (query: string) =>
+        Effect.callback<string, HttpProxyTestError>((resume) => {
+          const client = new WebSocket(
+            `ws://127.0.0.1:${proxy.port}/realtime/v1/websocket${query}`,
+            { headers: { authorization: "Bearer original-client-token" } },
+          );
+          client.once("message", (message) => {
+            const text = Array.isArray(message)
+              ? Buffer.concat(message).toString()
+              : Buffer.isBuffer(message)
+                ? message.toString()
+                : new TextDecoder().decode(message);
+            resume(Effect.succeed(text));
+            client.close();
+          });
+          client.once("error", (cause) =>
+            resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause }))),
+          );
+          return Effect.sync(() => client.close());
+        }).pipe(Effect.timeout("10 seconds"));
+
+      const publishableUrl = yield* connect("?apikey=sb_publishable_example&keep=a%20b&other=2");
+      expect(publishableUrl).toBe(
+        "/realtime/v1/websocket?apikey=anon.jwt.value&keep=a%20b&other=2",
+      );
+      expect(forwardedAuthorization).toBe("Bearer original-client-token");
+      const secretUrl = yield* connect("?apikey=sb_secret_example&keep=a%20b");
+      expect(secretUrl).toBe("/realtime/v1/websocket?apikey=service.role.jwt&keep=a%20b");
+      const noKeyUrl = yield* connect("?keep=a%20b&other=2");
+      expect(noKeyUrl).toBe("/realtime/v1/websocket?keep=a%20b&other=2");
+      yield* Effect.callback<void, HttpProxyTestError>((resume) => {
+        sockets.close((cause) =>
+          cause === undefined
+            ? resume(Effect.void)
+            : resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause }))),
+        );
+        return Effect.void;
+      });
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -1174,7 +1174,7 @@ describe("db reset", () => {
         expect(stackApi.stopCalls).toBe(1);
         expect(stackApi.startCalls).toBe(2);
         expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "storage", "realtime"]);
-        expect(catalogApplied[0]?.target.jwtSecret).toBe(RESET_JWT);
+        expect(catalogApplied[0]?.target).not.toHaveProperty("jwtSecret");
         expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
           false,
         );

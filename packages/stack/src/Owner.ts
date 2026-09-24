@@ -52,6 +52,7 @@ import {
 } from "./services/Catalog.ts";
 import * as State from "./State.ts";
 import type { SavedInstance, SavedStack, StackCredentials } from "./State.ts";
+import { resolveStackIdentity } from "./services/ServiceConfig.ts";
 import {
   DEFAULT_LOCAL_DATABASE_PASSWORD,
   DEFAULT_LOCAL_JWT_SECRET,
@@ -277,14 +278,16 @@ const makeOwnerWithDependencies = (
       );
     });
 
+    const routeKeys = {
+      publishableKey: options.saved.credentials?.publishableKey ?? "",
+      secretKey: options.saved.credentials?.secretKey ?? "",
+      anonKey: options.saved.credentials?.anonKey ?? "",
+      serviceRoleKey: options.saved.credentials?.serviceRoleKey ?? "",
+    };
     const resolveStackCredentials = Effect.fn("Owner.resolveStackCredentials")(function* (
       overrides: Record<string, string>,
+      identity?: State.StackIdentityInput,
     ) {
-      const defaults: StackCredentials = {
-        jwtSecret: DEFAULT_LOCAL_JWT_SECRET,
-        postgresRootKey: DEFAULT_POSTGRES_ROOT_KEY,
-        databasePassword: DEFAULT_LOCAL_DATABASE_PASSWORD,
-      };
       const credentials = yield* options.state
         .withLock(
           Effect.gen(function* () {
@@ -303,28 +306,81 @@ const makeOwnerWithDependencies = (
                   "credentials",
                   "Saved instances have no stack credential record; refusing to infer credentials",
                 );
-              const initial = { ...defaults, ...overrides };
+              const jwtSecret = overrides.jwtSecret ?? DEFAULT_LOCAL_JWT_SECRET;
+              const resolvedIdentity = yield* resolveStackIdentity(jwtSecret, identity, undefined);
+              const initial: StackCredentials = {
+                jwtSecret,
+                postgresRootKey: overrides.postgresRootKey ?? DEFAULT_POSTGRES_ROOT_KEY,
+                databasePassword: overrides.databasePassword ?? DEFAULT_LOCAL_DATABASE_PASSWORD,
+                ...resolvedIdentity,
+              };
               yield* options.state
                 .save({ ...current, credentials: initial })
                 .pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
               return initial;
             }
             const conflict =
-              (overrides.jwtSecret !== undefined &&
-                overrides.jwtSecret !== saved.jwtSecret &&
-                "jwtSecret") ||
               (overrides.postgresRootKey !== undefined &&
                 overrides.postgresRootKey !== saved.postgresRootKey &&
                 "rootKey") ||
               (overrides.databasePassword !== undefined &&
                 overrides.databasePassword !== saved.databasePassword &&
-                "databasePassword");
+                "databasePassword") ||
+              (identity === undefined &&
+                overrides.jwtSecret !== undefined &&
+                overrides.jwtSecret !== saved.jwtSecret &&
+                "jwtSecret");
             if (conflict !== false && conflict !== undefined)
               return yield* errorFor(
                 "credentials",
                 `Credential override ${conflict} conflicts with the saved stack value`,
               );
-            return saved;
+            const jwtSecret =
+              identity === undefined
+                ? saved.jwtSecret
+                : (overrides.jwtSecret ?? DEFAULT_LOCAL_JWT_SECRET);
+            const resolvedIdentity = yield* resolveStackIdentity(jwtSecret, identity, saved);
+            const next: StackCredentials = {
+              ...saved,
+              jwtSecret,
+              ...resolvedIdentity,
+            };
+            const identityChanged =
+              next.jwtSecret !== saved.jwtSecret ||
+              next.publishableKey !== saved.publishableKey ||
+              next.secretKey !== saved.secretKey ||
+              next.anonKey !== saved.anonKey ||
+              next.serviceRoleKey !== saved.serviceRoleKey ||
+              next.jwks !== saved.jwks ||
+              next.gotrueJwtKeys !== saved.gotrueJwtKeys ||
+              next.remoteJwks !== saved.remoteJwks ||
+              next.anonKeyIsOverride !== saved.anonKeyIsOverride ||
+              next.serviceRoleKeyIsOverride !== saved.serviceRoleKeyIsOverride;
+            if (identityChanged) {
+              const savedComposition = yield* Schema.decodeUnknownEffect(
+                Orchestrator.CompositionConfig,
+              )(current.composition).pipe(
+                Effect.mapError((cause) => errorFor("credentials", cause)),
+              );
+              const memberIds = new Set([
+                ...savedComposition.members.map(({ id }) => id),
+                ...savedComposition.dependencies.flatMap(({ from, to }) => [from, to]),
+              ]);
+              for (const id of memberIds) {
+                const { lifecycle, wakeEnabled } = yield* observation(id).pipe(
+                  Effect.mapError((cause) => errorFor("credentials", cause)),
+                );
+                if (lifecycle !== "stopped" || wakeEnabled)
+                  return yield* errorFor(
+                    "credentials",
+                    `Service ${id} must be stopped with wake disabled before identity changes`,
+                  );
+              }
+              yield* options.state
+                .save({ ...current, credentials: next })
+                .pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
+            }
+            return next;
           }),
         )
         .pipe(
@@ -332,6 +388,7 @@ const makeOwnerWithDependencies = (
             cause instanceof OwnerError ? cause : errorFor("credentials", cause),
           ),
         );
+      Object.assign(routeKeys, credentials);
       return credentials;
     });
 
@@ -353,8 +410,47 @@ const makeOwnerWithDependencies = (
           jwtSecret: Redacted.make(credentials.jwtSecret),
           rootKey: Redacted.make(credentials.postgresRootKey),
         });
-      } else if (consumesCredentials(creation)) {
+      } else {
         Object.assign(config, { jwtSecret: credentials.jwtSecret });
+        switch (creation.service) {
+          case "auth":
+            Object.assign(config, {
+              gotrueJwtKeys: creation.config.gotrueJwtKeys ?? credentials.gotrueJwtKeys,
+            });
+            break;
+          case "rest":
+          case "realtime":
+            Object.assign(config, {
+              jwks: creation.config.jwks ?? credentials.jwks,
+            });
+            break;
+          case "storage":
+            Object.assign(config, {
+              jwks: creation.config.jwks ?? credentials.jwks,
+              anonKey: creation.config.anonKey ?? credentials.anonKey,
+              serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
+            });
+            break;
+          case "functions":
+            Object.assign(config, {
+              jwks: creation.config.jwks ?? credentials.jwks,
+              anonKey: creation.config.anonKey ?? credentials.anonKey,
+              serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
+              publishableKey: creation.config.publishableKey ?? credentials.publishableKey,
+              secretKey: creation.config.secretKey ?? credentials.secretKey,
+            });
+            break;
+          case "studio":
+            Object.assign(config, {
+              anonKey: creation.config.anonKey ?? credentials.anonKey,
+              serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
+              publishableKey: creation.config.publishableKey ?? credentials.publishableKey,
+              secretKey: creation.config.secretKey ?? credentials.secretKey,
+            });
+            break;
+          default:
+            break;
+        }
       }
       return yield* Schema.decodeUnknownEffect(ServiceCreation)({
         ...creation,
@@ -623,14 +719,43 @@ const makeOwnerWithDependencies = (
                             prefix: "/realtime/v1/api",
                             upstreamPrefix: "/api",
                             upstreamHost: "realtime-dev",
+                            keyRewrite: { policy: "bearer" as const, keys: routeKeys },
                           },
                           {
                             prefix: route,
                             upstreamPrefix: "/socket",
                             upstreamHost: "realtime-dev",
+                            keyRewrite: { policy: "query" as const, keys: routeKeys },
                           },
                         ]
-                      : [{ prefix: route, upstreamPrefix: "/" }],
+                      : initial.service === "storage"
+                        ? [
+                            {
+                              prefix: `${route}/s3`,
+                              upstreamPrefix: "/s3",
+                            },
+                            {
+                              prefix: route,
+                              upstreamPrefix: "/",
+                              keyRewrite: { policy: "bearer" as const, keys: routeKeys },
+                            },
+                          ]
+                        : [
+                            {
+                              prefix: route,
+                              upstreamPrefix: "/",
+                              ...(initial.service === "rest" || initial.service === "auth"
+                                ? { keyRewrite: { policy: "bearer" as const, keys: routeKeys } }
+                                : initial.service === "functions"
+                                  ? {
+                                      keyRewrite: {
+                                        policy: "sb-api-key" as const,
+                                        keys: routeKeys,
+                                      },
+                                    }
+                                  : {}),
+                            },
+                          ],
                 }),
           };
           return [name, endpoint];
@@ -928,8 +1053,27 @@ const makeOwnerWithDependencies = (
       );
     });
 
+    const replaceCreation = Effect.fn("Owner.replaceCreation")(function* (
+      id: string,
+      input: ServiceCreation,
+    ) {
+      const creation = yield* Schema.decodeEffect(ServiceCreation)(input).pipe(
+        Effect.mapError((cause) => errorFor("supabase", cause)),
+      );
+      const current = yield* getCreation(id).pipe(
+        Effect.mapError((cause) => errorFor("supabase", cause)),
+      );
+      if (creation.service !== current.service)
+        return yield* errorFor("supabase", `Reused service ${id} cannot change service kind`);
+      yield* persistCreation(id, creation);
+      return { id, creation };
+    });
+
     const supabaseComposition = Effect.fn("Owner.supabaseComposition")(
-      (inputs: ReadonlyArray<ServiceCreationInput>, options?: SupabaseCompositionOptions) =>
+      (
+        inputs: ReadonlyArray<ServiceCreationInput>,
+        compositionOptions?: SupabaseCompositionOptions,
+      ) =>
         Effect.gen(function* () {
           const overrides: Record<string, string> = {};
           for (const input of inputs) {
@@ -942,7 +1086,7 @@ const makeOwnerWithDependencies = (
               overrides[key] = value;
             }
           }
-          if (inputs.some(consumesCredentials)) yield* resolveStackCredentials(overrides);
+          yield* resolveStackCredentials(overrides, compositionOptions?.identity);
           return yield* Effect.forEach(inputs, resolveCredentials);
         }).pipe(
           Effect.flatMap((creations) =>
@@ -989,11 +1133,13 @@ const makeOwnerWithDependencies = (
                   ),
                 updateCreation: (id, values) =>
                   updateCreation(id, values).pipe(Effect.mapError(supabaseError)),
+                replaceCreation: (id, creation) =>
+                  replaceCreation(id, creation).pipe(Effect.mapError(supabaseError)),
                 configure: (configuration) =>
                   configureComposition(configuration).pipe(Effect.mapError(supabaseError)),
               },
               creations,
-              options,
+              compositionOptions,
             ),
           ),
           Effect.catch((cause) =>
