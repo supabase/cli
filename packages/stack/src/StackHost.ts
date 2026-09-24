@@ -171,7 +171,8 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                 Effect.gen(function* () {
                   const existing = yield* Ref.get(current);
                   if (existing !== undefined) {
-                    if (existing.destroy !== destroy)
+                    if (existing.destroy && !destroy) return existing.fiber;
+                    if (!existing.destroy && destroy)
                       return yield* new StackError({
                         operation: "shutdown",
                         message: "Shutdown mode is already selected",
@@ -184,30 +185,36 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                   if (response !== undefined && responseClosedSignal !== undefined)
                     yield* watchResponse(response, responseClosedSignal);
                   let sentinelCloseStarted = false;
-                  const cleanup = Effect.gen(function* () {
+                  let retiringAfterDestroyFailure = false;
+                  const closeSentinel = Effect.gen(function* () {
+                    if (sentinel === undefined) return;
+                    const sentinelAlreadyFailed = yield* Ref.get(sentinelFailed);
+                    sentinelCloseStarted = true;
+                    yield* sentinel.close.pipe(
+                      Effect.mapError((cause) => stackError("shutdown", cause)),
+                      Effect.catchIf(
+                        () => sentinelAlreadyFailed,
+                        () => Effect.void,
+                      ),
+                    );
+                  });
+                  const removeOwned =
+                    containerEngine === undefined
+                      ? Effect.void
+                      : ContainerSentinel.removeOwned({
+                          engine: containerEngine,
+                          stackId: endpoint.stackId,
+                          ...(sentinel === undefined
+                            ? {}
+                            : { generation: sentinel.owner.generation }),
+                        }).pipe(Effect.mapError((cause) => stackError("shutdown", cause)));
+                  const stopOwned = Effect.gen(function* () {
                     yield* attachments.stopAll;
-                    if (destroy) yield* runner.cleanup;
-                    yield* destroy ? owner.namespace.destroy : owner.namespace.stop;
-                    if (containerEngine !== undefined) {
-                      yield* ContainerSentinel.removeOwned({
-                        engine: containerEngine,
-                        stackId: endpoint.stackId,
-                        ...(sentinel === undefined
-                          ? {}
-                          : { generation: sentinel.owner.generation }),
-                      }).pipe(Effect.mapError((cause) => stackError("shutdown", cause)));
-                    }
-                    if (sentinel !== undefined) {
-                      const sentinelAlreadyFailed = yield* Ref.get(sentinelFailed);
-                      sentinelCloseStarted = true;
-                      yield* sentinel.close.pipe(
-                        Effect.mapError((cause) => stackError("shutdown", cause)),
-                        Effect.catchIf(
-                          () => sentinelAlreadyFailed,
-                          () => Effect.void,
-                        ),
-                      );
-                    }
+                    yield* owner.namespace.stop;
+                    yield* removeOwned;
+                    yield* closeSentinel;
+                  });
+                  const finish = Effect.gen(function* () {
                     if (response !== undefined) {
                       if (responseClosedSignal === undefined) return;
                       yield* Effect.forkIn(
@@ -221,21 +228,76 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                       yield* closeConnections;
                       yield* Deferred.succeed(exit, undefined);
                     }
+                  });
+                  const cleanup = Effect.gen(function* () {
+                    if (!destroy) {
+                      yield* stopOwned;
+                      yield* finish;
+                      return;
+                    }
+                    const destroyExit = yield* Effect.gen(function* () {
+                      yield* attachments.stopAll;
+                      yield* runner.cleanup;
+                      yield* owner.namespace.destroy;
+                      yield* removeOwned;
+                      yield* closeSentinel;
+                    }).pipe(Effect.exit);
+                    if (Exit.isSuccess(destroyExit)) {
+                      yield* finish;
+                      return;
+                    }
+                    if (sentinelCloseStarted) return yield* Effect.failCause(destroyExit.cause);
+                    const stopExit = yield* stopOwned.pipe(Effect.exit);
+                    if (Exit.isFailure(stopExit)) {
+                      const describeCause = (cause: Cause.Cause<unknown>) => {
+                        const error = Option.match(Cause.findErrorOption(cause), {
+                          onNone: () =>
+                            new StackError({
+                              operation: "shutdown",
+                              message: Cause.pretty(cause),
+                            }),
+                          onSome: (value) => stackError("shutdown", value),
+                        });
+                        const failedOutcomes = error.outcomes
+                          ?.filter(({ succeeded }) => !succeeded)
+                          .map(({ id, error: reason }) => `${id}: ${reason ?? "failed"}`)
+                          .join("; ");
+                        return {
+                          error,
+                          message:
+                            failedOutcomes === undefined || failedOutcomes.length === 0
+                              ? error.message
+                              : `${error.message} (${failedOutcomes})`,
+                        };
+                      };
+                      const destroyFailure = describeCause(destroyExit.cause);
+                      const stopFailure = describeCause(stopExit.cause);
+                      const outcomes = [
+                        ...(destroyFailure.error.outcomes ?? []),
+                        ...(stopFailure.error.outcomes ?? []),
+                      ];
+                      return yield* new StackError({
+                        operation: "shutdown",
+                        message: `${destroyFailure.message}; fallback stop failed: ${stopFailure.message}`,
+                        ...(outcomes.length === 0 ? {} : { outcomes }),
+                      });
+                    }
+                    retiringAfterDestroyFailure = true;
+                    yield* finish;
+                    return yield* Effect.failCause(destroyExit.cause);
                   }).pipe(
                     Effect.mapError((cause) => stackError("shutdown", cause)),
                     Effect.catchCause((cause) =>
                       Ref.get(sentinelFailed).pipe(
-                        Effect.flatMap((failed) =>
-                          (failed || sentinelCloseStarted
-                            ? Effect.void
-                            : owner
-                                .setDraining(false)
-                                .pipe(Effect.mapError((reset) => stackError("shutdown", reset)))
-                          ).pipe(
+                        Effect.flatMap((failed) => {
+                          if (failed || sentinelCloseStarted || retiringAfterDestroyFailure)
+                            return Effect.failCause(cause);
+                          return owner.setDraining(false).pipe(
+                            Effect.mapError((reset) => stackError("shutdown", reset)),
                             Effect.andThen(gate.withPermits(1)(Ref.set(current, undefined))),
                             Effect.andThen(Effect.failCause(cause)),
-                          ),
-                        ),
+                          );
+                        }),
                       ),
                     ),
                   );

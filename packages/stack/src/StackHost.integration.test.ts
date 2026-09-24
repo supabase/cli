@@ -257,6 +257,145 @@ it.live("keeps serving when namespace shutdown fails", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
+it.live("reports destroy and fallback stop failures together", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-destroy-failure-" });
+      const state = yield* stateFor(`${root}/state`);
+      const saved = {
+        id: "stack",
+        runtime: "native" as const,
+        identity: { projectRoot: root, branchContext: "main", stackName: "host-destroy-failure" },
+        instances: [],
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      };
+      yield* state.save(saved);
+      const owner = yield* ownerFor({
+        saved,
+        state,
+        root: `${root}/data`,
+        cacheRoot: "/tmp/supabase-stack-artifacts",
+      });
+      const failureWithOutcome = (
+        operation: "destroy" | "stop",
+        message: string,
+        id: string,
+        reason: string,
+      ) =>
+        new OwnerError({
+          operation,
+          message,
+          cause: new OrchestratorError({
+            operation,
+            message,
+            outcomes: [
+              {
+                id,
+                result: Exit.fail(new OrchestratorError({ operation, message: reason })),
+              },
+            ],
+          }),
+        });
+      const failedOwner = {
+        ...owner,
+        namespace: {
+          ...owner.namespace,
+          destroy: Effect.fail(
+            failureWithOutcome(
+              "destroy",
+              "Namespace destroy had failures",
+              "database-destroy",
+              "data removal refused",
+            ),
+          ),
+          stop: Effect.fail(
+            failureWithOutcome(
+              "stop",
+              "Composition stop had failures",
+              "database-stop",
+              "process stop refused",
+            ),
+          ),
+        },
+      };
+      const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
+      const client = yield* clientFor(runtime.endpoint.port);
+      const failure = yield* client.shutdown({ destroy: true }).pipe(Effect.flip);
+      expect(failure.message).toContain("Namespace destroy had failures");
+      expect(failure.message).toContain("database-destroy:");
+      expect(failure.message).toContain("data removal refused");
+      expect(failure.message).toContain("fallback stop failed: Composition stop had failures");
+      expect(failure.message).toContain("database-stop:");
+      expect(failure.message).toContain("process stop refused");
+      expect("outcomes" in failure).toBe(true);
+      if (!("outcomes" in failure)) return yield* Effect.die("shutdown outcomes were missing");
+      expect(failure.outcomes).toEqual(
+        expect.arrayContaining([
+          {
+            id: "database-destroy",
+            succeeded: false,
+            error: expect.stringContaining("data removal refused"),
+          },
+          {
+            id: "database-stop",
+            succeeded: false,
+            error: expect.stringContaining("process stop refused"),
+          },
+        ]),
+      );
+      expect(yield* Deferred.isDone(runtime.exit)).toBe(false);
+      expect(yield* owner.getServing).toBe(true);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("rejects destroy while stop is in flight", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-stop-join-" });
+      const state = yield* stateFor(`${root}/state`);
+      const saved = {
+        id: "stack",
+        runtime: "native" as const,
+        identity: { projectRoot: root, branchContext: "main", stackName: "host-stop-join" },
+        instances: [],
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      };
+      yield* state.save(saved);
+      const owner = yield* ownerFor({
+        saved,
+        state,
+        root: `${root}/data`,
+        cacheRoot: "/tmp/supabase-stack-artifacts",
+      });
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const delayedOwner = {
+        ...owner,
+        namespace: {
+          ...owner.namespace,
+          stop: Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(owner.namespace.stop),
+          ),
+        },
+      };
+      const { runtime } = yield* inProcessRuntime(delayedOwner, state, root);
+      const stop = yield* Effect.forkScoped(runtime.shutdown(false));
+      yield* Deferred.await(entered);
+      const rejected = yield* runtime.shutdown(true).pipe(Effect.flip);
+      expect(rejected.message).toContain("Shutdown mode is already selected");
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(stop);
+      yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
 it.live("retains ownership when namespace shutdown defects and retries cleanup", () =>
   Effect.scoped(
     Effect.gen(function* () {
