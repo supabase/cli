@@ -51,6 +51,7 @@ import {
 } from "./services/Catalog.ts";
 import * as State from "./State.ts";
 import type { SavedInstance, SavedStack } from "./State.ts";
+import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
 
 export class OwnerError extends Data.TaggedError("OwnerError")<{
   readonly operation: string;
@@ -157,6 +158,10 @@ const makeOwnerWithDependencies = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const http = yield* HttpClient.HttpClient;
     const ownerScope = yield* Scope.Scope;
+    const helperOwnerId = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) => errorFor("identity", cause)),
+    );
+    const helpers = yield* makeDockerHelperRegistry(helperOwnerId);
     const recipes = yield* Ref.make(new Map<string, CatalogRecipe>());
     const instances = yield* Ref.make(new Map<string, ServiceInstance<ServiceCreation>>());
     const namespaces = yield* Ref.make(new Map<string, NetworkNamespace>());
@@ -268,6 +273,7 @@ const makeOwnerWithDependencies = (
         root: options.root,
         cacheRoot: options.cacheRoot,
         runtime,
+        helpers,
       }).pipe(Effect.mapError((cause) => errorFor("recipe", cause)));
     const recipeReady = (input: unknown, id: string) =>
       recipeFor(input, id).pipe(

@@ -29,7 +29,7 @@ const makeTestNetwork = (options: {
   ).pipe(Effect.map((context) => Context.get(context, Network.Service)));
 
 const options = (root: string) => ({
-  stackId: "catalog-test",
+  stackId: "catalog-rest",
   instanceId: "instance",
   root,
   cacheRoot: `${root}/cache`,

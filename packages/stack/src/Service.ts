@@ -66,6 +66,8 @@ export interface RuntimeSession {
   /** Resolves with the runtime's terminal result and remains attached to this session. */
   readonly exit: Effect.Effect<Exit.Exit<void, ServiceError>>;
   readonly stop: Effect.Effect<void, ServiceError>;
+  /** Skips a clean checkpoint. Used when the data directory is about to be deleted. */
+  readonly discard?: Effect.Effect<void, ServiceError>;
   readonly remove: Effect.Effect<void, ServiceError>;
 }
 
@@ -232,6 +234,7 @@ export const makeService = <Config>(
     const stopNow = Effect.fn("Service.stopNow")(function* (
       expected?: SessionRecord,
       retainWake = false,
+      discard = false,
     ) {
       yield* Effect.gen(function* () {
         const record = yield* Ref.get(current);
@@ -248,7 +251,11 @@ export const makeService = <Config>(
         );
         yield* Scope.close(record.healthScope, Exit.void);
         if (!(yield* Ref.get(record.stopped))) {
-          yield* record.runtime.stop.pipe(
+          const halt =
+            discard && record.runtime.discard !== undefined
+              ? record.runtime.discard
+              : record.runtime.stop;
+          yield* halt.pipe(
             Effect.tapError((error) =>
               SubscriptionRef.update(observations, (value) => ({
                 ...value,
@@ -645,7 +652,7 @@ export const makeService = <Config>(
           yield* coordinate("destroy", invalidate());
           yield* setOperation("destroy");
           yield* Effect.gen(function* () {
-            yield* stopNow();
+            yield* stopNow(undefined, false, true);
             {
               const dataScope = yield* Scope.fork(owner, "parallel");
               yield* definition

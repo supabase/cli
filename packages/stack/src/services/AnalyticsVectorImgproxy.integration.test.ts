@@ -8,7 +8,7 @@ import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-rela
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 
 const options = (root: string) => ({
-  stackId: "catalog-test",
+  stackId: "catalog-analytics",
   instanceId: "instance",
   root,
   cacheRoot: `${root}/cache`,
