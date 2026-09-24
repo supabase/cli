@@ -3,6 +3,7 @@ import { readStackFunctionsEnv } from "../../../../command-internal/stack-functi
 import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
 import { nativePostgresRootError } from "@supabase/stack/effect";
+import { postgresVersion } from "@supabase/stack/internal/postgres-artifact";
 import type { ServiceCreationInput, Stack, StackIdentityInput } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
@@ -144,12 +145,16 @@ const compositionManagedConfigKeys: Readonly<Record<string, ReadonlySet<string>>
     "apiUrl",
     "bootstrap",
     "databaseUrl",
+    "env",
+    "filesRoot",
+    "functions",
     "jwtSecret",
     "jwks",
     "anonKey",
     "serviceRoleKey",
     "publishableKey",
     "secretKey",
+    "verifyJwt",
   ]),
   studio: new Set([
     "functionsRoot",
@@ -175,7 +180,15 @@ const compositionManagedConfigKeys: Readonly<Record<string, ReadonlySet<string>>
 const comparableConfig = (service: string, value: unknown): unknown => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
   const ignored = compositionManagedConfigKeys[service] ?? new Set<string>();
-  return Object.fromEntries(Object.entries(value).filter(([key]) => !ignored.has(key)));
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !ignored.has(key))
+      .map(([key, entry]) =>
+        service === "database" && key === "version" && typeof entry === "string"
+          ? [key, postgresVersion(entry)]
+          : [key, entry],
+      ),
+  );
 };
 
 const selectedCreations = (
@@ -275,9 +288,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       yield* output.success("Stack is already running.", { id: stack.id, endpoints });
       return stack.id;
     }
-    const rootError = nativePostgresRootError(selectedRuntime, process.getuid?.());
-    if (rootError !== undefined)
-      return yield* new StackCommandStartError({ reason: "lifecycle", message: rootError });
     const fullyStopped = currentStatuses.every(
       ({ lifecycle, wakeEnabled }) => lifecycle === "stopped" && !wakeEnabled,
     );
@@ -287,6 +297,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "The stack is in a partial lifecycle state",
         suggestion: "Run supabase stack stop, then supabase stack start to recover the stack.",
       });
+    if (target.id !== undefined) {
+      const rootError = nativePostgresRootError(selectedRuntime, process.getuid?.());
+      if (rootError !== undefined)
+        return yield* new StackCommandStartError({ reason: "lifecycle", message: rootError });
+    }
     const shadowDatabase =
       composition.members.length === 0
         ? existingServices.find((instance) => instance.service === "database")
@@ -386,7 +401,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       if (
         creation.service === "database" &&
         status.config.service === "database" &&
-        creation.config.version !== status.config.config.version
+        postgresVersion(creation.config.version) !== postgresVersion(status.config.config.version)
       )
         return yield* new StackCommandStartError({
           reason: "invalid-config",

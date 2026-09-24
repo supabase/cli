@@ -7,6 +7,7 @@ import {
   DEFAULT_LOCAL_JWT_SECRET,
   DEFAULT_POSTGRES_ROOT_KEY,
 } from "@supabase/stack/defaults";
+import { postgresVersion } from "@supabase/stack/internal/postgres-artifact";
 import type {
   ServiceCreation,
   ServiceCreationInput,
@@ -97,16 +98,27 @@ const instance = (
     credentials: () => Effect.succeed({}),
   } satisfies Omit<ServiceInstance, "service">;
   switch (creation.service) {
-    case "database":
+    case "database": {
+      let current: Extract<ServiceCreation, { service: "database" }> = creation;
       return {
         ...base,
         service: "database",
+        restart: (input?: Parameters<ServiceInstances["database"]["restart"]>[0]) =>
+          Effect.sync(() => {
+            if (input?.config.version !== undefined)
+              current = {
+                ...current,
+                config: { ...current.config, version: input.config.version },
+              };
+          }),
+        status: Effect.sync(() => status(current)),
         credentials: () =>
           Effect.succeed({ databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres" }),
         saveSnapshot: () => Effect.die("unused"),
         restoreSnapshot: () => Effect.die("unused"),
         resetData: Effect.die("unused"),
       };
+    }
     case "rest":
       return { ...base, service: "rest" };
     case "auth":
@@ -164,6 +176,7 @@ const fakeStack = () => {
   let composed = 0;
   let catalogApplied = 0;
   let lifecycle: "stopped" | "running" = "stopped";
+  let activations = new Map<string, "eager" | "lazy">();
   const memberStatuses = new Map<
     string,
     { readonly lifecycle?: "stopped" | "running"; readonly wakeEnabled?: boolean }
@@ -199,7 +212,7 @@ const fakeStack = () => {
     },
     composition: {
       describe: Effect.sync(() => ({
-        members: members.map(({ id }) => ({ id, activation: "eager" as const })),
+        members: members.map(({ id }) => ({ id, activation: activations.get(id) ?? "eager" })),
         dependencies: [],
       })),
       supabase: (creations: ReadonlyArray<ServiceCreationInput>, options) =>
@@ -230,18 +243,29 @@ const fakeStack = () => {
             anonKeyIsOverride: options?.identity?.anonKeyIsOverride ?? false,
             serviceRoleKeyIsOverride: options?.identity?.serviceRoleKeyIsOverride ?? false,
           };
+          const previousMembers = members;
           members = creations.map((creation) => {
-            const id = `${creation.service}-member`;
+            const previous = previousMembers.find(({ service }) => service === creation.service);
+            const id =
+              previous !== undefined && options?.reuseIds?.includes(previous.id)
+                ? previous.id
+                : `${creation.service}-member-${composed}`;
             return instance(
               requireConcreteCreation(creation),
               id,
               () => memberStatuses.get(id)?.lifecycle ?? lifecycle,
-              () => memberStatuses.get(id)?.wakeEnabled ?? false,
+              () =>
+                memberStatuses.get(id)?.wakeEnabled ??
+                (lifecycle === "running" && activations.get(id) === "lazy"),
             );
           });
+          activations = new Map(members.map(({ id }) => [id, "eager"]));
           return members;
         }),
-      configure: () => Effect.void,
+      configure: ({ members: configured }) =>
+        Effect.sync(() => {
+          activations = new Map(configured.map(({ id, activation }) => [id, activation]));
+        }),
       start: Effect.sync(() => {
         lifecycle = "running";
         return [];
@@ -496,22 +520,22 @@ describe("experimental stack start", () => {
       );
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(composedBeforeRepeat);
+      const stillRunning = yield* functions.status;
+      if (stillRunning.config.service === "functions")
+        expect(stillRunning.config.config.env).toEqual({ CUSTOM_VALUE: "hello" });
+
       yield* fixture.stack.composition.stop;
-      const changedEnv = yield* stackStart(flags()).pipe(
-        Effect.provide(layers(root, fixture)),
-        Effect.flip,
-      );
-      expect(changedEnv).toBeInstanceOf(StackCommandStartError);
-      if (!(changedEnv instanceof StackCommandStartError))
-        return yield* Effect.die("Expected a stack configuration error");
-      expect(changedEnv.reason).toBe("invalid-config");
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(composedBeforeRepeat + 1);
       expect(fixture.members.find(({ service }) => service === "database")?.id).toBe(databaseId);
       const refreshed = fixture.members.find(({ service }) => service === "functions");
       if (refreshed?.service !== "functions") return yield* Effect.die("Functions missing");
       expect(refreshed.id).toBe(functionsId);
       const refreshedStatus = yield* refreshed.status;
       if (refreshedStatus.config.service === "functions")
-        expect(refreshedStatus.config.config.env).toEqual({ CUSTOM_VALUE: "hello" });
+        expect(refreshedStatus.config.config.env).toEqual({ CUSTOM_VALUE: "changed" });
+      const configured = yield* fixture.stack.composition.describe;
+      expect(configured.members.find(({ id }) => id === functionsId)?.activation).toBe("lazy");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -683,6 +707,33 @@ describe("experimental stack start", () => {
         expect(fixture.stopped).toBe(1);
         expect(fixture.composed).toBe(1);
       }
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("matches a Postgres major alias to the saved pinned database version", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-postgres-alias-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "start-postgres-alias"\n[db]\nmajor_version = 17\n[edge_runtime]\nenabled = false\n',
+      );
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const database = fixture.members.find(({ service }) => service === "database");
+      if (database?.service !== "database") return yield* Effect.die("Database missing");
+      const observed = yield* database.status;
+      if (observed.config.service !== "database")
+        return yield* Effect.die("Database config missing");
+      const pinnedVersion = postgresVersion("17");
+      expect(pinnedVersion).not.toBe("17");
+      yield* database.restart({ config: { ...observed.config.config, version: pinnedVersion } });
+      yield* fixture.stack.composition.stop;
+
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.members.find(({ service }) => service === "database")?.id).toBe(database.id);
+      expect(fixture.composed).toBe(2);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });
