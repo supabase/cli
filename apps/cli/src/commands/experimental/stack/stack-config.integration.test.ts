@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Schema } from "effect";
+import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
 import { ServiceCreationInput } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
@@ -135,12 +135,12 @@ content_path = "./templates/invite.html"
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects Auth third-party providers deferred by the stack", () =>
+  it.live("validates enabled Auth third-party providers", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-auth-third-party"
 [auth.third_party.firebase]
 enabled = true
-project_id = "firebase-project"
+project_id = ""
 `);
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -148,16 +148,19 @@ project_id = "firebase-project"
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects signing-key files only when Auth is enabled", () =>
+  it.live("loads an empty signing-key file and skips it when Auth is disabled", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const enabled = yield* project(`project_id = "stack-config-signing-keys"
 [auth]
 signing_keys_path = "./keys.json"
 `);
-      const enabledExit = yield* load(enabled).pipe(Effect.exit);
-      expect(Exit.isFailure(enabledExit)).toBe(true);
-      if (Exit.isFailure(enabledExit))
-        expect(String(enabledExit.cause)).toContain("auth.signing_keys_path");
+      yield* fs.writeFileString(path.join(enabled, "supabase", "keys.json"), "[]");
+      const enabledConfig = yield* load(enabled);
+      const identity = yield* enabledConfig.identity;
+      expect(identity.gotrueJwtKeys).toBe("[]");
+      expect(identity.publicSigningKeys).toBe("[]");
 
       const disabled = yield* project(`project_id = "stack-config-disabled-signing-keys"
 [auth]

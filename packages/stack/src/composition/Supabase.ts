@@ -2,6 +2,7 @@ import { Cause, Data, Effect, Exit, Schema } from "effect";
 import type { CompositionConfig } from "../Orchestrator.ts";
 import type { Observation } from "../Rpc.ts";
 import { ServiceCreation } from "../services/Catalog.ts";
+import type { StackIdentityInput } from "../State.ts";
 import { apiRoute, endpointNames, endpointPort } from "../host/Endpoints.ts";
 
 export class SupabaseCompositionError extends Data.TaggedError("SupabaseCompositionError")<{
@@ -38,6 +39,10 @@ export interface SupabaseCompositionOperations {
     id: string,
     inputs: Record<string, string | undefined>,
   ) => Effect.Effect<SupabaseCompositionEntry, SupabaseCompositionError>;
+  readonly replaceCreation: (
+    id: string,
+    creation: ServiceCreation,
+  ) => Effect.Effect<SupabaseCompositionEntry, SupabaseCompositionError>;
   readonly configure: (
     configuration: CompositionConfig,
   ) => Effect.Effect<void, SupabaseCompositionError>;
@@ -46,6 +51,7 @@ export interface SupabaseCompositionOperations {
 export interface SupabaseCompositionOptions {
   /** Reuses stopped instances; inputs declare desired bindings, not previous resolved creations. */
   readonly reuseIds?: ReadonlyArray<string>;
+  readonly identity?: StackIdentityInput;
 }
 
 const compositionError = (message: string, cause?: unknown) =>
@@ -168,9 +174,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
       });
 
       const reusedByKind = new Map(reusedEntries.map((entry) => [entry.creation.service, entry]));
-      const targetCreations = normalized.map(
-        (creation) => reusedByKind.get(creation.service)?.creation ?? creation,
-      );
+      const targetCreations = normalized;
       const byKind = new Map(targetCreations.map((creation) => [creation.service, creation]));
       const apiSource = targetCreations.find(
         (creation) =>
@@ -302,6 +306,15 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
 
       const createdIds: Array<string> = [];
       const compose = Effect.gen(function* () {
+        const replacedByKind = new Map<ServiceCreation["service"], SupabaseCompositionEntry>();
+        for (const creation of targetCreations) {
+          const reused = reusedByKind.get(creation.service);
+          if (reused === undefined) continue;
+          const entry = yield* operations
+            .replaceCreation(reused.id, creation)
+            .pipe(Effect.mapError(compositionErrorFrom));
+          replacedByKind.set(entry.creation.service, entry);
+        }
         const created = yield* Effect.forEach(
           targetCreations.filter((creation) => !reusedByKind.has(creation.service)),
           (creation) =>
@@ -314,7 +327,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
         );
         const createdByKind = new Map(created.map((entry) => [entry.creation.service, entry]));
         const entries = targetCreations.map((creation) => {
-          const reused = reusedByKind.get(creation.service);
+          const reused = replacedByKind.get(creation.service);
           return reused ?? createdByKind.get(creation.service);
         });
         const configuredEntries = entries.filter(

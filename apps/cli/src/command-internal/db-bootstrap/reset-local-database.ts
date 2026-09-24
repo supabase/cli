@@ -9,7 +9,7 @@
  * invocation only, emitted by its own handler after calling this function.
  */
 
-import { Data, Effect, FileSystem, Option, Path, Redacted } from "effect";
+import { Data, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { detectGitBranch } from "../../shared/git/git-branch.ts";
@@ -167,7 +167,6 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
           stack: opened.value.stack,
           database: opened.value.database,
           databaseServices,
-          jwtSecret: Redacted.value(databaseStatus.config.config.jwtSecret),
         },
         overlay: {
           webhooks: "config",

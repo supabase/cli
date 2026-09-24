@@ -7,7 +7,7 @@ import { connectHost, launchHost, waitForOwnerExit } from "./HostProcess.ts";
 import type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import * as State from "./State.ts";
-import type { SavedStack, StackCredentials } from "./State.ts";
+import type { SavedStack, StackCredentials, StackIdentityInput } from "./State.ts";
 import {
   StackError,
   StackErrorSchema,
@@ -36,6 +36,7 @@ export {
   DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
   DEFAULT_POSTGRES_ROOT_KEY,
   DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
+  DEFAULT_SIGNING_KEY,
 } from "./Defaults.ts";
 
 export { postgres } from "./Tools.ts";
@@ -44,6 +45,7 @@ export type { ServiceCreation } from "./services/Catalog.ts";
 export type ServiceCreationInput = CatalogServiceCreationInput;
 export type { CompositionConfig } from "./Orchestrator.ts";
 export type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
+export type { StackCredentials, StackIdentityInput };
 export type { Observation } from "./Rpc.ts";
 export type { DatabaseSnapshot } from "./services/DatabaseSnapshot.ts";
 export type { PgProveOptions } from "./Tools.ts";
@@ -411,6 +413,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           rpc.supabaseComposition({
             services,
             ...(options?.reuseIds === undefined ? {} : { reuseIds: options.reuseIds }),
+            ...(options?.identity === undefined ? {} : { identity: options.identity }),
           }),
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
       configure: (config: Orchestrator.CompositionConfig) =>

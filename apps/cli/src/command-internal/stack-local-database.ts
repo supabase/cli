@@ -226,6 +226,8 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
   const toml = yield* readDbToml(fs, path, settings.workdir).pipe(Effect.mapError(startFailed));
   const experimental = yield* resolveExperimentalWithProjectEnv({ ...toml.projectEnv });
   const existing = yield* stackForProject(api, settings, path).pipe(Effect.mapError(startFailed));
+  const identity =
+    existing === undefined ? yield* config.identity.pipe(Effect.mapError(startFailed)) : undefined;
   const stack =
     existing === undefined
       ? yield* api
@@ -290,8 +292,9 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
       message:
         "A standalone database exists outside the saved stack composition. Destroy the standalone database before starting this stack.",
     });
+  const effectiveIdentity = identity ?? (yield* config.identity.pipe(Effect.mapError(startFailed)));
   const [database] = yield* stack.composition
-    .supabase([databaseCreation])
+    .supabase([databaseCreation], { identity: effectiveIdentity })
     .pipe(Effect.mapError(startFailed));
   if (database === undefined || database.service !== "database")
     return yield* startFailed({ message: "stack did not create a database instance" });
@@ -311,7 +314,7 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
       return yield* startFailed({ message: "stack credentials were not saved" });
     yield* catalog
       .apply({
-        target: { stack, database, databaseServices, jwtSecret: credentials.jwtSecret },
+        target: { stack, database, databaseServices },
         overlay: {
           webhooks: "config",
           webhooksEnabled: toml.webhooksEnabled,

@@ -197,6 +197,8 @@ root_key = ""
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(
         `project_id = "auth-forwarding"
+[api]
+external_url = "https://api.example.test"
 [auth]
 additional_redirect_urls = ["https://app.example.test/callback"]
 enable_refresh_token_rotation = false
@@ -290,6 +292,7 @@ allow_dynamic_registration = true
       expect(decoded.config.settings?.email?.notification.password_changed?.subject).toBe(
         "Password changed",
       );
+      expect(decoded.config.apiExternalUrl).toBe("https://api.example.test");
       expect(decoded.config.smtp).toMatchObject({
         host: "smtp.example.test",
         port: 2525,
@@ -301,7 +304,6 @@ allow_dynamic_registration = true
           config: {
             ...auth.config,
             smtpUrl: "smtp://127.0.0.1:1025",
-            externalApiUrl: "http://localhost:54321/auth/v1",
           },
         },
         new Map(),
@@ -309,6 +311,7 @@ allow_dynamic_registration = true
       );
       expect(env).toMatchObject({
         GOTRUE_URI_ALLOW_LIST: "https://app.example.test/callback",
+        API_EXTERNAL_URL: "https://api.example.test/auth/v1",
         GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: "false",
         GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "15",
         GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: "true",
@@ -349,7 +352,7 @@ allow_dynamic_registration = true
         GOTRUE_SESSIONS_INACTIVITY_TIMEOUT: "1h",
         GOTRUE_EXTERNAL_GITHUB_CLIENT_ID: "github-client",
         GOTRUE_EXTERNAL_GITHUB_SECRET: "github-secret",
-        GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI: "http://localhost:54321/auth/v1/callback",
+        GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI: "https://issuer.example.test/callback",
         GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED: "true",
         GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH: "/oauth/consent",
       });

@@ -96,7 +96,6 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
         ...(input.setup.storageEnabledForSetup ? ["storage" as const] : []),
         ...(input.setup.realtimeEnabledForSetup ? ["realtime" as const] : []),
       ],
-      jwtSecret: input.jwtSecret,
     },
     overlay: {
       ...(opts.webhooks === undefined ? {} : { webhooks: opts.webhooks }),

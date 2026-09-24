@@ -1,6 +1,8 @@
 import { createHmac, createPrivateKey, createSign } from "node:crypto";
 import { encodeGoJsonCompact } from "./go-json.ts";
 
+export { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
+
 /**
  * An RFC 7517 JWK, with fields matching `auth.signing_keys_path`'s JSON/TOML key format so a
  * user's signing key file round-trips into `GOTRUE_JWT_KEYS` and the published JWKS unchanged.
@@ -35,18 +37,6 @@ export interface Jwk {
  * Shared by GoTrue's own env building (which signs tokens with it) and JWKS resolution (which
  * publishes its public form), so the two can never disagree on the default key.
  */
-export const DEFAULT_SIGNING_KEY: Jwk = {
-  kty: "EC",
-  kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
-  use: "sig",
-  key_ops: ["sign", "verify"],
-  alg: "ES256",
-  ext: true,
-  crv: "P-256",
-  x: "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
-  y: "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
-  d: "dIhR8wywJlqlua4y_yMq2SLhlFXDZJBCvFrY1DCHyVU",
-};
 
 /**
  * HS256 signer for the default local-dev `anon`/`service_role` keys. {@link

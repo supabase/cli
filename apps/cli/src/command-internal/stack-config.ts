@@ -2,7 +2,8 @@ import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
 import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
-import { Crypto, Effect, Data, FileSystem, Path, Redacted, SchemaIssue } from "effect";
+import { Crypto, Effect, Data, FileSystem, Path, Redacted, Schema, SchemaIssue } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 
 import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
@@ -14,6 +15,7 @@ declare const SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 import {
   decryptAuthSecret,
   resolveJwtSecret,
+  resolveConfiguredSigningKeys,
   envOverride,
   envOverrideApiMaxRows,
   envOverrideAuthPasswordRequirements,
@@ -32,17 +34,21 @@ import {
   resolveAuthCaptcha,
   resolveAuthEmail,
   resolveAuthEmailSmtp,
+  resolveAuthExternalUrl,
   resolveAuthExternalProviders,
   resolveAuthHooks,
   resolveAuthMfa,
   resolveAuthSms,
   resolveDbSettingsEnvOverrides,
   resolveGotrueOAuthServer,
+  resolveGotruePasskeyWebauthn,
   resolveGotrueRateLimit,
   resolveGotrueSessions,
   resolveGotrueWeb3,
   strToArr,
 } from "./local-config-values.ts";
+import { generateAsymmetricGoJwt } from "./go-jwt.ts";
+import { resolveRemoteJwks, resolveThirdPartyIssuerUrl, toPublicJwk } from "../shared/auth/jwks.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -65,6 +71,25 @@ interface StackStartConfig {
   readonly source: CliConfig;
   readonly projectEnvValues: Readonly<Record<string, string>>;
   readonly document?: Record<string, unknown>;
+  readonly remoteJwks: Effect.Effect<string | undefined, StackConfigError>;
+  readonly identity: Effect.Effect<
+    {
+      readonly publishableKey?: string;
+      readonly secretKey?: string;
+      readonly configuredPublishableKey?: string;
+      readonly configuredSecretKey?: string;
+      readonly configuredJwtSecret?: string;
+      readonly anonKey?: string;
+      readonly serviceRoleKey?: string;
+      readonly configuredAnonKey?: string;
+      readonly configuredServiceRoleKey?: string;
+      readonly gotrueJwtKeys?: string;
+      readonly configuredSigningKeys?: string;
+      readonly publicSigningKeys?: string;
+      readonly remoteJwks?: string;
+    },
+    StackConfigError
+  >;
 }
 
 type StackConfigEffect = Effect.Effect<
@@ -75,6 +100,8 @@ type StackConfigEffect = Effect.Effect<
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const encodeJwkArray = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.Unknown)));
 
 const withoutUndefined = (value: unknown): unknown => {
   if (Redacted.isRedacted(value)) return value;
@@ -693,11 +720,6 @@ const resolveEffectiveCliConfig = (
 };
 
 const unsupportedConfigPaths = [
-  { path: "auth.third_party", active: (config: CliConfig) => config.auth.enabled },
-  { path: "auth.publishable_key", active: (config: CliConfig) => config.auth.enabled },
-  { path: "auth.secret_key", active: (config: CliConfig) => config.auth.enabled },
-  { path: "auth.anon_key", active: (config: CliConfig) => config.auth.enabled },
-  { path: "auth.service_role_key", active: (config: CliConfig) => config.auth.enabled },
   { path: "api.tls", active: (config: CliConfig) => config.api.enabled },
   { path: "analytics.gcp_project_id", active: (config: CliConfig) => config.analytics.enabled },
   {
@@ -767,8 +789,6 @@ const configValidationError = (config: CliConfig): string | undefined => {
       if (notification.enabled && notification.content_path !== "")
         return `auth.email.notification.${name}.content_path requires template serving, which is not supported by the experimental stack`;
   }
-  if (config.auth.enabled && config.auth.signing_keys_path !== undefined)
-    return "auth.signing_keys_path is unsupported by the experimental stack";
   for (const { path, active } of unsupportedConfigPaths) {
     if (!active(config)) continue;
     const value = pathValue(config, path);
@@ -835,8 +855,104 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       if (validationError !== undefined)
         return yield* new StackConfigError({ message: validationError });
 
-      const authConfig = yield* resolveAuthConfig(validatedConfig.auth, validatedConfig.local_smtp);
+      const externalProviders = yield* Effect.try({
+        try: () =>
+          resolveAuthExternalProviders(
+            section(context.loaded?.document, "auth"),
+            validatedConfig.auth.external,
+            context.projectEnvValues,
+          ),
+        catch: (cause) =>
+          new StackConfigError({
+            message: cause instanceof Error ? cause.message : "invalid auth provider config",
+          }),
+      });
+      const authConfig = yield* resolveAuthConfig(
+        validatedConfig.auth,
+        validatedConfig.local_smtp,
+        {
+          authExternalUrl: resolveAuthExternalUrl(
+            context.loaded?.document,
+            context.projectEnvValues,
+          ),
+          apiExternalUrl: validatedConfig.api.external_url,
+          externalProviders,
+          ...resolveGotruePasskeyWebauthn(context.loaded?.document, context.projectEnvValues),
+        },
+      );
       const path = yield* Path.Path;
+      const auth = validatedConfig.auth;
+      const issuer = yield* Effect.try({
+        try: () => (auth.enabled ? resolveThirdPartyIssuerUrl(auth.third_party) : undefined),
+        catch: (cause) =>
+          new StackConfigError({
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+      const localIdentity = Effect.try({
+        try: () => {
+          const configured = (value: string | undefined) =>
+            value === undefined || value === ""
+              ? undefined
+              : decryptAuthSecret(value, context.projectEnvValues);
+          const publishableKey = configured(auth.publishable_key);
+          const secretKey = configured(auth.secret_key);
+          const configuredAnonKey = configured(auth.anon_key);
+          const configuredServiceRoleKey = configured(auth.service_role_key);
+          const signingKeys = resolveConfiguredSigningKeys(
+            validatedConfig,
+            projectRoot,
+            context.projectEnvValues,
+          );
+          const signingKey = signingKeys?.[0];
+          return {
+            ...(publishableKey === undefined
+              ? {}
+              : { publishableKey, configuredPublishableKey: publishableKey }),
+            ...(secretKey === undefined ? {} : { secretKey, configuredSecretKey: secretKey }),
+            ...(configuredAnonKey === undefined
+              ? signingKey === undefined
+                ? {}
+                : { anonKey: generateAsymmetricGoJwt(signingKey, "anon") }
+              : { anonKey: configuredAnonKey, configuredAnonKey }),
+            ...(configuredServiceRoleKey === undefined
+              ? signingKey === undefined
+                ? {}
+                : { serviceRoleKey: generateAsymmetricGoJwt(signingKey, "service_role") }
+              : { serviceRoleKey: configuredServiceRoleKey, configuredServiceRoleKey }),
+            ...(signingKeys === undefined
+              ? {}
+              : {
+                  gotrueJwtKeys: encodeJwkArray(signingKeys),
+                  configuredSigningKeys: encodeJwkArray(signingKeys),
+                  publicSigningKeys: encodeJwkArray(signingKeys.map(toPublicJwk)),
+                }),
+          };
+        },
+        catch: (cause) =>
+          new StackConfigError({
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+      const remoteJwks = Effect.gen(function* () {
+        return issuer === undefined
+          ? undefined
+          : encodeJwkArray(
+              yield* resolveRemoteJwks(issuer).pipe(
+                Effect.provide(FetchHttpClient.layer),
+                Effect.mapError((cause) => new StackConfigError({ message: cause.message })),
+              ),
+            );
+      });
+      const identity = Effect.gen(function* () {
+        const configuredKeys = yield* localIdentity;
+        const refreshedRemoteJwks = yield* remoteJwks;
+        return {
+          ...configuredKeys,
+          ...(configuredJwtSecret === undefined ? {} : { configuredJwtSecret }),
+          ...(refreshedRemoteJwks === undefined ? {} : { remoteJwks: refreshedRemoteJwks }),
+        };
+      });
       const functionEnvironments = Object.fromEntries(
         yield* Effect.forEach(Object.entries(validatedConfig.functions), ([name, config]) =>
           resolveCliConfigSubtree(
@@ -1244,6 +1360,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         creations: createCreations,
         source: validatedConfig,
         projectEnvValues: context.projectEnvValues,
+        remoteJwks,
+        identity,
         ...(context.loaded?.document === undefined ? {} : { document: context.loaded.document }),
       };
     }),

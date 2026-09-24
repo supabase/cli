@@ -20,8 +20,9 @@ export {
   DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
   DEFAULT_POSTGRES_ROOT_KEY,
   DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
+  DEFAULT_SIGNING_KEY,
 } from "./Defaults.ts";
-export type { StackCredentials } from "./State.ts";
+export type { StackCredentials, StackIdentityInput } from "./State.ts";
 
 export { postgres } from "./Tools.ts";
 export { StackError } from "./Rpc.ts";

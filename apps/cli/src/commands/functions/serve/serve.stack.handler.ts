@@ -1,5 +1,16 @@
 import type { ServiceCreation, Stack } from "@supabase/stack/effect";
-import { DateTime, Effect, Equal, Fiber, Option, Path, Stream, type Scope } from "effect";
+import {
+  DateTime,
+  Effect,
+  Encoding,
+  Equal,
+  Fiber,
+  Option,
+  Path,
+  Schema,
+  Stream,
+  type Scope,
+} from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -19,6 +30,9 @@ import { FunctionsServeStackError } from "./serve.errors.ts";
 type Instance = Effect.Success<ReturnType<Stack["services"]["get"]>>;
 type FunctionsInstance = Extract<Instance, { readonly service: "functions" }>;
 type FunctionsCreation = Extract<ServiceCreation, { readonly service: "functions" }>;
+
+const JwkArray = Schema.fromJsonString(Schema.Array(Schema.Unknown));
+const JwksDocument = Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.Unknown) }));
 
 const runtimeError = (cause: { readonly message: string }) =>
   cause instanceof FunctionsServeStackError
@@ -207,7 +221,29 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   const databaseStatus = yield* database.status;
   if (databaseStatus.config.service !== "database")
     return yield* invalidConfig("Invalid saved database configuration.");
+  const identity = yield* stack.credentials.get;
+  if (identity === undefined) return yield* invalidConfig("The stack has no saved credentials.");
   const config = yield* loadStackConfig(settings.workdir);
+  const refreshedJwks = yield* config.remoteJwks.pipe(
+    Effect.catch((cause) =>
+      output
+        .raw(
+          `Unable to refresh third-party JWKS: ${cause.message}. Using local signing keys.\n`,
+          "stderr",
+        )
+        .pipe(Effect.as(undefined)),
+    ),
+  );
+  const localKeys = yield* Schema.decodeEffect(JwkArray)(identity.publicSigningKeys);
+  const remoteKeys =
+    refreshedJwks === undefined ? [] : yield* Schema.decodeEffect(JwkArray)(refreshedJwks);
+  const jwks = yield* Schema.encodeEffect(JwksDocument)({
+    keys: [
+      ...remoteKeys,
+      ...localKeys,
+      { kty: "oct", k: Encoding.encodeBase64Url(identity.jwtSecret) },
+    ],
+  });
   const creations = yield* config.creations(stack.id);
   const source = creations.find(
     (creation): creation is FunctionsCreation => creation.service === "functions",
@@ -240,6 +276,12 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
     ...source,
     config: {
       ...source.config,
+      jwtSecret: identity.jwtSecret,
+      jwks,
+      publishableKey: identity.publishableKey,
+      secretKey: identity.secretKey,
+      anonKey: identity.anonKey,
+      serviceRoleKey: identity.serviceRoleKey,
       apiUrl,
       databaseUrl,
       env: { ...env, ...source.config.env, ...envOverride },

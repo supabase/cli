@@ -2,7 +2,13 @@ import { endpointReports } from "../stack-endpoints.format.ts";
 import { readStackFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
-import type { ServiceCreationInput, Stack } from "@supabase/stack/effect";
+import type {
+  ServiceCreation,
+  ServiceCreationInput,
+  Stack,
+  StackCredentials,
+  StackIdentityInput,
+} from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
   OutputFlag,
@@ -109,11 +115,30 @@ const sameBinding = (
 
 const compositionManagedConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
   database: new Set(["databasePassword", "jwtSecret", "rootKey"]),
-  rest: new Set(["databaseUrl", "jwtSecret"]),
-  auth: new Set(["databaseUrl", "jwtSecret", "externalApiUrl", "smtpUrl"]),
-  realtime: new Set(["databaseUrl", "jwtSecret"]),
-  storage: new Set(["databaseUrl", "filePath", "jwtSecret", "imgproxyUrl", "vectorDatabaseUrl"]),
-  functions: new Set(["apiUrl", "bootstrap", "databaseUrl", "jwtSecret"]),
+  rest: new Set(["databaseUrl", "jwtSecret", "jwks"]),
+  auth: new Set(["databaseUrl", "jwtSecret", "gotrueJwtKeys", "externalApiUrl", "smtpUrl"]),
+  realtime: new Set(["databaseUrl", "jwtSecret", "jwks"]),
+  storage: new Set([
+    "databaseUrl",
+    "filePath",
+    "jwtSecret",
+    "jwks",
+    "anonKey",
+    "serviceRoleKey",
+    "imgproxyUrl",
+    "vectorDatabaseUrl",
+  ]),
+  functions: new Set([
+    "apiUrl",
+    "bootstrap",
+    "databaseUrl",
+    "jwtSecret",
+    "jwks",
+    "anonKey",
+    "serviceRoleKey",
+    "publishableKey",
+    "secretKey",
+  ]),
   studio: new Set([
     "functionsRoot",
     "pgmetaUrl",
@@ -123,6 +148,11 @@ const compositionManagedConfigKeys: Readonly<Record<string, ReadonlySet<string>>
     "apiUrl",
     "publicApiUrl",
     "jwtSecret",
+    "jwks",
+    "anonKey",
+    "serviceRoleKey",
+    "publishableKey",
+    "secretKey",
   ]),
   analytics: new Set(["databaseUrl"]),
   vector: new Set(["analyticsUrl"]),
@@ -145,11 +175,59 @@ const selectedCreations = (
     return !exclusions.includes(capability);
   });
 
+const identityBindingMatches = (creation: ServiceCreation, active: StackCredentials): boolean => {
+  switch (creation.service) {
+    case "database":
+      return Redacted.value(creation.config.jwtSecret) === active.jwtSecret;
+    case "rest":
+    case "realtime":
+      return creation.config.jwtSecret === active.jwtSecret && creation.config.jwks === active.jwks;
+    case "auth":
+      return (
+        creation.config.jwtSecret === active.jwtSecret &&
+        creation.config.gotrueJwtKeys === active.gotrueJwtKeys
+      );
+    case "storage":
+      return (
+        creation.config.jwtSecret === active.jwtSecret &&
+        creation.config.jwks === active.jwks &&
+        creation.config.anonKey === active.anonKey &&
+        creation.config.serviceRoleKey === active.serviceRoleKey
+      );
+    case "functions":
+      return (
+        creation.config.jwtSecret === active.jwtSecret &&
+        creation.config.jwks === active.jwks &&
+        creation.config.anonKey === active.anonKey &&
+        creation.config.serviceRoleKey === active.serviceRoleKey &&
+        creation.config.publishableKey === active.publishableKey &&
+        creation.config.secretKey === active.secretKey
+      );
+    case "studio":
+      return (
+        creation.config.jwtSecret === active.jwtSecret &&
+        creation.config.anonKey === active.anonKey &&
+        creation.config.serviceRoleKey === active.serviceRoleKey &&
+        creation.config.publishableKey === active.publishableKey &&
+        creation.config.secretKey === active.secretKey
+      );
+    case "pooler":
+      return creation.config.jwtSecret === active.jwtSecret;
+    default:
+      return true;
+  }
+};
+
 const compose = (
   stack: Stack,
   creations: ReadonlyArray<ServiceCreationInput>,
   reuseIds: ReadonlyArray<string>,
-) => stack.composition.supabase(creations, reuseIds.length === 0 ? undefined : { reuseIds });
+  identity: StackIdentityInput,
+) =>
+  stack.composition.supabase(creations, {
+    identity,
+    ...(reuseIds.length === 0 ? {} : { reuseIds }),
+  });
 
 /** Starts the selected managed stack and applies the local database overlays. */
 export const stackStart = Effect.fn("experimental.stack.start")(function* (flags: StackStartFlags) {
@@ -178,6 +256,16 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       })
       .pipe(Effect.mapError(mapTargetError));
     const config = yield* loadStackConfig(target.projectRoot).pipe(
+      Effect.mapError(
+        (error) =>
+          new StackCommandStartError({
+            reason: "invalid-config",
+            message: error.message,
+            cause: error,
+          }),
+      ),
+    );
+    const identity = yield* config.identity.pipe(
       Effect.mapError(
         (error) =>
           new StackCommandStartError({
@@ -269,17 +357,27 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const requestedDatabase = requested.find((creation) => creation.service === "database");
     const savedCredentials = yield* stack.credentials.get.pipe(Effect.mapError(stackError));
     if (requestedDatabase?.service === "database" && savedCredentials !== undefined) {
-      const jwtSecret = requestedDatabase.config.jwtSecret;
       const rootKey = requestedDatabase.config.rootKey;
-      if (
-        (jwtSecret !== undefined && Redacted.value(jwtSecret) !== savedCredentials.jwtSecret) ||
-        (rootKey !== undefined && Redacted.value(rootKey) !== savedCredentials.postgresRootKey)
-      )
+      if (rootKey !== undefined && Redacted.value(rootKey) !== savedCredentials.postgresRootKey)
         return yield* new StackCommandStartError({
           reason: "invalid-config",
-          message: "The configured credentials conflict with the saved stack credentials",
+          message: "The configured Postgres root key conflicts with the saved stack credentials",
         });
     }
+    const identityChanged =
+      savedCredentials !== undefined &&
+      (savedCredentials.configuredJwtSecret !== identity.configuredJwtSecret ||
+        savedCredentials.configuredSigningKeys !== identity.configuredSigningKeys ||
+        savedCredentials.configuredPublishableKey !== identity.configuredPublishableKey ||
+        savedCredentials.configuredSecretKey !== identity.configuredSecretKey ||
+        savedCredentials.configuredAnonKey !== identity.configuredAnonKey ||
+        savedCredentials.configuredServiceRoleKey !== identity.configuredServiceRoleKey ||
+        savedCredentials.remoteJwks !== (identity.remoteJwks ?? "[]"));
+    const staleIdentity =
+      savedCredentials !== undefined &&
+      (yield* Effect.forEach(currentInstances, (instance) =>
+        instance.status.pipe(Effect.mapError(stackError)),
+      )).some((status) => !identityBindingMatches(status.config, savedCredentials));
     if (requested.some(({ service }) => service === "storage"))
       yield* fs
         .makeDirectory(
@@ -312,7 +410,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           ),
         );
     const initialComposition = composition.members.length === 0;
-    let compositionChanged = !sameKinds(currentInstances, requested);
+    const compositionChanged =
+      !sameKinds(currentInstances, requested) || identityChanged || staleIdentity;
     for (const instance of currentInstances) {
       const creation = requested.find(({ service }) => service === instance.service);
       if (creation === undefined) continue;
@@ -389,7 +488,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       yield* stopping.succeed();
     }
     const members = compositionChanged
-      ? yield* compose(stack, requested, reuseIds).pipe(
+      ? yield* compose(stack, requested, reuseIds, identity).pipe(
           Effect.tapError((error) => starting.fail(error.message)),
           Effect.mapError(stackError),
         )
@@ -503,7 +602,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             stack,
             database,
             databaseServices,
-            jwtSecret: stackCredentials.jwtSecret,
           },
           overlay: {
             webhooks: "config",
@@ -529,7 +627,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             stack,
             database,
             databaseServices,
-            jwtSecret: stackCredentials.jwtSecret,
           },
           overlay: {
             webhooks: "config",
@@ -571,7 +668,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           );
           const credentials = yield* stackStorageCredentialsFor(
             storage,
-            stackCredentials.jwtSecret,
+            stackCredentials.serviceRoleKey,
           ).pipe(Effect.mapError(stackError));
           yield* seedBucketsRun({
             projectRef: "",

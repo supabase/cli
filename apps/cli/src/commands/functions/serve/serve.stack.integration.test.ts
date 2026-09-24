@@ -10,6 +10,7 @@ import {
   Layer,
   Option,
   Redacted,
+  Schema,
   Scope,
   Stream,
 } from "effect";
@@ -17,6 +18,8 @@ import {
   StackError,
   type Observation,
   type ServiceCreation,
+  type ServiceCreationInput,
+  type ServiceInstances,
   type Stack,
 } from "@supabase/stack/effect";
 import { StackApi } from "../../../command-internal/stack-api.ts";
@@ -56,6 +59,23 @@ const databaseConfig: Extract<ServiceCreation, { service: "database" }>["config"
   jwtSecret: Redacted.make("jwt-secret"),
   jwtExpiry: 3600,
 };
+const savedSigningKey = {
+  kty: "RSA",
+  kid: "saved-signing-key",
+  n: "saved-modulus",
+  e: "AQAB",
+};
+const testJwkArray = Schema.Array(
+  Schema.Struct({
+    kty: Schema.String,
+    kid: Schema.optionalKey(Schema.String),
+    k: Schema.optionalKey(Schema.String),
+    n: Schema.optionalKey(Schema.String),
+    e: Schema.optionalKey(Schema.String),
+  }),
+);
+const testJwksDocument = Schema.fromJsonString(Schema.Struct({ keys: testJwkArray }));
+const encodeTestJwkArray = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.Unknown)));
 
 const observation = (
   id: string,
@@ -92,6 +112,7 @@ const flags = (overrides: Partial<Parameters<typeof functionsServeStack>[0]> = {
 const fixture = (
   options: {
     readonly failRestartOn?: number;
+    readonly standaloneProjectRoot?: string;
     readonly restartGate?: {
       readonly entered: Deferred.Deferred<void>;
       readonly release: Deferred.Deferred<void>;
@@ -127,6 +148,38 @@ const fixture = (
       config: currentFunctions,
       endpoints: { http: { port: 54321 } },
     });
+    let createdFunctions: Extract<ServiceCreation, { service: "functions" }> | undefined;
+    const stackCredentials = {
+      jwtSecret: "saved-jwt-secret",
+      postgresRootKey: "saved-root-key",
+      databasePassword: "saved-database-password",
+      publishableKey: "saved-publishable-key",
+      secretKey: "saved-secret-key",
+      anonKey: "saved-anon-key",
+      serviceRoleKey: "saved-service-role-key",
+      jwks: '{"keys":[]}',
+      gotrueJwtKeys: "[]",
+      publicSigningKeys: encodeTestJwkArray([savedSigningKey]),
+      remoteJwks: "[]",
+    };
+    const temporaryFunctions: FunctionsInstance = {
+      id: "temporary-functions",
+      service: "functions",
+      status: Effect.sync(() =>
+        observation("temporary-functions", createdFunctions ?? functionsCreation()),
+      ),
+      credentials: () => Effect.succeed({ url: "http://127.0.0.1:54321" }),
+      start: Deferred.succeed(started, undefined),
+      ready: Effect.void,
+      stop: Effect.void,
+      restart: () => Effect.void,
+      destroy: Effect.sync(() => {
+        destroyed = true;
+      }),
+      prepare: Effect.void,
+      followStatus: Stream.never,
+      logs: Stream.never,
+    };
     const database: DatabaseInstance = {
       id: "database",
       service: "database" as const,
@@ -187,17 +240,31 @@ const fixture = (
     const stack = {
       id: "a".repeat(64),
       services: {
-        list: Effect.succeed([database, functions]),
+        list: Effect.succeed(
+          options.standaloneProjectRoot === undefined ? [database, functions] : [database],
+        ),
         get: (id: string) => Effect.succeed(id === "database" ? database : functions),
-        create: () => Effect.die("unused"),
+        create: <Input extends ServiceCreationInput>(
+          creation: Input,
+        ): Effect.Effect<ServiceInstances[Input["service"]], StackError> => {
+          if (creation.service !== "functions") return Effect.die("unexpected service creation");
+          createdFunctions = creation;
+          return Effect.succeed(temporaryFunctions) as unknown as Effect.Effect<
+            ServiceInstances[Input["service"]],
+            StackError
+          >;
+        },
       },
-      credentials: { get: Effect.die("unused") },
+      credentials: { get: Effect.succeed(stackCredentials) },
       composition: {
         describe: Effect.succeed({
-          members: [
-            { id: "database", activation: "eager" as const },
-            { id: "functions", activation: "eager" as const },
-          ],
+          members:
+            options.standaloneProjectRoot === undefined
+              ? [
+                  { id: "database", activation: "eager" as const },
+                  { id: "functions", activation: "eager" as const },
+                ]
+              : [{ id: "database", activation: "eager" as const }],
           dependencies: [],
         }),
         supabase: () => Effect.die("unused"),
@@ -234,8 +301,11 @@ const fixture = (
     const layer = Layer.mergeAll(
       BunServices.layer,
       api,
-      mockCommandSettings({ workdir: "/project", supabaseHome: "/home" }),
-      mockRuntimeInfo({ cwd: "/project", homeDir: "/home" }),
+      mockCommandSettings({
+        workdir: options.standaloneProjectRoot ?? "/project",
+        supabaseHome: "/home",
+      }),
+      mockRuntimeInfo({ cwd: options.standaloneProjectRoot ?? "/project", homeDir: "/home" }),
       output.layer,
       signalControl.layer,
       telemetry,
@@ -257,10 +327,167 @@ const fixture = (
       get destroyed() {
         return destroyed;
       },
+      get createdFunctions() {
+        return createdFunctions;
+      },
     };
   });
 
 describe("experimental Stack Functions serve", () => {
+  it.live("creates standalone Functions with saved credentials and local verification keys", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-standalone-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-standalone"\n\n[edge_runtime]\nenabled = true\n',
+      );
+      const state = yield* fixture({ standaloneProjectRoot: root });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(state.started);
+
+      const created = state.createdFunctions;
+      expect(created?.service).toBe("functions");
+      if (created?.service === "functions") {
+        expect(created.config.jwtSecret).toBe("saved-jwt-secret");
+        expect(created.config.publishableKey).toBe("saved-publishable-key");
+        expect(created.config.secretKey).toBe("saved-secret-key");
+        expect(created.config.anonKey).toBe("saved-anon-key");
+        expect(created.config.serviceRoleKey).toBe("saved-service-role-key");
+        expect(created.config.jwks).toBeDefined();
+        const jwks = yield* Schema.decodeEffect(testJwksDocument)(created.config.jwks ?? "");
+        expect(
+          jwks.keys.some((key) => key.kty === "oct" && key.k === "c2F2ZWQtand0LXNlY3JldA"),
+        ).toBe(true);
+        expect(jwks.keys).toContainEqual(savedSigningKey);
+      }
+
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+      expect(state.destroyed).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("refreshes remote JWKS before creating standalone Functions", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-remote-jwks-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      const remoteKey = { kty: "RSA", kid: "remote-test-key", n: "AQ", e: "AQAB" };
+      let jwksServerPort = 0;
+      const server = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch(request) {
+              const path = new URL(request.url).pathname;
+              if (path === "/.well-known/openid-configuration")
+                return Response.json({ jwks_uri: `http://127.0.0.1:${jwksServerPort}/jwks` });
+              if (path === "/jwks") return Response.json({ keys: [remoteKey] });
+              return new Response(null, { status: 404 });
+            },
+          }),
+        ),
+        (server) => Effect.promise(() => server.stop(true)),
+      );
+      if (server.port === undefined) return yield* Effect.die("The JWKS server has no TCP port.");
+      jwksServerPort = server.port;
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        `project_id = "functions-remote-jwks"\n\n[edge_runtime]\nenabled = true\n\n[auth]\nsigning_keys_path = "./missing-keys.json"\n\n[auth.third_party.workos]\nenabled = true\nissuer_url = "http://127.0.0.1:${server.port}"\n`,
+      );
+      const state = yield* fixture({ standaloneProjectRoot: root });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(state.started);
+
+      const created = state.createdFunctions;
+      expect(created?.service).toBe("functions");
+      if (created?.service === "functions") {
+        const jwks = yield* Schema.decodeEffect(testJwksDocument)(created.config.jwks ?? "");
+        expect(jwks.keys).toContainEqual(remoteKey);
+        expect(
+          jwks.keys.some((key) => key.kty === "oct" && key.k === "c2F2ZWQtand0LXNlY3JldA"),
+        ).toBe(true);
+        expect(jwks.keys).toContainEqual(savedSigningKey);
+      }
+      expect(
+        state.output.rawChunks.some(({ text }) =>
+          text.includes("Unable to refresh third-party JWKS"),
+        ),
+      ).toBe(false);
+
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("keeps local signing keys and warns when remote JWKS refresh fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-remote-jwks-failure-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      let serverPort = 0;
+      const discoveryServer = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch(request) {
+              const path = new URL(request.url).pathname;
+              if (path === "/.well-known/openid-configuration")
+                return Response.json({ jwks_uri: `http://127.0.0.1:${serverPort}/jwks` });
+              return new Response("unavailable", { status: 503 });
+            },
+          }),
+        ),
+        (server) => Effect.promise(() => server.stop(true)),
+      );
+      if (discoveryServer.port === undefined)
+        return yield* Effect.die("The JWKS discovery server has no TCP port.");
+      serverPort = discoveryServer.port;
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        `project_id = "functions-remote-jwks-failure"\n\n[edge_runtime]\nenabled = true\n\n[auth.third_party.workos]\nenabled = true\nissuer_url = "http://127.0.0.1:${discoveryServer.port}"\n`,
+      );
+      const state = yield* fixture({ standaloneProjectRoot: root });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(state.started);
+
+      const created = state.createdFunctions;
+      expect(created?.service).toBe("functions");
+      if (created?.service === "functions") {
+        const jwks = yield* Schema.decodeEffect(testJwksDocument)(created.config.jwks ?? "");
+        expect(
+          jwks.keys.some((key) => key.kty === "oct" && key.k === "c2F2ZWQtand0LXNlY3JldA"),
+        ).toBe(true);
+        expect(jwks.keys).toContainEqual(savedSigningKey);
+        expect(jwks.keys.some((key) => key.kid === "remote-test-key")).toBe(false);
+      }
+      expect(
+        state.output.rawChunks.some(
+          ({ stream, text }) =>
+            stream === "stderr" &&
+            text.includes("Unable to refresh third-party JWKS") &&
+            text.includes("Using local signing keys"),
+        ),
+      ).toBe(true);
+
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("restores an overridden composed Functions config on SIGINT", () =>
     Effect.gen(function* () {
       const state = yield* fixture();

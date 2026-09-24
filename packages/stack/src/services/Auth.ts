@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect";
 import { ServiceError } from "../Service.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
+import { DEFAULT_SIGNING_KEY } from "../Defaults.ts";
 import { localJwtSecret } from "./ServiceConfig.ts";
 import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
 
@@ -18,8 +19,11 @@ const Smtp = Schema.Struct({
 export const Config = Schema.Struct({
   databaseUrl: Schema.String,
   siteUrl: Schema.optionalKey(Schema.String),
+  apiExternalUrl: Schema.optionalKey(Schema.String),
   externalApiUrl: Schema.optionalKey(Schema.String),
+  authExternalUrl: Schema.optionalKey(Schema.String),
   jwtSecret: Schema.optionalKey(Schema.String),
+  gotrueJwtKeys: Schema.optionalKey(Schema.String),
   jwtExpiry: Schema.optionalKey(Schema.Finite),
   disableSignup: Schema.optionalKey(Schema.Boolean),
   smtpUrl: Schema.optionalKey(Schema.String),
@@ -60,6 +64,14 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   healthPath: "/health",
   env: (creation, endpoints, container) => {
     const http = endpoints.get("http");
+    const apiExternalUrl = creation.config.apiExternalUrl;
+    const authExternalUrl =
+      creation.config.authExternalUrl !== undefined && creation.config.authExternalUrl.length > 0
+        ? creation.config.authExternalUrl
+        : apiExternalUrl !== undefined && apiExternalUrl.length > 0
+          ? `${apiExternalUrl.replace(/\/+$/u, "")}/auth/v1`
+          : (creation.config.externalApiUrl ?? creation.config.siteUrl ?? "http://localhost:3000");
+    const jwtIssuer = creation.config.settings?.jwtIssuer || authExternalUrl;
     const base = {
       GOTRUE_API_HOST: container ? "0.0.0.0" : "127.0.0.1",
       GOTRUE_DB_DATABASE_URL: creation.config.databaseUrl,
@@ -67,21 +79,24 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       GOTRUE_DB_DRIVER: "postgres",
       GOTRUE_SITE_URL: creation.config.siteUrl ?? "http://localhost:3000",
       GOTRUE_JWT_SECRET: creation.config.jwtSecret ?? localJwtSecret,
+      GOTRUE_JWT_KEYS: creation.config.gotrueJwtKeys ?? JSON.stringify([DEFAULT_SIGNING_KEY]),
       GOTRUE_JWT_AUD: "authenticated",
       GOTRUE_JWT_ADMIN_ROLES: "service_role",
       GOTRUE_JWT_DEFAULT_GROUP_NAME: "authenticated",
       GOTRUE_MAILER_AUTOCONFIRM: "true",
       GOTRUE_DISABLE_SIGNUP: String(creation.config.disableSignup ?? false),
+      GOTRUE_RATE_LIMIT_EMAIL_SENT: "360000",
       ...(http === undefined ? {} : { GOTRUE_API_PORT: String(http.port) }),
-      API_EXTERNAL_URL:
-        creation.config.externalApiUrl ?? creation.config.siteUrl ?? "http://localhost:3000",
+      API_EXTERNAL_URL: authExternalUrl,
+      GOTRUE_JWT_ISSUER: jwtIssuer,
+      GOTRUE_MAILER_URLPATHS_INVITE: `${authExternalUrl.replace(/\/+$/u, "")}/verify`,
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: `${authExternalUrl.replace(/\/+$/u, "")}/verify`,
+      GOTRUE_MAILER_URLPATHS_RECOVERY: `${authExternalUrl.replace(/\/+$/u, "")}/verify`,
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: `${authExternalUrl.replace(/\/+$/u, "")}/verify`,
       ...(creation.config.jwtExpiry === undefined
         ? {}
         : { GOTRUE_JWT_EXP: String(creation.config.jwtExpiry) }),
-      ...settingsEnvironment(
-        creation.config.settings,
-        creation.config.externalApiUrl ?? creation.config.siteUrl ?? "http://localhost:3000",
-      ),
+      ...settingsEnvironment(creation.config.settings, jwtIssuer),
     };
     const smtp = creation.config.smtp;
     if (smtp !== undefined) {
@@ -92,6 +107,11 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         GOTRUE_SMTP_USER: smtp.user,
         GOTRUE_SMTP_PASS: smtp.pass,
         GOTRUE_SMTP_ADMIN_EMAIL: smtp.adminEmail,
+        ...(creation.config.settings?.rateLimit?.email_sent === undefined
+          ? {}
+          : {
+              GOTRUE_RATE_LIMIT_EMAIL_SENT: String(creation.config.settings.rateLimit.email_sent),
+            }),
         ...(smtp.senderName === undefined ? {} : { GOTRUE_SMTP_SENDER_NAME: smtp.senderName }),
       });
     }

@@ -11,6 +11,7 @@ import type {
   ServiceCreationInput,
   ServiceInstance,
   ServiceInstances,
+  StackCredentials,
   Stack,
 } from "@supabase/stack/effect";
 import {
@@ -148,10 +149,92 @@ const requireConcreteCreation = (creation: ServiceCreationInput): ServiceCreatio
   };
 };
 
+const withIdentity = (creation: ServiceCreation, identity: StackCredentials): ServiceCreation => {
+  switch (creation.service) {
+    case "database":
+      return {
+        ...creation,
+        config: { ...creation.config, jwtSecret: Redacted.make(identity.jwtSecret) },
+      };
+    case "rest":
+      return {
+        ...creation,
+        config: { ...creation.config, jwtSecret: identity.jwtSecret, jwks: identity.jwks },
+      };
+    case "auth":
+      return {
+        ...creation,
+        config: {
+          ...creation.config,
+          jwtSecret: identity.jwtSecret,
+          gotrueJwtKeys: identity.gotrueJwtKeys,
+        },
+      };
+    case "realtime":
+      return {
+        ...creation,
+        config: { ...creation.config, jwtSecret: identity.jwtSecret, jwks: identity.jwks },
+      };
+    case "storage":
+      return {
+        ...creation,
+        config: {
+          ...creation.config,
+          jwtSecret: identity.jwtSecret,
+          jwks: identity.jwks,
+          anonKey: identity.anonKey,
+          serviceRoleKey: identity.serviceRoleKey,
+        },
+      };
+    case "functions":
+      return {
+        ...creation,
+        config: {
+          ...creation.config,
+          jwtSecret: identity.jwtSecret,
+          jwks: identity.jwks,
+          anonKey: identity.anonKey,
+          serviceRoleKey: identity.serviceRoleKey,
+          publishableKey: identity.publishableKey,
+          secretKey: identity.secretKey,
+        },
+      };
+    case "studio":
+      return {
+        ...creation,
+        config: {
+          ...creation.config,
+          jwtSecret: identity.jwtSecret,
+          anonKey: identity.anonKey,
+          serviceRoleKey: identity.serviceRoleKey,
+          publishableKey: identity.publishableKey,
+          secretKey: identity.secretKey,
+        },
+      };
+    case "pooler":
+      return { ...creation, config: { ...creation.config, jwtSecret: identity.jwtSecret } };
+    default:
+      return creation;
+  }
+};
+
 const fakeStack = () => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   let stopped = 0;
   let composed = 0;
+  let savedCredentials: StackCredentials = {
+    jwtSecret: DEFAULT_LOCAL_JWT_SECRET,
+    postgresRootKey: DEFAULT_POSTGRES_ROOT_KEY,
+    databasePassword: DEFAULT_LOCAL_DATABASE_PASSWORD,
+    publishableKey: "sb_publishable_test",
+    secretKey: "sb_secret_test",
+    anonKey: "anon-token",
+    serviceRoleKey: "service-token",
+    jwks: '{"keys":[]}',
+    gotrueJwtKeys: "[]",
+    publicSigningKeys: "[]",
+    remoteJwks: "[]",
+  };
   const stack: Stack = {
     id: "a".repeat(64),
     services: {
@@ -165,22 +248,46 @@ const fakeStack = () => {
       },
     },
     credentials: {
-      get: Effect.succeed({
-        jwtSecret: DEFAULT_LOCAL_JWT_SECRET,
-        postgresRootKey: DEFAULT_POSTGRES_ROOT_KEY,
-        databasePassword: DEFAULT_LOCAL_DATABASE_PASSWORD,
-      }),
+      get: Effect.succeed(savedCredentials),
     },
     composition: {
       describe: Effect.sync(() => ({
         members: members.map(({ id }) => ({ id, activation: "eager" as const })),
         dependencies: [],
       })),
-      supabase: (creations: ReadonlyArray<ServiceCreationInput>) =>
+      supabase: (creations: ReadonlyArray<ServiceCreationInput>, options) =>
         Effect.sync(() => {
           composed += 1;
+          const database = creations.find((creation) => creation.service === "database");
+          const jwtSecret =
+            database?.service === "database" && database.config.jwtSecret !== undefined
+              ? Redacted.value(database.config.jwtSecret)
+              : DEFAULT_LOCAL_JWT_SECRET;
+          savedCredentials = {
+            jwtSecret,
+            postgresRootKey:
+              database?.service === "database" && database.config.rootKey !== undefined
+                ? Redacted.value(database.config.rootKey)
+                : DEFAULT_POSTGRES_ROOT_KEY,
+            databasePassword:
+              database?.service === "database" && database.config.databasePassword !== undefined
+                ? Redacted.value(database.config.databasePassword)
+                : DEFAULT_LOCAL_DATABASE_PASSWORD,
+            publishableKey: options?.identity?.publishableKey ?? "sb_publishable_test",
+            secretKey: options?.identity?.secretKey ?? "sb_secret_test",
+            anonKey: options?.identity?.anonKey ?? "anon-token",
+            serviceRoleKey: options?.identity?.serviceRoleKey ?? "service-token",
+            jwks: '{"keys":[]}',
+            gotrueJwtKeys: options?.identity?.gotrueJwtKeys ?? "[]",
+            publicSigningKeys: "[]",
+            remoteJwks: options?.identity?.remoteJwks ?? "[]",
+            ...options?.identity,
+          };
           members = creations.map((creation) =>
-            instance(requireConcreteCreation(creation), `${creation.service}-member`),
+            instance(
+              withIdentity(requireConcreteCreation(creation), savedCredentials),
+              `${creation.service}-member`,
+            ),
           );
           return members;
         }),
@@ -435,33 +542,55 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects changed credentials and database versions before stopping the stack", () =>
+  it.live("restarts services when the configured JWT secret changes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      for (const [name, changed] of [
-        ["jwt", '[auth]\njwt_secret = "a-new-jwt-secret-with-at-least-32-characters"\n'],
-        ["root key", '[db]\nroot_key = "a-different-postgres-root-key"\n'],
-        ["version", "[db]\nmajor_version = 15\n"],
-      ] as const) {
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-start-${name}-` });
-        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-        yield* fs.writeFileString(`${root}/supabase/config.toml`, `project_id = "${name}"\n`);
-        const fixture = fakeStack();
-        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-        expect(fixture.composed).toBe(1);
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-jwt-rotation-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "jwt-rotation"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(1);
 
-        yield* fs.writeFileString(
-          `${root}/supabase/config.toml`,
-          `project_id = "${name}"\n${changed}`,
-        );
-        const error = yield* stackStart(flags(["studio"])).pipe(
-          Effect.provide(layers(root, fixture)),
-          Effect.flip,
-        );
-        expect(error).toMatchObject({ reason: "invalid-config" });
-        expect(fixture.stopped).toBe(0);
-        expect(fixture.composed).toBe(1);
-      }
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "jwt-rotation"\n[auth]\njwt_secret = "a-new-jwt-secret-with-at-least-32-characters"\n',
+      );
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.stopped).toBe(1);
+      expect(fixture.composed).toBe(2);
+      expect(fixture.members.find(({ service }) => service === "auth")?.service).toBe("auth");
     }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "rejects changed Postgres root keys and database versions before stopping the stack",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        for (const [name, changed] of [
+          ["root-key", '[db]\nroot_key = "a-different-postgres-root-key"\n'],
+          ["version", "[db]\nmajor_version = 15\n"],
+        ] as const) {
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-start-${name}-` });
+          yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+          yield* fs.writeFileString(`${root}/supabase/config.toml`, `project_id = "${name}"\n`);
+          const fixture = fakeStack();
+          yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+          expect(fixture.composed).toBe(1);
+
+          yield* fs.writeFileString(
+            `${root}/supabase/config.toml`,
+            `project_id = "${name}"\n${changed}`,
+          );
+          const error = yield* stackStart(flags(["studio"])).pipe(
+            Effect.provide(layers(root, fixture)),
+            Effect.flip,
+          );
+          expect(error).toMatchObject({ reason: "invalid-config" });
+          expect(fixture.stopped).toBe(0);
+          expect(fixture.composed).toBe(1);
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 });

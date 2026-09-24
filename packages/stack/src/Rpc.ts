@@ -4,6 +4,7 @@ import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
 import { CompositionConfig } from "./Orchestrator.ts";
 import { SnapshotDescriptor } from "./services/DatabaseSnapshot.ts";
 import { PgProveOptions, PostgresTool } from "./Tools.ts";
+import { StackIdentityInput } from "./State.ts";
 
 const Outcome = Schema.Struct({
   id: Schema.String,
@@ -115,6 +116,7 @@ export const StackRpc = RpcGroup.make(
     payload: {
       services: Schema.Array(ServiceCreationInput),
       reuseIds: Schema.optionalKey(Schema.Array(Schema.String)),
+      identity: Schema.optionalKey(StackIdentityInput),
     },
     success: Schema.Array(Definition),
     error: StackErrorSchema,

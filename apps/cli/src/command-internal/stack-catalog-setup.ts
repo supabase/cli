@@ -1,8 +1,9 @@
 import { Context, Data, Effect, FileSystem, Layer, Path } from "effect";
 import {
   type DatabaseInstance,
-  type ServiceCreation,
+  type ServiceCreationInput,
   type ServiceInstance,
+  type StackCredentials,
   type Stack,
 } from "@supabase/stack/effect";
 import { Output } from "../shared/output/output.service.ts";
@@ -60,7 +61,6 @@ export interface StackCatalogSetupInput {
     readonly stack: Stack;
     readonly database: DatabaseInstance;
     readonly databaseServices: ReadonlyArray<DatabaseService>;
-    readonly jwtSecret: string;
   };
   readonly overlay: StackCatalogOverlay;
 }
@@ -102,16 +102,17 @@ const credential = (
 const serviceDefinition = (
   service: DatabaseService,
   credentials: ServiceCredentials,
-  jwtSecret: string,
+  identity: StackCredentials,
   storagePath: string,
-): Extract<ServiceCreation, { readonly service: DatabaseService }> => {
+): Extract<ServiceCreationInput, { readonly service: DatabaseService }> => {
   switch (service) {
     case "auth":
       return {
         service,
         config: {
           databaseUrl: credentials.authDatabaseUrl,
-          jwtSecret,
+          jwtSecret: identity.jwtSecret,
+          gotrueJwtKeys: identity.gotrueJwtKeys,
         },
         endpoints: {},
       };
@@ -121,7 +122,10 @@ const serviceDefinition = (
         config: {
           databaseUrl: credentials.storageDatabaseUrl,
           filePath: storagePath,
-          jwtSecret,
+          jwtSecret: identity.jwtSecret,
+          jwks: identity.jwks,
+          anonKey: identity.anonKey,
+          serviceRoleKey: identity.serviceRoleKey,
         },
         endpoints: {},
       };
@@ -130,7 +134,8 @@ const serviceDefinition = (
         service,
         config: {
           databaseUrl: credentials.databaseUrl,
-          jwtSecret,
+          jwtSecret: identity.jwtSecret,
+          jwks: identity.jwks,
         },
         endpoints: {},
       };
@@ -164,6 +169,11 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
   const hostCredentials = yield* input.target.database
     .credentials({ from: "host" })
     .pipe(Effect.mapError(catalogError));
+  const identity = yield* input.target.stack.credentials.get.pipe(Effect.mapError(catalogError));
+  if (identity === undefined)
+    return yield* new StackCatalogSetupError({
+      message: "The stack's active credentials are unavailable for catalog setup",
+    });
   yield* Effect.scoped(
     Effect.gen(function* () {
       const runtimeDatabaseUrl = yield* credential(runtimeCredentials, "databaseUrl");
@@ -184,9 +194,7 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         (service) =>
           Effect.acquireUseRelease(
             input.target.stack.services
-              .create(
-                serviceDefinition(service, serviceCredentials, input.target.jwtSecret, storagePath),
-              )
+              .create(serviceDefinition(service, serviceCredentials, identity, storagePath))
               .pipe(Effect.mapError(catalogError)),
             startTemporaryService,
             destroyTemporaryService,

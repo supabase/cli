@@ -471,7 +471,13 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
           message: "The primary database configuration is unavailable for environment export.",
           suggestion: "Run supabase stack start first.",
         });
-      const jwtSecret = Redacted.value(databaseConfig.config.jwtSecret);
+      const identity = yield* stack.credentials.get.pipe(Effect.mapError(mapStackError));
+      if (identity === undefined)
+        return yield* new StackCommandStatusError({
+          reason: "lifecycle",
+          message: "The stack's active credentials are unavailable for environment export.",
+          suggestion: "Run supabase stack start first.",
+        });
       const sql = databaseObservation.endpoints.find(({ name }) => name === "sql");
       const databaseUrl =
         sql === undefined
@@ -496,7 +502,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
           : { mailUi: endpointFor(services, observed.members, "mail", "http") }),
       };
       const values = stackEnvValues(
-        { endpoints, jwtSecret },
+        { endpoints, credentials: identity },
         databaseUrl === undefined ? {} : { databaseUrl },
         envNames,
       );
