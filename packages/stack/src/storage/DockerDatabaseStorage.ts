@@ -579,7 +579,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               yield* options.fs
                 .makeDirectory(options.cacheRoot, { recursive: true })
                 .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
-            yield* options.container.prepare(image);
+            const preparedImage = yield* options.container
+              .prepareImage(image)
+              .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
             const token = yield* options.crypto.randomUUIDv4.pipe(
               Effect.mapError((cause) => errorFor("helper", cause)),
             );
@@ -600,7 +602,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               "--label",
               `com.supabase.instance=${options.instanceId}`,
               ...mountArgs(mounts),
-              image,
+              preparedImage,
               "/bin/sh",
               "-c",
               "trap : TERM INT; while :; do sleep 3600; done",
@@ -670,7 +672,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           }
           if (options.container === undefined)
             return yield* errorFor("helper", "Container runtime is unavailable");
-          yield* options.container.prepare(image);
+          const preparedImage = yield* options.container
+            .prepareImage(image)
+            .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
           return yield* Effect.uninterruptibleMask((restore) =>
             restore(
               engineCommand([
@@ -685,7 +689,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 "--label",
                 `com.supabase.stack=${options.stackId}`,
                 ...mountArgs(mounts),
-                image,
+                preparedImage,
                 "/bin/sh",
                 "-c",
                 "trap : TERM INT; while :; do sleep 3600; done",

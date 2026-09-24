@@ -6,9 +6,11 @@ import {
   Effect,
   Exit,
   FileSystem,
+  Layer,
   Option,
   Path,
   Schema,
+  Sink,
   Scope,
   Stream,
 } from "effect";
@@ -36,6 +38,50 @@ const Marker = Schema.Struct({
 class DockerTestError extends Data.TaggedError("DockerTestError")<{
   readonly message: string;
 }> {}
+
+const helperMirror = "registry.test/supabase/postgres:17";
+const fakeHelperEngine = () => {
+  const commands: string[][] = [];
+  const local = new Set<string>();
+  const handle = (exitCode: number, stdout = "", stderr = "") =>
+    ChildProcessSpawner.makeHandle({
+      pid: ChildProcessSpawner.ProcessId(4242),
+      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+      isRunning: Effect.succeed(false),
+      kill: () => Effect.void,
+      stdin: Sink.drain,
+      stdout: Stream.succeed(new TextEncoder().encode(stdout)),
+      stderr: Stream.succeed(new TextEncoder().encode(stderr)),
+      all: Stream.empty,
+      getInputFd: () => Sink.drain,
+      getOutputFd: () => Stream.empty,
+      unref: Effect.succeed(Effect.void),
+    });
+  const spawner = ChildProcessSpawner.make((command) => {
+    if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
+    const args = [...command.args];
+    commands.push(args);
+    if (args[0] === "image")
+      return Effect.succeed(handle(0, local.has(args.at(-1) ?? "") ? "sha256:1" : ""));
+    if (args[0] === "pull") {
+      if (args.at(-1) !== helperMirror)
+        return Effect.succeed(handle(1, "", `denied: ${args.at(-1)}`));
+      local.add(helperMirror);
+      return Effect.succeed(handle(0));
+    }
+    if (args[0] === "inspect") return Effect.succeed(handle(1, "", "no such container"));
+    if (args[0] === "run") {
+      const shellIndex = args.indexOf("/bin/sh");
+      const image = args[shellIndex - 1];
+      return image !== undefined && local.has(image)
+        ? Effect.succeed(handle(0, "abcdef0123456789"))
+        : Effect.succeed(handle(1, "", `Unable to find image '${image ?? ""}' locally`));
+    }
+    if (args[0] === "exec" || args[0] === "rm") return Effect.succeed(handle(0, "done"));
+    return Effect.succeed(handle(1, "", `unexpected engine command: ${args[0] ?? ""}`));
+  });
+  return { commands, layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner) };
+};
 
 const docker = Effect.fn("DockerStorageTest.docker")((args: ReadonlyArray<string>) =>
   Effect.scoped(
@@ -74,6 +120,116 @@ const docker = Effect.fn("DockerStorageTest.docker")((args: ReadonlyArray<string
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 describe("Docker database storage", { timeout: 120_000 }, () => {
+  it.live("starts a storage helper with the mirror image selected during preparation", () => {
+    const engine = fakeHelperEngine();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "storage-helper-mirror-" });
+        const storageRoot = path.join(root, "state", "stack", "data");
+        const cacheRoot = path.join(root, "cache");
+        const instanceRoot = path.join(storageRoot, "database");
+        yield* fs.makeDirectory(instanceRoot, { recursive: true });
+        const container = yield* makeContainerRuntime({
+          engine: "podman",
+          imageMirrors: () => [helperMirror],
+        });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const storage = yield* makeDockerDatabaseStorage({
+          runtime: "podman",
+          stackId: "storage-helper-mirror",
+          instanceId: "database",
+          instanceRoot,
+          root: storageRoot,
+          cacheRoot,
+          fs,
+          path,
+          crypto,
+          container,
+          spawner,
+        });
+
+        yield* storage.prepare("17");
+        yield* storage.removeData("17");
+
+        const run = engine.commands.find((args) => args[0] === "run");
+        const shellIndex = run?.indexOf("/bin/sh") ?? -1;
+        expect(run?.[shellIndex - 1]).toBe(helperMirror);
+        expect(
+          engine.commands.filter((args) => args[0] === "pull").map((args) => args.at(-1)),
+        ).toEqual([expect.stringContaining("ghcr.io/supabase/cli/postgres:"), helperMirror]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+  });
+
+  it.live("starts a shared volume helper with the mirror image selected during preparation", () => {
+    const engine = fakeHelperEngine();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "storage-shared-helper-mirror-" });
+        const storageRoot = path.join(root, "state", "stack", "data");
+        const cacheRoot = path.join(root, "cache");
+        const instanceRoot = path.join(storageRoot, "database");
+        yield* fs.makeDirectory(instanceRoot, { recursive: true });
+        yield* fs.makeDirectory(cacheRoot, { recursive: true });
+        const stackId = "shared-helper-mirror";
+        const instanceId = "database";
+        const cachePath = yield* fs.realPath(cacheRoot);
+        const cacheHash = yield* crypto.digest("SHA-256", new TextEncoder().encode(cachePath));
+        const cacheNamespace = `cache-${Array.from(cacheHash, (byte) =>
+          byte.toString(16).padStart(2, "0"),
+        )
+          .join("")
+          .slice(0, 32)}`;
+        const marker = yield* Schema.encodeEffect(Schema.fromJsonString(Marker))({
+          backend: "docker",
+          volume: "database-volume",
+          namespace: `instance-${stackId}-${instanceId}`,
+          cacheNamespace,
+          initialized: false,
+        });
+        yield* fs.writeFileString(
+          path.join(instanceRoot, ".supabase-database-storage.json"),
+          marker,
+        );
+        const container = yield* makeContainerRuntime({
+          engine: "podman",
+          imageMirrors: () => [helperMirror],
+        });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const helpers = yield* makeDockerHelperRegistry("mirror-test");
+        const storage = yield* makeDockerDatabaseStorage({
+          runtime: "podman",
+          stackId,
+          instanceId,
+          instanceRoot,
+          root: storageRoot,
+          cacheRoot,
+          fs,
+          path,
+          crypto,
+          container,
+          spawner,
+          helpers,
+        });
+
+        yield* storage.prepare("17");
+
+        const run = engine.commands.find((args) => args[0] === "run");
+        const shellIndex = run?.indexOf("/bin/sh") ?? -1;
+        expect(run?.[shellIndex - 1]).toBe(helperMirror);
+        expect(
+          engine.commands.filter((args) => args[0] === "pull").map((args) => args.at(-1)),
+        ).toEqual([expect.stringContaining("ghcr.io/supabase/cli/postgres:"), helperMirror]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+  });
+
   it.live("round-trips PostgreSQL 15 data with its catalog image", () =>
     Effect.scoped(
       Effect.gen(function* () {
