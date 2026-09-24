@@ -1,11 +1,10 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option } from "effect";
+import { Effect, Option, Schema } from "effect";
+import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import {
-  makeNotebooksProject,
   notebookListPage,
   notebookResource,
+  notebooksProject,
   notebooksRoute,
   setupNotebooks,
 } from "../../../../tests/helpers/notebooks.ts";
@@ -20,22 +19,18 @@ function flags(overrides: Partial<NotebooksPullFlags> = {}): NotebooksPullFlags 
   return { notebookId: Option.none(), projectRef: Option.none(), ...overrides };
 }
 
-function project(files: Readonly<Record<string, string>> = {}) {
-  const created = makeNotebooksProject(files);
-  return {
-    dir: created.dir,
-    read: (name: string) =>
-      readFileSync(join(created.dir, "supabase", "notebooks", `${name}.json`), "utf8"),
-    exists: (name: string) =>
-      existsSync(join(created.dir, "supabase", "notebooks", `${name}.json`)),
-    cleanup: () => rmSync(created.dir, { recursive: true, force: true }),
-  };
+const temp = useTempWorkdir("supabase-notebooks-pull-");
+
+const jsonValue = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+function project() {
+  return notebooksProject(temp.current);
 }
 
 describe("notebooks pull", () => {
   it.live("writes missing project notebooks without replacing local notebooks", () => {
     const localSales = '{"content":{"cells":[{"type":"markdown","text":"# Local"}]}}';
-    const repo = project({ "supabase/notebooks/sales-dashboard.json": localSales });
+    const repo = project();
     const { layer, http, out } = setupNotebooks({
       workdir: repo.dir,
       routes: {
@@ -62,12 +57,13 @@ describe("notebooks pull", () => {
     });
 
     return Effect.gen(function* () {
+      yield* repo.write("sales-dashboard", localSales);
       yield* notebooksPull(flags());
 
-      expect(repo.read("sales-dashboard")).toBe(localSales);
+      expect(yield* repo.read("sales-dashboard")).toBe(localSales);
       // A newly downloaded file is the notebook's attributes minus its name and
       // the server-owned `schema_version`.
-      expect(JSON.parse(repo.read("error-rates"))).toEqual({
+      expect(yield* jsonValue(yield* repo.read("error-rates"))).toEqual({
         favorite: false,
         content: { cells: [{ id: "cell-1", type: "database", sql: "select 1", row_limit: 100 }] },
       });
@@ -77,15 +73,11 @@ describe("notebooks pull", () => {
       ]);
       expect(out.stdoutText).toContain("Pulled 1 notebook(s)");
       expect(out.stdoutText).toContain("Kept 1 existing local notebook(s) unchanged.");
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("replaces a single local notebook by id without listing or reconciling", () => {
-    const repo = project({
-      "supabase/notebooks/sales-dashboard.json":
-        '{"content":{"cells":[{"type":"markdown","text":"# Local"}]}}',
-      "supabase/notebooks/leftover.json": '{"content":{"cells":[]}}',
-    });
+    const repo = project();
     const { layer, http } = setupNotebooks({
       workdir: repo.dir,
       routes: {
@@ -97,15 +89,20 @@ describe("notebooks pull", () => {
     });
 
     return Effect.gen(function* () {
+      yield* repo.write(
+        "sales-dashboard",
+        '{"content":{"cells":[{"type":"markdown","text":"# Local"}]}}',
+      );
+      yield* repo.write("leftover", '{"content":{"cells":[]}}');
       yield* notebooksPull(flags({ notebookId: Option.some(SALES_ID) }));
 
-      expect(JSON.parse(repo.read("sales-dashboard"))).toEqual({
+      expect(yield* jsonValue(yield* repo.read("sales-dashboard"))).toEqual({
         favorite: false,
         content: { cells: [{ id: "cell-1", type: "markdown", text: "# Hello" }] },
       });
-      expect(repo.exists("leftover")).toBe(true);
+      expect(yield* repo.exists("leftover")).toBe(true);
       expect(http.routeKeys).toEqual([`GET ${notebooksRoute(`/${SALES_ID}`)}`]);
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("rejects a non-UUID notebook id before calling the API", () => {
@@ -119,11 +116,11 @@ describe("notebooks pull", () => {
 
       expect(error).toBeInstanceOf(NotebookIdError);
       expect(http.requests).toEqual([]);
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("deletes the local notebooks the project does not have when asked to", () => {
-    const repo = project({ "supabase/notebooks/gone.json": '{"content":{"cells":[]}}' });
+    const repo = project();
     const { layer, out } = setupNotebooks({
       workdir: repo.dir,
       promptSelectResponses: ["delete"],
@@ -133,22 +130,20 @@ describe("notebooks pull", () => {
     });
 
     return Effect.gen(function* () {
+      yield* repo.write("gone", '{"content":{"cells":[]}}');
       yield* notebooksPull(flags());
 
-      expect(repo.exists("gone")).toBe(false);
+      expect(yield* repo.exists("gone")).toBe(false);
       expect(out.stderrText).toContain("1 local notebook(s) are not in the project:");
       expect(out.stderrText).toContain(" • gone");
       expect(out.promptSelectCalls.map((call) => call.message)).toEqual([
         "What should happen to them?",
       ]);
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("creates the local notebooks in the project instead when asked to", () => {
-    const repo = project({
-      "supabase/notebooks/new-one.json":
-        '{"content":{"cells":[{"type":"markdown","text":"# New"}]}}',
-    });
+    const repo = project();
     const { layer, http } = setupNotebooks({
       workdir: repo.dir,
       promptSelectResponses: ["copy"],
@@ -162,12 +157,13 @@ describe("notebooks pull", () => {
     });
 
     return Effect.gen(function* () {
+      yield* repo.write("new-one", '{"content":{"cells":[{"type":"markdown","text":"# New"}]}}');
       yield* notebooksPull(flags());
 
-      expect(repo.exists("new-one")).toBe(true);
+      expect(yield* repo.exists("new-one")).toBe(true);
       const created = http.requests.find((request) => request.method === "POST");
       // The name goes up from the file name, and the cells go up as written.
-      expect(JSON.parse(created?.body ?? "{}")).toEqual({
+      expect(yield* jsonValue(created?.body ?? "{}")).toEqual({
         data: {
           type: "notebook",
           attributes: {
@@ -176,13 +172,13 @@ describe("notebooks pull", () => {
           },
         },
       });
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   // Both other answers delete something, so an unattended run reports the
   // divergence and resolves nothing.
   it.live("leaves both sides alone when there is nobody to ask", () => {
-    const repo = project({ "supabase/notebooks/gone.json": '{"content":{"cells":[]}}' });
+    const repo = project();
     const { layer, out } = setupNotebooks({
       workdir: repo.dir,
       format: "json",
@@ -192,9 +188,10 @@ describe("notebooks pull", () => {
     });
 
     return Effect.gen(function* () {
+      yield* repo.write("gone", '{"content":{"cells":[]}}');
       yield* notebooksPull(flags());
 
-      expect(repo.exists("gone")).toBe(true);
+      expect(yield* repo.exists("gone")).toBe(true);
       expect(out.promptSelectCalls).toHaveLength(0);
       expect(out.messages).toContainEqual(
         expect.objectContaining({
@@ -202,7 +199,7 @@ describe("notebooks pull", () => {
           data: expect.objectContaining({ pulled: [], deleted_locally: [], created: [] }),
         }),
       );
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   // `page[after]` has to reach the wire as its own query parameter, or the
@@ -239,8 +236,8 @@ describe("notebooks pull", () => {
     return Effect.gen(function* () {
       yield* notebooksPull(flags());
 
-      expect(repo.exists("sales-dashboard")).toBe(true);
-      expect(repo.exists("error-rates")).toBe(true);
+      expect(yield* repo.exists("sales-dashboard")).toBe(true);
+      expect(yield* repo.exists("error-rates")).toBe(true);
       const listCalls = http.requests.filter(
         (request) => new URL(request.url).pathname === notebooksRoute(),
       );
@@ -250,7 +247,7 @@ describe("notebooks pull", () => {
       expect(listCalls[0]!.query.get("page[size]")).toBe("100");
       expect(listCalls[0]!.query.get("page[after]")).toBeNull();
       expect(listCalls[1]!.query.get("page[after]")).toBe("cursor-1");
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("skips a notebook whose name cannot be a file name", () => {
@@ -271,7 +268,7 @@ describe("notebooks pull", () => {
       expect(out.stderrText).toContain("Skipped 1 notebook(s)");
       // Nothing was read, so nothing could have been written outside the dir.
       expect(out.stdoutText).toContain("No notebooks to pull.");
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("refuses duplicate remote names before writing either notebook", () => {
@@ -295,9 +292,9 @@ describe("notebooks pull", () => {
       const error = yield* notebooksPull(flags()).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(NotebookNameConflictError);
-      expect(repo.exists("sales-dashboard")).toBe(false);
+      expect(yield* repo.exists("sales-dashboard")).toBe(false);
       expect(http.routeKeys).toEqual([`GET ${notebooksRoute()}`]);
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("emits the machine payload without text output", () => {
@@ -313,9 +310,9 @@ describe("notebooks pull", () => {
     return Effect.gen(function* () {
       yield* notebooksPull(flags());
 
-      expect(JSON.parse(out.stdoutText)).toEqual(
+      expect(yield* jsonValue(out.stdoutText)).toEqual(
         expect.objectContaining({ pulled: [], preserved_locally: [], skipped: 0 }),
       );
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 });
