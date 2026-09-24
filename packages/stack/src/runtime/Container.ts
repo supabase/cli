@@ -65,6 +65,7 @@ export class ContainerLaunchError extends Data.TaggedError("ContainerLaunchError
 
 export interface ContainerRuntime {
   readonly prepare: (image: string) => Effect.Effect<void, ContainerError>;
+  readonly prepareImage: (image: string) => Effect.Effect<string, ContainerError>;
   readonly launch: (
     spec: ContainerSpec,
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
@@ -169,12 +170,13 @@ export const makeContainerRuntime = (options: {
       image: string,
       mirrors: ReadonlyArray<string>,
       primaryError: ContainerError,
-    ): Effect.Effect<void, ContainerError> => {
+    ): Effect.Effect<string, ContainerError> => {
       const [mirror, ...rest] = mirrors;
       if (mirror === undefined) return Effect.fail(primaryError);
       return Effect.gen(function* () {
         if (!(yield* present(mirror))) yield* pull(mirror);
         yield* Ref.update(mirrored, (map) => new Map(map).set(image, mirror));
+        return mirror;
       }).pipe(
         Effect.tap(() => Effect.logInfo(`Pulled image from mirror ${mirror}`)),
         Effect.tapError((cause) => Effect.logWarning(`Image mirror ${mirror} failed`, cause)),
@@ -182,7 +184,7 @@ export const makeContainerRuntime = (options: {
       );
     };
 
-    const prepare = Effect.fn("Container.prepare")(function* (image: string) {
+    const prepareImage = Effect.fn("Container.prepareImage")(function* (image: string) {
       // A mirror chosen earlier may have been pruned since; launches follow the primary again.
       const usePrimary = Ref.update(mirrored, (map) => {
         if (!map.has(image)) return map;
@@ -190,13 +192,20 @@ export const makeContainerRuntime = (options: {
         next.delete(image);
         return next;
       });
-      if (yield* present(image)) return yield* usePrimary;
+      if (yield* present(image)) {
+        yield* usePrimary;
+        return image;
+      }
       const mirrors = options.imageMirrors?.(image) ?? [];
-      yield* pull(image).pipe(
-        Effect.andThen(usePrimary),
+      return yield* pull(image).pipe(
+        Effect.as(image),
+        Effect.tap(() => usePrimary),
         Effect.catch((primaryError) => fromMirror(image, mirrors, primaryError)),
       );
     });
+    const prepare = Effect.fn("Container.prepare")((image: string) =>
+      prepareImage(image).pipe(Effect.asVoid),
+    );
 
     const launch = Effect.fn("Container.launch")(function* (
       spec: ContainerSpec,
@@ -422,5 +431,5 @@ export const makeContainerRuntime = (options: {
         }),
       );
     });
-    return { prepare, launch, launchTool: (spec) => launch(spec, true) };
+    return { prepare, prepareImage, launch, launchTool: (spec) => launch(spec, true) };
   });
