@@ -188,7 +188,7 @@ it.live("preserves composition outcomes over RPC", () =>
       const failed = new OrchestratorError({
         operation: "start",
         message: "member failed",
-        cause: new Error("EACCES: permission denied"),
+        cause: new Error("member failed", { cause: new Error("EACCES: permission denied") }),
       });
       const delayedOwner = {
         ...owner,

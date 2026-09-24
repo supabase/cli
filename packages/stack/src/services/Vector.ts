@@ -112,12 +112,13 @@ const makeSpec = (
         if (creation.config.configPath === undefined)
           yield* writeAtomically(fs, path, defaultPipelinePath, defaultPipelineConfig);
       }),
-    // A caller configPath may live under the instance root, so only recipe files and empty parents go.
+    // A caller configPath may live anywhere under the instance root, so only recipe files and empty directories go.
     removeData: () =>
       Effect.gen(function* () {
         yield* ownedInstance("destroy");
-        yield* fs.remove(configRoot, { recursive: true, force: true });
-        for (const directory of [path.dirname(configRoot), instanceRoot]) {
+        yield* fs.remove(apiConfigPath, { force: true });
+        yield* fs.remove(defaultPipelinePath, { force: true });
+        for (const directory of [configRoot, path.dirname(configRoot), instanceRoot]) {
           if (!(yield* fs.exists(directory))) continue;
           if ((yield* fs.readDirectory(directory)).length > 0) return;
           yield* fs.remove(directory, { recursive: true });

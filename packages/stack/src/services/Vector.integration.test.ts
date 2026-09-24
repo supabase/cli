@@ -54,14 +54,14 @@ describe("vector recipe", () => {
   }
 
   it.live(
-    "keeps a caller pipeline stored under the instance root on destroy",
+    "keeps a caller pipeline stored beside the recipe config on destroy",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-vector-caller-" });
-          const pipeline = `${root}/vector/pipeline.yaml`;
-          yield* fs.makeDirectory(`${root}/vector`, { recursive: true });
+          const pipeline = `${root}/vector/runtime/vector/pipeline.yaml`;
+          yield* fs.makeDirectory(`${root}/vector/runtime/vector`, { recursive: true });
           yield* fs.writeFileString(
             pipeline,
             "sources:\n  s:\n    type: internal_logs\nsinks:\n  d:\n    type: blackhole\n    inputs: [s]\n",
@@ -82,7 +82,7 @@ describe("vector recipe", () => {
           yield* vector.ready;
           yield* vector.destroy;
           expect(yield* fs.exists(pipeline)).toBe(true);
-          expect(yield* fs.exists(`${root}/vector/runtime`)).toBe(false);
+          expect(yield* fs.exists(`${root}/vector/runtime/vector/vector-api.yaml`)).toBe(false);
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     { timeout: 120_000 },
