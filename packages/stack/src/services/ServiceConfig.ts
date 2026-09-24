@@ -46,13 +46,10 @@ const fixedJwt = (secret: string, role: "anon" | "service_role") =>
     catch: (cause) => serviceError("identity", cause),
   });
 
-export const defaultStackIdentity = (jwtSecret: string) =>
+const defaultStackIdentity = (jwtSecret: string) =>
   Effect.gen(function* () {
     const anonKey = yield* fixedJwt(jwtSecret, "anon");
     const serviceRoleKey = yield* fixedJwt(jwtSecret, "service_role");
-    const jwks = yield* stringify({
-      keys: [defaultPublicSigningKey, { kty: "oct", k: Encoding.encodeBase64Url(jwtSecret) }],
-    });
     const gotrueJwtKeys = yield* stringify([DEFAULT_SIGNING_KEY]);
     const publicSigningKeys = yield* stringify([defaultPublicSigningKey]);
     return {
@@ -60,10 +57,8 @@ export const defaultStackIdentity = (jwtSecret: string) =>
       secretKey: DEFAULT_LOCAL_SECRET_KEY,
       anonKey,
       serviceRoleKey,
-      jwks,
       gotrueJwtKeys,
       publicSigningKeys,
-      remoteJwks: "[]",
     };
   });
 
@@ -83,12 +78,24 @@ export const resolveStackIdentity = Effect.fn("ServiceConfig.resolveStackIdentit
       const remoteJwks = input?.remoteJwks ?? "[]";
       const privateKeys = yield* jsonArray(gotrueJwtKeys, "gotrueJwtKeys");
       const normalizedGotrueJwtKeys = yield* stringify(privateKeys);
-      const tokenSourceChanged =
-        saved !== undefined &&
-        (saved.jwtSecret !== jwtSecret || saved.gotrueJwtKeys !== normalizedGotrueJwtKeys);
       const localKeys = yield* jsonArray(publicSigningKeys, "publicSigningKeys");
       const remoteKeys = yield* jsonArray(remoteJwks, "remoteJwks");
       const hasConfiguredSigningKeys = input?.gotrueJwtKeys !== undefined && privateKeys.length > 0;
+      let savedLocalKeys: ReadonlyArray<unknown> = [];
+      if (saved !== undefined) {
+        const savedJwks = yield* Schema.decodeEffect(
+          Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.Unknown) })),
+        )(saved.jwks).pipe(Effect.mapError((cause) => serviceError("identity", cause)));
+        const savedRemoteKeys = yield* jsonArray(saved.remoteJwks, "remoteJwks");
+        savedLocalKeys = savedJwks.keys.slice(savedRemoteKeys.length);
+      }
+      const tokenSourceChanged =
+        saved !== undefined &&
+        (saved.jwtSecret !== jwtSecret ||
+          saved.gotrueJwtKeys !== normalizedGotrueJwtKeys ||
+          savedLocalKeys.some(
+            (key) => typeof key === "object" && key !== null && "kty" in key && key.kty === "oct",
+          ) !== !hasConfiguredSigningKeys);
       const jwks = yield* stringify({
         keys: [
           ...remoteKeys,
@@ -98,7 +105,6 @@ export const resolveStackIdentity = Effect.fn("ServiceConfig.resolveStackIdentit
             : [{ kty: "oct", k: Encoding.encodeBase64Url(jwtSecret) }]),
         ],
       });
-      const normalizedPublicSigningKeys = yield* stringify(localKeys);
       const normalizedRemoteJwks = yield* stringify(remoteKeys);
       const anonKeyIsOverride = input?.anonKeyIsOverride ?? input?.anonKey !== undefined;
       const serviceRoleKeyIsOverride =
@@ -110,15 +116,14 @@ export const resolveStackIdentity = Effect.fn("ServiceConfig.resolveStackIdentit
           ? (input?.anonKey ?? defaults.anonKey)
           : saved !== undefined && !saved.anonKeyIsOverride && !tokenSourceChanged
             ? saved.anonKey
-            : (input?.anonKey ?? (yield* fixedJwt(jwtSecret, "anon"))),
+            : (input?.anonKey ?? defaults.anonKey),
         serviceRoleKey: serviceRoleKeyIsOverride
           ? (input?.serviceRoleKey ?? defaults.serviceRoleKey)
           : saved !== undefined && !saved.serviceRoleKeyIsOverride && !tokenSourceChanged
             ? saved.serviceRoleKey
-            : (input?.serviceRoleKey ?? (yield* fixedJwt(jwtSecret, "service_role"))),
+            : (input?.serviceRoleKey ?? defaults.serviceRoleKey),
         jwks,
         gotrueJwtKeys: normalizedGotrueJwtKeys,
-        publicSigningKeys: normalizedPublicSigningKeys,
         remoteJwks: normalizedRemoteJwks,
         anonKeyIsOverride,
         serviceRoleKeyIsOverride,

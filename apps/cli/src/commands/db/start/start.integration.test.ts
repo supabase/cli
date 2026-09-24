@@ -1667,7 +1667,6 @@ describe("db start stack backend", () => {
           serviceRoleKey: "service-token",
           jwks: '{"keys":[]}',
           gotrueJwtKeys: "[]",
-          publicSigningKeys: "[]",
           remoteJwks: "[]",
           anonKeyIsOverride: false,
           serviceRoleKeyIsOverride: false,

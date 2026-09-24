@@ -50,7 +50,6 @@ export const StackCredentials = Schema.Struct({
   serviceRoleKey: Schema.String,
   jwks: Schema.String,
   gotrueJwtKeys: Schema.String,
-  publicSigningKeys: Schema.String,
   remoteJwks: Schema.String,
   anonKeyIsOverride: Schema.Boolean,
   serviceRoleKeyIsOverride: Schema.Boolean,

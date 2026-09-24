@@ -352,7 +352,6 @@ const makeOwnerWithDependencies = (
               next.serviceRoleKey !== saved.serviceRoleKey ||
               next.jwks !== saved.jwks ||
               next.gotrueJwtKeys !== saved.gotrueJwtKeys ||
-              next.publicSigningKeys !== saved.publicSigningKeys ||
               next.remoteJwks !== saved.remoteJwks ||
               next.anonKeyIsOverride !== saved.anonKeyIsOverride ||
               next.serviceRoleKeyIsOverride !== saved.serviceRoleKeyIsOverride;
@@ -380,7 +379,6 @@ const makeOwnerWithDependencies = (
                 .save({ ...current, credentials: next })
                 .pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
             }
-            Object.assign(routeKeys, next);
             return next;
           }),
         )
@@ -411,8 +409,47 @@ const makeOwnerWithDependencies = (
           jwtSecret: Redacted.make(credentials.jwtSecret),
           rootKey: Redacted.make(credentials.postgresRootKey),
         });
-      } else if (consumesCredentials(creation)) {
+      } else {
         Object.assign(config, { jwtSecret: credentials.jwtSecret });
+        switch (creation.service) {
+          case "auth":
+            Object.assign(config, {
+              gotrueJwtKeys: creation.config.gotrueJwtKeys ?? credentials.gotrueJwtKeys,
+            });
+            break;
+          case "rest":
+          case "realtime":
+            Object.assign(config, {
+              jwks: creation.config.jwks ?? credentials.jwks,
+            });
+            break;
+          case "storage":
+            Object.assign(config, {
+              jwks: creation.config.jwks ?? credentials.jwks,
+              anonKey: creation.config.anonKey ?? credentials.anonKey,
+              serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
+            });
+            break;
+          case "functions":
+            Object.assign(config, {
+              jwks: creation.config.jwks ?? credentials.jwks,
+              anonKey: creation.config.anonKey ?? credentials.anonKey,
+              serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
+              publishableKey: creation.config.publishableKey ?? credentials.publishableKey,
+              secretKey: creation.config.secretKey ?? credentials.secretKey,
+            });
+            break;
+          case "studio":
+            Object.assign(config, {
+              anonKey: creation.config.anonKey ?? credentials.anonKey,
+              serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
+              publishableKey: creation.config.publishableKey ?? credentials.publishableKey,
+              secretKey: creation.config.secretKey ?? credentials.secretKey,
+            });
+            break;
+          default:
+            break;
+        }
       }
       return yield* Schema.decodeUnknownEffect(ServiceCreation)({ ...creation, config }).pipe(
         Effect.mapError((cause) => errorFor("credentials", cause)),
@@ -1000,55 +1037,8 @@ const makeOwnerWithDependencies = (
               overrides[key] = value;
             }
           }
-          const credentials = yield* resolveStackCredentials(
-            overrides,
-            compositionOptions?.identity,
-          );
-          const resolved = yield* Effect.forEach(inputs, resolveCredentials);
-          return yield* Effect.forEach(resolved, (creation) => {
-            let config: Record<string, unknown> = creation.config;
-            switch (creation.service) {
-              case "auth":
-                config = { ...creation.config, gotrueJwtKeys: credentials.gotrueJwtKeys };
-                break;
-              case "rest":
-              case "realtime":
-                config = { ...creation.config, jwks: credentials.jwks };
-                break;
-              case "storage":
-                config = {
-                  ...creation.config,
-                  jwks: credentials.jwks,
-                  anonKey: credentials.anonKey,
-                  serviceRoleKey: credentials.serviceRoleKey,
-                };
-                break;
-              case "functions":
-                config = {
-                  ...creation.config,
-                  jwks: credentials.jwks,
-                  anonKey: credentials.anonKey,
-                  serviceRoleKey: credentials.serviceRoleKey,
-                  publishableKey: credentials.publishableKey,
-                  secretKey: credentials.secretKey,
-                };
-                break;
-              case "studio":
-                config = {
-                  ...creation.config,
-                  anonKey: credentials.anonKey,
-                  serviceRoleKey: credentials.serviceRoleKey,
-                  publishableKey: credentials.publishableKey,
-                  secretKey: credentials.secretKey,
-                };
-                break;
-              default:
-                break;
-            }
-            return Schema.decodeUnknownEffect(ServiceCreation)({ ...creation, config }).pipe(
-              Effect.mapError((cause) => errorFor("credentials", cause)),
-            );
-          });
+          yield* resolveStackCredentials(overrides, compositionOptions?.identity);
+          return yield* Effect.forEach(inputs, resolveCredentials);
         }).pipe(
           Effect.flatMap((creations) =>
             makeSupabaseComposition(

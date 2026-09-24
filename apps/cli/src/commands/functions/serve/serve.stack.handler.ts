@@ -257,16 +257,12 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   if (apiUrl === undefined) return yield* invalidConfig("The stack has no runtime API URL.");
   const env =
     envOverride ?? (yield* readStackFunctionsEnv(`${source.config.functionsRoot}/.env`, true));
+  const { jwtSecret: _jwtSecret, ...sourceConfig } = source.config;
   const creation: FunctionsCreation = {
     ...source,
     config: {
-      ...source.config,
-      jwtSecret: identity.jwtSecret,
+      ...sourceConfig,
       jwks,
-      publishableKey: identity.publishableKey,
-      secretKey: identity.secretKey,
-      anonKey: identity.anonKey,
-      serviceRoleKey: identity.serviceRoleKey,
       apiUrl,
       databaseUrl,
       env: { ...env, ...source.config.env, ...envOverride },

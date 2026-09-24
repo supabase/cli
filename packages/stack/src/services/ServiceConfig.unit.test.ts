@@ -1,20 +1,41 @@
 import { expect, it } from "@effect/vitest";
-import { Effect, Encoding } from "effect";
+import { Buffer } from "node:buffer";
+import { Effect, Encoding, Schema } from "effect";
+import { importJWK, jwtVerify, SignJWT } from "jose";
 import {
   DEFAULT_LOCAL_DATABASE_PASSWORD,
   DEFAULT_LOCAL_JWT_SECRET,
   DEFAULT_POSTGRES_ROOT_KEY,
+  DEFAULT_SIGNING_KEY,
 } from "../Defaults.ts";
-import { defaultStackIdentity, resolveStackIdentity } from "./ServiceConfig.ts";
+import { resolveStackIdentity } from "./ServiceConfig.ts";
 
-const savedDefaults = Effect.map(defaultStackIdentity(DEFAULT_LOCAL_JWT_SECRET), (identity) => ({
-  ...identity,
-  jwtSecret: DEFAULT_LOCAL_JWT_SECRET,
-  postgresRootKey: DEFAULT_POSTGRES_ROOT_KEY,
-  databasePassword: DEFAULT_LOCAL_DATABASE_PASSWORD,
-  anonKeyIsOverride: false,
-  serviceRoleKeyIsOverride: false,
-}));
+const PublishedJwks = Schema.fromJsonString(
+  Schema.Struct({
+    keys: Schema.Array(
+      Schema.Union([
+        Schema.Struct({
+          kty: Schema.Literal("EC"),
+          kid: Schema.String,
+          crv: Schema.String,
+          x: Schema.String,
+          y: Schema.String,
+        }),
+        Schema.Struct({ kty: Schema.Literal("oct"), k: Schema.String }),
+      ]),
+    ),
+  }),
+);
+
+const savedDefaults = Effect.map(
+  resolveStackIdentity(DEFAULT_LOCAL_JWT_SECRET, undefined, undefined),
+  (identity) => ({
+    ...identity,
+    jwtSecret: DEFAULT_LOCAL_JWT_SECRET,
+    postgresRootKey: DEFAULT_POSTGRES_ROOT_KEY,
+    databasePassword: DEFAULT_LOCAL_DATABASE_PASSWORD,
+  }),
+);
 
 it.effect("preserves the full saved identity when no identity input is supplied", () =>
   Effect.gen(function* () {
@@ -44,11 +65,10 @@ it.effect("removing key overrides uses new signing-key tokens and drops remote J
       anonKey: "configured-anon",
       serviceRoleKey: "configured-service-role",
       gotrueJwtKeys: privateKeys,
-      publicSigningKeys: publicKeys,
       anonKeyIsOverride: true,
       serviceRoleKeyIsOverride: true,
       remoteJwks: '[{"kid":"remote"}]',
-      jwks: '[{"kid":"remote"}]',
+      jwks: '{"keys":[{"kid":"remote"},{"kid":"public-signing-key"}]}',
     };
     const resolved = yield* resolveStackIdentity(
       DEFAULT_LOCAL_JWT_SECRET,
@@ -75,7 +95,7 @@ it.effect("removing key overrides uses new signing-key tokens and drops remote J
   }),
 );
 
-it.effect("publishes the HMAC key for an empty signing-key file", () =>
+it.effect("publishes a usable HMAC key for an empty signing-key file", () =>
   Effect.gen(function* () {
     const resolved = yield* resolveStackIdentity(
       DEFAULT_LOCAL_JWT_SECRET,
@@ -89,23 +109,91 @@ it.effect("publishes the HMAC key for an empty signing-key file", () =>
     expect(resolved.jwks).toContain('"kty":"oct"');
     expect(resolved.jwks).toContain(Encoding.encodeBase64Url(DEFAULT_LOCAL_JWT_SECRET));
     expect(resolved.gotrueJwtKeys).toBe("[]");
+    const jwks = yield* Schema.decodeEffect(PublishedJwks)(resolved.jwks);
+    const hmacKey = jwks.keys.find((key) => key.kty === "oct");
+    if (hmacKey === undefined) return yield* Effect.die("JWKS has no HMAC key");
+    yield* Effect.tryPromise(() =>
+      jwtVerify(resolved.anonKey, Buffer.from(hmacKey.k, "base64url")),
+    );
+    yield* Effect.tryPromise(() =>
+      jwtVerify(resolved.serviceRoleKey, Buffer.from(hmacKey.k, "base64url")),
+    );
   }),
 );
 
-it.effect("omits the HMAC key when asymmetric signing keys are configured", () =>
-  Effect.gen(function* () {
-    const resolved = yield* resolveStackIdentity(
-      DEFAULT_LOCAL_JWT_SECRET,
-      {
-        gotrueJwtKeys: '[{"kid":"private-key"}]',
-        publicSigningKeys: '[{"kid":"public-key"}]',
-      },
-      undefined,
-    );
+it.effect(
+  "rotates tokens when switching between HMAC and an explicit copy of the default key",
+  () =>
+    Effect.gen(function* () {
+      const defaults = yield* savedDefaults;
+      const publicSigningKey = {
+        kty: DEFAULT_SIGNING_KEY.kty,
+        kid: DEFAULT_SIGNING_KEY.kid,
+        use: DEFAULT_SIGNING_KEY.use,
+        key_ops: ["verify"],
+        alg: DEFAULT_SIGNING_KEY.alg,
+        ext: DEFAULT_SIGNING_KEY.ext,
+        crv: DEFAULT_SIGNING_KEY.crv,
+        x: DEFAULT_SIGNING_KEY.x,
+        y: DEFAULT_SIGNING_KEY.y,
+      };
+      const privateSigningKey = { ...DEFAULT_SIGNING_KEY, key_ops: ["sign"] };
+      const privateKey = yield* Effect.tryPromise(() => importJWK(privateSigningKey, "ES256"));
+      const anonKey = yield* Effect.tryPromise(() =>
+        new SignJWT({ iss: "supabase-demo", role: "anon", exp: 1983812996 })
+          .setProtectedHeader({ alg: "ES256", typ: "JWT", kid: DEFAULT_SIGNING_KEY.kid })
+          .sign(privateKey),
+      );
+      const serviceRoleKey = yield* Effect.tryPromise(() =>
+        new SignJWT({ iss: "supabase-demo", role: "service_role", exp: 1983812996 })
+          .setProtectedHeader({ alg: "ES256", typ: "JWT", kid: DEFAULT_SIGNING_KEY.kid })
+          .sign(privateKey),
+      );
+      const configured = yield* resolveStackIdentity(
+        DEFAULT_LOCAL_JWT_SECRET,
+        {
+          gotrueJwtKeys: JSON.stringify([DEFAULT_SIGNING_KEY]),
+          publicSigningKeys: JSON.stringify([publicSigningKey]),
+          anonKey,
+          serviceRoleKey,
+          anonKeyIsOverride: false,
+          serviceRoleKeyIsOverride: false,
+        },
+        { ...defaults, anonKeyIsOverride: false, serviceRoleKeyIsOverride: false },
+      );
+      expect(configured.anonKey).toBe(anonKey);
+      expect(configured.serviceRoleKey).toBe(serviceRoleKey);
+      expect(configured.jwks).toContain(DEFAULT_SIGNING_KEY.kid);
+      expect(configured.jwks).not.toContain('"kty":"oct"');
+      const configuredJwks = yield* Schema.decodeEffect(PublishedJwks)(configured.jwks);
+      const publishedKeyData = configuredJwks.keys.find((key) => key.kty === "EC");
+      if (publishedKeyData === undefined) return yield* Effect.die("JWKS has no EC key");
+      const publishedKey = yield* Effect.tryPromise(() => importJWK(publishedKeyData, "ES256"));
+      yield* Effect.tryPromise(() => jwtVerify(configured.anonKey, publishedKey));
+      yield* Effect.tryPromise(() => jwtVerify(configured.serviceRoleKey, publishedKey));
 
-    expect(resolved.jwks).toContain("public-key");
-    expect(resolved.jwks).not.toContain('"kty":"oct"');
-  }),
+      const reverted = yield* resolveStackIdentity(
+        DEFAULT_LOCAL_JWT_SECRET,
+        {},
+        {
+          ...configured,
+          jwtSecret: DEFAULT_LOCAL_JWT_SECRET,
+          postgresRootKey: DEFAULT_POSTGRES_ROOT_KEY,
+          databasePassword: DEFAULT_LOCAL_DATABASE_PASSWORD,
+        },
+      );
+      expect(reverted.anonKey).toBe(defaults.anonKey);
+      expect(reverted.serviceRoleKey).toBe(defaults.serviceRoleKey);
+      const revertedJwks = yield* Schema.decodeEffect(PublishedJwks)(reverted.jwks);
+      const revertedHmacKey = revertedJwks.keys.find((key) => key.kty === "oct");
+      if (revertedHmacKey === undefined) return yield* Effect.die("JWKS has no HMAC key");
+      yield* Effect.tryPromise(() =>
+        jwtVerify(reverted.anonKey, Buffer.from(revertedHmacKey.k, "base64url")),
+      );
+      yield* Effect.tryPromise(() =>
+        jwtVerify(reverted.serviceRoleKey, Buffer.from(revertedHmacKey.k, "base64url")),
+      );
+    }),
 );
 
 it.effect("retains generated asymmetric tokens when the signing source is unchanged", () =>
@@ -118,7 +206,7 @@ it.effect("retains generated asymmetric tokens when the signing source is unchan
       anonKey: "saved-asymmetric-anon-token",
       serviceRoleKey: "saved-asymmetric-service-token",
       gotrueJwtKeys: privateKeys,
-      publicSigningKeys: publicKeys,
+      jwks: '{"keys":[{"kid":"public-signing-key"}]}',
     };
     const resolved = yield* resolveStackIdentity(
       DEFAULT_LOCAL_JWT_SECRET,
@@ -146,13 +234,13 @@ it.effect("does not rotate local tokens when only remote JWKS changes", () =>
       anonKey: "saved-asymmetric-anon-token",
       serviceRoleKey: "saved-asymmetric-service-token",
       gotrueJwtKeys: '[{"kid":"local-private"}]',
-      publicSigningKeys: '[{"kid":"local-public"}]',
+      jwks: '{"keys":[{"kid":"local-public"}]}',
     };
     const resolved = yield* resolveStackIdentity(
       DEFAULT_LOCAL_JWT_SECRET,
       {
         gotrueJwtKeys: saved.gotrueJwtKeys,
-        publicSigningKeys: saved.publicSigningKeys,
+        publicSigningKeys: '[{"kid":"local-public"}]',
         remoteJwks: '[{"kid":"rotated-remote"}]',
         anonKeyIsOverride: false,
         serviceRoleKeyIsOverride: false,
@@ -174,7 +262,7 @@ it.effect("keeps generated tokens when signing key JSON formatting changes", () 
       anonKey: "saved-asymmetric-anon-token",
       serviceRoleKey: "saved-asymmetric-service-token",
       gotrueJwtKeys: '[{"kid":"local-private"}]',
-      publicSigningKeys: '[{"kid":"local-public"}]',
+      jwks: '{"keys":[{"kid":"local-public"}]}',
     };
     const resolved = yield* resolveStackIdentity(
       DEFAULT_LOCAL_JWT_SECRET,

@@ -111,7 +111,6 @@ const stackCredentials = {
     keys: [{ kty: "oct", k: Buffer.from(STORAGE_TEST_JWT_SECRET).toString("base64url") }],
   }),
   gotrueJwtKeys: "[]",
-  publicSigningKeys: "[]",
   remoteJwks: "[]",
   anonKeyIsOverride: false,
   serviceRoleKeyIsOverride: false,

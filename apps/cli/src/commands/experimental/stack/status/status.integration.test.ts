@@ -32,7 +32,6 @@ const savedCredentials: StackCredentials = {
   serviceRoleKey: "saved-service-token",
   jwks: '{"keys":[]}',
   gotrueJwtKeys: "[]",
-  publicSigningKeys: "[]",
   remoteJwks: "[]",
   anonKeyIsOverride: false,
   serviceRoleKeyIsOverride: false,

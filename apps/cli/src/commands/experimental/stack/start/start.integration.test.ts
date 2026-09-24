@@ -158,75 +158,6 @@ const requireConcreteCreation = (creation: ServiceCreationInput): ServiceCreatio
   };
 };
 
-const withIdentity = (creation: ServiceCreation, identity: StackCredentials): ServiceCreation => {
-  switch (creation.service) {
-    case "database":
-      return {
-        ...creation,
-        config: { ...creation.config, jwtSecret: Redacted.make(identity.jwtSecret) },
-      };
-    case "rest":
-      return {
-        ...creation,
-        config: { ...creation.config, jwtSecret: identity.jwtSecret, jwks: identity.jwks },
-      };
-    case "auth":
-      return {
-        ...creation,
-        config: {
-          ...creation.config,
-          jwtSecret: identity.jwtSecret,
-          gotrueJwtKeys: identity.gotrueJwtKeys,
-        },
-      };
-    case "realtime":
-      return {
-        ...creation,
-        config: { ...creation.config, jwtSecret: identity.jwtSecret, jwks: identity.jwks },
-      };
-    case "storage":
-      return {
-        ...creation,
-        config: {
-          ...creation.config,
-          jwtSecret: identity.jwtSecret,
-          jwks: identity.jwks,
-          anonKey: identity.anonKey,
-          serviceRoleKey: identity.serviceRoleKey,
-        },
-      };
-    case "functions":
-      return {
-        ...creation,
-        config: {
-          ...creation.config,
-          jwtSecret: identity.jwtSecret,
-          jwks: identity.jwks,
-          anonKey: identity.anonKey,
-          serviceRoleKey: identity.serviceRoleKey,
-          publishableKey: identity.publishableKey,
-          secretKey: identity.secretKey,
-        },
-      };
-    case "studio":
-      return {
-        ...creation,
-        config: {
-          ...creation.config,
-          jwtSecret: identity.jwtSecret,
-          anonKey: identity.anonKey,
-          serviceRoleKey: identity.serviceRoleKey,
-          publishableKey: identity.publishableKey,
-          secretKey: identity.secretKey,
-        },
-      };
-    case "pooler":
-      return { ...creation, config: { ...creation.config, jwtSecret: identity.jwtSecret } };
-    default:
-      return creation;
-  }
-};
-
 const fakeStack = () => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   let stopped = 0;
@@ -247,7 +178,6 @@ const fakeStack = () => {
     serviceRoleKey: "service-token",
     jwks: '{"keys":[]}',
     gotrueJwtKeys: "[]",
-    publicSigningKeys: "[]",
     remoteJwks: "[]",
     anonKeyIsOverride: false,
     serviceRoleKeyIsOverride: false,
@@ -275,7 +205,6 @@ const fakeStack = () => {
       supabase: (creations: ReadonlyArray<ServiceCreationInput>, options) =>
         Effect.sync(() => {
           composed += 1;
-          const publicSigningKeys = options?.identity?.publicSigningKeys;
           const database = creations.find((creation) => creation.service === "database");
           const jwtSecret =
             database?.service === "database" && database.config.jwtSecret !== undefined
@@ -295,18 +224,16 @@ const fakeStack = () => {
             secretKey: options?.identity?.secretKey ?? "sb_secret_test",
             anonKey: options?.identity?.anonKey ?? "anon-token",
             serviceRoleKey: options?.identity?.serviceRoleKey ?? "service-token",
-            jwks: publicSigningKeys === undefined ? '{"keys":[]}' : `{"keys":${publicSigningKeys}}`,
+            jwks: '{"keys":[]}',
             gotrueJwtKeys: options?.identity?.gotrueJwtKeys ?? "[]",
-            publicSigningKeys: "[]",
             remoteJwks: options?.identity?.remoteJwks ?? "[]",
             anonKeyIsOverride: options?.identity?.anonKeyIsOverride ?? false,
             serviceRoleKeyIsOverride: options?.identity?.serviceRoleKeyIsOverride ?? false,
-            ...options?.identity,
           };
           members = creations.map((creation) => {
             const id = `${creation.service}-member`;
             return instance(
-              withIdentity(requireConcreteCreation(creation), savedCredentials),
+              requireConcreteCreation(creation),
               id,
               () => memberStatuses.get(id)?.lifecycle ?? lifecycle,
               () => memberStatuses.get(id)?.wakeEnabled ?? false,
@@ -623,7 +550,6 @@ describe("experimental stack start", () => {
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(1);
       const savedKeys = fixture.savedCredentials.gotrueJwtKeys;
-      const savedJwks = fixture.savedCredentials.jwks;
       const savedAnonKey = fixture.savedCredentials.anonKey;
 
       // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- The stack parser consumes JWK files as JSON.
@@ -632,14 +558,12 @@ describe("experimental stack start", () => {
       expect(fixture.stopped).toBe(0);
       expect(fixture.composed).toBe(1);
       expect(fixture.savedCredentials.gotrueJwtKeys).toBe(savedKeys);
-      expect(fixture.savedCredentials.jwks).toBe(savedJwks);
       expect(fixture.savedCredentials.anonKey).toBe(savedAnonKey);
 
       yield* fixture.stack.composition.stop;
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(2);
       expect(fixture.savedCredentials.gotrueJwtKeys).not.toBe(savedKeys);
-      expect(fixture.savedCredentials.jwks).not.toBe(savedJwks);
       expect(fixture.savedCredentials.anonKey).not.toBe(savedAnonKey);
       expect(fixture.members.find(({ service }) => service === "auth")?.service).toBe("auth");
     }).pipe(Effect.provide(BunServices.layer)),

@@ -167,7 +167,6 @@ const fixture = (
           keys: [savedSigningKey, { kty: "oct", k: "c2F2ZWQtand0LXNlY3JldA" }],
         }),
       gotrueJwtKeys: options.savedGotrueJwtKeys ?? "[]",
-      publicSigningKeys: encodeTestJwkArray([savedSigningKey]),
       remoteJwks: options.savedRemoteJwks ?? "[]",
       anonKeyIsOverride: false,
       serviceRoleKeyIsOverride: false,
@@ -344,42 +343,44 @@ const fixture = (
   });
 
 describe("experimental Stack Functions serve", () => {
-  it.live("creates standalone Functions with saved credentials and local verification keys", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-standalone-" });
-      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-      yield* fs.writeFileString(
-        `${root}/supabase/config.toml`,
-        'project_id = "functions-standalone"\n\n[edge_runtime]\nenabled = true\n',
-      );
-      const state = yield* fixture({ standaloneProjectRoot: root });
-      const run = yield* functionsServeStack(flags()).pipe(
-        Effect.provide(state.layer),
-        Effect.forkChild({ startImmediately: true }),
-      );
-      yield* Deferred.await(state.started);
+  it.live(
+    "delegates standalone Functions credentials to the stack and forwards local verification keys",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-standalone-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "functions-standalone"\n\n[edge_runtime]\nenabled = true\n',
+        );
+        const state = yield* fixture({ standaloneProjectRoot: root });
+        const run = yield* functionsServeStack(flags()).pipe(
+          Effect.provide(state.layer),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(state.started);
 
-      const created = state.createdFunctions;
-      expect(created?.service).toBe("functions");
-      if (created?.service === "functions") {
-        expect(created.config.jwtSecret).toBe("saved-jwt-secret");
-        expect(created.config.publishableKey).toBe("saved-publishable-key");
-        expect(created.config.secretKey).toBe("saved-secret-key");
-        expect(created.config.anonKey).toBe("saved-anon-key");
-        expect(created.config.serviceRoleKey).toBe("saved-service-role-key");
-        expect(created.config.jwks).toBeDefined();
-        const jwks = yield* Schema.decodeEffect(testJwksDocument)(created.config.jwks ?? "");
-        expect(
-          jwks.keys.some((key) => key.kty === "oct" && key.k === "c2F2ZWQtand0LXNlY3JldA"),
-        ).toBe(true);
-        expect(jwks.keys).toContainEqual(savedSigningKey);
-      }
+        const created = state.createdFunctions;
+        expect(created?.service).toBe("functions");
+        if (created?.service === "functions") {
+          expect(created.config.jwtSecret).toBeUndefined();
+          expect(created.config.publishableKey).toBeUndefined();
+          expect(created.config.secretKey).toBeUndefined();
+          expect(created.config.anonKey).toBeUndefined();
+          expect(created.config.serviceRoleKey).toBeUndefined();
+          expect(created.config.jwks).toBeDefined();
+          const jwks = yield* Schema.decodeEffect(testJwksDocument)(created.config.jwks ?? "");
+          expect(
+            jwks.keys.some((key) => key.kty === "oct" && key.k === "c2F2ZWQtand0LXNlY3JldA"),
+          ).toBe(true);
+          expect(jwks.keys).toContainEqual(savedSigningKey);
+        }
 
-      yield* Deferred.succeed(state.signal, undefined);
-      yield* Fiber.join(run);
-      expect(state.destroyed).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+        yield* Deferred.succeed(state.signal, undefined);
+        yield* Fiber.join(run);
+        expect(state.destroyed).toBe(true);
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("refreshes remote JWKS before creating standalone Functions", () =>

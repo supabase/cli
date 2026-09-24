@@ -176,6 +176,51 @@ it.live("forwards and rotates saved identity across composed services in one own
       });
       expect(firstAuth.config.gotrueJwtKeys).toBe(firstCredentials.gotrueJwtKeys);
 
+      const standaloneRest = yield* owner.services.create({
+        service: "rest",
+        config: { databaseUrl: "postgresql://placeholder" },
+        endpoints: {},
+      });
+      expect(standaloneRest.creation.config).toMatchObject({
+        jwtSecret: customJwtSecret,
+        jwks: firstCredentials.jwks,
+      });
+      const standaloneAuth = yield* owner.services.create({
+        service: "auth",
+        config: { databaseUrl: "postgresql://placeholder" },
+        endpoints: {},
+      });
+      expect(standaloneAuth.creation.config).toMatchObject({
+        jwtSecret: customJwtSecret,
+        gotrueJwtKeys: firstCredentials.gotrueJwtKeys,
+      });
+      const standaloneStorage = yield* owner.services.create({
+        service: "storage",
+        config: { databaseUrl: "postgresql://placeholder", filePath: `${root}/standalone-uploads` },
+        endpoints: {},
+      });
+      expect(standaloneStorage.creation.config).toMatchObject({
+        jwtSecret: customJwtSecret,
+        jwks: firstCredentials.jwks,
+        anonKey: firstCredentials.anonKey,
+        serviceRoleKey: firstCredentials.serviceRoleKey,
+      });
+      const standaloneFunctions = yield* owner.services.create({
+        service: "functions",
+        config: {
+          functionsRoot: `${root}/standalone-functions`,
+          bootstrap: "export {};",
+          jwks: "refreshed-functions-jwks",
+        },
+        endpoints: {},
+      });
+      expect(standaloneFunctions.creation.config).toMatchObject({
+        jwtSecret: customJwtSecret,
+        jwks: "refreshed-functions-jwks",
+        anonKey: firstCredentials.anonKey,
+        serviceRoleKey: firstCredentials.serviceRoleKey,
+      });
+
       yield* owner.composition.stop;
       const secondServices = servicesFor().filter((creation) => creation.service !== "studio");
       const studioId = first.find(({ creation }) => creation.service === "studio")?.id;
