@@ -189,6 +189,7 @@ const runStatus = (input: {
           projectRoot: target.projectRoot,
           id: stackId,
           runtime: "native" as const,
+          hostRunning: false,
         }),
     });
     const out = mockOutput({ format: input.outputFormat ?? "text" });

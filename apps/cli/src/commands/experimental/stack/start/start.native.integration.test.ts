@@ -1,7 +1,9 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
+import * as net from "node:net";
+import type { Stack } from "@supabase/stack/effect";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -50,6 +52,54 @@ const prepareFlags = () => ({
 
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
 
+const captureOwnerPid = (capture: (pid: number) => void) =>
+  Layer.effect(
+    StackApi,
+    Effect.gen(function* () {
+      const api = yield* Effect.provide(Effect.service(StackApi), liveStackApi);
+      const observe = (stack: Stack, stateRoot: string): Stack => ({
+        ...stack,
+        composition: {
+          ...stack.composition,
+          supabase: (services, compositionOptions) =>
+            stack.composition.supabase(services, compositionOptions).pipe(
+              Effect.onExit(() =>
+                api.discover({ stateRoot }).pipe(
+                  Effect.flatMap((definitions) => {
+                    const host = definitions.find(
+                      ({ definition }) => definition.id === stack.id,
+                    )?.host;
+                    return host === undefined
+                      ? Effect.die("Stack owner was not discoverable")
+                      : Effect.sync(() => capture(host.pid));
+                  }),
+                ),
+              ),
+            ),
+        },
+      });
+      return StackApi.of({
+        ...api,
+        create: (options) =>
+          api.create(options).pipe(Effect.map((stack) => observe(stack, options.stateRoot))),
+        open: (options) =>
+          api.open(options).pipe(Effect.map((stack) => observe(stack, options.stateRoot))),
+      });
+    }),
+  );
+
+const ownerHasExited = (pid: number) =>
+  Effect.sync(() => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch (cause) {
+      if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ESRCH")
+        return true;
+      throw cause;
+    }
+  });
+
 const projectConfig = `
 project_id = "stack-start-native-integration"
 
@@ -81,10 +131,10 @@ enabled = false
 enabled = false
 `;
 
-const makeLayers = (root: string) => {
+const makeLayers = (root: string, apiLayer = liveStackApi) => {
   const settings = mockCommandSettings({ workdir: root, supabaseHome: root });
   const resolver = stackTargetResolverLayer.pipe(
-    Layer.provide(Layer.mergeAll(BunServices.layer, settings, liveStackApi)),
+    Layer.provide(Layer.mergeAll(BunServices.layer, settings, apiLayer)),
   );
   const output = mockOutput();
   const telemetry = mockTelemetryStateTracked();
@@ -97,7 +147,7 @@ const makeLayers = (root: string) => {
       FetchHttpClient.layer,
       runtimeInfoLayer,
       settings,
-      liveStackApi,
+      apiLayer,
       resolver,
       output.layer,
       telemetry.layer,
@@ -132,6 +182,12 @@ describe("experimental stack start native lifecycle", () => {
           Effect.gen(function* () {
             yield* Effect.scoped(stackPrepare(prepareFlags()));
             const api = yield* StackApi;
+            const preparedDefinitions = yield* api.discover({
+              stateRoot: path.join(root, "stacks"),
+            });
+            const existingOwnerPid = preparedDefinitions[0]?.host?.pid;
+            if (existingOwnerPid === undefined)
+              return yield* Effect.die("prepared stack owner missing");
             const failedStart = yield* Effect.scoped(Effect.exit(stackStart(flags([]))));
             expect(Exit.isFailure(failedStart)).toBe(true);
             const failedDefinitions = yield* api.discover({ stateRoot: path.join(root, "stacks") });
@@ -139,6 +195,8 @@ describe("experimental stack start native lifecycle", () => {
             const failedDefinition = failedDefinitions[0];
             if (failedDefinition === undefined)
               return yield* Effect.die("registered stack missing");
+            expect(failedDefinition.host?.pid).toBe(existingOwnerPid);
+            expect(() => process.kill(existingOwnerPid, 0)).not.toThrow();
             {
               const failedStack = yield* api.open({
                 id: failedDefinition.definition.id,
@@ -218,5 +276,85 @@ describe("experimental stack start native lifecycle", () => {
         ).pipe(Effect.provide(fixture.layer));
       }).pipe(Effect.provide(BunServices.layer)),
     { timeout: 180_000 },
+  );
+
+  it.live(
+    "stops each owner across retries when initial database startup cannot bind its endpoint",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-native-bind-" });
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        const server = net.createServer();
+        const ownedServer = yield* Effect.acquireRelease(
+          Effect.callback<net.Server, Error>((resume) => {
+            const onError = (cause: Error) => resume(Effect.fail(cause));
+            server.once("error", onError);
+            server.listen(0, "127.0.0.1", () => {
+              server.removeListener("error", onError);
+              resume(Effect.succeed(server));
+            });
+            return Effect.sync(() => {
+              server.removeListener("error", onError);
+              if (server.listening) server.close();
+            });
+          }),
+          (listeningServer) =>
+            Effect.callback<void>((resume) => {
+              listeningServer.close(() => resume(Effect.void));
+            }),
+        );
+        const address = ownedServer.address();
+        if (address === null || typeof address === "string")
+          return yield* Effect.die("Unable to reserve a native test port");
+        const occupiedPort = address.port;
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.toml"),
+          projectConfig.replace("[db.pooler]", `[db]\nport = ${occupiedPort}\n\n[db.pooler]`),
+        );
+        const ownerPids: Array<number> = [];
+        const fixture = makeLayers(
+          root,
+          captureOwnerPid((pid) => ownerPids.push(pid)),
+        );
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* Effect.addFinalizer(() =>
+              destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache")),
+            );
+            let stackId: string | undefined;
+            for (let attempt = 0; attempt < 2; attempt++) {
+              const failedStart = yield* Effect.scoped(Effect.exit(stackStart(flags([]))));
+              expect(Exit.isFailure(failedStart)).toBe(true);
+              if (!Exit.isFailure(failedStart)) return;
+              expect(Cause.pretty(failedStart.cause)).toContain(
+                `:${occupiedPort}: Cannot bind TCP listener`,
+              );
+              const ownerPid = ownerPids[attempt];
+              expect(ownerPid).toBeDefined();
+              if (ownerPid === undefined) return yield* Effect.die("stack owner PID missing");
+              expect(yield* ownerHasExited(ownerPid)).toBe(true);
+              const definitions = yield* api.discover({ stateRoot: path.join(root, "stacks") });
+              expect(definitions).toHaveLength(1);
+              const definition = definitions[0];
+              if (definition === undefined) return yield* Effect.die("registered stack missing");
+              if (stackId === undefined) stackId = definition.definition.id;
+              else expect(definition.definition.id).toBe(stackId);
+              expect(definition.host).toBeUndefined();
+              const stack = yield* api.open({
+                id: definition.definition.id,
+                stateRoot: path.join(root, "stacks"),
+                cacheRoot: path.join(root, "cache"),
+              });
+              expect(yield* stack.services.list).toHaveLength(0);
+              expect((yield* stack.composition.describe).members).toHaveLength(0);
+            }
+            expect(ownerPids).toHaveLength(2);
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(BunServices.layer)),
+    { timeout: 60_000 },
   );
 });

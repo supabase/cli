@@ -203,7 +203,8 @@ const fakeStack = () => {
 const layers = (root: string, fixture: ReturnType<typeof fakeStack>, output = mockOutput()) => {
   const telemetry = mockTelemetryStateTracked();
   const target = Layer.succeed(StackTargetResolver, {
-    resolve: () => Effect.succeed({ projectRoot: root, runtime: "native" as const }),
+    resolve: () =>
+      Effect.succeed({ projectRoot: root, runtime: "native" as const, hostRunning: false }),
   });
   const api = Layer.succeed(StackApi, {
     create: () => Effect.succeed(fixture.stack),

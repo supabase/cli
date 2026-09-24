@@ -384,6 +384,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         if (candidate !== undefined) reuseIds.push(candidate.id);
       }
     }
+    const initialCleanupComplete = yield* Ref.make(!initialComposition);
     const starting = yield* output.task("Starting local Supabase stack...");
     if (compositionChanged && composition.members.length > 0) {
       const stopping = yield* output.task(
@@ -404,13 +405,30 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       );
       yield* stopping.succeed();
     }
+    if (!target.hostRunning && initialComposition) {
+      yield* Effect.addFinalizer(() =>
+        Ref.get(initialCleanupComplete).pipe(
+          Effect.flatMap((complete) =>
+            complete
+              ? Effect.void
+              : stack.stop.pipe(
+                  Effect.catch((error) =>
+                    output.raw(
+                      `Failed to stop initial stack host ${stack.id}: ${error.message}. Run supabase stack stop --stack-id ${stack.id} to stop it.\n`,
+                      "stderr",
+                    ),
+                  ),
+                ),
+          ),
+        ),
+      );
+    }
     const members = compositionChanged
       ? yield* compose(stack, requested, reuseIds).pipe(
           Effect.tapError((error) => starting.fail(error.message)),
           Effect.mapError(stackError),
         )
       : currentInstances;
-    const initialCleanupComplete = yield* Ref.make(!initialComposition);
     if (initialComposition) {
       const existingIds = new Set(existingServices.map(({ id }) => id));
       const owned = members.filter(({ id }) => !existingIds.has(id));

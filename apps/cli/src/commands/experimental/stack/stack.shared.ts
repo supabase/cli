@@ -19,6 +19,7 @@ export interface StackTarget {
   readonly id?: StackId;
   readonly name?: string;
   readonly runtime?: "native" | "docker" | "podman";
+  readonly hostRunning: boolean;
 }
 
 export class StackTargetError extends Data.TaggedError("ExperimentalStackTargetError")<{
@@ -170,6 +171,7 @@ export const stackTargetResolverLayer = Layer.effect(
           : found === undefined
             ? { runtime: requestedRuntime }
             : { runtime: found.definition.runtime }),
+        hostRunning: found?.host !== undefined,
       };
     });
     return StackTargetResolver.of({ resolve });
