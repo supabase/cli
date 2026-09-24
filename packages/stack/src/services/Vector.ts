@@ -62,7 +62,7 @@ const writeAtomically = Effect.fn("Vector.writeAtomically")(
   ),
 );
 
-export const makeSpec = (
+const makeSpec = (
   instanceId: string,
   instanceRoot: string,
   fs: FileSystem.FileSystem,
