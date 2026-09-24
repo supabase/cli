@@ -80,7 +80,6 @@ const errorFor = (operation: string, cause: unknown) =>
 const rateLimited = (error: ContainerError) =>
   /toomanyrequests|too many requests|rate limit|rate exceeded/iu.test(error.message);
 
-/** 4 retries (5 attempts) per prepare: 2s exponential, jittered. */
 const PULL_MAX_RETRIES = 4;
 
 const pullBackoff = Schedule.exponential("2 seconds").pipe(Schedule.jittered);
