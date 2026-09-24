@@ -37,6 +37,12 @@ const dockerAvailable = hasDocker();
 const SERVE_OFFLINE_STARTUP_TIMEOUT_MS = 60_000;
 const SERVE_OFFLINE_ATTEMPT_TIMEOUT_MS = 10_000;
 const DOCKER_COMMAND_TIMEOUT_MS = 5_000;
+// Concurrent cold inits of these SQLite caches can unlink a live DB and SIGBUS Edge Runtime
+// (supabase/edge-runtime#746). An empty mountpoint at each v1.76.2 cache path can't be opened or
+// unlinked, so Deno falls back to in-memory caches; drop this once the pinned runtime has the fix.
+const IN_MEMORY_DENO_ANALYSIS_CACHES = ["dep_analysis_cache_v2", "node_analysis_cache_v2"].flatMap(
+  (cache) => ["--tmpfs", `/root/.cache/deno/${cache}`],
+);
 // Cold-cache image resolution (up to a shared 90s budget) runs ahead of the
 // 60s startup wait; the test timeout must cover both stacked.
 const SERVE_OFFLINE_TEST_TIMEOUT_MS = 180_000;
@@ -299,6 +305,7 @@ describe("functions serve runtime template (offline)", () => {
             "SUPABASE_INTERNAL_FUNCTIONS_CONFIG={}",
             "-e",
             "SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=400",
+            ...IN_MEMORY_DENO_ANALYSIS_CACHES,
             "-v",
             `${dir}:/app:ro`,
             "--entrypoint",
@@ -363,6 +370,7 @@ describe("functions serve runtime template (offline)", () => {
             "SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=400",
             "-e",
             'SUPABASE_JWKS={"keys":[]}',
+            ...IN_MEMORY_DENO_ANALYSIS_CACHES,
             "-v",
             `${dir}:/app:ro`,
             "--entrypoint",
@@ -488,6 +496,7 @@ describe("functions serve runtime template (offline)", () => {
             "SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=400",
             "-e",
             'SUPABASE_JWKS={"keys":[]}',
+            ...IN_MEMORY_DENO_ANALYSIS_CACHES,
             "-v",
             `${dir}:/app:ro`,
             "--entrypoint",
