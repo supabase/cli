@@ -11,8 +11,6 @@ allowBuilds:
   msgpackr-extract: true
   sharp: true
 
-autoDedupe: true
-
 catalog:
   "@effect/platform-bun": "4.0.0-rc.112"
   "@effect/platform-node": "4.0.0-rc.112"
@@ -46,6 +44,11 @@ packageExtensions:
   # The global virtual store has no hidden hoist directory
   # (node_modules/.pnpm/node_modules), so anything a package imports without
   # declaring has to be declared here for it to resolve at all.
+  bun-types:
+    dependencies:
+      # bun-types imports undici-types but declares only @types/node; keep
+      # this range matching @types/node's own so both resolve to one copy.
+      undici-types: "~8.3.0"
   "@supabase/pg-delta":
     dependencies:
       # Consumed as raw TypeScript source (`bun` exports condition), which

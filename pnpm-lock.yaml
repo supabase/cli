@@ -231,7 +231,7 @@ catalogs:
 overrides:
   '@launchql/protobufjs>@types/node': 24.10.4
 
-packageExtensionsChecksum: sha256-qKtMg1ZaBD7uYitEE1CXHAyjGFLvZPej+4/sAzgxu3s=
+packageExtensionsChecksum: sha256-+q1Reu9SIvF0cNyYHg1TxU5zvG0d67iLruu2/1HlPHo=
 
 patchedDependencies:
   '@libpg-query/parser@17.6.10': ed67c0ca88b6ced3ec50fd6862f191d6192a246cf20d9c777d45efdb8373bed3
@@ -9322,6 +9322,7 @@ snapshots:
   bun-types@1.4.2:
     dependencies:
       '@types/node': 26.4.1
+      undici-types: 8.3.0
 
   byte-counter@0.1.0: {}
 
