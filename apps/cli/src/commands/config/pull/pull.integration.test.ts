@@ -1,18 +1,20 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Sink,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { join } from "node:path";
 
 import {
   mockOutput,
@@ -32,6 +34,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { GLOBAL_OUTPUT_FORMATS, YesFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -48,64 +51,30 @@ import type { ConfigPullFlags } from "./pull.command.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-pull-int-");
 
+// A past mtime for "untouched file" checks, so a rewrite within the same millisecond still shows.
+const BACKDATED_MTIME_SECONDS = 1_577_836_800;
+
 const BRANCH_REF = "cccccccccccccccccccc";
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
 
-function configPath(): string {
-  return join(tempRoot.current, "supabase", "config.toml");
-}
+const projectFilePath = Effect.fnUntraced(function* (name: string) {
+  const path = yield* Path.Path;
+  return path.join(tempRoot.current, "supabase", name);
+});
 
-function jsonConfigPath(): string {
-  return join(tempRoot.current, "supabase", "config.json");
-}
+const writeProjectFile = Effect.fnUntraced(function* (name: string, contents: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+  yield* fs.writeFileString(yield* projectFilePath(name), contents);
+});
 
-function writeConfig(toml: string): string {
-  const dir = join(tempRoot.current, "supabase");
-  mkdirSync(dir, { recursive: true });
-  const path = configPath();
-  writeFileSync(path, toml);
-  return path;
-}
+const readProjectFile = Effect.fnUntraced(function* (name: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString(yield* projectFilePath(name));
+});
 
-function writeJsonConfig(json: string): string {
-  const dir = join(tempRoot.current, "supabase");
-  mkdirSync(dir, { recursive: true });
-  const path = jsonConfigPath();
-  writeFileSync(path, json);
-  return path;
-}
-
-/** Writes `supabase/.env`, backing `env(VAR)` resolution — copied from
- * `../diff/diff.integration.test.ts`'s own helper. */
-function writeProjectEnv(dotenv: string): void {
-  const dir = join(tempRoot.current, "supabase");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, ".env"), dotenv);
-}
-
-/**
- * Save/restore a `process.env` var around an Effect. Set directly on `process.env` rather than
- * `supabase/.env`: the schema-validation gate resolves `env(VAR)` the same way the loader does
- * (process env layered with the project's own `.env` files), so either source works, and
- * `process.env` is simplest to set/restore in a test.
- */
-function withProcessEnv<A, E, R>(
-  name: string,
-  value: string | undefined,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> {
-  const prev = process.env[name];
-  if (value === undefined) delete process.env[name];
-  else process.env[name] = value;
-  return effect.pipe(
-    Effect.ensuring(
-      Effect.sync(() => {
-        if (prev === undefined) delete process.env[name];
-        else process.env[name] = prev;
-      }),
-    ),
-  );
-}
+const readConfig = readProjectFile("config.toml");
 
 /** Schema-valid v2 project-config body whose managed values all sit at the local schema
  *  defaults, so an empty config.toml diffs clean against it. */
@@ -273,6 +242,12 @@ const BRANCH_CONFIG = {
   db_port: 5432,
 };
 
+type ConfirmSideEffect = Effect.Effect<
+  void,
+  PlatformError.PlatformError,
+  FileSystem.FileSystem | Path.Path
+>;
+
 /**
  * Wraps `base` so every `promptConfirm` call runs `onConfirm` first, simulating a concurrent
  * edit landing on disk while the confirmation prompt is on screen (the TOCTOU case
@@ -280,19 +255,24 @@ const BRANCH_CONFIG = {
  */
 function withConfirmSideEffect(
   base: Layer.Layer<Output>,
-  onConfirm: () => void,
+  onConfirm: ConfirmSideEffect,
 ): Layer.Layer<Output> {
   return Layer.effect(
     Output,
     Effect.gen(function* () {
       const inner = yield* Output;
+      const services = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
       return {
         ...inner,
         promptConfirm: (message: string, promptOpts?: { defaultValue?: boolean }) =>
-          Effect.sync(onConfirm).pipe(Effect.andThen(inner.promptConfirm(message, promptOpts))),
+          onConfirm.pipe(
+            Effect.provide(services),
+            Effect.orDie,
+            Effect.andThen(inner.promptConfirm(message, promptOpts)),
+          ),
       };
     }),
-  ).pipe(Layer.provide(base));
+  ).pipe(Layer.provide(base), Layer.provide(BunServices.layer));
 }
 
 /**
@@ -311,14 +291,12 @@ function mockGitStatusSpawner(
     Effect.gen(function* () {
       state.spawnCalls += 1;
       if (opts.spawnFails === true) {
-        return yield* Effect.fail(
-          PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-            description: "git not found",
-          }),
-        );
+        return yield* PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: "git not found",
+        });
       }
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
@@ -365,7 +343,7 @@ interface SetupOpts {
   readonly gitSpawnFails?: boolean;
   /** Runs as a side effect of every `promptConfirm` call, BEFORE it resolves
    * — simulates a concurrent edit landing while the prompt is on screen. */
-  readonly confirmSideEffect?: () => void;
+  readonly confirmSideEffect?: ConfirmSideEffect;
   /** cliSettings.workdir override (what `--workdir` resolves to); defaults to the temp project root. */
   readonly workdir?: string;
   /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
@@ -373,12 +351,12 @@ interface SetupOpts {
 }
 
 function setup(opts: SetupOpts = {}) {
-  if (opts.toml !== undefined) {
-    writeConfig(opts.toml);
-  }
-  if (opts.dotenv !== undefined) {
-    writeProjectEnv(opts.dotenv);
-  }
+  const projectFiles = Layer.effectDiscard(
+    Effect.all([
+      opts.toml === undefined ? Effect.void : writeProjectFile("config.toml", opts.toml),
+      opts.dotenv === undefined ? Effect.void : writeProjectFile(".env", opts.dotenv),
+    ]),
+  ).pipe(Layer.provide(BunServices.layer));
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const outputLayer =
     opts.confirmSideEffect === undefined
@@ -451,6 +429,7 @@ function setup(opts: SetupOpts = {}) {
     // Listed after `buildTestRuntime` so it overrides the real spawner
     // BunServices.layer provides (last-wins).
     gitStatus.layer,
+    projectFiles,
   );
   return { layer, out, api, telemetry, linkedProjectCache, processControl, gitStatus };
 }
@@ -478,7 +457,7 @@ describe("config pull integration", () => {
       const { layer, out, telemetry, linkedProjectCache } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
         yield* configPull(noFlags);
-        const after = readFileSync(configPath(), "utf8");
+        const after = yield* readConfig;
         expect(countChangedLines(before, after)).toBe(1);
         expect(after).toContain("max_rows = 1000");
         expect(after).not.toContain("max_rows = 500");
@@ -492,12 +471,14 @@ describe("config pull integration", () => {
   it.live("--dry-run leaves the file untouched and reports dry_run in the payload", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, format: "json", yes: true });
-    const path = configPath();
-    const beforeStat = { mtimeMs: statSync(path).mtimeMs, contents: readFileSync(path, "utf8") };
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* projectFilePath("config.toml");
+      yield* fs.utimes(path, BACKDATED_MTIME_SECONDS, BACKDATED_MTIME_SECONDS);
+      const beforeStat = { mtime: (yield* fs.stat(path)).mtime, contents: yield* readConfig };
       yield* configPull({ ...noFlags, dryRun: true });
-      expect(statSync(path).mtimeMs).toBe(beforeStat.mtimeMs);
-      expect(readFileSync(path, "utf8")).toBe(beforeStat.contents);
+      expect((yield* fs.stat(path)).mtime).toEqual(beforeStat.mtime);
+      expect(yield* readConfig).toBe(beforeStat.contents);
       const success = out.messages.find((message) => message.type === "success");
       const data = success?.data as Record<string, unknown>;
       expect(data["dry_run"]).toBe(true);
@@ -525,7 +506,7 @@ describe("config pull integration", () => {
     });
     return Effect.gen(function* () {
       yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
-      const after = readFileSync(configPath(), "utf8");
+      const after = yield* readConfig;
       expect(after.startsWith(before)).toBe(true);
       const remotesIndex = after.indexOf("[remotes.staging]");
       expect(remotesIndex).toBeGreaterThan(-1);
@@ -566,7 +547,7 @@ describe("config pull integration", () => {
       });
       return Effect.gen(function* () {
         yield* configPull(noFlags);
-        const after = readFileSync(configPath(), "utf8");
+        const after = yield* readConfig;
         expect(after).toContain("[auth.oauth_server]");
         expect(after).toContain("enabled = true");
         expect(out.stdoutText).not.toContain("cannot send it back");
@@ -602,7 +583,7 @@ describe("config pull integration", () => {
       });
       return Effect.gen(function* () {
         yield* configPull(noFlags);
-        const after = readFileSync(configPath(), "utf8");
+        const after = yield* readConfig;
         expect(after).toContain("[auth.rate_limit]");
         expect(after).toContain("email_sent = 50");
         expect(out.stdoutText).toContain("Warnings:");
@@ -631,12 +612,13 @@ describe("config pull integration", () => {
       confirm: [false],
     });
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       yield* configPull(noFlags);
-      expect(readFileSync(configPath(), "utf8")).toBe(before);
+      expect(yield* readConfig).toBe(before);
       expect(out.promptConfirmCalls).toHaveLength(1);
       // No [remotes.*] suffix for a root-bound write.
       expect(out.promptConfirmCalls[0]?.message).toBe(
-        `Apply 1 change(s) to ${join("supabase", "config.toml")}?`,
+        `Apply 1 change(s) to ${path.join("supabase", "config.toml")}?`,
       );
       expect(out.stdoutText).toContain("not written (declined)");
     }).pipe(Effect.provide(layer));
@@ -646,10 +628,11 @@ describe("config pull integration", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, format: "json", yes: true });
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       yield* configPull(noFlags);
       const success = out.messages.find((message) => message.type === "success");
       const data = success?.data as Record<string, unknown>;
-      expect(data["config_path"]).toBe(join("supabase", "config.toml"));
+      expect(data["config_path"]).toBe(path.join("supabase", "config.toml"));
       expect(data["destination"]).toEqual({ scope: "base", created: false });
       expect(data["wrote"]).toBe(true);
       expect(data["counts"]).toMatchObject({ written: 1 });
@@ -672,11 +655,13 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPullLoadConfigError");
-      // A defaulted workdir with no project keeps the supabase init suggestion; only an
-      // explicit --workdir/SUPABASE_WORKDIR gets the resolved-path wording.
-      expect(rendered).toContain("supabase init");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPullLoadConfigError");
+        // A defaulted workdir with no project keeps the supabase init suggestion; only an
+        // explicit --workdir/SUPABASE_WORKDIR gets the resolved-path wording.
+        expect(causeText).toContain("supabase init");
+      }
       // The load runs before any network call or target resolution, so the linked-project
       // cache never fires.
       expect(api.requests).toHaveLength(0);
@@ -687,47 +672,58 @@ describe("config pull integration", () => {
 
   it.live(
     "does not climb to an ancestor project's config when --workdir names a subdirectory with no config of its own",
-    () => {
-      // The ancestor (tempRoot) genuinely has a valid config.toml (captured below to prove
-      // it's never touched); the subdirectory genuinely has none.
-      const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
-      const sub = join(tempRoot.current, "nested", "dir");
-      mkdirSync(sub, { recursive: true });
-      const { layer } = setup({ toml: before, yes: true, workdir: sub, explicitWorkdir: true });
-      const path = configPath();
-      const beforeStat = { mtimeMs: statSync(path).mtimeMs, contents: readFileSync(path, "utf8") };
-      return Effect.gen(function* () {
-        const exit = yield* configPull(noFlags).pipe(Effect.exit);
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // The ancestor (tempRoot) genuinely has a valid config.toml (captured below to prove
+        // it's never touched); the subdirectory genuinely has none.
+        const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+        const sub = path.join(tempRoot.current, "nested", "dir");
+        yield* fs.makeDirectory(sub, { recursive: true });
+        yield* writeProjectFile("config.toml", before);
+        const { layer } = setup({ yes: true, workdir: sub, explicitWorkdir: true });
+        const configPath = yield* projectFilePath("config.toml");
+        yield* fs.utimes(configPath, BACKDATED_MTIME_SECONDS, BACKDATED_MTIME_SECONDS);
+        const beforeStat = {
+          mtime: (yield* fs.stat(configPath)).mtime,
+          contents: yield* readConfig,
+        };
+        const exit = yield* configPull(noFlags).pipe(Effect.exit, Effect.provide(layer));
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPullLoadConfigError");
-        expect(rendered).toContain("file not found");
-        // An explicit workdir skips the ancestor-search "supabase init" hint; it names the
-        // resolved directory and the flag/env var to change instead.
-        expect(rendered).not.toContain("supabase init");
-        expect(rendered).toContain("--workdir/SUPABASE_WORKDIR");
-        expect(rendered).toContain(sub);
-        expect(statSync(path).mtimeMs).toBe(beforeStat.mtimeMs);
-        expect(readFileSync(path, "utf8")).toBe(beforeStat.contents);
-      }).pipe(Effect.provide(layer));
-    },
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPullLoadConfigError");
+          expect(causeText).toContain("file not found");
+          // An explicit workdir skips the ancestor-search "supabase init" hint; it names the
+          // resolved directory and the flag/env var to change instead.
+          expect(causeText).not.toContain("supabase init");
+          expect(causeText).toContain("--workdir/SUPABASE_WORKDIR");
+          expect(causeText).toContain(sub);
+        }
+        expect((yield* fs.stat(configPath)).mtime).toEqual(beforeStat.mtime);
+        expect(yield* readConfig).toBe(beforeStat.contents);
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(
     "an explicit --workdir naming a directory that does not exist at all fails before any config load",
-    () => {
-      const missing = join(tempRoot.current, "does-not-exist");
-      const { layer, api } = setup({ workdir: missing, explicitWorkdir: true });
-      return Effect.gen(function* () {
-        const exit = yield* configPull(noFlags).pipe(Effect.exit);
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const missing = path.join(tempRoot.current, "does-not-exist");
+        const { layer, api } = setup({ workdir: missing, explicitWorkdir: true });
+        const exit = yield* configPull(noFlags).pipe(Effect.exit, Effect.provide(layer));
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPullWorkdirError");
-        expect(rendered).toContain("failed to change workdir: chdir");
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPullWorkdirError");
+          expect(causeText).toContain("failed to change workdir: chdir");
+        }
         expect(api.requests).toHaveLength(0);
-        expect(existsSync(missing)).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
+        expect(yield* fs.exists(missing)).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(
@@ -746,7 +742,7 @@ describe("config pull integration", () => {
         yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
         expect(out.stderrText).toContain("→ [remotes.prod]");
         expect(out.stderrText).not.toContain("[remotes.staging]");
-        const after = readFileSync(configPath(), "utf8");
+        const after = yield* readConfig;
         expect(after).not.toContain("[remotes.staging]");
         expect(after).toContain("[remotes.prod.api]");
         expect(after).toContain("max_rows = 1000");
@@ -771,7 +767,7 @@ describe("config pull integration", () => {
         remoteLabel: Option.some("prod"),
       });
       expect(out.stderrText).toContain("→ [remotes.prod]");
-      expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
+      expect(yield* readConfig).toContain("max_rows = 1000");
     }).pipe(Effect.provide(layer));
   });
 
@@ -788,9 +784,10 @@ describe("config pull integration", () => {
       ].join("\n");
       const { layer, out } = setup({ toml: before, stdinIsTty: true, confirm: [true] });
       return Effect.gen(function* () {
+        const path = yield* Path.Path;
         yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
         expect(out.promptConfirmCalls[0]?.message).toBe(
-          `Apply 1 change(s) to ${join("supabase", "config.toml")} [remotes.prod]?`,
+          `Apply 1 change(s) to ${path.join("supabase", "config.toml")} [remotes.prod]?`,
         );
       }).pipe(Effect.provide(layer));
     },
@@ -812,11 +809,13 @@ describe("config pull integration", () => {
           remoteLabel: Option.some("prod"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPullRemoteLabelCollisionError");
-        expect(rendered).toContain('--remote-label \\"prod\\"');
-        expect(rendered).toContain("dddddddddddddddddddd");
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPullRemoteLabelCollisionError");
+          expect(causeText).toContain('--remote-label "prod"');
+          expect(causeText).toContain("dddddddddddddddddddd");
+        }
+        expect(yield* readConfig).toBe(before);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -837,12 +836,14 @@ describe("config pull integration", () => {
           remoteLabel: Option.some("newname"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPullRemoteLabelCollisionError");
-        // Names the actually conflicting block (`other`), not the requested-but-unused label.
-        expect(rendered).toContain("[remotes.other] already tracks project");
-        expect(rendered).toContain(VALID_REF);
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPullRemoteLabelCollisionError");
+          // Names the actually conflicting block (`other`), not the requested-but-unused label.
+          expect(causeText).toContain("[remotes.other] already tracks project");
+          expect(causeText).toContain(VALID_REF);
+        }
+        expect(yield* readConfig).toBe(before);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -864,10 +865,12 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPullRemoteEnvRefError");
-        expect(rendered).toContain("REMOTE_REF");
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPullRemoteEnvRefError");
+          expect(causeText).toContain("REMOTE_REF");
+        }
+        expect(yield* readConfig).toBe(before);
         // Fails purely from the scope resolver — never even reaches the fetch.
         expect(api.requests.some((request) => request.url.includes("/v2/projects/"))).toBe(false);
       }).pipe(Effect.provide(layer));
@@ -890,7 +893,7 @@ describe("config pull integration", () => {
       });
       return Effect.gen(function* () {
         yield* configPull({ ...noFlags, remoteLabel: Option.some("y") });
-        const after = readFileSync(configPath(), "utf8");
+        const after = yield* readConfig;
         expect(after).toContain("[remotes.y]");
         expect(after).toContain(`project_id = "${VALID_REF}"`);
         // The unrelated env()-spelled block is left exactly as it was.
@@ -917,10 +920,12 @@ describe("config pull integration", () => {
           projectRef: Option.some("staging"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPullRemoteLabelCollisionError");
-        expect(rendered).toContain("dddddddddddddddddddd");
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPullRemoteLabelCollisionError");
+          expect(causeText).toContain("dddddddddddddddddddd");
+        }
+        expect(yield* readConfig).toBe(before);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -941,10 +946,12 @@ describe("config pull integration", () => {
           remoteLabel: Option.some(`stag${String.fromCharCode(1)}ing`),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPullRemoteLabelCollisionError");
-        expect(rendered).toContain("dddddddddddddddddddd");
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPullRemoteLabelCollisionError");
+          expect(causeText).toContain("dddddddddddddddddddd");
+        }
+        expect(yield* readConfig).toBe(before);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -965,8 +972,10 @@ describe("config pull integration", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* configPull(noFlags);
-      const entries = readdirSync(join(tempRoot.current, "supabase"));
+      const entries = yield* fs.readDirectory(path.join(tempRoot.current, "supabase"));
       expect(entries.some((name) => name.includes(".tmp."))).toBe(false);
       expect(entries).toContain("config.toml");
     }).pipe(Effect.provide(layer));
@@ -983,13 +992,15 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPullUnsupportedLayoutError");
-        // Prose, not the raw reason token, plus a remediation sentence.
-        expect(rendered).toContain("an inline table on this path");
-        expect(rendered).toContain("Rewrite it as a standard [table] section, then rerun.");
-        expect(rendered).not.toContain("inline_table_on_path");
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPullUnsupportedLayoutError");
+          // Prose, not the raw reason token, plus a remediation sentence.
+          expect(causeText).toContain("an inline table on this path");
+          expect(causeText).toContain("Rewrite it as a standard [table] section, then rerun.");
+          expect(causeText).not.toContain("inline_table_on_path");
+        }
+        expect(yield* readConfig).toBe(before);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1019,9 +1030,7 @@ describe("config pull integration", () => {
     });
     return Effect.gen(function* () {
       yield* configPull(noFlags);
-      expect(readFileSync(configPath(), "utf8")).toContain(
-        'site_url = "https://local.example.com"',
-      );
+      expect(yield* readConfig).toContain('site_url = "https://local.example.com"');
       const success = out.messages.find((message) => message.type === "success");
       const data = success?.data as Record<string, unknown>;
       const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
@@ -1051,7 +1060,7 @@ describe("config pull integration", () => {
       });
       return Effect.gen(function* () {
         yield* configPull(noFlags);
-        const after = readFileSync(configPath(), "utf8");
+        const after = yield* readConfig;
         expect(after).toContain('site_url = "env(SITE_URL)"');
         expect(after).toContain("max_rows = 1000");
         const success = out.messages.find((message) => message.type === "success");
@@ -1080,7 +1089,7 @@ describe("config pull integration", () => {
       const { layer, out } = setup({ toml: before, dotenv: "SMTP_PASS=hunter2\n", yes: true });
       return Effect.gen(function* () {
         yield* configPull(noFlags);
-        expect(readFileSync(configPath(), "utf8")).toContain('pass = "env(SMTP_PASS)"');
+        expect(yield* readConfig).toContain('pass = "env(SMTP_PASS)"');
         expect(out.stdoutText).toContain(
           "Note: 1 credential value not compared (masked by the API): auth.email.smtp.pass",
         );
@@ -1119,7 +1128,7 @@ describe("config pull integration", () => {
       });
       return Effect.gen(function* () {
         yield* configPull(noFlags);
-        const after = readFileSync(configPath(), "utf8");
+        const after = yield* readConfig;
         // site_url stays byte-identical since the remote's env()-spelled value is never
         // written, while the unrelated max_rows change is written normally.
         expect(after).toContain('site_url = "https://local.example.com"');
@@ -1176,9 +1185,7 @@ describe("config pull integration", () => {
         yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
         expect(out.stdoutText).not.toContain("Warnings:");
         expect(out.stdoutText).not.toContain("also configures the local stack");
-        expect(readFileSync(configPath(), "utf8")).toContain(
-          'site_url = "https://staging.example.com"',
-        );
+        expect(yield* readConfig).toContain('site_url = "https://staging.example.com"');
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1207,7 +1214,7 @@ describe("config pull integration", () => {
         expect(out.stdoutText).toContain(
           "api.max_rows already matches the config root's value — this remote block now carries a redundant copy.",
         );
-        expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
+        expect(yield* readConfig).toContain("max_rows = 1000");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1221,8 +1228,10 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ConfigPullUncommittedChangesError");
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPullUncommittedChangesError");
+        }
+        expect(yield* readConfig).toBe(before);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1239,8 +1248,10 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPullUncommittedChangesError");
-      expect(readFileSync(configPath(), "utf8")).toBe(before);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPullUncommittedChangesError");
+      }
+      expect(yield* readConfig).toBe(before);
     }).pipe(Effect.provide(layer));
   });
 
@@ -1252,8 +1263,10 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ConfigPullUncommittedChangesError");
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPullUncommittedChangesError");
+        }
+        expect(yield* readConfig).toBe(before);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1265,7 +1278,7 @@ describe("config pull integration", () => {
       const { layer, out } = setup({ toml: before, gitDirty: true, yes: true });
       return Effect.gen(function* () {
         yield* configPull({ ...noFlags, force: true });
-        expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
+        expect(yield* readConfig).toContain("max_rows = 1000");
         expect(out.stdoutText).not.toContain("uncommitted changes");
       }).pipe(Effect.provide(layer));
     },
@@ -1287,7 +1300,7 @@ describe("config pull integration", () => {
           "supabase/config.toml has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
         );
         expect(out.promptConfirmCalls[0]?.opts).toEqual({ defaultValue: false });
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        expect(yield* readConfig).toBe(before);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1297,7 +1310,7 @@ describe("config pull integration", () => {
     const { layer, out } = setup({ toml: before, gitSpawnFails: true, yes: true });
     return Effect.gen(function* () {
       yield* configPull(noFlags);
-      expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
+      expect(yield* readConfig).toContain("max_rows = 1000");
       expect(out.stdoutText).not.toContain("uncommitted changes");
     }).pipe(Effect.provide(layer));
   });
@@ -1318,7 +1331,7 @@ describe("config pull integration", () => {
         const data = success?.data as Record<string, unknown>;
         expect(data["wrote"]).toBe(false);
         expect(gitStatus.spawnCalls).toBe(0);
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        expect(yield* readConfig).toBe(before);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1339,8 +1352,10 @@ describe("config pull integration", () => {
           projectRef: Option.some("staging"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ConfigPullUncommittedChangesError");
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPullUncommittedChangesError");
+        }
+        expect(yield* readConfig).toBe(before);
         expect(gitStatus.spawnCalls).toBe(1);
       }).pipe(Effect.provide(layer));
     },
@@ -1357,10 +1372,13 @@ describe("config pull integration", () => {
         v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
       });
       return Effect.gen(function* () {
+        const path = yield* Path.Path;
         yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
         expect(first.out.promptConfirmCalls).toHaveLength(1);
         expect(first.out.promptConfirmCalls[0]?.message).toContain("Create [remotes.staging] in");
-        expect(first.out.promptConfirmCalls[0]?.message).toContain(join("supabase", "config.toml"));
+        expect(first.out.promptConfirmCalls[0]?.message).toContain(
+          path.join("supabase", "config.toml"),
+        );
         // The block-only body states its one action too, not only the confirmation prompt above.
         expect(first.out.stdoutText).toContain(
           `New block [remotes.staging] will be created (project_id = ${BRANCH_REF}).`,
@@ -1368,7 +1386,7 @@ describe("config pull integration", () => {
         expect(first.out.stdoutText).toContain(
           "Created [remotes.staging]; no config differences to apply.",
         );
-        const afterFirst = readFileSync(configPath(), "utf8");
+        const afterFirst = yield* readConfig;
         const remotesIndex = afterFirst.indexOf("[remotes.staging]");
         expect(remotesIndex).toBeGreaterThan(-1);
         expect(afterFirst.slice(0, remotesIndex)).toBe(`${before}\n`);
@@ -1388,7 +1406,7 @@ describe("config pull integration", () => {
         const data = success?.data as Record<string, unknown>;
         expect(data["destination"]).toMatchObject({ created: false });
         expect(data["wrote"]).toBe(false);
-        expect(readFileSync(configPath(), "utf8")).toBe(afterFirst);
+        expect(yield* readConfig).toBe(afterFirst);
       }).pipe(Effect.provide(first.layer));
     },
   );
@@ -1399,7 +1417,7 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       yield* configPull({ ...noFlags, remoteLabel: Option.some("customname") });
       expect(out.stderrText).toContain("→ [remotes.customname]");
-      expect(readFileSync(configPath(), "utf8")).toBe(
+      expect(yield* readConfig).toBe(
         `${before}\n[remotes.customname]\nproject_id = "${VALID_REF}"\n`,
       );
     }).pipe(Effect.provide(layer));
@@ -1420,7 +1438,7 @@ describe("config pull integration", () => {
           projectRef: Option.some("staging"),
           dryRun: true,
         });
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        expect(yield* readConfig).toBe(before);
         const success = out.messages.find((message) => message.type === "success");
         const data = success?.data as Record<string, unknown>;
         expect(data["dry_run"]).toBe(true);
@@ -1440,7 +1458,7 @@ describe("config pull integration", () => {
     });
     return Effect.gen(function* () {
       yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
-      expect(readFileSync(configPath(), "utf8")).toBe(before);
+      expect(yield* readConfig).toBe(before);
       expect(out.promptConfirmCalls).toHaveLength(1);
       expect(out.stdoutText).toContain("[remotes.staging] not created (declined).");
     }).pipe(Effect.provide(layer));
@@ -1452,7 +1470,7 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       yield* configPull(noFlags);
       expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
+      expect(yield* readConfig).toContain("max_rows = 1000");
     }).pipe(Effect.provide(layer));
   });
 
@@ -1463,13 +1481,13 @@ describe("config pull integration", () => {
       const first = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
         yield* configPull(noFlags);
-        const afterFirst = readFileSync(configPath(), "utf8");
+        const afterFirst = yield* readConfig;
         expect(afterFirst).toContain("max_rows = 1000");
 
         const second = setup({ toml: afterFirst, yes: true });
         yield* configPull(noFlags).pipe(Effect.provide(second.layer));
         expect(second.out.stdoutText).toContain("No config differences found.");
-        expect(readFileSync(configPath(), "utf8")).toBe(afterFirst);
+        expect(yield* readConfig).toBe(afterFirst);
       }).pipe(Effect.provide(first.layer));
     },
   );
@@ -1483,13 +1501,15 @@ describe("config pull integration", () => {
         toml: before,
         stdinIsTty: true,
         confirm: [true],
-        confirmSideEffect: () => writeFileSync(configPath(), concurrent),
+        confirmSideEffect: writeProjectFile("config.toml", concurrent),
       });
       return Effect.gen(function* () {
         const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ConfigPullFileChangedError");
-        expect(readFileSync(configPath(), "utf8")).toBe(concurrent);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPullFileChangedError");
+        }
+        expect(yield* readConfig).toBe(concurrent);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1504,11 +1524,13 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPullOutputFlagUnsupportedError");
-        expect(rendered).toContain(
-          "the -o/--output flag is not supported by config pull; use --output-format json|stream-json instead.",
-        );
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPullOutputFlagUnsupportedError");
+          expect(causeText).toContain(
+            "the -o/--output flag is not supported by config pull; use --output-format json|stream-json instead.",
+          );
+        }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     };
@@ -1562,7 +1584,7 @@ describe("config pull integration", () => {
       );
       // A UUID target creates a new `[remotes.*]` block falling back to the
       // resolved project ref as the label (no branch name to use instead).
-      expect(readFileSync(configPath(), "utf8")).toContain(`[remotes.${BRANCH_REF}]`);
+      expect(yield* readConfig).toContain(`[remotes.${BRANCH_REF}]`);
     }).pipe(Effect.provide(layer));
   });
 
@@ -1593,9 +1615,11 @@ describe("config pull integration", () => {
           projectRef: Option.some("somebranch"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPullBranchNotLinkedError");
-        expect(rendered).toContain('\\"somebranch\\"');
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPullBranchNotLinkedError");
+          expect(causeText).toContain('"somebranch"');
+        }
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
         expect(linkedProjectCache.cachedRef).toBeUndefined();
@@ -1614,10 +1638,12 @@ describe("config pull integration", () => {
         projectRef: Option.some("somebranch"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPullParentRefInvalidError");
-      expect(rendered).toContain('\\"somebranch\\"');
-      expect(rendered).toContain("Relink the parent project");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPullParentRefInvalidError");
+        expect(causeText).toContain('"somebranch"');
+        expect(causeText).toContain("Relink the parent project");
+      }
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -1632,10 +1658,12 @@ describe("config pull integration", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPullBranchNotFoundError");
-      expect(rendered).toContain('Branch \\"ghost\\" not found');
-      expect(rendered).toContain("supabase branches list");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPullBranchNotFoundError");
+        expect(causeText).toContain('Branch "ghost" not found');
+        expect(causeText).toContain("supabase branches list");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1650,9 +1678,11 @@ describe("config pull integration", () => {
         projectRef: Option.some("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPullBranchNotReadyError");
-      expect(rendered).toContain("has no project ref yet");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPullBranchNotReadyError");
+        expect(causeText).toContain("has no project ref yet");
+      }
       expect(api.requests.some((request) => request.url.includes("/v2/projects/"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -1668,19 +1698,26 @@ describe("config pull integration", () => {
         projectRef: Option.some("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPullReadStatusError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPullReadStatusError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("a malformed config aborts before any network call, even with a branch target", () => {
     const { layer, api, telemetry } = setup({ toml: "not [valid toml\n" });
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       const exit = yield* configPull({
         ...noFlags,
         projectRef: Option.some("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(`failed to parse ${join("supabase", "config.toml")}`);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain(
+          `failed to parse ${path.join("supabase", "config.toml")}`,
+        );
+      }
       expect(api.requests).toHaveLength(0);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -1699,7 +1736,9 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPullLoadConfigError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPullLoadConfigError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1722,9 +1761,11 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ProjectConfigParseError");
-      expect(rendered).toContain("Could not read the project config");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectConfigParseError");
+        expect(causeText).toContain("Could not read the project config");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1736,9 +1777,11 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPullReadStatusError");
-      expect(rendered).toContain("supabase login");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPullReadStatusError");
+        expect(causeText).toContain("supabase login");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1750,10 +1793,12 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPullReadStatusError");
-      expect(rendered).toContain("Access denied");
-      expect(rendered).toContain(VALID_REF);
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPullReadStatusError");
+        expect(causeText).toContain("Access denied");
+        expect(causeText).toContain(VALID_REF);
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1765,10 +1810,12 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain(`Could not read configuration for project ${VALID_REF}`);
-      expect(rendered).toContain("supabase projects list");
-      expect(rendered).toContain(DEFAULT_API_URL);
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain(`Could not read configuration for project ${VALID_REF}`);
+        expect(causeText).toContain("supabase projects list");
+        expect(causeText).toContain(DEFAULT_API_URL);
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1780,7 +1827,9 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain('unexpected status 500: {\\"message\\":\\"boom\\"}');
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain('unexpected status 500: {"message":"boom"}');
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1788,14 +1837,12 @@ describe("config pull integration", () => {
     "a config.json project is rewritten preserving key order and indent, changing only the drifted property",
     () => {
       const before = `${JSON.stringify({ project_id: "test", api: { max_rows: 500 } }, null, 4)}\n`;
-      writeJsonConfig(before);
+      const expected = `${JSON.stringify({ project_id: "test", api: { max_rows: 1000 } }, null, 4)}\n`;
       const { layer } = setup({ yes: true });
       return Effect.gen(function* () {
+        yield* writeProjectFile("config.json", before);
         yield* configPull(noFlags);
-        const after = readFileSync(jsonConfigPath(), "utf8");
-        expect(after).toBe(
-          `${JSON.stringify({ project_id: "test", api: { max_rows: 1000 } }, null, 4)}\n`,
-        );
+        expect(yield* readProjectFile("config.json")).toBe(expected);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1808,9 +1855,11 @@ describe("config pull integration", () => {
         projectRef: Option.some("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPullReadNetworkError");
-      expect(rendered).toContain("failed to resolve branch");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPullReadNetworkError");
+        expect(causeText).toContain("failed to resolve branch");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1819,7 +1868,9 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPullReadNetworkError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPullReadNetworkError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1832,7 +1883,9 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPullReadStatusError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPullReadStatusError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1841,7 +1894,9 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPullReadNetworkError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPullReadNetworkError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1852,7 +1907,9 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ConfigPullReadNetworkError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPullReadNetworkError");
+        }
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1879,7 +1936,7 @@ describe("config pull integration", () => {
       yield* configPull({ ...noFlags, dryRun: true });
       expect(out.stdoutText).toContain("api.max_rows [update, write]");
       expect(out.stdoutText).toContain("1 change would be written (dry run).");
-      expect(readFileSync(configPath(), "utf8")).toBe(before);
+      expect(yield* readConfig).toBe(before);
     }).pipe(Effect.provide(layer));
   });
 
@@ -1891,12 +1948,17 @@ describe("config pull integration", () => {
         toml: before,
         stdinIsTty: true,
         confirm: [true],
-        confirmSideEffect: () => rmSync(configPath()),
+        confirmSideEffect: Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.remove(yield* projectFilePath("config.toml"));
+        }),
       });
       return Effect.gen(function* () {
         const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ConfigPullFileChangedError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPullFileChangedError");
+        }
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1919,7 +1981,7 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       yield* configPull({ ...noFlags, remoteLabel: Option.some("newstage") });
       expect(out.stderrText).toContain("→ [remotes.newstage]");
-      const after = readFileSync(configPath(), "utf8");
+      const after = yield* readConfig;
       expect(after).toContain("[remotes.newstage]");
       expect(after).toContain(`project_id = "${VALID_REF}"`);
     }).pipe(Effect.provide(layer));
@@ -1928,15 +1990,17 @@ describe("config pull integration", () => {
   it.live("a filesystem write failure maps to ConfigPullWriteError", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer } = setup({ toml: before, yes: true });
-    const dir = join(tempRoot.current, "supabase");
-    chmodSync(dir, 0o500);
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = path.join(tempRoot.current, "supabase");
+      yield* fs.chmod(dir, 0o500);
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
-      chmodSync(dir, 0o700);
+      yield* fs.chmod(dir, 0o700);
       // Running as root (some CI/container setups) bypasses the permission bit, so skip the
       // assertion instead of asserting a false negative.
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit)).toContain("ConfigPullWriteError");
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPullWriteError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1995,7 +2059,9 @@ describe("config pull integration", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPullBranchNotFoundError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPullBranchNotFoundError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -2090,7 +2156,7 @@ describe("config pull integration", () => {
         yield* configPull(noFlags);
         expect(out.stdoutText).toContain("auth.site_url [update, skip: env() reference]");
         expect(out.stdoutText).toContain("No changes written.");
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        expect(yield* readConfig).toBe(before);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -2142,12 +2208,12 @@ describe("config pull integration", () => {
         yes: true,
         v2: twilioV2({ withMessageServiceSid: true }),
       });
-      return withProcessEnv(
+      return withEnvVar(
         TWILIO_AUTH_TOKEN_VAR,
         "a-real-secret-value",
         Effect.gen(function* () {
           yield* configPull(noFlags);
-          const after = readFileSync(configPath(), "utf8");
+          const after = yield* readConfig;
           expect(after).toContain("enabled = true");
           expect(after).toContain('account_sid = "ACreal0000000000000000000000000"');
           expect(after).toContain('message_service_sid = "MGreal0000000000000000000000000"');
@@ -2167,7 +2233,7 @@ describe("config pull integration", () => {
           });
           yield* configPull(noFlags).pipe(Effect.provide(second.layer));
           expect(second.out.stdoutText).toContain("No config differences found.");
-          expect(readFileSync(configPath(), "utf8")).toBe(after);
+          expect(yield* readConfig).toBe(after);
         }),
       ).pipe(Effect.provide(layer));
     },
@@ -2202,7 +2268,7 @@ describe("config pull integration", () => {
       });
       return Effect.gen(function* () {
         yield* configPull(noFlags);
-        const after = readFileSync(configPath(), "utf8");
+        const after = yield* readConfig;
         // The unrelated change still wrote.
         expect(after).toContain("max_rows = 250");
         // The whole twilio family (including account_sid, which the fixpoint did classify as
@@ -2221,7 +2287,7 @@ describe("config pull integration", () => {
         // The written file reloads cleanly — it was never touched for the twilio family.
         // openConfigPullSource re-reads and re-decodes the same path; a failing decode would
         // fail this yield*.
-        const configText = readFileSync(configPath(), "utf8");
+        const configText = yield* readConfig;
         const reloaded = yield* openConfigPullSource();
         expect(reloaded.loaded.config.auth.sms.twilio.enabled).toBe(false);
 
@@ -2250,7 +2316,7 @@ describe("config pull integration", () => {
         expect(second.out.stdoutText).toContain(
           "auth.sms.twilio.enabled [update, skip: requires values pull cannot write]",
         );
-        expect(readFileSync(configPath(), "utf8")).toBe(configText);
+        expect(yield* readConfig).toBe(configText);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -2322,7 +2388,7 @@ describe("config pull integration", () => {
       });
       return Effect.gen(function* () {
         yield* configPull(noFlags);
-        const after = readFileSync(configPath(), "utf8");
+        const after = yield* readConfig;
         expect(after).toContain("enabled = true");
         expect(after).toContain('provider = "turnstile"');
 
@@ -2355,7 +2421,7 @@ describe("config pull integration", () => {
       });
       return Effect.gen(function* () {
         yield* configPull(noFlags);
-        const after = readFileSync(configPath(), "utf8");
+        const after = yield* readConfig;
         expect(after).toContain('max_rows = "env(PULL_TEST_NUMERIC_ENV)"');
         expect(after).toContain("graphql_public");
         expect(out.stdoutText).not.toContain("would_invalidate");
@@ -2386,7 +2452,7 @@ describe("config pull integration", () => {
           "enabled = true\n" +
           'account_sid = ""\n' +
           'message_service_sid = ""\n';
-        writeFileSync(configPath(), brokenText);
+        yield* writeProjectFile("config.toml", brokenText);
         const brokenSource: ConfigPullSource = {
           loaded: { ...source.loaded, rawDocument: brokenRawDocument },
           text: brokenText,
@@ -2399,7 +2465,7 @@ describe("config pull integration", () => {
           yes: true,
           source: brokenSource,
         });
-        const after = readFileSync(configPath(), "utf8");
+        const after = yield* readConfig;
         expect(after).toContain("max_rows = 1000");
         // The pre-existing, unrelated twilio state is left exactly as it was; pull never
         // attributes it to this run's own plan.
@@ -2451,7 +2517,7 @@ describe("config pull integration", () => {
       });
       return Effect.gen(function* () {
         yield* configPull({ ...noFlags, projectRef: Option.some(MERGE_CHECK_REF) });
-        const after = readFileSync(configPath(), "utf8");
+        const after = yield* readConfig;
         expect(after).toContain("[remotes.staging.auth.sms.twilio]");
         expect(after).toContain("enabled = false");
         expect(after).not.toContain("ACreal0000000000000000000000000");
