@@ -140,13 +140,29 @@ function replaceImageTag(image: string, tag: string): string {
   return `${image.slice(0, index + 1)}${tag.trim()}`;
 }
 
-function tagForServiceVersion(service: LocalServiceVersionName, version: string): string {
+/** Applies that service's image-tag prefix when the version does not already start with it. */
+export function tagForServiceVersion(service: LocalServiceVersionName, version: string): string {
   const trimmed = version.trim();
   const prefix = SERVICE_VERSION_TAG_PREFIX[service];
   if (prefix === "v" && !trimmed.toLowerCase().startsWith("v")) {
     return `v${trimmed}`;
   }
   return trimmed;
+}
+
+const DOCKER_TAG_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
+
+/**
+ * A pin can be used as an image tag. A doubled `v` (`vv1.2.3`) is rejected:
+ * that pin is left on disk and the caller fails instead of rewriting it.
+ */
+export function isUsableServiceVersionTag(
+  service: LocalServiceVersionName,
+  version: string,
+): boolean {
+  const tag = tagForServiceVersion(service, version);
+  if (!DOCKER_TAG_PATTERN.test(tag)) return false;
+  return !(SERVICE_VERSION_TAG_PREFIX[service] === "v" && /^vv/i.test(tag));
 }
 
 function localServiceImagesForOptions(
@@ -351,7 +367,7 @@ const fetchPostgrestVersion = Effect.fnUntraced(function* (
     return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "postgrest" }));
   }
 
-  return normalized.startsWith("v") ? normalized : `v${normalized}`;
+  return tagForServiceVersion("postgrest", normalized);
 });
 
 const fetchAuthVersion = Effect.fnUntraced(function* (
@@ -379,7 +395,7 @@ const fetchStorageVersion = Effect.fnUntraced(function* (
     return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "storage" }));
   }
 
-  return version.startsWith("v") ? version : `v${version}`;
+  return tagForServiceVersion("storage", version);
 });
 
 const fetchOptionalVersion = (

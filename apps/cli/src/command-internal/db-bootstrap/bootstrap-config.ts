@@ -23,7 +23,10 @@ import {
   envOverrideRealtimeMaxHeaderLength,
   InvalidRealtimeIpVersionEnvOverrideError,
 } from "../local-config-values.ts";
-import { readServiceVersionOverrides } from "../service-version-overrides.ts";
+import {
+  InvalidServiceVersionTagError,
+  readServiceVersionOverrides,
+} from "../service-version-overrides.ts";
 import { ramInBytes } from "../size-units.ts";
 import { tempPaths } from "../temp-paths.ts";
 
@@ -96,7 +99,7 @@ export const resolveDbBootstrapConfig = <E>(
   path: Path.Path,
   input: DbBootstrapConfigInput,
   mapConfigError: (message: string) => E,
-): Effect.Effect<DbBootstrapConfig, E> =>
+): Effect.Effect<DbBootstrapConfig, E | InvalidServiceVersionTagError> =>
   Effect.gen(function* () {
     const { config, projectEnvValues, workdir } = input;
     const remoteOverrideKeys = input.remoteOverrideKeys ?? new Set<string>();
@@ -239,7 +242,7 @@ export const resolveDbBootstrapConfig = <E>(
       orioledbVersion,
     );
     // Read once and reused by the fresh-DB one-shot setup jobs regardless of whether this run's
-    // volume turns out to be fresh; never fails.
+    // volume turns out to be fresh. A missing pin is skipped; an unusable tag fails.
     const serviceVersionOverrides = yield* readServiceVersionOverrides(
       fs,
       path,
