@@ -4804,31 +4804,6 @@ export const V1GetProjectLogsAllInput = Schema.Struct({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
-  sql: Schema.optionalKey(Schema.String),
-  iso_timestamp_start: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-  iso_timestamp_end: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-});
-export const V1GetProjectLogsAllOutput = Schema.Struct({
-  result: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
-  error: Schema.optionalKey(
-    Schema.Union([
-      Schema.String,
-      Schema.Struct({
-        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-        errors: Schema.Array(
-          Schema.Struct({
-            domain: Schema.String,
-            location: Schema.String,
-            locationType: Schema.String,
-            message: Schema.String,
-            reason: Schema.String,
-          }),
-        ),
-        message: Schema.String,
-        status: Schema.String,
-      }),
-    ]),
-  ),
 });
 export const V1GetProjectPgbouncerConfigInput = Schema.Struct({
   ref: Schema.String.check(
@@ -13746,6 +13721,7 @@ export const V1DeleteProjectClaimTokenOutput = Schema.Void;
 export const V1DisablePreviewBranchingOutput = Schema.Void;
 export const V1DisableReadonlyModeTemporarilyOutput = Schema.Void;
 export const V1EnableDatabaseWebhookOutput = Schema.Void;
+export const V1GetProjectLogsAllOutput = Schema.Void;
 export const V1ModifyDatabaseDiskOutput = Schema.Void;
 export const V1OauthAuthorizeProjectClaimOutput = Schema.Void;
 export const V1PatchAMigrationOutput = Schema.Void;
@@ -15232,14 +15208,14 @@ export const operationDefinitions = {
   v1GetProjectLogsAll: {
     id: "v1GetProjectLogsAll",
     description:
-      "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#logs-explorer) for all available sources.",
+      "This endpoint has been removed and always responds with `410 Gone`. Use `GET /v1/projects/{ref}/analytics/endpoints/logs` instead. See the [migration guide](https://supabase.com/changelog/48235-migration-of-supabase-management-api-logs-all-analytics-endpoint-to-logs-endpoint).",
     method: "GET",
     path: "/v1/projects/{ref}/analytics/endpoints/logs.all",
     pathParams: ["ref"],
-    queryParams: ["sql", "iso_timestamp_start", "iso_timestamp_end"],
+    queryParams: [],
     headerParams: [],
     requestBody: { kind: "none" },
-    response: { kind: "json" },
+    response: { kind: "void" },
     inputSchema: V1GetProjectLogsAllInput,
     outputSchema: V1GetProjectLogsAllOutput,
   },

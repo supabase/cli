@@ -219,7 +219,7 @@ type ClientInterface interface {
 	V1GetProjectLogs(ctx context.Context, ref string, params *V1GetProjectLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetProjectLogsAll request
-	V1GetProjectLogsAll(ctx context.Context, ref string, params *V1GetProjectLogsAllParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1GetProjectLogsAll(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1ScrapeProjectMetrics request
 	V1ScrapeProjectMetrics(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1273,8 +1273,8 @@ func (c *Client) V1GetProjectLogs(ctx context.Context, ref string, params *V1Get
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1GetProjectLogsAll(ctx context.Context, ref string, params *V1GetProjectLogsAllParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1GetProjectLogsAllRequest(c.Server, ref, params)
+func (c *Client) V1GetProjectLogsAll(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectLogsAllRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -5357,7 +5357,7 @@ func NewV1GetProjectLogsRequest(server string, ref string, params *V1GetProjectL
 }
 
 // NewV1GetProjectLogsAllRequest generates requests for V1GetProjectLogsAll
-func NewV1GetProjectLogsAllRequest(server string, ref string, params *V1GetProjectLogsAllParams) (*http.Request, error) {
+func NewV1GetProjectLogsAllRequest(server string, ref string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5380,57 +5380,6 @@ func NewV1GetProjectLogsAllRequest(server string, ref string, params *V1GetProje
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.Sql != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "sql", *params.Sql, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.IsoTimestampStart != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "iso_timestamp_start", *params.IsoTimestampStart, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.IsoTimestampEnd != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "iso_timestamp_end", *params.IsoTimestampEnd, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -11664,7 +11613,7 @@ type ClientWithResponsesInterface interface {
 	V1GetProjectLogsWithResponse(ctx context.Context, ref string, params *V1GetProjectLogsParams, reqEditors ...RequestEditorFn) (*V1GetProjectLogsResponse, error)
 
 	// V1GetProjectLogsAllWithResponse request
-	V1GetProjectLogsAllWithResponse(ctx context.Context, ref string, params *V1GetProjectLogsAllParams, reqEditors ...RequestEditorFn) (*V1GetProjectLogsAllResponse, error)
+	V1GetProjectLogsAllWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectLogsAllResponse, error)
 
 	// V1ScrapeProjectMetricsWithResponse request
 	V1ScrapeProjectMetricsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ScrapeProjectMetricsResponse, error)
@@ -13242,7 +13191,6 @@ func (r V1GetProjectLogsResponse) ContentType() string {
 type V1GetProjectLogsAllResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *AnalyticsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -17636,8 +17584,8 @@ func (c *ClientWithResponses) V1GetProjectLogsWithResponse(ctx context.Context, 
 }
 
 // V1GetProjectLogsAllWithResponse request returning *V1GetProjectLogsAllResponse
-func (c *ClientWithResponses) V1GetProjectLogsAllWithResponse(ctx context.Context, ref string, params *V1GetProjectLogsAllParams, reqEditors ...RequestEditorFn) (*V1GetProjectLogsAllResponse, error) {
-	rsp, err := c.V1GetProjectLogsAll(ctx, ref, params, reqEditors...)
+func (c *ClientWithResponses) V1GetProjectLogsAllWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectLogsAllResponse, error) {
+	rsp, err := c.V1GetProjectLogsAll(ctx, ref, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -20112,16 +20060,6 @@ func ParseV1GetProjectLogsAllResponse(rsp *http.Response) (*V1GetProjectLogsAllR
 	response := &V1GetProjectLogsAllResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AnalyticsResponseOutput
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
 	}
 
 	return response, nil

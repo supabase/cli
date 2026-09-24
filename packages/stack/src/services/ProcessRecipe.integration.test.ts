@@ -1,6 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  PlatformError,
   Crypto,
   Deferred,
   Effect,
@@ -11,15 +12,25 @@ import {
   Path,
   Ref,
   Scope,
+  Schema,
   Sink,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { HttpClient } from "effect/unstable/http";
 import { TestClock } from "effect/testing";
+import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { systemError } from "effect/PlatformError";
 import * as Net from "node:net";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
+import * as NodeHttp from "node:http";
 import { prepareNativeArtifact } from "../Artifacts.ts";
+import {
+  makeArtifactStore,
+  type ArtifactRequest,
+  type ArtifactSource,
+} from "../preparation/ArtifactStore.ts";
+import { PreparationError } from "../preparation/Errors.ts";
 import {
   ContainerError,
   ContainerLaunchError,
@@ -34,6 +45,7 @@ import {
 } from "./ProcessRecipe.ts";
 import type { CatalogOptions, RecipeCreation } from "./Recipe.ts";
 import * as Realtime from "./Realtime.ts";
+import * as Pooler from "./Pooler.ts";
 
 type TestCreation = RecipeCreation<"rest", Record<string, never>> & {
   readonly service: "rest";
@@ -451,6 +463,122 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
 
 const platform = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
+const nativePoolerArtifact = Effect.fn(function* (cacheRoot: string) {
+  const platformName = `${process.platform}-${process.arch}`;
+  const target =
+    platformName === "darwin-arm64"
+      ? "darwin-arm64"
+      : platformName === "linux-x64"
+        ? "linux-amd64"
+        : platformName === "linux-arm64"
+          ? "linux-arm64"
+          : undefined;
+  if (target === undefined) return yield* Effect.fail(`Unsupported test platform: ${platformName}`);
+
+  const request: ArtifactRequest = {
+    key: `slim-services/pooler/v2.9.12/${target}`,
+    requiredRuntimePaths: ["bin/server", "bin/prepare", "bin/provision-tenant"],
+    executablePath: "bin/server",
+  };
+  const fs = yield* FileSystem.FileSystem;
+  const server =
+    `#!${process.execPath}\nconst http = require("node:http");\n` +
+    `const port = Number(process.env.PORT);\n` +
+    `if (process.env.TENANT_ID === "unrelated-failure") { console.error("unrelated startup failure"); process.exit(1); }\n` +
+    `if (process.env.TENANT_ID === "retry-exhaustion") {\n` +
+    `const blocker = http.createServer();\n` +
+    `blocker.listen(port, "127.0.0.1", () => {\n` +
+    `const failed = http.createServer();\n` +
+    `failed.on("error", () => { console.error("port already in use " + "x".repeat(2000)); process.exit(1); });\n` +
+    `failed.listen(port, "127.0.0.1");\n` +
+    `});\nreturn;\n}\n` +
+    `const server = http.createServer((_request, response) => response.end("owned-fixture:" + port));\n` +
+    `server.on("error", (error) => { console.error(error); process.exit(1); });\n` +
+    `server.listen(port, "127.0.0.1", () => {\n` +
+    `console.log("Running SupavisorWeb.Endpoint at 127.0.0.1:" + port + " (http)");\n` +
+    `});\n`;
+  const oneShot = `#!${process.execPath}\nprocess.exit(0);\n`;
+  const source: ArtifactSource = {
+    checksum: () => Effect.succeed("0".repeat(64)),
+    materialize: (_entry, destination) =>
+      Effect.gen(function* () {
+        yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+        yield* fs.writeFileString(`${destination}/bin/server`, server);
+        yield* fs.writeFileString(`${destination}/bin/prepare`, oneShot);
+        yield* fs.writeFileString(`${destination}/bin/provision-tenant`, oneShot);
+        yield* fs.chmod(`${destination}/bin/prepare`, 0o755);
+        yield* fs.chmod(`${destination}/bin/provision-tenant`, 0o755);
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PreparationError({
+              message: `Unable to write native Pooler fixture: ${cause.message}`,
+              cause,
+            }),
+        ),
+      ),
+  };
+  const store = yield* makeArtifactStore({ cacheRoot, source });
+  yield* store.prepare(request);
+});
+
+const NativeLaunchPayload = Schema.Struct({
+  executable: Schema.String,
+  args: Schema.optionalKey(Schema.Array(Schema.String)),
+  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+});
+
+const countingSpawner = (
+  spawner: ChildProcessSpawnerService["Service"],
+  mainLaunches: Ref.Ref<number>,
+  startupLaunches: Ref.Ref<ReadonlyArray<string>>,
+  splitStderr = false,
+): ChildProcessSpawnerService["Service"] => ({
+  ...spawner,
+  spawn: (command) =>
+    spawner.spawn(command).pipe(
+      Effect.map((handle) => ({
+        ...handle,
+        stderr: splitStderr
+          ? handle.stderr.pipe(
+              Stream.flatMap((bytes) =>
+                Stream.fromIterable(
+                  Array.from({ length: Math.ceil(bytes.length / 128) }, (_, index) =>
+                    bytes.slice(index * 128, (index + 1) * 128),
+                  ),
+                ),
+              ),
+            )
+          : handle.stderr,
+        getInputFd: (fd: number) => {
+          const sink = handle.getInputFd(fd);
+          if (fd !== 4) return sink;
+          return Sink.mapInputEffect(sink, (bytes) =>
+            Effect.gen(function* () {
+              const payload = yield* Schema.decodeEffect(
+                Schema.fromJsonString(NativeLaunchPayload),
+              )(new TextDecoder().decode(bytes)).pipe(Effect.orDie);
+              if (
+                payload.executable.endsWith("/bin/server") &&
+                (payload.args ?? []).includes("start")
+              )
+                yield* Ref.update(mainLaunches, (count) => count + 1);
+              if (
+                payload.executable.endsWith("/bin/prepare") ||
+                payload.executable.endsWith("/bin/provision-tenant")
+              )
+                yield* Ref.update(startupLaunches, (launches) => [
+                  ...launches,
+                  payload.executable.endsWith("/bin/prepare") ? "prepare" : "provision-tenant",
+                ]);
+              return bytes;
+            }),
+          );
+        },
+      })),
+    ),
+});
+
 describe("process recipe startup", () => {
   it.effect("reports the startup process's recent stdout and stderr when it exits non-zero", () =>
     Effect.scoped(
@@ -472,6 +600,480 @@ describe("process recipe startup", () => {
         expect(error.message).toContain("realtime startup exited with 1");
         expect(error.message).toContain(postgrexFailure);
         expect(error.message).toContain(poolTimeout);
+      }),
+    ).pipe(Effect.provide(platform)),
+  );
+
+  it.live("recovers when a healthy competing listener claims Pooler's selected HTTP port", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const client = yield* HttpClient.HttpClient;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-port-race-" });
+        const cacheRoot = path.join(root, "cache");
+        yield* nativePoolerArtifact(cacheRoot);
+        const collisionPort = yield* Ref.make<number | undefined>(undefined);
+        const collisionInstalled = yield* Ref.make(false);
+        const competitor = yield* Ref.make<NodeHttp.Server | undefined>(undefined);
+        const testScope = yield* Scope.fork(yield* Effect.scope, "sequential");
+        yield* Effect.addFinalizer(() => Scope.close(testScope, Exit.void));
+        const creation: Pooler.Creation = {
+          service: "pooler",
+          config: {
+            databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+            jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
+            tenant: "collision-test",
+            poolMode: "transaction",
+          },
+        };
+        const interceptingSpawner: typeof spawner = {
+          ...spawner,
+          spawn: (command) =>
+            spawner.spawn(command).pipe(
+              Effect.map((handle) => ({
+                ...handle,
+                getInputFd: (fd: number) => {
+                  const sink = handle.getInputFd(fd);
+                  if (fd !== 4) return sink;
+                  return Sink.mapInputEffect(sink, (bytes) =>
+                    Effect.gen(function* () {
+                      const payload = yield* Schema.decodeEffect(
+                        Schema.fromJsonString(NativeLaunchPayload),
+                      )(new TextDecoder().decode(bytes)).pipe(Effect.orDie);
+                      if (
+                        !payload.executable.endsWith("/bin/server") ||
+                        !(payload.args ?? []).includes("start") ||
+                        (yield* Ref.get(collisionInstalled))
+                      )
+                        return bytes;
+
+                      const port = Number(payload.env?.PORT);
+                      const server = NodeHttp.createServer((_request, response) =>
+                        response.end("competing-listener"),
+                      );
+                      yield* Effect.addFinalizer(() =>
+                        server.listening
+                          ? Effect.callback<void, never>((resume) => {
+                              server.close(() => resume(Effect.void));
+                              return Effect.void;
+                            })
+                          : Effect.void,
+                      ).pipe(Scope.provide(testScope));
+                      yield* Effect.callback<void, never>((resume) => {
+                        const onError = (cause: Error) => resume(Effect.die(cause));
+                        server.once("error", onError);
+                        server.listen(port, "127.0.0.1", () => resume(Effect.void));
+                        return Effect.sync(() => server.off("error", onError));
+                      });
+                      yield* Ref.set(collisionPort, port);
+                      yield* Ref.set(competitor, server);
+                      yield* Ref.set(collisionInstalled, true);
+                      return bytes;
+                    }),
+                  );
+                },
+              })),
+            ),
+        };
+        const recipe = yield* makeProcessRecipe(
+          creation,
+          {
+            stackId: "process-recipe-port-race",
+            instanceId: "instance",
+            root,
+            cacheRoot,
+            runtime: "native",
+            platform: { os: process.platform, arch: process.arch },
+          },
+          { fs, path, crypto, client, spawner: interceptingSpawner, container: undefined },
+          Pooler.makeSpec(),
+        );
+        if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
+        const scope = yield* Scope.fork(testScope, "sequential");
+        const runtime = yield* recipe.definition.launch({
+          id: "pooler",
+          config: creation,
+          scope,
+        });
+        const endpoints = yield* Ref.get(recipe.endpoints);
+        const endpoint = endpoints.get("http");
+        const collided = yield* Ref.get(collisionPort);
+        expect(collided).toBeDefined();
+        expect(endpoint?.port).not.toBe(collided);
+        const oldPort = yield* Ref.get(collisionPort);
+        const competingServer = yield* Ref.get(competitor);
+        expect(competingServer?.listening).toBe(true);
+        const competingResponse = yield* client.execute(
+          HttpClientRequest.get(`http://127.0.0.1:${oldPort}/api/health`),
+        );
+        expect(yield* competingResponse.text).toBe("competing-listener");
+        const response = yield* client.execute(
+          HttpClientRequest.get(`http://${endpoint?.host}:${endpoint?.port}/api/health`),
+        );
+        expect(yield* response.text).toBe(`owned-fixture:${endpoint?.port}`);
+        expect(yield* Ref.get(collisionInstalled)).toBe(true);
+        yield* runtime.stop;
+      }),
+    ).pipe(Effect.provide(platform)),
+  );
+
+  it.live("stops after three consecutive native Pooler port collisions", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const client = yield* HttpClient.HttpClient;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "process-recipe-port-exhaustion-",
+        });
+        const cacheRoot = path.join(root, "cache");
+        yield* nativePoolerArtifact(cacheRoot);
+        const mainLaunches = yield* Ref.make(0);
+        const startupLaunches = yield* Ref.make<ReadonlyArray<string>>([]);
+        const creation: Pooler.Creation = {
+          service: "pooler",
+          config: {
+            databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+            jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
+            tenant: "retry-exhaustion",
+            poolMode: "transaction",
+          },
+        };
+        const recipe = yield* makeProcessRecipe(
+          creation,
+          {
+            stackId: "process-recipe-port-exhaustion",
+            instanceId: "instance",
+            root,
+            cacheRoot,
+            runtime: "native",
+            platform: { os: process.platform, arch: process.arch },
+          },
+          {
+            fs,
+            path,
+            crypto,
+            client,
+            spawner: countingSpawner(spawner, mainLaunches, startupLaunches, true),
+            container: undefined,
+          },
+          Pooler.makeSpec(),
+        );
+        const service = yield* makeService(recipe.definition, { id: "pooler", config: creation });
+        const subscribed = yield* Deferred.make<void>();
+        const exitObserved = yield* Deferred.make<void>();
+        yield* service.observation.pipe(
+          Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+          Stream.runForEach((observation) =>
+            observation.exit === undefined
+              ? Effect.void
+              : Deferred.succeed(exitObserved, undefined),
+          ),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(subscribed);
+        yield* service.start;
+        yield* Deferred.await(exitObserved);
+        expect(yield* Ref.get(mainLaunches)).toBe(3);
+        expect(yield* Ref.get(startupLaunches)).toEqual(["prepare", "provision-tenant"]);
+        expect(yield* Ref.get(recipe.endpoints)).toEqual(new Map());
+        const ready = yield* Effect.exit(service.ready);
+        expect(Exit.isFailure(ready)).toBe(true);
+        if (Exit.isFailure(ready))
+          expect(ready.cause.toString()).toContain("native port collision");
+        const observation = yield* service.get;
+        expect(observation.error?.operation).toBe("launch");
+        expect(observation.error?.message).toContain("native port collision");
+        expect(observation.exit).toBeDefined();
+        if (observation.exit !== undefined) {
+          expect(Exit.isFailure(observation.exit)).toBe(true);
+          if (Exit.isFailure(observation.exit))
+            expect(observation.exit.cause.toString()).toContain("native port collision");
+        }
+        yield* service.stop;
+        expect((yield* service.get).lifecycle).toBe("stopped");
+        expect(yield* Ref.get(recipe.endpoints)).toEqual(new Map());
+      }),
+    ).pipe(Effect.provide(platform)),
+  );
+
+  it.effect("preserves the collision diagnostic when retries cross the readiness deadline", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const client = yield* HttpClient.HttpClient;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-deadline-" });
+        const cacheRoot = path.join(root, "cache");
+        yield* nativePoolerArtifact(cacheRoot);
+        const exitReached = yield* Deferred.make<void>();
+        const clockAdvanced = yield* Deferred.make<void>();
+        const deadlineSpawner: typeof spawner = {
+          ...spawner,
+          spawn: (command) =>
+            spawner.spawn(command).pipe(
+              Effect.map((handle) => {
+                let mainProcess = false;
+                return {
+                  ...handle,
+                  exitCode: handle.exitCode.pipe(
+                    Effect.tap(() =>
+                      mainProcess ? Deferred.succeed(exitReached, undefined) : Effect.void,
+                    ),
+                  ),
+                  stderr: Stream.suspend(() =>
+                    mainProcess
+                      ? handle.stderr.pipe(
+                          Stream.concat(
+                            Stream.fromEffectDrain(
+                              Deferred.await(exitReached).pipe(
+                                Effect.andThen(TestClock.adjust("61 seconds")),
+                                Effect.tap(() => Deferred.succeed(clockAdvanced, undefined)),
+                              ),
+                            ),
+                          ),
+                        )
+                      : handle.stderr,
+                  ),
+                  getInputFd: (fd: number) => {
+                    const sink = handle.getInputFd(fd);
+                    if (fd !== 4) return sink;
+                    return Sink.mapInputEffect(sink, (bytes) =>
+                      Effect.gen(function* () {
+                        const payload = yield* Schema.decodeEffect(
+                          Schema.fromJsonString(NativeLaunchPayload),
+                        )(new TextDecoder().decode(bytes)).pipe(Effect.orDie);
+                        if (
+                          payload.executable.endsWith("/bin/server") &&
+                          (payload.args ?? []).includes("start")
+                        )
+                          mainProcess = true;
+                        return bytes;
+                      }),
+                    );
+                  },
+                };
+              }),
+            ),
+        };
+        const creation: Pooler.Creation = {
+          service: "pooler",
+          config: {
+            databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+            jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
+            tenant: "retry-exhaustion",
+            poolMode: "transaction",
+          },
+        };
+        const recipe = yield* makeProcessRecipe(
+          creation,
+          {
+            stackId: "process-recipe-deadline",
+            instanceId: "instance",
+            root,
+            cacheRoot,
+            runtime: "native",
+            platform: { os: process.platform, arch: process.arch },
+          },
+          { fs, path, crypto, client, spawner: deadlineSpawner, container: undefined },
+          Pooler.makeSpec(),
+        );
+        if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
+        const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
+        const launched = recipe.definition
+          .launch({ id: "pooler", config: creation, scope })
+          .pipe(Effect.forkChild);
+        const fiber = yield* launched;
+        yield* Deferred.await(clockAdvanced);
+        const runtime = yield* Fiber.join(fiber);
+        const failure = yield* Effect.flip(runtime.health);
+        expect(failure.operation).toBe("launch");
+        expect(failure.message).toContain("native port collision");
+        expect(failure.message).not.toContain("readiness timed out");
+        const exit = yield* runtime.exit;
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) expect(exit.cause.toString()).toContain("native port collision");
+        expect(yield* Ref.get(recipe.endpoints)).toEqual(new Map());
+        yield* runtime.stop;
+      }),
+    ).pipe(Effect.provide(platform)),
+  );
+
+  it.live("does not retry an unrelated native Pooler startup failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const client = yield* HttpClient.HttpClient;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "process-recipe-unrelated-failure-",
+        });
+        const cacheRoot = path.join(root, "cache");
+        yield* nativePoolerArtifact(cacheRoot);
+        const mainLaunches = yield* Ref.make(0);
+        const startupLaunches = yield* Ref.make<ReadonlyArray<string>>([]);
+        const creation: Pooler.Creation = {
+          service: "pooler",
+          config: {
+            databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+            jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
+            tenant: "unrelated-failure",
+            poolMode: "transaction",
+          },
+        };
+        const recipe = yield* makeProcessRecipe(
+          creation,
+          {
+            stackId: "process-recipe-unrelated-failure",
+            instanceId: "instance",
+            root,
+            cacheRoot,
+            runtime: "native",
+            platform: { os: process.platform, arch: process.arch },
+          },
+          {
+            fs,
+            path,
+            crypto,
+            client,
+            spawner: countingSpawner(spawner, mainLaunches, startupLaunches),
+            container: undefined,
+          },
+          Pooler.makeSpec(),
+        );
+        if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
+        const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
+        const runtime = yield* recipe.definition.launch({ id: "pooler", config: creation, scope });
+        expect(yield* Ref.get(mainLaunches)).toBe(1);
+        expect(yield* Ref.get(startupLaunches)).toEqual(["prepare", "provision-tenant"]);
+        expect(yield* Ref.get(recipe.endpoints)).toEqual(new Map());
+        const health = yield* Effect.exit(runtime.health);
+        expect(Exit.isFailure(health)).toBe(true);
+        if (Exit.isFailure(health))
+          expect(health.cause.toString()).toContain("unrelated startup failure");
+        const exit = yield* runtime.exit;
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit))
+          expect(exit.cause.toString()).toContain("unrelated startup failure");
+        yield* runtime.stop;
+      }),
+    ).pipe(Effect.provide(platform)),
+  );
+
+  it.live("cleans up a native process when exit observation fails before output ends", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const client = yield* HttpClient.HttpClient;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-exit-failure-" });
+        const cacheRoot = path.join(root, "cache");
+        yield* nativePoolerArtifact(cacheRoot);
+        const port = yield* Ref.make<number | undefined>(undefined);
+        let mainProcess = false;
+        const failingSpawner: typeof spawner = {
+          ...spawner,
+          spawn: (command) =>
+            spawner.spawn(command).pipe(
+              Effect.map((handle) => ({
+                ...handle,
+                stdout: Stream.suspend(() => (mainProcess ? Stream.never : handle.stdout)),
+                stderr: Stream.suspend(() => (mainProcess ? Stream.never : handle.stderr)),
+                exitCode: Effect.suspend(() =>
+                  mainProcess
+                    ? Effect.fail(
+                        PlatformError.systemError({
+                          _tag: "PermissionDenied",
+                          module: "ChildProcess",
+                          method: "exitCode",
+                          description: "injected native exit observation failure",
+                          cause: { code: "EIO" },
+                        }),
+                      )
+                    : handle.exitCode,
+                ),
+                getInputFd: (fd: number) => {
+                  const sink = handle.getInputFd(fd);
+                  if (fd !== 4) return sink;
+                  return Sink.mapInputEffect(sink, (bytes) =>
+                    Effect.gen(function* () {
+                      const payload = yield* Schema.decodeEffect(
+                        Schema.fromJsonString(NativeLaunchPayload),
+                      )(new TextDecoder().decode(bytes)).pipe(Effect.orDie);
+                      if (
+                        payload.executable.endsWith("/bin/server") &&
+                        (payload.args ?? []).includes("start")
+                      ) {
+                        mainProcess = true;
+                        yield* Ref.set(port, Number(payload.env?.PORT));
+                      }
+                      return bytes;
+                    }),
+                  );
+                },
+              })),
+            ),
+        };
+        const creation: Pooler.Creation = {
+          service: "pooler",
+          config: {
+            databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+            jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
+            tenant: "exit-observation-failure",
+            poolMode: "transaction",
+          },
+        };
+        const recipe = yield* makeProcessRecipe(
+          creation,
+          {
+            stackId: "process-recipe-exit-failure",
+            instanceId: "instance",
+            root,
+            cacheRoot,
+            runtime: "native",
+            platform: { os: process.platform, arch: process.arch },
+          },
+          { fs, path, crypto, client, spawner: failingSpawner, container: undefined },
+          Pooler.makeSpec(),
+        );
+        if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
+        const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
+        const runtime = yield* recipe.definition.launch({ id: "pooler", config: creation, scope });
+        const health = yield* Effect.exit(runtime.health);
+        expect(Exit.isFailure(health)).toBe(true);
+        const exit = yield* runtime.exit;
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit))
+          expect(exit.cause.toString()).toContain("injected native exit observation failure");
+        expect(yield* Ref.get(recipe.endpoints)).toEqual(new Map());
+
+        const portToProbe = yield* Ref.get(port);
+        expect(portToProbe).toBeDefined();
+        if (portToProbe !== undefined) {
+          const probe = NodeHttp.createServer();
+          const bind = Effect.callback<void, never>((resume) => {
+            const onError = (cause: Error) => resume(Effect.die(cause));
+            probe.once("error", onError);
+            probe.listen(portToProbe, "127.0.0.1", () => resume(Effect.void));
+            return Effect.sync(() => probe.off("error", onError));
+          });
+          const close = Effect.callback<void, never>((resume) => {
+            probe.close(() => resume(Effect.void));
+            return Effect.void;
+          });
+          yield* bind.pipe(Effect.ensuring(close));
+        }
       }),
     ).pipe(Effect.provide(platform)),
   );
