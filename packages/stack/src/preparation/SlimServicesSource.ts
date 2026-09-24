@@ -260,6 +260,8 @@ const firstSuccess = <T, A, R>(
         fallback(
           new PreparationError({
             ...primaryError,
+            // `cause` is a non-enumerable Error property, so the spread drops it.
+            cause: primaryError.cause,
             message: `${primaryError.message}\nFallback ${describe(candidate)} also failed: ${fallbackDetail(cause)}`,
           }),
           rest,

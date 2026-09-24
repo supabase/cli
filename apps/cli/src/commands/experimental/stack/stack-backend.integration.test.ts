@@ -39,7 +39,9 @@ describe("resolveStackBackend", () => {
         expect(error).toBeInstanceOf(StackRoutingError);
         expect(error.message).toBe("`supabase stack` requires the experimental stack backend.");
         expect(error.suggestion).toContain("SUPABASE_EXPERIMENTAL_STACK=1");
-        expect(error.suggestion).toContain("[experimental]");
+        expect(error.suggestion).toContain(
+          "leave it unset and add `stack = true` under [experimental]",
+        );
       }
       expect(yield* resolve({ args: ["__complete", "stack", ""], cwd: "/missing", env: {} })).toBe(
         "legacy",

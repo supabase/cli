@@ -40,7 +40,7 @@ export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
 }> {
   get suggestion(): string {
     return this.disabledNamespace === true
-      ? "Set SUPABASE_EXPERIMENTAL_STACK=1, or add `stack = true` under [experimental] in supabase/config.toml."
+      ? "Set SUPABASE_EXPERIMENTAL_STACK=1, or leave it unset and add `stack = true` under [experimental] in supabase/config.toml."
       : "Set SUPABASE_EXPERIMENTAL_STACK=1 to enable stack commands, or 0 to use legacy start/stop/status.";
   }
 

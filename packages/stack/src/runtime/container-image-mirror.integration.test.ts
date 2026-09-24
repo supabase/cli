@@ -208,24 +208,27 @@ describe("container image mirror", () => {
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
   });
 
-  it.effect("retries the chain when the primary is unreachable and the mirror is rate-limited", () => {
-    const engine = fakeEngine({ pullable: [mirror], throttled: { [mirror]: 1 } });
-    return Effect.gen(function* () {
-      const runtime = yield* makeContainerRuntime({
-        engine: "docker",
-        imageMirrors: (image) => (image === primary ? [mirror] : []),
-      });
-      const prepared = yield* runtime.prepare(primary).pipe(Effect.forkChild);
-      yield* TestClock.adjust("1 minute");
-      yield* Fiber.join(prepared);
-      expect(engine.commands.filter((args) => args[0] === "pull")).toEqual([
-        ["pull", primary],
-        ["pull", mirror],
-        ["pull", primary],
-        ["pull", mirror],
-      ]);
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
-  });
+  it.effect(
+    "retries the chain when the primary is unreachable and the mirror is rate-limited",
+    () => {
+      const engine = fakeEngine({ pullable: [mirror], throttled: { [mirror]: 1 } });
+      return Effect.gen(function* () {
+        const runtime = yield* makeContainerRuntime({
+          engine: "docker",
+          imageMirrors: (image) => (image === primary ? [mirror] : []),
+        });
+        const prepared = yield* runtime.prepare(primary).pipe(Effect.forkChild);
+        yield* TestClock.adjust("1 minute");
+        yield* Fiber.join(prepared);
+        expect(engine.commands.filter((args) => args[0] === "pull")).toEqual([
+          ["pull", primary],
+          ["pull", mirror],
+          ["pull", primary],
+          ["pull", mirror],
+        ]);
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+    },
+  );
 
   it.effect("falls back to a mirror before backing off on a rate-limited primary", () => {
     const engine = fakeEngine({ pullable: [mirror], throttled: { [primary]: 10 } });
