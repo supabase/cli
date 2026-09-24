@@ -5,6 +5,7 @@ import {
   Context,
   Layer,
   Path,
+  PlatformError,
   Predicate,
   Schedule,
   Schema,
@@ -102,6 +103,13 @@ const stateError = (operation: string, cause: unknown): StateError =>
     message: cause instanceof Error ? cause.message : String(cause),
     cause,
   });
+
+// Windows refuses to replace a file another process has open; unlocked readers release it quickly.
+const blockedReplaceCode = (error: PlatformError.PlatformError) =>
+  Predicate.hasProperty(error.cause, "code") &&
+  (error.cause.code === "EPERM" || error.cause.code === "EBUSY")
+    ? error.cause.code
+    : undefined;
 
 const checkId = (id: string): Effect.Effect<void, StateError> =>
   Schema.is(SafeId)(id)
@@ -215,9 +223,24 @@ const makeState = (
             yield* fs
               .writeFileString(temporary, serialized, { mode: 0o600 })
               .pipe(Effect.mapError((cause) => stateError("write", cause)));
-            yield* fs
-              .rename(temporary, target)
-              .pipe(Effect.mapError((cause) => stateError("publish", cause)));
+            yield* fs.rename(temporary, target).pipe(
+              Effect.retry({
+                schedule: Schedule.spaced("20 millis").pipe(
+                  Schedule.upTo({ duration: "2 seconds" }),
+                ),
+                while: (error) => blockedReplaceCode(error) !== undefined,
+              }),
+              Effect.mapError((cause) => {
+                const code = blockedReplaceCode(cause);
+                return code === undefined
+                  ? stateError("publish", cause)
+                  : new StateError({
+                      operation: "publish",
+                      message: `Unable to replace ${target} (${code}); another process may be holding it open`,
+                      cause,
+                    });
+              }),
+            );
           }),
         (directory) =>
           fs

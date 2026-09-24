@@ -1,7 +1,18 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { TestClock } from "effect/testing";
-import { Context, Deferred, Effect, Exit, Fiber, FileSystem, Layer, Path, Schema } from "effect";
+import {
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Path,
+  PlatformError,
+  Schema,
+} from "effect";
 import * as State from "./State.ts";
 import type { SavedStack } from "./State.ts";
 
@@ -9,6 +20,35 @@ const makeTestState = (root: string) =>
   Layer.build(State.layer({ root })).pipe(
     Effect.map((context) => Context.get(context, State.Service)),
   );
+
+const failingRename = (code: string, failures: number) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const attempted = yield* Deferred.make<void>();
+    let attempts = 0;
+    const failing: FileSystem.FileSystem = {
+      ...fs,
+      rename: (from, to) =>
+        Effect.suspend(() =>
+          ++attempts > failures
+            ? fs.rename(from, to)
+            : Deferred.succeed(attempted, undefined).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "Unknown",
+                      module: "FileSystem",
+                      method: "rename",
+                      pathOrDescriptor: from,
+                      cause: { code },
+                    }),
+                  ),
+                ),
+              ),
+        ),
+    };
+    return { fs: failing, attempted, attempts: () => attempts };
+  });
 
 const initial: SavedStack = {
   id: "stack-main",
@@ -201,6 +241,73 @@ describe("durable stack state", () => {
         expect(error).toBeInstanceOf(State.StateError);
         expect(error.operation).toBe("lock");
         expect(yield* state.read(initial.id)).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("publishes state once a concurrent reader releases it on Windows", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-publish-retry-" });
+        for (const code of ["EPERM", "EBUSY"]) {
+          const rename = yield* failingRename(code, 2);
+          const state = yield* makeTestState(root).pipe(
+            Effect.provideService(FileSystem.FileSystem, rename.fs),
+          );
+          const saving = yield* Effect.forkScoped(state.save(initial));
+          yield* Deferred.await(rename.attempted);
+          yield* TestClock.adjust("1 second");
+          yield* Fiber.join(saving);
+          expect(rename.attempts()).toBe(3);
+          expect(yield* state.read(initial.id)).toEqual(initial);
+        }
+        expect(yield* fs.readDirectory(root)).toEqual([initial.id]);
+      }),
+    ),
+  );
+
+  it.effect("fails publishing state that stays locked or cannot be renamed", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-publish-fail-" });
+        yield* (yield* makeTestState(root)).save(initial);
+        const next: SavedStack = { ...initial, runtime: "podman" };
+
+        const locked = yield* failingRename("EPERM", Infinity);
+        const lockedState = yield* makeTestState(root).pipe(
+          Effect.provideService(FileSystem.FileSystem, locked.fs),
+        );
+        const saving = yield* lockedState.save(next).pipe(Effect.flip, Effect.forkScoped);
+        yield* Deferred.await(locked.attempted);
+        yield* TestClock.adjust("1990 millis");
+        expect(locked.attempts()).toBe(100);
+        yield* TestClock.adjust("5 seconds");
+        const error = yield* Fiber.join(saving);
+        expect(locked.attempts()).toBe(102);
+        expect(error.operation).toBe("publish");
+        expect(error.message).toBe(
+          `Unable to replace ${path.join(root, initial.id, "state.json")} (EPERM); another process may be holding it open`,
+        );
+
+        for (const code of ["EACCES", "EXDEV"]) {
+          const rename = yield* failingRename(code, Infinity);
+          const state = yield* makeTestState(root).pipe(
+            Effect.provideService(FileSystem.FileSystem, rename.fs),
+          );
+          const failing = yield* state.save(next).pipe(Effect.flip, Effect.forkScoped);
+          yield* Deferred.await(rename.attempted);
+          yield* TestClock.adjust("5 seconds");
+          const failure = yield* Fiber.join(failing);
+          expect(failure.operation).toBe("publish");
+          expect(failure.message).toMatch(/^Unknown: FileSystem\.rename \(.*\.state-write-/u);
+          expect(rename.attempts()).toBe(1);
+        }
+
+        expect(yield* lockedState.read(initial.id)).toEqual(initial);
+        expect(yield* fs.readDirectory(root)).toEqual([initial.id]);
       }),
     ),
   );
