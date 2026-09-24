@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import * as Owner from "./Owner.ts";
 import * as State from "./State.ts";
 import type { SavedStack } from "./State.ts";
+import { DEFAULT_LOCAL_JWT_SECRET } from "./Defaults.ts";
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
@@ -56,6 +57,238 @@ const query = (url: string, statement: string) =>
       return yield* Context.get(services, PgClient.PgClient).unsafe(statement);
     }),
   );
+
+it.live("forwards and rotates saved identity across composed services in one owner", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-identity-rotation-" });
+      const stack = initial("a".repeat(64));
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({
+        saved: stack,
+        state,
+        root: `${root}/data`,
+        cacheRoot,
+      });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+
+      const servicesFor = (jwtSecret?: string) => [
+        {
+          service: "database" as const,
+          config: {
+            version: "17",
+            databasePassword: Redacted.make("identity-rotation-password"),
+            jwtExpiry: 3600,
+            ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.make(jwtSecret) }),
+          },
+          endpoints: { sql: { port: "auto" as const } },
+        },
+        {
+          service: "rest" as const,
+          config: { databaseUrl: "postgresql://placeholder" },
+          endpoints: { http: { port: "auto" as const } },
+        },
+        {
+          service: "auth" as const,
+          config: { databaseUrl: "postgresql://placeholder" },
+          endpoints: { http: { port: "auto" as const } },
+        },
+        {
+          service: "storage" as const,
+          config: { databaseUrl: "postgresql://placeholder", filePath: `${root}/uploads` },
+          endpoints: { http: { port: "auto" as const } },
+        },
+        {
+          service: "realtime" as const,
+          config: { databaseUrl: "postgresql://placeholder" },
+          endpoints: { http: { port: "auto" as const } },
+        },
+        {
+          service: "functions" as const,
+          config: { functionsRoot: `${root}/functions`, bootstrap: "export {};" },
+          endpoints: { http: { port: "auto" as const } },
+        },
+        {
+          service: "studio" as const,
+          config: {},
+          endpoints: { http: { port: "auto" as const } },
+        },
+      ];
+      const identity = (suffix: string, keys: string): State.StackIdentityInput => ({
+        publishableKey: `publishable-${suffix}`,
+        secretKey: `secret-${suffix}`,
+        anonKey: `anon-${suffix}`,
+        serviceRoleKey: `service-role-${suffix}`,
+        gotrueJwtKeys: keys,
+        publicSigningKeys: "[]",
+        anonKeyIsOverride: true,
+        serviceRoleKeyIsOverride: true,
+      });
+      const customJwtSecret = "custom-owner-rotation-jwt-secret-long-enough";
+      const services = servicesFor(customJwtSecret);
+      const first = yield* owner.composition.supabase(services, {
+        identity: identity("one", "[]"),
+      });
+      const ids = first.map(({ id }) => id);
+      const creationFor = (entries: typeof first, service: string) =>
+        entries.find((entry) => entry.creation.service === service)?.creation;
+      const firstCredentials = yield* state
+        .read(stack.id)
+        .pipe(Effect.map((saved) => saved?.credentials));
+      if (firstCredentials === undefined) return yield* Effect.die("identity was not persisted");
+      expect(firstCredentials.jwtSecret).toBe(customJwtSecret);
+      const firstRest = creationFor(first, "rest");
+      const firstStorage = creationFor(first, "storage");
+      const firstRealtime = creationFor(first, "realtime");
+      const firstFunctions = creationFor(first, "functions");
+      const firstStudio = creationFor(first, "studio");
+      const firstAuth = creationFor(first, "auth");
+      if (
+        firstRest?.service !== "rest" ||
+        firstStorage?.service !== "storage" ||
+        firstRealtime?.service !== "realtime" ||
+        firstFunctions?.service !== "functions" ||
+        firstStudio?.service !== "studio" ||
+        firstAuth?.service !== "auth"
+      )
+        return yield* Effect.die("identity consumers are missing");
+      expect(firstRest.config.jwks).toBe(firstCredentials.jwks);
+      expect(firstStorage.config).toMatchObject({
+        jwks: firstCredentials.jwks,
+        anonKey: firstCredentials.anonKey,
+        serviceRoleKey: firstCredentials.serviceRoleKey,
+      });
+      expect(firstRealtime.config.jwks).toBe(firstCredentials.jwks);
+      expect(firstFunctions.config).toMatchObject({
+        jwks: firstCredentials.jwks,
+        anonKey: firstCredentials.anonKey,
+        serviceRoleKey: firstCredentials.serviceRoleKey,
+        publishableKey: firstCredentials.publishableKey,
+        secretKey: firstCredentials.secretKey,
+      });
+      expect(firstStudio.config).toMatchObject({
+        anonKey: firstCredentials.anonKey,
+        serviceRoleKey: firstCredentials.serviceRoleKey,
+        publishableKey: firstCredentials.publishableKey,
+        secretKey: firstCredentials.secretKey,
+      });
+      expect(firstAuth.config.gotrueJwtKeys).toBe(firstCredentials.gotrueJwtKeys);
+
+      const standaloneRest = yield* owner.services.create({
+        service: "rest",
+        config: { databaseUrl: "postgresql://placeholder" },
+        endpoints: {},
+      });
+      expect(standaloneRest.creation.config).toMatchObject({
+        jwtSecret: customJwtSecret,
+        jwks: firstCredentials.jwks,
+      });
+      const standaloneAuth = yield* owner.services.create({
+        service: "auth",
+        config: { databaseUrl: "postgresql://placeholder" },
+        endpoints: {},
+      });
+      expect(standaloneAuth.creation.config).toMatchObject({
+        jwtSecret: customJwtSecret,
+        gotrueJwtKeys: firstCredentials.gotrueJwtKeys,
+      });
+      const standaloneStorage = yield* owner.services.create({
+        service: "storage",
+        config: { databaseUrl: "postgresql://placeholder", filePath: `${root}/standalone-uploads` },
+        endpoints: {},
+      });
+      expect(standaloneStorage.creation.config).toMatchObject({
+        jwtSecret: customJwtSecret,
+        jwks: firstCredentials.jwks,
+        anonKey: firstCredentials.anonKey,
+        serviceRoleKey: firstCredentials.serviceRoleKey,
+      });
+      const standaloneFunctions = yield* owner.services.create({
+        service: "functions",
+        config: {
+          functionsRoot: `${root}/standalone-functions`,
+          bootstrap: "export {};",
+          jwks: "refreshed-functions-jwks",
+        },
+        endpoints: {},
+      });
+      expect(standaloneFunctions.creation.config).toMatchObject({
+        jwtSecret: customJwtSecret,
+        jwks: "refreshed-functions-jwks",
+        anonKey: firstCredentials.anonKey,
+        serviceRoleKey: firstCredentials.serviceRoleKey,
+      });
+
+      yield* owner.composition.stop;
+      const secondServices = servicesFor().filter((creation) => creation.service !== "studio");
+      const studioId = first.find(({ creation }) => creation.service === "studio")?.id;
+      if (studioId === undefined) return yield* Effect.die("Studio ID is missing");
+      const retainedIds = ids.filter((id) => id !== studioId);
+      const second = yield* owner.composition.supabase(secondServices, {
+        identity: identity("two", "[{}]"),
+        reuseIds: retainedIds,
+      });
+      const secondCredentials = yield* state
+        .read(stack.id)
+        .pipe(Effect.map((saved) => saved?.credentials));
+      if (secondCredentials === undefined)
+        return yield* Effect.die("rotated identity was not saved");
+      expect(secondCredentials.jwtSecret).toBe(DEFAULT_LOCAL_JWT_SECRET);
+      expect(secondCredentials.anonKey).toBe("anon-two");
+      expect(secondCredentials.publishableKey).toBe("publishable-two");
+      expect(creationFor(second, "rest")?.config).toMatchObject({ jwks: secondCredentials.jwks });
+      expect(creationFor(second, "realtime")?.config).toMatchObject({
+        jwks: secondCredentials.jwks,
+      });
+      expect(creationFor(second, "storage")?.config).toMatchObject({
+        jwks: secondCredentials.jwks,
+        anonKey: secondCredentials.anonKey,
+        serviceRoleKey: secondCredentials.serviceRoleKey,
+      });
+      expect(creationFor(second, "functions")?.config).toMatchObject({
+        jwks: secondCredentials.jwks,
+        anonKey: secondCredentials.anonKey,
+        serviceRoleKey: secondCredentials.serviceRoleKey,
+        publishableKey: secondCredentials.publishableKey,
+        secretKey: secondCredentials.secretKey,
+      });
+      expect(creationFor(second, "auth")?.config).toMatchObject({
+        gotrueJwtKeys: secondCredentials.gotrueJwtKeys,
+      });
+      expect(second.some(({ id }) => id === studioId)).toBe(false);
+      expect((yield* owner.core.get(studioId)).lifecycle).toBe("stopped");
+      const excludedStudio = yield* owner.services.get(studioId);
+      expect(excludedStudio.creation.service).toBe("studio");
+      if (excludedStudio.creation.service === "studio")
+        expect(excludedStudio.creation.config.anonKey).toBe("anon-one");
+      for (const id of retainedIds) expect((yield* owner.core.get(id)).lifecycle).toBe("stopped");
+
+      yield* owner.composition.stop;
+      const third = yield* owner.composition.supabase(servicesFor(customJwtSecret), {
+        identity: identity("three", "[]"),
+        reuseIds: ids,
+      });
+      const thirdCredentials = yield* state
+        .read(stack.id)
+        .pipe(Effect.map((saved) => saved?.credentials));
+      expect(thirdCredentials?.jwtSecret).toBe(customJwtSecret);
+      expect(creationFor(third, "studio")?.config).toMatchObject({
+        anonKey: "anon-three",
+        publishableKey: "publishable-three",
+      });
+
+      const credentialConflict = yield* owner.composition
+        .supabase(servicesFor("different-owner-jwt-secret-long-enough"), { reuseIds: ids })
+        .pipe(Effect.flip);
+      expect(credentialConflict.message).toContain("Credential override jwtSecret conflicts");
+      expect(
+        (yield* state.read(stack.id).pipe(Effect.map((saved) => saved?.credentials)))?.jwtSecret,
+      ).toBe(customJwtSecret);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
 
 it.effect("rejects a malformed persisted composition", () =>
   Effect.scoped(
@@ -157,7 +390,7 @@ it.live(
           config: {
             version: "17",
             databasePassword: Redacted.make("owner-password"),
-            jwtSecret: Redacted.make("owner-jwt"),
+            jwtSecret: Redacted.make("owner-integration-jwt-secret-long-enough"),
             jwtExpiry: 3600,
           },
           endpoints: { sql: { port: "auto" } },
@@ -171,8 +404,8 @@ it.live(
           service: "database",
           config: {
             version: "17",
-            databasePassword: Redacted.make("shadow-password"),
-            jwtSecret: Redacted.make("shadow-jwt"),
+            databasePassword: Redacted.make("owner-password"),
+            jwtSecret: Redacted.make("owner-integration-jwt-secret-long-enough"),
             jwtExpiry: 3600,
           },
           endpoints: { sql: { port: "auto" } },
@@ -301,7 +534,7 @@ it.live(
             config: {
               version: "17",
               databasePassword: Redacted.make("owner-factory-password"),
-              jwtSecret: Redacted.make("owner-factory-jwt"),
+              jwtSecret: Redacted.make("owner-factory-jwt-secret-long-enough"),
               jwtExpiry: 3600,
             },
             endpoints: { sql: { port: "auto" } },

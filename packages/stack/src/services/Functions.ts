@@ -37,6 +37,11 @@ export const Config = Schema.Struct({
   env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   apiUrl: Schema.optionalKey(Schema.String),
   jwtSecret: Schema.optionalKey(Schema.String),
+  jwks: Schema.optionalKey(Schema.String),
+  anonKey: Schema.optionalKey(Schema.String),
+  serviceRoleKey: Schema.optionalKey(Schema.String),
+  publishableKey: Schema.optionalKey(Schema.String),
+  secretKey: Schema.optionalKey(Schema.String),
   policy: Schema.optionalKey(Schema.String),
   verifyJwt: Schema.optionalKey(Schema.Boolean),
   inspector: Schema.optionalKey(Schema.Boolean),
@@ -115,6 +120,11 @@ const makeSpec = (
         ]),
       );
       const jwt = creation.config.jwtSecret;
+      const anonKey =
+        creation.config.anonKey ?? (jwt === undefined ? undefined : yield* serviceJwt("anon", jwt));
+      const serviceRoleKey =
+        creation.config.serviceRoleKey ??
+        (jwt === undefined ? undefined : yield* serviceJwt("service_role", jwt));
       return {
         ...creation.config.env,
         ...(http === undefined ? {} : { EDGE_RUNTIME_PORT: String(http.port) }),
@@ -122,13 +132,16 @@ const makeSpec = (
         ...(filesRoot === undefined
           ? {}
           : { SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT: runtimePath(filesRoot) }),
-        ...(jwt === undefined
+        ...(jwt === undefined ? {} : { SUPABASE_INTERNAL_JWT_SECRET: jwt }),
+        ...(creation.config.jwks === undefined ? {} : { SUPABASE_JWKS: creation.config.jwks }),
+        ...(anonKey === undefined ? {} : { SUPABASE_ANON_KEY: anonKey }),
+        ...(serviceRoleKey === undefined ? {} : { SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey }),
+        ...(creation.config.publishableKey === undefined
           ? {}
-          : {
-              SUPABASE_INTERNAL_JWT_SECRET: jwt,
-              SUPABASE_ANON_KEY: yield* serviceJwt("anon", jwt),
-              SUPABASE_SERVICE_ROLE_KEY: yield* serviceJwt("service_role", jwt),
-            }),
+          : { SUPABASE_INTERNAL_PUBLISHABLE_KEY: creation.config.publishableKey }),
+        ...(creation.config.secretKey === undefined
+          ? {}
+          : { SUPABASE_INTERNAL_SECRET_KEY: creation.config.secretKey }),
         ...(creation.config.verifyJwt === undefined && creation.config.functions === undefined
           ? {}
           : {

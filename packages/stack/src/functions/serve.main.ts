@@ -15,6 +15,7 @@ interface DenoErrorConstructors {
   readonly InvalidWorkerCreation?: abstract new (...args: never[]) => Error;
   readonly InvalidWorkerResponse?: abstract new (...args: never[]) => Error;
   readonly WorkerRequestCancelled?: abstract new (...args: never[]) => Error;
+  readonly WorkerAlreadyRetired?: abstract new (...args: never[]) => Error;
 }
 interface DenoApi {
   readonly env: { get(name: string): string | undefined; toObject(): Record<string, string> };
@@ -125,6 +126,10 @@ const DENO_SB_ERROR_MAP = new Map([
   [Deno.errors.InvalidWorkerResponse, SB_SPECIFIC_ERROR_CODE.InvalidWorkerResponse],
   [Deno.errors.WorkerRequestCancelled, SB_SPECIFIC_ERROR_CODE.WorkerLimit],
 ]);
+const isWorkerAlreadyRetired = (error: unknown) => {
+  const WorkerAlreadyRetired = Deno.errors.WorkerAlreadyRetired;
+  return WorkerAlreadyRetired !== undefined && error instanceof WorkerAlreadyRetired;
+};
 
 export enum RequestErrors {
   MissingAuthHeader = "UNAUTHORIZED_NO_AUTH_HEADER",
@@ -433,6 +438,12 @@ Deno.serve({
           return yield* foreign(() => worker.fetch(prepareUserRequest(request)));
         });
         return yield* workerRequest.pipe(
+          Effect.retry({
+            times: 1,
+            // A retired worker rejects the request before running it, so a bodyless request is safe
+            // to replay; a forwarded body cannot be replayed.
+            while: ({ cause }) => request.body === null && isWorkerAlreadyRetired(cause),
+          }),
           Effect.catchTag("BootstrapOperationError", ({ cause }) =>
             Console.error("[functions] worker error", cause).pipe(
               Effect.andThen(Effect.succeed(getWorkerErrorResponse(cause))),

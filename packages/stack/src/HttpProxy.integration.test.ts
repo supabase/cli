@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Fiber, Layer, Logger } from "effect";
+import { Data, Deferred, Effect, Fiber, Layer, Logger, type LogLevel } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { Socket } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
@@ -35,22 +35,43 @@ class HttpProxyTestError extends Data.TaggedError("HttpProxyTestError")<{
   readonly cause?: unknown;
 }> {}
 
-const captureErrors = (lines: Array<string>) =>
+const captureLogs = (levels: ReadonlyArray<LogLevel.LogLevel>) => (lines: Array<string>) =>
   Logger.layer([
     Logger.make(({ logLevel, message }) => {
-      if (logLevel === "Error")
+      if (levels.some((level) => level === logLevel))
         lines.push((Array.isArray(message) ? message : [message]).map(String).join(" "));
     }),
   ]);
 
-const request = (port: number, path: string, body: Uint8Array) =>
+const captureErrors = captureLogs(["Error"]);
+
+/** Upstream that resets its first `drops` accepted connections without responding. */
+const droppingBackend = (drops: number) => {
+  let connections = 0;
+  const server = createServer((_request, response) => response.end("recovered"));
+  server.on("connection", (socket) => {
+    connections += 1;
+    if (connections <= drops) socket.destroy();
+  });
+  return { server, connections: () => connections };
+};
+
+const request = (
+  port: number,
+  path: string,
+  body: Uint8Array,
+  headers: Readonly<Record<string, string>> = {},
+  method: "GET" | "POST" = "POST",
+) =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
-    const response = yield* client.execute(
-      HttpClientRequest.post(`http://127.0.0.1:${port}${path}`).pipe(
+    const outgoing = Object.entries(headers).reduce(
+      (current, [name, value]) => current.pipe(HttpClientRequest.setHeader(name, value)),
+      HttpClientRequest.make(method)(`http://127.0.0.1:${port}${path}`).pipe(
         HttpClientRequest.bodyUint8Array(body),
       ),
     );
+    const response = yield* client.execute(outgoing);
     return { status: response.status, body: new Uint8Array(yield* response.arrayBuffer) };
   });
 
@@ -269,6 +290,186 @@ it.live("overrides the upstream host for HTTP routes when configured", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.live("rewrites bearer and sb-api-key headers only on opted-in routes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((incoming, response) => {
+        response.end(
+          JSON.stringify({
+            authorization: incoming.headers.authorization,
+            apikey: incoming.headers.apikey,
+            sbApiKey: incoming.headers["sb-api-key"],
+          }),
+        );
+      });
+      const backendAddress = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      const keys = {
+        publishableKey: "sb_publishable_example",
+        secretKey: "sb_secret_example",
+        anonKey: "anon.jwt.value",
+        serviceRoleKey: "service.role.jwt",
+      };
+      yield* proxy.setRoutes([
+        {
+          id: "bearer",
+          prefix: "/bearer",
+          target: Effect.succeed(backendAddress),
+          keyRewrite: { policy: "bearer", keys },
+        },
+        {
+          id: "sb-api-key",
+          prefix: "/functions",
+          target: Effect.succeed(backendAddress),
+          keyRewrite: { policy: "sb-api-key", keys },
+        },
+        {
+          id: "storage-s3",
+          prefix: "/storage/v1/s3",
+          upstreamPrefix: "/s3",
+          target: Effect.succeed(backendAddress),
+        },
+        {
+          id: "storage",
+          prefix: "/storage/v1",
+          target: Effect.succeed(backendAddress),
+          keyRewrite: { policy: "bearer", keys },
+        },
+        { id: "passthrough", prefix: "/raw", target: Effect.succeed(backendAddress) },
+      ]);
+      const send = (path: string, headers: Readonly<Record<string, string>>) =>
+        request(proxy.port, path, new Uint8Array(), headers).pipe(
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+          Effect.map(({ body }) => JSON.parse(new TextDecoder().decode(body))),
+        );
+
+      expect(
+        yield* send("/bearer", {
+          authorization: "Bearer sb_publishable_client",
+          apikey: keys.publishableKey,
+        }),
+      ).toEqual({ authorization: "Bearer anon.jwt.value", apikey: keys.publishableKey });
+      expect(
+        yield* send("/bearer", {
+          authorization: "Bearer custom-client-token",
+          apikey: keys.secretKey,
+        }),
+      ).toEqual({ authorization: "Bearer custom-client-token", apikey: keys.secretKey });
+      expect(yield* send("/bearer", { apikey: "unrecognized-client-key" })).toEqual({
+        authorization: "unrecognized-client-key",
+        apikey: "unrecognized-client-key",
+      });
+      expect(
+        yield* send("/functions", {
+          authorization: "Bearer sb_secret_client",
+          apikey: keys.secretKey,
+        }),
+      ).toEqual({
+        authorization: "Bearer sb_secret_client",
+        apikey: keys.secretKey,
+        sbApiKey: "Bearer service.role.jwt",
+      });
+      expect(
+        yield* send("/storage/v1/object", {
+          authorization: "Bearer sb_secret_client",
+          apikey: keys.secretKey,
+        }),
+      ).toEqual({
+        authorization: "Bearer service.role.jwt",
+        apikey: keys.secretKey,
+      });
+      expect(
+        yield* send("/storage/v1/s3/bucket/object", {
+          authorization: "AWS4-HMAC-SHA256 Credential=client",
+          apikey: keys.secretKey,
+        }),
+      ).toEqual({
+        authorization: "AWS4-HMAC-SHA256 Credential=client",
+        apikey: keys.secretKey,
+      });
+      expect(
+        yield* send("/raw", {
+          authorization: "Bearer sb_publishable_client",
+          apikey: keys.publishableKey,
+        }),
+      ).toEqual({
+        authorization: "Bearer sb_publishable_client",
+        apikey: keys.publishableKey,
+      });
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("rewrites only the apikey query value on opted-in WebSocket routes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer();
+      const sockets = new WebSocketServer({ server: backend });
+      let forwardedAuthorization: string | undefined;
+      sockets.on("connection", (socket, request) => {
+        forwardedAuthorization = request.headers.authorization;
+        socket.send(request.url ?? "/");
+      });
+      const backendAddress = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([
+        {
+          id: "realtime",
+          prefix: "/realtime",
+          target: Effect.succeed(backendAddress),
+          keyRewrite: {
+            policy: "query",
+            keys: {
+              publishableKey: "sb_publishable_example",
+              secretKey: "sb_secret_example",
+              anonKey: "anon.jwt.value",
+              serviceRoleKey: "service.role.jwt",
+            },
+          },
+        },
+      ]);
+      const connect = (query: string) =>
+        Effect.callback<string, HttpProxyTestError>((resume) => {
+          const client = new WebSocket(
+            `ws://127.0.0.1:${proxy.port}/realtime/v1/websocket${query}`,
+            { headers: { authorization: "Bearer original-client-token" } },
+          );
+          client.once("message", (message) => {
+            const text = Array.isArray(message)
+              ? Buffer.concat(message).toString()
+              : Buffer.isBuffer(message)
+                ? message.toString()
+                : new TextDecoder().decode(message);
+            resume(Effect.succeed(text));
+            client.close();
+          });
+          client.once("error", (cause) =>
+            resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause }))),
+          );
+          return Effect.sync(() => client.close());
+        }).pipe(Effect.timeout("10 seconds"));
+
+      const publishableUrl = yield* connect("?apikey=sb_publishable_example&keep=a%20b&other=2");
+      expect(publishableUrl).toBe(
+        "/realtime/v1/websocket?apikey=anon.jwt.value&keep=a%20b&other=2",
+      );
+      expect(forwardedAuthorization).toBe("Bearer original-client-token");
+      const secretUrl = yield* connect("?apikey=sb_secret_example&keep=a%20b");
+      expect(secretUrl).toBe("/realtime/v1/websocket?apikey=service.role.jwt&keep=a%20b");
+      const noKeyUrl = yield* connect("?keep=a%20b&other=2");
+      expect(noKeyUrl).toBe("/realtime/v1/websocket?keep=a%20b&other=2");
+      yield* Effect.callback<void, HttpProxyTestError>((resume) => {
+        sockets.close((cause) =>
+          cause === undefined
+            ? resume(Effect.void)
+            : resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause }))),
+        );
+        return Effect.void;
+      });
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live("returns a gateway error naming the route and cause when a target cannot wake", () => {
   const logs: Array<string> = [];
   return Effect.scoped(
@@ -293,6 +494,109 @@ it.live("returns a gateway error naming the route and cause when a target cannot
   ).pipe(
     Effect.provide(
       Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(logs)),
+    ),
+  );
+});
+
+it.live("retries a bodyless request once when the upstream drops the connection unanswered", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const backend = droppingBackend(1);
+      const address = yield* listen(backend.server);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "functions", prefix: "/", target: Effect.succeed(address) }]);
+      const client = yield* HttpClient.HttpClient;
+      const response = yield* client.get(`http://127.0.0.1:${proxy.port}/hello`);
+      expect(response.status).toBe(200);
+      expect(yield* response.text).toBe("recovered");
+      expect(backend.connections()).toBe(2);
+      // The only log is the retry warning; the masked failure never reaches the error level.
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toContain("Route functions GET upstream failed before responding");
+      expect(logs[0]).toMatch(/ECONNRESET|socket hang up/u);
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeHttpClient.layerNodeHttp,
+        NodeServices.layer,
+        captureLogs(["Error", "Warn"])(logs),
+      ),
+    ),
+  );
+});
+
+it.live("does not replay a request with a body when the upstream drops the connection", () => {
+  const errors: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const backend = droppingBackend(1);
+      const address = yield* listen(backend.server);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "functions", prefix: "/", target: Effect.succeed(address) }]);
+      const response = yield* request(
+        proxy.port,
+        "/hello",
+        new TextEncoder().encode("payload"),
+        {},
+        "GET",
+      );
+      expect(response.status).toBe(502);
+      expect(backend.connections()).toBe(1);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("Route functions request failed");
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(errors)),
+    ),
+  );
+});
+
+it.live(
+  "does not replay a bodyless non-idempotent request when the upstream drops the connection",
+  () => {
+    const errors: Array<string> = [];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const backend = droppingBackend(1);
+        const address = yield* listen(backend.server);
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        yield* proxy.setRoutes([{ id: "functions", prefix: "/", target: Effect.succeed(address) }]);
+        const response = yield* request(proxy.port, "/hello", new Uint8Array());
+        expect(response.status).toBe(502);
+        expect(backend.connections()).toBe(1);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain("Route functions request failed");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(errors)),
+      ),
+    );
+  },
+);
+
+it.live("gives up after a single retry when the upstream keeps dropping connections", () => {
+  const errors: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const backend = droppingBackend(Number.POSITIVE_INFINITY);
+      const address = yield* listen(backend.server);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "functions", prefix: "/", target: Effect.succeed(address) }]);
+      const client = yield* HttpClient.HttpClient;
+      const response = yield* client.get(`http://127.0.0.1:${proxy.port}/hello`);
+      expect(response.status).toBe(502);
+      expect(yield* response.text).toBe("Bad Gateway");
+      expect(backend.connections()).toBe(2);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("Route functions request failed");
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(errors)),
     ),
   );
 });

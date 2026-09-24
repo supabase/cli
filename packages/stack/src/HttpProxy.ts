@@ -1,4 +1,4 @@
-import { Data, Effect, FiberSet, Ref, Scope } from "effect";
+import { Data, Effect, FiberSet, Ref, Schedule, Scope } from "effect";
 import { PortError } from "./Ports.ts";
 import type { BackendAddress, ProxyError } from "./Proxy.ts";
 import {
@@ -13,6 +13,8 @@ import type { Duplex } from "node:stream";
 class HttpProxyError extends Data.TaggedError("HttpProxyError")<{
   readonly message: string;
   readonly cause?: unknown;
+  /** Whether upstream response headers had arrived when a proxied request failed. */
+  readonly responded?: boolean;
 }> {}
 
 /** Distinguishes a client that went away first from a genuine proxy failure. */
@@ -24,6 +26,18 @@ export interface HttpRoute {
   readonly target: Effect.Effect<BackendAddress, ProxyError, Scope.Scope>;
   readonly upstreamPrefix?: string;
   readonly upstreamHost?: string;
+  readonly keyRewrite?: HttpRouteKeyRewrite;
+}
+
+/** Configures Supabase API-key rewriting for one HTTP route. */
+interface HttpRouteKeyRewrite {
+  readonly policy: "bearer" | "query" | "sb-api-key";
+  readonly keys: {
+    readonly publishableKey: string;
+    readonly secretKey: string;
+    readonly anonKey: string;
+    readonly serviceRoleKey: string;
+  };
 }
 
 export interface HttpProxy {
@@ -43,8 +57,22 @@ const hopByHop = new Set([
   "upgrade",
 ]);
 
-const errorFor = (cause: unknown) =>
-  new HttpProxyError({ message: cause instanceof Error ? cause.message : String(cause), cause });
+const errorFor = (cause: unknown, responded?: boolean) =>
+  new HttpProxyError({
+    message: cause instanceof Error ? cause.message : String(cause),
+    cause,
+    ...(responded === undefined ? {} : { responded }),
+  });
+
+// RFC 9110 section 9.2.1 safe methods only: user functions behind the proxy need not honor
+// PUT or DELETE idempotency.
+const safeMethods = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
+
+// RFC 9112 section 6: a request carries a body only when Content-Length or
+// Transfer-Encoding is present, regardless of method.
+const hasBody = (request: IncomingMessage) =>
+  request.headers["transfer-encoding"] !== undefined ||
+  Number(request.headers["content-length"] ?? 0) > 0;
 
 const headersFor = (headers: IncomingMessage["headers"]) =>
   Object.fromEntries(
@@ -53,19 +81,83 @@ const headersFor = (headers: IncomingMessage["headers"]) =>
     ),
   );
 
-const upstreamHeadersFor = (headers: IncomingMessage["headers"], route: HttpRoute) => ({
-  ...headersFor(headers),
-  ...(route.upstreamHost === undefined ? {} : { host: route.upstreamHost }),
-});
+const headerValue = (value: string | ReadonlyArray<string> | undefined) =>
+  value === undefined ? undefined : typeof value === "string" ? value : value.join(", ");
+
+const bearerValueFor = (headers: IncomingMessage["headers"], keys: HttpRouteKeyRewrite["keys"]) => {
+  const authorization = headerValue(headers.authorization);
+  if (authorization !== undefined && !authorization.startsWith("Bearer sb_")) return authorization;
+  const apiKey = headerValue(headers.apikey);
+  if (apiKey === undefined) return undefined;
+  if (apiKey === keys.secretKey) return `Bearer ${keys.serviceRoleKey}`;
+  if (apiKey === keys.publishableKey) return `Bearer ${keys.anonKey}`;
+  return apiKey;
+};
+
+const upstreamHeadersFor = (headers: IncomingMessage["headers"], route: HttpRoute) => {
+  const result: Record<string, string | string[]> = {
+    ...headersFor(headers),
+    ...(route.upstreamHost === undefined ? {} : { host: route.upstreamHost }),
+  };
+  const keyRewrite = route.keyRewrite;
+  if (keyRewrite?.policy === "bearer") {
+    const value = bearerValueFor(headers, keyRewrite.keys);
+    if (value === undefined) delete result.authorization;
+    else result.authorization = value;
+  } else if (keyRewrite?.policy === "sb-api-key") {
+    const value = bearerValueFor(headers, keyRewrite.keys);
+    if (value === undefined) delete result["sb-api-key"];
+    else result["sb-api-key"] = value;
+  }
+  return result;
+};
+
+const decodeQuery = (value: string) => {
+  try {
+    return decodeURIComponent(value.replace(/\+/gu, " "));
+  } catch {
+    return value;
+  }
+};
+
+const queryValueFor = (value: string, keys: HttpRouteKeyRewrite["keys"]) =>
+  value === keys.secretKey
+    ? keys.serviceRoleKey
+    : value === keys.publishableKey
+      ? keys.anonKey
+      : value;
 
 const pathFor = (request: IncomingMessage, route: HttpRoute) => {
   const input = request.url ?? "/";
-  if (route.upstreamPrefix === undefined) return input;
   const queryAt = input.indexOf("?");
   const pathname = queryAt < 0 ? input : input.slice(0, queryAt);
   const query = queryAt < 0 ? "" : input.slice(queryAt);
   const suffix = route.prefix === "/" ? pathname : pathname.slice(route.prefix.length);
-  return `${route.upstreamPrefix.replace(/\/$/u, "")}${suffix.startsWith("/") ? suffix : `/${suffix}`}${query}`;
+  const path =
+    route.upstreamPrefix === undefined
+      ? pathname
+      : `${route.upstreamPrefix.replace(/\/$/u, "")}${suffix.startsWith("/") ? suffix : `/${suffix}`}`;
+  return `${path}${rewriteQuery(query, route)}`;
+};
+
+const rewriteQuery = (query: string, route: HttpRoute) => {
+  if (route.keyRewrite?.policy !== "query" || query.length === 0) return query;
+  const { keys } = route.keyRewrite;
+  return query
+    .slice(1)
+    .split("&")
+    .map((parameter) => {
+      const separator = parameter.indexOf("=");
+      const name = separator < 0 ? parameter : parameter.slice(0, separator);
+      if (decodeQuery(name) !== "apikey") return parameter;
+      const rawValue = separator < 0 ? "" : parameter.slice(separator + 1);
+      const replacement = queryValueFor(decodeQuery(rawValue), keys);
+      return replacement === decodeQuery(rawValue)
+        ? parameter
+        : `${name}=${encodeURIComponent(replacement)}`;
+    })
+    .join("&")
+    .replace(/^/u, "?");
 };
 
 const pathnameFor = (url: string) => url.split("?", 1)[0] || "/";
@@ -130,76 +222,109 @@ const connectInterruptibly = Effect.fn("HttpProxy.connect")((address: BackendAdd
   }),
 );
 
+// Mirrors nginx `proxy_next_upstream error`: a backend that drops a fresh connection before
+// answering gets one more attempt, but only when nothing sent to the client or upstream would
+// need replaying.
+const retryOnce = (request: IncomingMessage, response: ServerResponse, route: HttpRoute) =>
+  Schedule.recurs(1).pipe(
+    Schedule.setInputType<HttpProxyError | HttpProxyDisconnected>(),
+    Schedule.while(
+      ({ input }) =>
+        input._tag === "HttpProxyError" &&
+        input.responded === false &&
+        !response.destroyed &&
+        safeMethods.has(request.method ?? "GET") &&
+        !hasBody(request),
+    ),
+    Schedule.tap(({ input }) =>
+      Effect.logWarning(
+        `Route ${route.id} ${request.method ?? "GET"} upstream failed before responding, retrying`,
+        input,
+      ),
+    ),
+  );
+
+const forward = Effect.fn("HttpProxy.forward")(
+  (request: IncomingMessage, response: ServerResponse, route: HttpRoute, backend: BackendAddress) =>
+    Effect.callback<void, HttpProxyError | HttpProxyDisconnected>((resume) => {
+      let outgoing: ReturnType<typeof upstreamRequest> | undefined;
+      let incoming: IncomingMessage | undefined;
+      let settled = false;
+      // Error listeners remain until collection because destroy may emit errors asynchronously.
+      const cleanup = () => {
+        request.off("aborted", onClientGone);
+        response.off("close", onResponseClose);
+        response.off("finish", onFinish);
+
+        incoming?.off("aborted", onError);
+      };
+      const finish = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resume(result);
+      };
+      // Settling first keeps the outcome: destroying a partial upstream response emits
+      // `aborted` synchronously, which would otherwise resettle as a proxy failure.
+      const abandon = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
+        if (settled) return;
+        finish(result);
+        outgoing?.destroy();
+        incoming?.destroy();
+      };
+      const onError = (cause: Error) =>
+        abandon(Effect.fail(errorFor(cause, incoming !== undefined)));
+      const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
+      const onFinish = () => finish(Effect.void);
+      const onResponseClose = () => {
+        if (!response.writableEnded) onClientGone();
+      };
+      outgoing = upstreamRequest(
+        {
+          host: "path" in backend ? undefined : backend.host,
+          port: "path" in backend ? undefined : backend.port,
+          socketPath: "path" in backend ? backend.path : undefined,
+          method: request.method,
+          path: pathFor(request, route),
+          headers: upstreamHeadersFor(request.headers, route),
+        },
+        (value) => {
+          incoming = value;
+          value.once("aborted", onError);
+          value.on("error", onError);
+          response.once("finish", onFinish);
+          setCors(response, request);
+          response.statusCode = value.statusCode ?? 502;
+          for (const [name, header] of Object.entries(value.headers)) {
+            if (header !== undefined && !hopByHop.has(name.toLowerCase()))
+              response.setHeader(name, header);
+          }
+          value.pipe(response);
+        },
+      );
+      outgoing.on("error", onError);
+      request.once("aborted", onClientGone);
+      response.once("close", onResponseClose);
+      // A retried bodyless request was already drained by the first attempt and emits no
+      // further `end`, so pipe would never finish the upstream request.
+      if (request.readableEnded) outgoing.end();
+      else request.pipe(outgoing);
+      return Effect.sync(() => {
+        settled = true;
+        cleanup();
+        outgoing?.destroy();
+        incoming?.destroy();
+      });
+    }),
+);
+
 const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
   (request: IncomingMessage, response: ServerResponse, route: HttpRoute) =>
     Effect.gen(function* () {
       const backend = yield* Effect.raceFirst(route.target, disconnected(request, response));
-      yield* Effect.callback<void, HttpProxyError | HttpProxyDisconnected>((resume) => {
-        let outgoing: ReturnType<typeof upstreamRequest> | undefined;
-        let incoming: IncomingMessage | undefined;
-        let settled = false;
-        // Error listeners remain until collection because destroy may emit errors asynchronously.
-        const cleanup = () => {
-          request.off("aborted", onClientGone);
-          response.off("close", onResponseClose);
-          response.off("finish", onFinish);
-
-          incoming?.off("aborted", onError);
-        };
-        const finish = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          resume(result);
-        };
-        // Settling first keeps the outcome: destroying a partial upstream response emits
-        // `aborted` synchronously, which would otherwise resettle as a proxy failure.
-        const abandon = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
-          if (settled) return;
-          finish(result);
-          outgoing?.destroy();
-          incoming?.destroy();
-        };
-        const onError = (cause: Error) => abandon(Effect.fail(errorFor(cause)));
-        const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
-        const onFinish = () => finish(Effect.void);
-        const onResponseClose = () => {
-          if (!response.writableEnded) onClientGone();
-        };
-        outgoing = upstreamRequest(
-          {
-            host: "path" in backend ? undefined : backend.host,
-            port: "path" in backend ? undefined : backend.port,
-            socketPath: "path" in backend ? backend.path : undefined,
-            method: request.method,
-            path: pathFor(request, route),
-            headers: upstreamHeadersFor(request.headers, route),
-          },
-          (value) => {
-            incoming = value;
-            value.once("aborted", onError);
-            value.on("error", onError);
-            response.once("finish", onFinish);
-            setCors(response, request);
-            response.statusCode = value.statusCode ?? 502;
-            for (const [name, header] of Object.entries(value.headers)) {
-              if (header !== undefined && !hopByHop.has(name.toLowerCase()))
-                response.setHeader(name, header);
-            }
-            value.pipe(response);
-          },
-        );
-        outgoing.on("error", onError);
-        request.once("aborted", onClientGone);
-        response.once("close", onResponseClose);
-        request.pipe(outgoing);
-        return Effect.sync(() => {
-          settled = true;
-          cleanup();
-          outgoing?.destroy();
-          incoming?.destroy();
-        });
-      });
+      yield* forward(request, response, route, backend).pipe(
+        Effect.retry(retryOnce(request, response, route)),
+      );
     }),
 );
 

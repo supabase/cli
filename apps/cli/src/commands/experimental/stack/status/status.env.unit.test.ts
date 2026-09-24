@@ -42,6 +42,31 @@ describe("stack dotenv encoding", () => {
 });
 
 describe("stack environment overrides", () => {
+  it.effect("exports the saved effective API credentials unchanged", () =>
+    Effect.gen(function* () {
+      const names = yield* stackEnvOverrides([]);
+      const values = stackEnvValues(
+        {
+          endpoints: {},
+          credentials: {
+            publishableKey: "sb_publishable_saved",
+            secretKey: "sb_secret_saved",
+            anonKey: "asymmetric-anon-token",
+            serviceRoleKey: "asymmetric-service-token",
+          },
+        },
+        {},
+        names,
+      );
+      expect(values).toEqual({
+        PUBLISHABLE_KEY: "sb_publishable_saved",
+        SECRET_KEY: "sb_secret_saved",
+        ANON_KEY: "asymmetric-anon-token",
+        SERVICE_ROLE_KEY: "asymmetric-service-token",
+      });
+    }),
+  );
+
   it.effect("accepts renames and rejects malformed or colliding destinations", () =>
     Effect.gen(function* () {
       const names = yield* stackEnvOverrides(["API_URL=NEXT_PUBLIC_API_URL"]);
