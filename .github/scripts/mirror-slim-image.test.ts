@@ -154,6 +154,43 @@ describe("verifyDigest", () => {
     ).rejects.toThrow(`resolves to ${OTHER}, expected ${DIGEST}`);
     expect(reads).toBe(3);
   });
+
+  test("fails on the first read when the head errors for another reason", async () => {
+    let reads = 0;
+    const run: RunCommand = async () => {
+      reads++;
+      return fail("unauthorized [http 401]");
+    };
+    await expect(
+      verifyDigest({
+        reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+        digest: DIGEST,
+        run,
+        attempts: 5,
+        sleep: async () => undefined,
+        log: () => undefined,
+      }),
+    ).rejects.toThrow("unauthorized [http 401]");
+    expect(reads).toBe(1);
+  });
+
+  test("rejects a non-integer attempt count before reading", async () => {
+    let reads = 0;
+    const run: RunCommand = async () => {
+      reads++;
+      return ok(`${OTHER}\n`);
+    };
+    await expect(
+      verifyDigest({
+        reference: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+        digest: DIGEST,
+        run,
+        attempts: Number.NaN,
+        log: () => undefined,
+      }),
+    ).rejects.toThrow(InvalidPayloadError);
+    expect(reads).toBe(0);
+  });
 });
 
 describe("ensureEcrPublicRepo", () => {
