@@ -1,9 +1,17 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
 import { StackError, type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
 
@@ -29,6 +37,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  withEnvVar,
 } from "../../../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../../../shared/cli/cli-args.service.ts";
 import {
@@ -381,6 +390,15 @@ const flags = (
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
+const seedMigration = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const migrationsDir = path.join(workdir, "supabase", "migrations");
+    yield* fs.makeDirectory(migrationsDir, { recursive: true });
+    yield* fs.writeFileString(path.join(migrationsDir, "0001_init.sql"), "select 1;");
+  });
+
 describe("db schema declarative generate integration", () => {
   const tmp = useTempWorkdir();
 
@@ -432,15 +450,15 @@ describe("db schema declarative generate integration", () => {
       const { layer } = setup(tmp.current, { experimental: false });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const saved = process.env[ENV];
-        process.env[ENV] = "1";
-        const exit = yield* Effect.exit(
-          dbSchemaDeclarativeGenerate(
-            flags({ local: Option.some(true), linked: Option.some(true) }),
+        const exit = yield* withEnvVar(
+          ENV,
+          "1",
+          Effect.exit(
+            dbSchemaDeclarativeGenerate(
+              flags({ local: Option.some(true), linked: Option.some(true) }),
+            ),
           ),
         );
-        if (saved === undefined) delete process.env[ENV];
-        else process.env[ENV] = saved;
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failError(exit)).toMatchObject({
           _tag: "DeclarativeMutuallyExclusiveFlagsError",
@@ -460,13 +478,11 @@ describe("db schema declarative generate integration", () => {
       });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const saved = process.env[ENV];
-        process.env[ENV] = "1";
-        const exit = yield* Effect.exit(
-          dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })),
+        const exit = yield* withEnvVar(
+          ENV,
+          "1",
+          Effect.exit(dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }))),
         );
-        if (saved === undefined) delete process.env[ENV];
-        else process.env[ENV] = saved;
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
       }).pipe(Effect.provide(layer));
@@ -476,31 +492,30 @@ describe("db schema declarative generate integration", () => {
   it.effect(
     "--local --linked with SUPABASE_EXPERIMENTAL set only in the project .env fails with the mutex error",
     () => {
-      const saved = process.env["SUPABASE_EXPERIMENTAL"];
-      delete process.env["SUPABASE_EXPERIMENTAL"];
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_EXPERIMENTAL=true\n");
       const { layer } = setup(tmp.current, { experimental: false });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          dbSchemaDeclarativeGenerate(
-            flags({ local: Option.some(true), linked: Option.some(true) }),
-          ),
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)).toMatchObject({
-          _tag: "DeclarativeMutuallyExclusiveFlagsError",
-          message:
-            "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-        });
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (saved === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
-            else process.env["SUPABASE_EXPERIMENTAL"] = saved;
-          }),
-        ),
+      return withEnvVar(
+        "SUPABASE_EXPERIMENTAL",
+        undefined,
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(tmp.current, "supabase", ".env"),
+            "SUPABASE_EXPERIMENTAL=true\n",
+          );
+          const exit = yield* Effect.exit(
+            dbSchemaDeclarativeGenerate(
+              flags({ local: Option.some(true), linked: Option.some(true) }),
+            ),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(failError(exit)).toMatchObject({
+            _tag: "DeclarativeMutuallyExclusiveFlagsError",
+            message:
+              "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+          });
+        }).pipe(Effect.provide(layer)),
       );
     },
   );
@@ -509,10 +524,15 @@ describe("db schema declarative generate integration", () => {
     // Upgrade path: the implicit default moved from supabase/database to
     // supabase/schemas; a project relying on the old default must be told before
     // a fresh tree is generated somewhere its existing files are not.
-    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "database", "public.sql"), "create table a();");
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase", "database"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "database", "public.sql"),
+        "create table a();",
+      );
       yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
       expect(stripAnsi(s.out.stderrText)).toContain(
         "WARNING: found declarative schema files in supabase/database, but the default declarative directory is now supabase/schemas.",
@@ -524,21 +544,20 @@ describe("db schema declarative generate integration", () => {
   it.effect("explicit --local: exports from the local database and writes files", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
       expect(s.engineExportCalls[0]!.targetRef).toContain(
         "postgresql://postgres:postgres@127.0.0.1:54322",
       );
-      const written = yield* Effect.promise(async () =>
-        (await import("node:fs")).readFileSync(
-          join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql"),
-          "utf8",
-        ),
+      const written = yield* fs.readFileString(
+        path.join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql"),
       );
       expect(written).toBe("create table players ();");
       expect(
         s.out.rawChunks.map((c) => ({ text: stripAnsi(c.text), stream: c.stream })),
       ).toContainEqual({
-        text: `Declarative schema written to ${join("supabase", "schemas")}\n`,
+        text: `Declarative schema written to ${path.join("supabase", "schemas")}\n`,
         stream: "stderr",
       });
       expect(s.out.rawChunks.some((c) => c.text.includes(tmp.current))).toBe(false);
@@ -563,37 +582,50 @@ describe("db schema declarative generate integration", () => {
   it.effect(
     "--output-dir writes a complete export relative to the project without activating it",
     () => {
-      mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "select 1;");
-      const configPath = join(tmp.current, "supabase", "config.toml");
       const config = [
         "[experimental.pgdelta]",
         "enabled = true",
         'declarative_schema_path = "supabase/database"',
         "",
       ].join("\n");
-      writeFileSync(configPath, config);
-      const destination = join("supabase", "database-next");
       const s = setup(tmp.current, { experimental: true });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tmp.current, "supabase", "database"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(tmp.current, "supabase", "database", "configured.sql"),
+          "select 1;",
+        );
+        const configPath = path.join(tmp.current, "supabase", "config.toml");
+        yield* fs.writeFileString(configPath, config);
+        const destination = path.join("supabase", "database-next");
         yield* dbSchemaDeclarativeGenerate(
           flags({ local: Option.some(true), outputDir: Option.some(destination) }),
         );
 
         expect(
-          readFileSync(join(tmp.current, destination, "public", "tables", "players.sql"), "utf8"),
+          yield* fs.readFileString(
+            path.join(tmp.current, destination, "public", "tables", "players.sql"),
+          ),
         ).toBe("create table players ();");
         expect(
-          JSON.parse(readFileSync(join(tmp.current, destination, ".pgdelta-export.json"), "utf8")),
+          yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+            yield* fs.readFileString(path.join(tmp.current, destination, ".pgdelta-export.json")),
+          ),
         ).toMatchObject({
           formatVersion: 1,
           profile: "supabase",
           files: ["public/tables/players.sql"],
         });
         expect(
-          readFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "utf8"),
+          yield* fs.readFileString(
+            path.join(tmp.current, "supabase", "database", "configured.sql"),
+          ),
         ).toBe("select 1;");
-        expect(readFileSync(configPath, "utf8")).toBe(config);
+        expect(yield* fs.readFileString(configPath)).toBe(config);
         expect(
           s.out.rawChunks.map((chunk) => ({ text: stripAnsi(chunk.text), stream: chunk.stream })),
         ).toContainEqual({
@@ -605,56 +637,66 @@ describe("db schema declarative generate integration", () => {
   );
 
   it.effect("--output-dir protects a non-empty destination without --overwrite", () => {
-    const destination = join(tmp.current, "staged-schema");
-    mkdirSync(destination, { recursive: true });
-    writeFileSync(join(destination, "keep.sql"), "select 'keep';");
     const s = setup(tmp.current, {
       experimental: true,
       promptConfirmResponses: [false],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const destination = path.join(tmp.current, "staged-schema");
+      yield* fs.makeDirectory(destination, { recursive: true });
+      yield* fs.writeFileString(path.join(destination, "keep.sql"), "select 'keep';");
       yield* dbSchemaDeclarativeGenerate(
         flags({ local: Option.some(true), outputDir: Option.some(destination) }),
       );
-      expect(readFileSync(join(destination, "keep.sql"), "utf8")).toBe("select 'keep';");
-      expect(existsSync(join(destination, ".pgdelta-export.json"))).toBe(false);
+      expect(yield* fs.readFileString(path.join(destination, "keep.sql"))).toBe("select 'keep';");
+      expect(yield* fs.exists(path.join(destination, ".pgdelta-export.json"))).toBe(false);
       expect(s.out.rawChunks.some((chunk) => chunk.text.includes("Skipped writing"))).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("rejects output paths that could overwrite the project or an ancestor", () => {
-    const projectDir = join(tmp.current, "project");
-    mkdirSync(projectDir, { recursive: true });
-    const sentinel = join(projectDir, "project-sentinel.txt");
-    writeFileSync(sentinel, "keep");
-    const s = setup(projectDir, { experimental: true });
-    return Effect.gen(function* () {
-      for (const output of ["", ".", "..", dirname(projectDir)]) {
-        const exit = yield* dbSchemaDeclarativeGenerate(
-          flags({ local: Option.some(true), outputDir: Option.some(output), overwrite: true }),
-        ).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)).toMatchObject({
-          _tag: "DeclarativeWriteError",
-          message:
-            "declarative output directory must not be empty, resolve to the project directory, or contain the project directory",
-        });
-        expect(readFileSync(sentinel, "utf8")).toBe("keep");
-      }
-      expect(s.localPostgresImageChecks).toEqual([]);
-    }).pipe(Effect.provide(s.layer));
-  });
+  it.effect("rejects output paths that could overwrite the project or an ancestor", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const projectDir = path.join(tmp.current, "project");
+      yield* fs.makeDirectory(projectDir, { recursive: true });
+      const sentinel = path.join(projectDir, "project-sentinel.txt");
+      yield* fs.writeFileString(sentinel, "keep");
+      const s = setup(projectDir, { experimental: true });
+      yield* Effect.gen(function* () {
+        for (const output of ["", ".", "..", path.dirname(projectDir)]) {
+          const exit = yield* dbSchemaDeclarativeGenerate(
+            flags({ local: Option.some(true), outputDir: Option.some(output), overwrite: true }),
+          ).pipe(Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(failError(exit)).toMatchObject({
+            _tag: "DeclarativeWriteError",
+            message:
+              "declarative output directory must not be empty, resolve to the project directory, or contain the project directory",
+          });
+          expect(yield* fs.readFileString(sentinel)).toBe("keep");
+        }
+        expect(s.localPostgresImageChecks).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.effect("--output-dir leaves the configured declarative tree untouched", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* dbSchemaDeclarativeGenerate(
         flags({ local: Option.some(true), outputDir: Option.some("staged-schema") }),
       );
       expect(
-        existsSync(join(tmp.current, "staged-schema", "public", "tables", "players.sql")),
+        yield* fs.exists(
+          path.join(tmp.current, "staged-schema", "public", "tables", "players.sql"),
+        ),
       ).toBe(true);
-      expect(existsSync(join(tmp.current, "supabase", "schemas"))).toBe(false);
+      expect(yield* fs.exists(path.join(tmp.current, "supabase", "schemas"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -679,16 +721,18 @@ describe("db schema declarative generate integration", () => {
     // Pre-seeds the declarative dir so the overwrite branch is reached. No
     // `promptConfirmResponses` are queued, so reaching the prompt would error — success proves
     // `--yes` bypassed it.
-    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "schemas", "existing.sql"), "create table x ();");
     const s = setup(tmp.current, { experimental: true, yes: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase", "schemas"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "schemas", "existing.sql"),
+        "create table x ();",
+      );
       yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
-      const written = yield* Effect.promise(async () =>
-        (await import("node:fs")).readFileSync(
-          join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql"),
-          "utf8",
-        ),
+      const written = yield* fs.readFileString(
+        path.join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql"),
       );
       expect(written).toBe("create table players ();");
     }).pipe(Effect.provide(s.layer));
@@ -696,15 +740,17 @@ describe("db schema declarative generate integration", () => {
 
   it.effect("aborts (does not overwrite) when the declarative dir cannot be read", () => {
     // Seeding `supabase/schemas` as a file makes `readDirectory` fail with ENOTDIR.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "schemas"), "not a directory");
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(tmp.current, "supabase", "schemas"), "not a directory");
       const exit = yield* Effect.exit(
         dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(readFileSync(join(tmp.current, "supabase", "schemas"), "utf8")).toBe(
+      expect(yield* fs.readFileString(path.join(tmp.current, "supabase", "schemas"))).toBe(
         "not a directory",
       );
       expect(s.out.rawChunks.some((c) => c.text.includes("Declarative schema written to"))).toBe(
@@ -724,58 +770,58 @@ describe("db schema declarative generate integration", () => {
   });
 
   it.effect("writes to an absolute declarative_schema_path as-is (no workdir prefix)", () => {
-    const absSchema = mkdtempSync(join(tmpdir(), "decl-abs-"));
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[experimental.pgdelta]",
-        "enabled = true",
-        `declarative_schema_path = "${absSchema}"`,
-        "",
-      ].join("\n"),
-    );
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
-      expect(existsSync(join(absSchema, "public", "tables", "players.sql"))).toBe(true);
-      expect(readFileSync(join(absSchema, "public", "tables", "players.sql"), "utf8")).toBe(
-        "create table players ();",
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const absSchema = yield* fs.makeTempDirectoryScoped({ prefix: "decl-abs-" });
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        [
+          "[experimental.pgdelta]",
+          "enabled = true",
+          `declarative_schema_path = "${absSchema}"`,
+          "",
+        ].join("\n"),
       );
+      yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
+      expect(yield* fs.exists(path.join(absSchema, "public", "tables", "players.sql"))).toBe(true);
+      expect(
+        yield* fs.readFileString(path.join(absSchema, "public", "tables", "players.sql")),
+      ).toBe("create table players ();");
       expect(
         s.out.rawChunks.map((c) => ({ text: stripAnsi(c.text), stream: c.stream })),
       ).toContainEqual({
         text: `Declarative schema written to ${absSchema}\n`,
         stream: "stderr",
       });
-      rmSync(absSchema, { recursive: true, force: true });
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(Effect.scoped, Effect.provide(s.layer));
   });
 
   it.effect("explicit --linked applies a matching [remotes.<ref>] schema-path override", () => {
     const ref = "abcdefghijklmnopqrst";
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        'project_id = "base"',
-        "[experimental.pgdelta]",
-        "enabled = true",
-        "[remotes.prod]",
-        `project_id = "${ref}"`,
-        "[remotes.prod.experimental.pgdelta]",
-        'declarative_schema_path = "remote_schema"',
-        "",
-      ].join("\n"),
-    );
     const s = setup(tmp.current, { experimental: true, projectId: Option.some(ref) });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        [
+          'project_id = "base"',
+          "[experimental.pgdelta]",
+          "enabled = true",
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.experimental.pgdelta]",
+          'declarative_schema_path = "remote_schema"',
+          "",
+        ].join("\n"),
+      );
       yield* dbSchemaDeclarativeGenerate(flags({ linked: Option.some(true) }));
-      const written = yield* Effect.promise(async () =>
-        (await import("node:fs")).readFileSync(
-          join(tmp.current, "supabase", "remote_schema", "public", "tables", "players.sql"),
-          "utf8",
-        ),
+      const written = yield* fs.readFileString(
+        path.join(tmp.current, "supabase", "remote_schema", "public", "tables", "players.sql"),
       );
       expect(written).toBe("create table players ();");
       expect(s.engineExportCalls[0]!.projectRef).toBe(ref);
@@ -818,20 +864,22 @@ describe("db schema declarative generate integration", () => {
     "explicit --linked gates pg-delta on base config, not a remote enabled override",
     () => {
       const ref = "abcdefghijklmnopqrst";
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        [
-          'project_id = "base"',
-          "[remotes.prod]",
-          `project_id = "${ref}"`,
-          "[remotes.prod.experimental.pgdelta]",
-          "enabled = true",
-          "",
-        ].join("\n"),
-      );
       const s = setup(tmp.current, { experimental: false, projectId: Option.some(ref) });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(tmp.current, "supabase", "config.toml"),
+          [
+            'project_id = "base"',
+            "[remotes.prod]",
+            `project_id = "${ref}"`,
+            "[remotes.prod.experimental.pgdelta]",
+            "enabled = true",
+            "",
+          ].join("\n"),
+        );
         const exit = yield* Effect.exit(
           dbSchemaDeclarativeGenerate(flags({ linked: Option.some(true) })),
         );
@@ -853,15 +901,17 @@ describe("db schema declarative generate integration", () => {
   });
 
   it.effect("smart mode: existing files + decline regenerate → skips", () => {
-    const declDir = join(tmp.current, "supabase", "schemas");
-    mkdirSync(declDir, { recursive: true });
-    writeFileSync(join(declDir, "existing.sql"), "-- existing");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
       promptConfirmResponses: [false],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const declDir = path.join(tmp.current, "supabase", "schemas");
+      yield* fs.makeDirectory(declDir, { recursive: true });
+      yield* fs.writeFileString(path.join(declDir, "existing.sql"), "-- existing");
       yield* dbSchemaDeclarativeGenerate(flags());
       expect(s.engineExportCalls).toEqual([]);
       expect(
@@ -873,15 +923,17 @@ describe("db schema declarative generate integration", () => {
   it.effect("smart mode: --yes regenerates over existing files without prompting", () => {
     // No migrations, so the smart target resolves to local without a further prompt. No
     // `promptConfirmResponses` are queued, so a prompt would throw.
-    const declDir = join(tmp.current, "supabase", "schemas");
-    mkdirSync(declDir, { recursive: true });
-    writeFileSync(join(declDir, "existing.sql"), "-- existing");
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const declDir = path.join(tmp.current, "supabase", "schemas");
+      yield* fs.makeDirectory(declDir, { recursive: true });
+      yield* fs.writeFileString(path.join(declDir, "existing.sql"), "-- existing");
       yield* dbSchemaDeclarativeGenerate(flags());
       expect(s.engineExportCalls).toHaveLength(1);
       expect(stripAnsi(s.out.stderrText)).toContain(
-        `Declarative schema already exists at ${join("supabase", "schemas")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
+        `Declarative schema already exists at ${path.join("supabase", "schemas")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
       );
       expect(
         s.out.rawChunks.some((c) => c.text.includes("Skipped generating declarative schema")),
@@ -890,26 +942,22 @@ describe("db schema declarative generate integration", () => {
   });
 
   it.effect("smart mode: SUPABASE_YES=1 regenerates over existing files like --yes", () => {
-    const declDir = join(tmp.current, "supabase", "schemas");
-    mkdirSync(declDir, { recursive: true });
-    writeFileSync(join(declDir, "existing.sql"), "-- existing");
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: false });
-    return Effect.gen(function* () {
-      yield* dbSchemaDeclarativeGenerate(flags());
-      expect(s.engineExportCalls).toHaveLength(1);
-      expect(stripAnsi(s.out.stderrText)).toContain(
-        `Declarative schema already exists at ${join("supabase", "schemas")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
-      );
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(s.layer),
+    return withEnvVar(
+      "SUPABASE_YES",
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const declDir = path.join(tmp.current, "supabase", "schemas");
+        yield* fs.makeDirectory(declDir, { recursive: true });
+        yield* fs.writeFileString(path.join(declDir, "existing.sql"), "-- existing");
+        yield* dbSchemaDeclarativeGenerate(flags());
+        expect(s.engineExportCalls).toHaveLength(1);
+        expect(stripAnsi(s.out.stderrText)).toContain(
+          `Declarative schema already exists at ${path.join("supabase", "schemas")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
+        );
+      }).pipe(Effect.provide(s.layer)),
     );
   });
 
@@ -941,8 +989,6 @@ describe("db schema declarative generate integration", () => {
   });
 
   it.effect("smart mode: propagates a reset failure instead of exiting the process", () => {
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -950,6 +996,7 @@ describe("db schema declarative generate integration", () => {
       resetShouldFail: true,
     });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
       const exit = yield* Effect.exit(dbSchemaDeclarativeGenerate(flags({ reset: true })));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
@@ -961,8 +1008,6 @@ describe("db schema declarative generate integration", () => {
 
   it.effect("smart mode: offers and resolves the linked project when the workdir is linked", () => {
     // A valid 20-char ref is required for the linked choice to show.
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -970,6 +1015,7 @@ describe("db schema declarative generate integration", () => {
       promptSelectResponses: ["linked"],
     });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
       yield* dbSchemaDeclarativeGenerate(flags());
       const options = s.out.promptSelectCalls[0]?.options ?? [];
       expect(options.map((o) => o.value)).toEqual(["local", "linked", "custom"]);
@@ -978,8 +1024,6 @@ describe("db schema declarative generate integration", () => {
   });
 
   it.effect("smart mode: local target checks the local Postgres image before generating", () => {
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -987,6 +1031,7 @@ describe("db schema declarative generate integration", () => {
       promptSelectResponses: ["local"],
     });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
       const exit = yield* Effect.exit(dbSchemaDeclarativeGenerate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
@@ -1001,8 +1046,6 @@ describe("db schema declarative generate integration", () => {
   it.effect(
     "smart mode: caches the linked project even when the user picks local (Go PostRun)",
     () => {
-      mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
       const s = setup(tmp.current, {
         experimental: true,
         stdinIsTty: true,
@@ -1011,6 +1054,7 @@ describe("db schema declarative generate integration", () => {
         promptSelectResponses: ["local"],
       });
       return Effect.gen(function* () {
+        yield* seedMigration(tmp.current);
         yield* dbSchemaDeclarativeGenerate(flags());
         expect(s.cache.cached).toBe(true);
         // The in-process local reset's own body never touches the linked-project cache or
@@ -1035,8 +1079,6 @@ describe("db schema declarative generate integration", () => {
   });
 
   it.effect("smart mode: hides the linked choice when the workdir is not linked", () => {
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -1044,6 +1086,7 @@ describe("db schema declarative generate integration", () => {
       promptSelectResponses: ["local"],
     });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
       yield* dbSchemaDeclarativeGenerate(flags());
       const options = s.out.promptSelectCalls[0]?.options ?? [];
       expect(options.map((o) => o.value)).toEqual(["local", "custom"]);
@@ -1052,10 +1095,15 @@ describe("db schema declarative generate integration", () => {
 
   it.effect("smart mode: an unreadable migrations path is treated as no migrations", () => {
     // Seeding `supabase/migrations` as a file makes the list fail with ENOTDIR.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations"), "not a directory");
     const s = setup(tmp.current, { experimental: true, yes: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "migrations"),
+        "not a directory",
+      );
       const exit = yield* Effect.exit(dbSchemaDeclarativeGenerate(flags()));
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(s.ensureStartedCalls).toBe(1);
@@ -1064,9 +1112,6 @@ describe("db schema declarative generate integration", () => {
 
   it.effect("smart mode: an unreadable ref file just omits the linked choice", () => {
     // Seeding `.temp/project-ref` as a directory makes the read fail.
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
-    mkdirSync(join(tmp.current, "supabase", ".temp", "project-ref"), { recursive: true });
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -1075,6 +1120,12 @@ describe("db schema declarative generate integration", () => {
       promptSelectResponses: ["local"],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedMigration(tmp.current);
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase", ".temp", "project-ref"), {
+        recursive: true,
+      });
       const exit = yield* Effect.exit(dbSchemaDeclarativeGenerate(flags()));
       expect(Exit.isSuccess(exit)).toBe(true);
       expect((s.out.promptSelectCalls[0]?.options ?? []).map((o) => o.value)).toEqual([
@@ -1087,12 +1138,9 @@ describe("db schema declarative generate integration", () => {
 
   it.effect("smart mode: --yes auto-resets the local database without prompting", () => {
     // No `promptConfirmResponses` are supplied, so a prompt would throw.
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     // `resetLocalDatabase`'s container-recreate resolves its own project id from
     // `@supabase/config`, independently of the mocked `CommandSettings.projectId` — pin it to
     // "test" so the recreated container name matches the spawner route's assumption.
-    writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "test"\n');
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -1100,6 +1148,13 @@ describe("db schema declarative generate integration", () => {
       promptSelectResponses: ["local"],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedMigration(tmp.current);
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        'project_id = "test"\n',
+      );
       yield* dbSchemaDeclarativeGenerate(flags());
       expect(localResetRemovedContainers(s.child.spawned)).toContain("supabase_db_test");
       expect(localResetCreateArgs(s.child.spawned)).not.toBeUndefined();
@@ -1108,9 +1163,6 @@ describe("db schema declarative generate integration", () => {
   });
 
   it.effect("smart mode: forwards --network-id to the local reset", () => {
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
-    writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "test"\n');
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -1119,6 +1171,13 @@ describe("db schema declarative generate integration", () => {
       promptSelectResponses: ["local"],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedMigration(tmp.current);
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        'project_id = "test"\n',
+      );
       yield* dbSchemaDeclarativeGenerate(flags());
       const createArgs = localResetCreateArgs(s.child.spawned);
       const networkIndex = createArgs?.indexOf("--network") ?? -1;
@@ -1128,8 +1187,6 @@ describe("db schema declarative generate integration", () => {
   });
 
   it.effect("smart mode: rejects a malformed custom database URL", () => {
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -1137,6 +1194,7 @@ describe("db schema declarative generate integration", () => {
       promptTextResponses: ["not a url"],
     });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
       const exit = yield* Effect.exit(dbSchemaDeclarativeGenerate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
@@ -1147,8 +1205,6 @@ describe("db schema declarative generate integration", () => {
   });
 
   it.effect("smart mode: normalizes a valid custom database URL before pg-delta", () => {
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -1156,6 +1212,7 @@ describe("db schema declarative generate integration", () => {
       promptTextResponses: ["postgres://user:secret@db.example.com:5432/app"],
     });
     return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
       yield* dbSchemaDeclarativeGenerate(flags());
       expect(s.engineExportCalls[0]!.targetRef).toContain(
         "@db.example.com:5432/app?connect_timeout=",
@@ -1166,9 +1223,13 @@ describe("db schema declarative generate integration", () => {
   it.effect("writes the engine's export manifest alongside the declarative tree", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
-      const manifest = JSON.parse(
-        readFileSync(join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"), "utf8"),
+      const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+        yield* fs.readFileString(
+          path.join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"),
+        ),
       );
       expect(manifest).toMatchObject({
         formatVersion: 1,

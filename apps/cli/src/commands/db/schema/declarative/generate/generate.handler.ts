@@ -90,11 +90,9 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     if (Option.isSome(flags.linked)) exclusive.push("linked");
     if (Option.isSome(flags.local)) exclusive.push("local");
     if (exclusive.length > 1) {
-      return yield* Effect.fail(
-        new DeclarativeMutuallyExclusiveFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
-        }),
-      );
+      return yield* new DeclarativeMutuallyExclusiveFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
+      });
     }
 
     // Explicit `--linked` re-loads config with the resolved ref, so a matching `[remotes.<ref>]`
@@ -129,12 +127,10 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         workdirFromOutput !== ".." &&
         !workdirFromOutput.startsWith(`..${path.sep}`));
     if (declarativeDirRel.trim().length === 0 || outputContainsWorkdir) {
-      return yield* Effect.fail(
-        new DeclarativeWriteError({
-          message:
-            "declarative output directory must not be empty, resolve to the project directory, or contain the project directory",
-        }),
-      );
+      return yield* new DeclarativeWriteError({
+        message:
+          "declarative output directory must not be empty, resolve to the project directory, or contain the project directory",
+      });
     }
     yield* warnFormerDeclarativeDefault(fs, path, cliSettings.workdir, toml.pgDelta);
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
@@ -185,11 +181,9 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       overwrite = flags.overwrite;
     } else {
       if (!tty.stdinIsTty && !yes) {
-        return yield* Effect.fail(
-          new DeclarativeNonInteractiveError({
-            message: "in non-interactive mode, specify a target: --local, --linked, or --db-url",
-          }),
-        );
+        return yield* new DeclarativeNonInteractiveError({
+          message: "in non-interactive mode, specify a target: --local, --linked, or --db-url",
+        });
       }
       if ((yield* hasDeclarativeFiles(fs, declarativeDir)) && !flags.overwrite) {
         // `--yes`/`SUPABASE_YES` auto-confirms, but still echoes the `<label> [y/N] y` stderr
