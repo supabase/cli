@@ -137,48 +137,41 @@ const runtimeFromNative = (process: NativeProcess): RuntimeSession => ({
 });
 
 const reserveNativePort = Effect.fn("ProcessRecipe.reserveNativePort")(
-  (requested: number): Effect.Effect<number, CatalogError> =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const allocation = yield* Effect.acquireRelease(
-          Effect.callback<{ readonly port: number; readonly server: Net.Server }, CatalogError>(
-            (resume) => {
-              const server = Net.createServer();
-              const onError = (cause: Error) =>
-                resume(
-                  Effect.fail(
-                    catalogError(
-                      "launch",
-                      "Unable to reserve native service port",
-                      undefined,
-                      cause,
-                    ),
-                  ),
-                );
-              server.once("error", onError);
-              server.listen({ host: "127.0.0.1", port: requested }, () => {
-                const address = server.address();
-                if (address === null || typeof address === "string") {
-                  onError(new Error("Native service port reservation returned no address"));
-                } else {
-                  resume(Effect.succeed({ port: address.port, server }));
-                }
-              });
-              return Effect.sync(() => {
-                server.off("error", onError);
-                if (server.listening) server.close();
-              });
-            },
-          ),
-          ({ server }) =>
-            Effect.callback<void, never>((resume) => {
-              server.close(() => resume(Effect.void));
-              return Effect.void;
-            }),
-        );
-        return allocation.port;
-      }),
-    ),
+  (requested: number): Effect.Effect<number, CatalogError, Scope.Scope> =>
+    Effect.gen(function* () {
+      const allocation = yield* Effect.acquireRelease(
+        Effect.callback<{ readonly port: number; readonly server: Net.Server }, CatalogError>(
+          (resume) => {
+            const server = Net.createServer();
+            const onError = (cause: Error) =>
+              resume(
+                Effect.fail(
+                  catalogError("launch", "Unable to reserve native service port", undefined, cause),
+                ),
+              );
+            server.once("error", onError);
+            server.listen({ host: "127.0.0.1", port: requested }, () => {
+              const address = server.address();
+              if (address === null || typeof address === "string") {
+                onError(new Error("Native service port reservation returned no address"));
+              } else {
+                resume(Effect.succeed({ port: address.port, server }));
+              }
+            });
+            return Effect.sync(() => {
+              server.off("error", onError);
+              if (server.listening) server.close();
+            });
+          },
+        ),
+        ({ server }) =>
+          Effect.callback<void, never>((resume) => {
+            server.close(() => resume(Effect.void));
+            return Effect.void;
+          }),
+      );
+      return allocation.port;
+    }),
 );
 
 const publishLogs = Effect.fn("ProcessRecipe.publishLogs")((
@@ -371,20 +364,32 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               runtime: runtimeFromNative(startupProcess),
             });
         }
-        const serving = new Map<string, ServiceEndpoint>();
-        for (const [name, endpoint] of desired) {
-          serving.set(name, {
-            ...endpoint,
-            port: yield* reserveNativePort(0).pipe(
-              Effect.mapError((cause) => serviceError("launch", cause)),
-            ),
-          });
-        }
+        const serving = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const endpoints = new Map<string, ServiceEndpoint>();
+            for (const [name, endpoint] of desired) {
+              endpoints.set(name, {
+                ...endpoint,
+                port: yield* reserveNativePort(0).pipe(
+                  Effect.mapError((cause) => serviceError("launch", cause)),
+                ),
+              });
+            }
+            return {
+              endpoints,
+              args: yield* spec.args(context.config, endpoints, {
+                container: false,
+                artifactRoot,
+              }),
+              env: yield* spec.env(context.config, endpoints, false),
+            };
+          }),
+        );
         const native: NativeProcess = yield* spawnNativeProcess(
           {
             executable,
-            args: yield* spec.args(context.config, serving, { container: false, artifactRoot }),
-            env: yield* spec.env(context.config, serving, false),
+            args: serving.args,
+            env: serving.env,
             gracefulStopSignal: "SIGTERM",
             gracefulStopTimeout: "5 seconds",
           },
@@ -395,9 +400,9 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
           Effect.mapError((cause) => serviceError("launch", cause)),
         );
-        yield* Ref.set(endpoints, serving);
+        yield* Ref.set(endpoints, serving.endpoints);
         yield* publishLogs(native, logs, context.scope);
-        const ready = serving.get("http");
+        const ready = serving.endpoints.get("http");
         const runtime = runtimeFromNative(native);
         return {
           health:

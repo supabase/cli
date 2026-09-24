@@ -50,6 +50,18 @@ const spec: ProcessRecipeSpec<TestCreation> = {
   startup: [{ args: [] }],
 };
 
+const isPortOccupied = (port: number): Effect.Effect<boolean> =>
+  Effect.callback<boolean, never>((resume) => {
+    const server = Net.createServer();
+    server.once("error", (cause: NodeJS.ErrnoException) =>
+      resume(Effect.succeed(cause.code === "EADDRINUSE")),
+    );
+    server.listen(port, "127.0.0.1", () => server.close(() => resume(Effect.succeed(false))));
+    return Effect.sync(() => {
+      if (server.listening) server.close();
+    });
+  });
+
 describe("ProcessRecipe launch cleanup", () => {
   for (const scenario of [
     "partial launch",
@@ -242,7 +254,7 @@ describe("ProcessRecipe launch cleanup", () => {
     ),
   );
 
-  it.live("lets startup helpers bind ephemeral ports before reserving serving ports", () =>
+  it.live("holds all native serving ports until allocation completes", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -271,10 +283,18 @@ describe("ProcessRecipe launch cleanup", () => {
         };
         const blocked = yield* Ref.make<Net.Server | undefined>(undefined);
         const helperPort = yield* Ref.make<number | undefined>(undefined);
-        const servingPort = yield* Ref.make<number | undefined>(undefined);
+        const servingPorts = yield* Ref.make<ReadonlyArray<number>>([]);
         const nativeSpec: ProcessRecipeSpec<TestCreation> = {
           ...spec,
-          args: () => Effect.succeed(["--version"]),
+          ports: { http: 8080, smtp: 1025, pop3: 1110 },
+          args: (_creation, endpoints) =>
+            Effect.gen(function* () {
+              const ports = [...endpoints.values()].map((endpoint) => endpoint.port);
+              yield* Ref.set(servingPorts, ports);
+              expect(new Set(ports).size).toBe(ports.length);
+              for (const port of ports) expect(yield* isPortOccupied(port)).toBe(true);
+              return ["--version"];
+            }),
           env: (_creation, endpoints) =>
             Effect.gen(function* () {
               const port = endpoints.get("http")?.port;
@@ -312,8 +332,6 @@ describe("ProcessRecipe launch cleanup", () => {
                     }),
                 ).pipe(Effect.provideService(Scope.Scope, testScope));
                 yield* Ref.set(blocked, server);
-              } else {
-                yield* Ref.set(servingPort, port);
               }
               return { PORT: String(port) };
             }),
@@ -344,16 +362,11 @@ describe("ProcessRecipe launch cleanup", () => {
         yield* service.start;
         const helper = yield* Ref.get(helperPort);
         const blocker = yield* Ref.get(blocked);
-        const endpointPort = yield* Ref.get(servingPort);
+        const ports = yield* Ref.get(servingPorts);
         expect(helper).toBe(0);
         expect(blocker?.listening).toBe(true);
-        expect(endpointPort).toBeGreaterThan(0);
-        const blockedAddress = blocker?.address();
-        expect(endpointPort).not.toBe(
-          typeof blockedAddress === "object" && blockedAddress !== null
-            ? blockedAddress.port
-            : undefined,
-        );
+        expect(ports).toHaveLength(3);
+        expect(ports.every((port) => port > 0)).toBe(true);
         yield* service.stop;
       }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     ),
