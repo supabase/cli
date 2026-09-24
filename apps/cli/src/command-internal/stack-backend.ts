@@ -25,6 +25,7 @@ const STACK_BACKEND_COMMANDS = new Set([
   "pull",
   "storage",
   "seed",
+  "services",
 ]);
 
 const isFunctionsServePath = (path: ReadonlyArray<string>): boolean =>

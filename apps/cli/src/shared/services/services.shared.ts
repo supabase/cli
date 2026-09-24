@@ -441,16 +441,23 @@ export function renderServicesTable(rows: ReadonlyArray<ServiceVersionRow>): str
   );
 }
 
-export function renderServicesWarning(rows: ReadonlyArray<ServiceVersionRow>): string | undefined {
+export function renderServicesWarning(
+  rows: ReadonlyArray<ServiceVersionRow>,
+  options: {
+    readonly heading?: string;
+    readonly recommendation?: string;
+  } = {},
+): string | undefined {
   const mismatches = rows.filter((row) => row.remote.length > 0 && row.remote !== row.local);
   if (mismatches.length === 0) {
     return undefined;
   }
 
   return [
-    "You are running different service versions locally than your linked project:",
+    options.heading ??
+      "You are running different service versions locally than your linked project:",
     ...mismatches.map((row) => `${row.name}:${row.local} => ${row.remote}`),
-    "Run supabase link to update them.",
+    options.recommendation ?? "Run supabase link to update them.",
   ].join("\n");
 }
 
