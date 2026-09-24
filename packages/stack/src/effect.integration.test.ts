@@ -2,6 +2,8 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Redacted } from "effect";
 import { tmpdir } from "node:os";
+import { DEFAULT_LOCAL_TLS_CERT, DEFAULT_LOCAL_TLS_KEY } from "./Defaults.ts";
+import { create as createPromise, open as openPromise } from "./index.ts";
 import {
   create,
   discover,
@@ -71,7 +73,20 @@ it.live("starts the owner on opt-in reopen without starting saved services", () 
     yield* Effect.ensuring(
       Effect.gen(function* () {
         const mail = yield* stack.services.create({ service: "mail", config: {} });
+        const initialGateway = yield* stack.gateway.configure({
+          tls: { cert: DEFAULT_LOCAL_TLS_CERT, key: DEFAULT_LOCAL_TLS_KEY },
+          port: "auto",
+        });
+        expect(initialGateway.hostUrl).toMatch(/^https:\/\//u);
+        expect(initialGateway.runtimeUrl).toMatch(/^http:\/\//u);
+        expect(initialGateway.runtimeUrl).not.toBe(initialGateway.hostUrl);
         yield* stack.stop;
+
+        const saved = yield* discover(options);
+        expect(saved[0]?.definition.gateway?.tls).toEqual({
+          cert: DEFAULT_LOCAL_TLS_CERT,
+          key: DEFAULT_LOCAL_TLS_KEY,
+        });
 
         const offline = yield* open({ ...options, id: stack.id });
         expect(offline.id).toBe(stack.id);
@@ -79,6 +94,11 @@ it.live("starts the owner on opt-in reopen without starting saved services", () 
 
         const reopened = yield* open({ ...options, id: stack.id, startOwner: true });
         expect(reopened.id).toBe(stack.id);
+        const reopenedGateway = yield* reopened.gateway.configure({
+          tls: { cert: DEFAULT_LOCAL_TLS_CERT, key: DEFAULT_LOCAL_TLS_KEY },
+          port: "auto",
+        });
+        expect(reopenedGateway).toEqual(initialGateway);
         const observation = yield* (yield* reopened.services.get(mail.id)).status;
         expect(observation.lifecycle).toBe("stopped");
       }),
@@ -87,6 +107,43 @@ it.live("starts the owner on opt-in reopen without starting saved services", () 
           expect(Exit.isSuccess(exit)).toBe(true);
         }),
       ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("configures the gateway through the Promise RPC with omitted TLS", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-promise-gateway-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* Effect.promise(() => createPromise(options));
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        const first = yield* Effect.promise(() => stack.gateway.configure({ port: "auto" }));
+        expect(first.hostUrl).toMatch(/^http:\/\//u);
+        yield* Effect.promise(() => stack.stop());
+        yield* Effect.promise(() => stack.close());
+
+        const reopened = yield* Effect.promise(() =>
+          openPromise({ ...options, id: stack.id, startOwner: true }),
+        );
+        const second = yield* Effect.promise(() => reopened.gateway.configure({ port: "auto" }));
+        expect(second).toEqual(first);
+        yield* Effect.promise(() => reopened.close());
+      }),
+      Effect.gen(function* () {
+        yield* Effect.promise(() => stack.close());
+        const cleanup = yield* Effect.promise(() =>
+          openPromise({ ...options, id: stack.id, startOwner: true }),
+        );
+        yield* Effect.promise(() => cleanup.destroy());
+        yield* Effect.promise(() => cleanup.close());
+      }),
     );
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );

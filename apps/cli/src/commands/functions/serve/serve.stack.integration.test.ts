@@ -140,6 +140,7 @@ const fixture = (
       clearDistinctId: Effect.void,
     });
     let currentFunctions = functionsConfig();
+    let configuredGateway: Parameters<Stack["gateway"]["configure"]>[0] | undefined;
     let restartCount = 0;
     let destroyed = false;
     const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
@@ -264,6 +265,18 @@ const fixture = (
           >;
         },
       },
+      gateway: {
+        configure: (configuration) =>
+          Effect.sync(() => {
+            const { port } = configuration;
+            const publicPort = typeof port === "number" ? port : 54321;
+            configuredGateway = configuration;
+            return {
+              hostUrl: `https://127.0.0.1:${publicPort}`,
+              runtimeUrl: `http://127.0.0.1:${publicPort + 1}`,
+            };
+          }),
+      },
       credentials: { get: Effect.succeed(stackCredentials) },
       composition: {
         describe: Effect.succeed({
@@ -339,6 +352,9 @@ const fixture = (
       get createdFunctions() {
         return createdFunctions;
       },
+      get configuredGateway() {
+        return configuredGateway;
+      },
     };
   });
 
@@ -352,7 +368,7 @@ describe("experimental Stack Functions serve", () => {
         yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
         yield* fs.writeFileString(
           `${root}/supabase/config.toml`,
-          'project_id = "functions-standalone"\n\n[edge_runtime]\nenabled = true\n',
+          'project_id = "functions-standalone"\n\n[edge_runtime]\nenabled = true\n\n[api.tls]\nenabled = true\n',
         );
         const state = yield* fixture({ standaloneProjectRoot: root });
         const run = yield* functionsServeStack(flags()).pipe(
@@ -363,7 +379,9 @@ describe("experimental Stack Functions serve", () => {
 
         const created = state.createdFunctions;
         expect(created?.service).toBe("functions");
+        expect(state.configuredGateway?.tls).toBeDefined();
         if (created?.service === "functions") {
+          expect(created.config.apiUrl).toBe("http://127.0.0.1:54322");
           expect(created.config.jwtSecret).toBeUndefined();
           expect(created.config.publishableKey).toBeUndefined();
           expect(created.config.secretKey).toBeUndefined();

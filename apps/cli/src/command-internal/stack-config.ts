@@ -1,7 +1,11 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
-import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
+import {
+  DEFAULT_LOCAL_TLS_CERT,
+  DEFAULT_LOCAL_TLS_KEY,
+  DEFAULT_SIGNING_KEY,
+} from "@supabase/stack/defaults";
 import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
 import { Crypto, Effect, Data, FileSystem, Path, Redacted, Schema, SchemaIssue } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -11,6 +15,14 @@ import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { parseGoDuration } from "./go-duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
+import {
+  apiTlsCertReadErrorMessage,
+  apiTlsKeyReadErrorMessage,
+  emailContentPathReadErrorMessage,
+  resolveApiTlsPath,
+  resolveEmailTemplateContentPath,
+  validateApiTlsPresence,
+} from "./config-validate.ts";
 
 declare const SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 import {
@@ -75,6 +87,13 @@ interface StackStartConfig {
     stackId: string,
   ) => Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError>;
   readonly source: CliConfig;
+  readonly gateway: Effect.Effect<
+    {
+      readonly tls?: { readonly cert: string; readonly key: string };
+      readonly port: number | "auto";
+    },
+    StackConfigError
+  >;
   readonly projectEnvValues: Readonly<Record<string, string>>;
   readonly document?: Record<string, unknown>;
   readonly remoteJwks: Effect.Effect<string | undefined, StackConfigError>;
@@ -722,7 +741,6 @@ const resolveEffectiveCliConfig = (
 };
 
 const unsupportedConfigPaths = [
-  { path: "api.tls", active: (config: CliConfig) => config.api.enabled },
   { path: "analytics.gcp_project_id", active: (config: CliConfig) => config.analytics.enabled },
   {
     path: "analytics.gcp_project_number",
@@ -783,14 +801,6 @@ const firstDifference = (left: unknown, right: unknown, path: string): string | 
 
 const configValidationError = (config: CliConfig): string | undefined => {
   const defaults = getDefaultCliConfig();
-  if (config.auth.enabled) {
-    for (const [name, template] of Object.entries(config.auth.email.template))
-      if (template.content_path !== "")
-        return `auth.email.template.${name}.content_path requires template serving, which is not supported by the experimental stack`;
-    for (const [name, notification] of Object.entries(config.auth.email.notification))
-      if (notification.enabled && notification.content_path !== "")
-        return `auth.email.notification.${name}.content_path requires template serving, which is not supported by the experimental stack`;
-  }
   for (const { path, active } of unsupportedConfigPaths) {
     if (!active(config)) continue;
     const value = pathValue(config, path);
@@ -827,6 +837,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           projectRoot,
           (message) => new StackConfigError({ message }),
         ));
+      const fs = yield* FileSystem.FileSystem;
       const effectiveInput = yield* Effect.try({
         try: () =>
           resolveEffectiveCliConfig(
@@ -1133,10 +1144,90 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const poolMode =
         validatedConfig.db.pooler.pool_mode === "session" ? ("session" as const) : "transaction";
       const storagePath = `${projectRoot}/supabase/.temp/stack-uploads`;
+      const gatewayPort: number | "auto" = apiPort === undefined ? "auto" : apiPort;
+      const authTemplates = Effect.gen(function* () {
+        if (!validatedConfig.auth.enabled) return [];
+        const templates: Array<{ readonly id: string; readonly filePath: string }> = [];
+        const resolveContentPath = (
+          section: "template" | "notification",
+          id: string,
+          contentPath: string,
+        ) =>
+          Effect.try({
+            try: () =>
+              resolveEmailTemplateContentPath({
+                section,
+                name: id,
+                contentPath,
+                contentPresent: false,
+                base: projectRoot,
+              }),
+            catch: (cause) =>
+              new StackConfigError({
+                message: cause instanceof Error ? cause.message : String(cause),
+              }),
+          });
+        const readContent = (section: "template" | "notification", id: string, filePath: string) =>
+          fs.readFileString(filePath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackConfigError({
+                  message: emailContentPathReadErrorMessage(section, id, cause),
+                }),
+            ),
+          );
+        for (const [id, template] of Object.entries(validatedConfig.auth.email.template)) {
+          const filePath = yield* resolveContentPath("template", id, template.content_path);
+          if (filePath === undefined) continue;
+          yield* readContent("template", id, filePath);
+          templates.push({ id, filePath });
+        }
+        for (const [id, notification] of Object.entries(validatedConfig.auth.email.notification)) {
+          if (!notification.enabled) continue;
+          const filePath = yield* resolveContentPath("notification", id, notification.content_path);
+          if (filePath === undefined) continue;
+          yield* readContent("notification", id, filePath);
+          templates.push({ id: `${id}_notification`, filePath });
+        }
+        return templates;
+      });
+      const gateway = Effect.gen(function* () {
+        if (!validatedConfig.api.enabled || !validatedConfig.api.tls.enabled)
+          return { port: gatewayPort };
+        const { cert_path: certPath, key_path: keyPath } = validatedConfig.api.tls;
+        yield* Effect.try({
+          try: () => validateApiTlsPresence(certPath, keyPath),
+          catch: (cause) =>
+            new StackConfigError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        });
+        if (certPath === undefined || certPath.length === 0)
+          return {
+            port: gatewayPort,
+            tls: { cert: DEFAULT_LOCAL_TLS_CERT, key: DEFAULT_LOCAL_TLS_KEY },
+          };
+        const cert = yield* fs
+          .readFileString(resolveApiTlsPath(projectRoot, certPath))
+          .pipe(
+            Effect.mapError(
+              (cause) => new StackConfigError({ message: apiTlsCertReadErrorMessage(cause) }),
+            ),
+          );
+        const key = yield* fs
+          .readFileString(resolveApiTlsPath(projectRoot, keyPath ?? ""))
+          .pipe(
+            Effect.mapError(
+              (cause) => new StackConfigError({ message: apiTlsKeyReadErrorMessage(cause) }),
+            ),
+          );
+        return { port: gatewayPort, tls: { cert, key } };
+      });
       const createCreations = (
         stackId: string,
       ): Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError> =>
         Effect.gen(function* () {
+          const templates = yield* authTemplates;
           const bootstrap = validatedConfig.edge_runtime.enabled
             ? yield* typeof SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
                 ? Effect.succeed(SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE)
@@ -1231,6 +1322,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     service: "auth" as const,
                     config: {
                       ...authConfig,
+                      ...(templates.length === 0 ? {} : { templates }),
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                     },
                     endpoints: { http: endpoint(apiPort) },
@@ -1369,6 +1461,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       return {
         creations: createCreations,
         source: validatedConfig,
+        gateway,
         projectEnvValues: context.projectEnvValues,
         remoteJwks,
         identity,

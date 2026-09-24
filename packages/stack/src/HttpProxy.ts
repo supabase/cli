@@ -7,6 +7,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw HTTP upgrade sockets preserve handshake bytes.
+import { createServer as createHttpsServer } from "node:https"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw HTTP upgrade sockets preserve handshake bytes.
 import { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 
@@ -26,6 +27,7 @@ export interface HttpRoute {
   readonly target: Effect.Effect<BackendAddress, ProxyError, Scope.Scope>;
   readonly upstreamPrefix?: string;
   readonly upstreamHost?: string;
+  readonly addHeaders?: Readonly<Record<string, string>>;
   readonly keyRewrite?: HttpRouteKeyRewrite;
 }
 
@@ -99,6 +101,10 @@ const upstreamHeadersFor = (headers: IncomingMessage["headers"], route: HttpRout
     ...headersFor(headers),
     ...(route.upstreamHost === undefined ? {} : { host: route.upstreamHost }),
   };
+  for (const [name, value] of Object.entries(route.addHeaders ?? {})) {
+    const normalizedName = name.toLowerCase();
+    if (result[normalizedName] === undefined) result[normalizedName] = value;
+  }
   const keyRewrite = route.keyRewrite;
   if (keyRewrite?.policy === "bearer") {
     const value = bearerValueFor(headers, keyRewrite.keys);
@@ -134,8 +140,8 @@ const pathFor = (request: IncomingMessage, route: HttpRoute) => {
   const query = queryAt < 0 ? "" : input.slice(queryAt);
   const suffix = route.prefix === "/" ? pathname : pathname.slice(route.prefix.length);
   const path =
-    route.upstreamPrefix === undefined
-      ? pathname
+    route.upstreamPrefix === undefined || suffix.length === 0
+      ? (route.upstreamPrefix ?? pathname)
       : `${route.upstreamPrefix.replace(/\/$/u, "")}${suffix.startsWith("/") ? suffix : `/${suffix}`}`;
   return `${path}${rewriteQuery(query, route)}`;
 };
@@ -395,12 +401,13 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
 export const makeHttpProxy = (options: {
   readonly host: string;
   readonly port: number;
+  readonly tls?: { readonly cert: string; readonly key: string };
 }): Effect.Effect<HttpProxy, PortError, Scope.Scope> =>
   Effect.gen(function* () {
     const routes = yield* Ref.make<ReadonlyArray<HttpRoute>>([]);
     const runRequest = yield* FiberSet.makeRuntime();
     const sockets = new Set<Socket>();
-    const server = createServer((request, response) => {
+    const handleRequest = (request: IncomingMessage, response: ServerResponse) => {
       runRequest(
         Effect.scoped(
           Effect.gen(function* () {
@@ -437,6 +444,18 @@ export const makeHttpProxy = (options: {
           }),
         ),
       );
+    };
+    const server = yield* Effect.try({
+      try: () =>
+        options.tls === undefined
+          ? createServer(handleRequest)
+          : createHttpsServer({ cert: options.tls.cert, key: options.tls.key }, handleRequest),
+      catch: (cause) =>
+        new PortError({
+          key: "http",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
     });
     server.on("connection", (socket) => {
       sockets.add(socket);

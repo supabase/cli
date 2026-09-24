@@ -26,7 +26,7 @@ import { encodeStackEnv, stackEnvOverrides, stackEnvValues } from "./status.env.
 
 type StackService = Effect.Success<ReturnType<Stack["services"]["get"]>>;
 type EndpointReport = {
-  readonly protocol: "tcp" | "http";
+  readonly protocol: "tcp" | "http" | "https";
   readonly address: string;
   readonly port: number;
   readonly url: string;

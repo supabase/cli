@@ -129,7 +129,17 @@ const sameBinding = (
 const compositionManagedConfigKeys: Readonly<Record<string, ReadonlySet<string>>> = {
   database: new Set(["databasePassword", "jwtSecret", "rootKey"]),
   rest: new Set(["databaseUrl", "jwtSecret", "jwks"]),
-  auth: new Set(["databaseUrl", "jwtSecret", "gotrueJwtKeys", "externalApiUrl", "smtpUrl"]),
+  auth: new Set([
+    "databaseUrl",
+    "jwtSecret",
+    "gotrueJwtKeys",
+    "externalApiUrl",
+    "apiExternalUrl",
+    "authExternalUrl",
+    "templates",
+    "templateBaseUrl",
+    "smtpUrl",
+  ]),
   realtime: new Set(["databaseUrl", "jwtSecret", "jwks"]),
   storage: new Set([
     "databaseUrl",
@@ -450,6 +460,27 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         if (candidate !== undefined) reuseIds.push(candidate.id);
       }
     }
+    const gatewayConfig = yield* config.gateway.pipe(
+      Effect.mapError(
+        (error) =>
+          new StackCommandStartError({
+            reason: "invalid-config",
+            message: error.message,
+            cause: error,
+          }),
+      ),
+    );
+    if (
+      requested.some(
+        ({ service }) =>
+          service === "rest" ||
+          service === "auth" ||
+          service === "storage" ||
+          service === "functions" ||
+          service === "realtime",
+      )
+    )
+      yield* stack.gateway.configure(gatewayConfig).pipe(Effect.mapError(stackError));
     const starting = yield* output.task("Starting local Supabase stack...");
     const members = yield* compose(stack, requested, reuseIds, identity).pipe(
       Effect.tapError((error) => starting.fail(error.message)),
@@ -627,7 +658,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             emitSummary: false,
             interactive: false,
             yes: true,
-            credentials,
+            credentials: {
+              ...credentials,
+              localKongCa: gatewayConfig.tls?.cert,
+            },
             resolvedConfig: { config: context.config, document: context.loaded?.document },
             projectEnvValues: toml.projectEnv,
             workdir: target.projectRoot,

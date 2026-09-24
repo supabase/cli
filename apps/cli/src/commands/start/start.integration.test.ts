@@ -52,7 +52,7 @@ import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
 import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import type { StartFlags } from "./start.command.ts";
 import { start } from "./start.handler.ts";
-import { KONG_LOCAL_TLS_CERT, KONG_LOCAL_TLS_KEY } from "./templates/kong-local-tls.ts";
+import { DEFAULT_LOCAL_TLS_CERT, DEFAULT_LOCAL_TLS_KEY } from "@supabase/stack/defaults";
 
 /**
  * Counts real invocations of `resolveLocalConfigValues` across this file (every test delegates
@@ -4519,8 +4519,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
           yield* start(flags()).pipe(Effect.provide(layer));
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
-          expect(copied.get("/home/kong/localhost.crt")).toBe(KONG_LOCAL_TLS_CERT);
-          expect(copied.get("/home/kong/localhost.key")).toBe(KONG_LOCAL_TLS_KEY);
+          expect(copied.get("/home/kong/localhost.crt")).toBe(DEFAULT_LOCAL_TLS_CERT);
+          expect(copied.get("/home/kong/localhost.key")).toBe(DEFAULT_LOCAL_TLS_KEY);
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -4541,8 +4541,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
           yield* start(flags()).pipe(Effect.provide(layer));
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
-          expect(copied.get("/home/kong/localhost.crt")).toBe(KONG_LOCAL_TLS_CERT);
-          expect(copied.get("/home/kong/localhost.key")).toBe(KONG_LOCAL_TLS_KEY);
+          expect(copied.get("/home/kong/localhost.crt")).toBe(DEFAULT_LOCAL_TLS_CERT);
+          expect(copied.get("/home/kong/localhost.key")).toBe(DEFAULT_LOCAL_TLS_KEY);
         }).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4625,8 +4625,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
             yield* start(flags()).pipe(Effect.provide(layer));
             expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
-            expect(copied.get("/home/kong/localhost.crt")).toBe(KONG_LOCAL_TLS_CERT);
-            expect(copied.get("/home/kong/localhost.key")).toBe(KONG_LOCAL_TLS_KEY);
+            expect(copied.get("/home/kong/localhost.crt")).toBe(DEFAULT_LOCAL_TLS_CERT);
+            expect(copied.get("/home/kong/localhost.key")).toBe(DEFAULT_LOCAL_TLS_KEY);
           }).pipe(Effect.provide(BunServices.layer)),
         ).pipe(Effect.provide(BunServices.layer)),
     );

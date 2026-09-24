@@ -3,6 +3,8 @@ import * as State from "./State.ts";
 import { makePorts, PortError } from "./Ports.ts";
 import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
 import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
+import type { SharedRoute } from "./host/Routes.ts";
+import { validateGatewayConfig, type GatewayConfig } from "./Gateway.ts";
 
 export type NetworkRuntime = "native" | "docker" | "podman";
 
@@ -10,9 +12,8 @@ export interface NetworkEndpoint {
   readonly protocol: "tcp" | "http";
   readonly port: number | "auto";
   readonly backend: Effect.Effect<BackendAddress, ProxyError, Scope.Scope>;
-  readonly shared?: ReadonlyArray<
-    Pick<HttpRoute, "prefix" | "upstreamPrefix" | "upstreamHost" | "keyRewrite">
-  >;
+  readonly shared?: ReadonlyArray<SharedRoute>;
+  readonly routes?: ReadonlyArray<SharedRoute>;
   readonly enabled: Effect.Effect<boolean>;
 }
 
@@ -24,7 +25,7 @@ class NetworkError extends Data.TaggedError("NetworkError")<{
 
 export interface NetworkBinding {
   readonly name: string;
-  readonly protocol: "tcp" | "http";
+  readonly protocol: "tcp" | "http" | "https";
   readonly host: string;
   readonly port: number;
 }
@@ -41,6 +42,12 @@ export interface NetworkNamespace {
 }
 
 export interface Interface {
+  readonly gateway: {
+    readonly configure: (options: {
+      readonly tls?: GatewayConfig["tls"];
+      readonly port: number | "auto";
+    }) => Effect.Effect<{ readonly hostUrl: string; readonly runtimeUrl: string }, NetworkError>;
+  };
   readonly release: Effect.Effect<void, NetworkError>;
   readonly register: (options: {
     readonly id: string;
@@ -72,11 +79,14 @@ const makeNetwork = (options: {
       | {
           readonly claim: number;
           readonly proxy: HttpProxy;
-          readonly routes: ReadonlyArray<HttpRoute>;
+          readonly runtimeProxy?: HttpProxy;
           readonly scope: Scope.Closeable;
         }
       | undefined
     >(undefined);
+    const routeContributions = yield* Ref.make(
+      new Map<string, { readonly api: boolean; readonly routes: ReadonlyArray<HttpRoute> }>(),
+    );
     const namespaces = yield* Ref.make(new Map<string, ReadonlyArray<string>>());
 
     const listenHost = options.runtime === "native" ? "127.0.0.1" : "0.0.0.0";
@@ -118,7 +128,10 @@ const makeNetwork = (options: {
                   const key = endpoint.shared === undefined ? `${id}:${name}` : "api";
                   const result = yield* restore(
                     ports
-                      .acquire<{ readonly proxy?: HttpProxy }, Scope.Scope>(
+                      .acquire<
+                        { readonly proxy?: HttpProxy; readonly runtimeProxy?: HttpProxy },
+                        Scope.Scope
+                      >(
                         { stackId: options.stackId, key, host: listenHost, port: endpoint.port },
                         (host, port) =>
                           Effect.gen(function* () {
@@ -132,7 +145,31 @@ const makeNetwork = (options: {
                                   });
                                 return { proxy: current.proxy };
                               }
-                              return { proxy: yield* makeHttpProxy({ host, port }) };
+                              const saved = yield* options.state
+                                .read(options.stackId)
+                                .pipe(
+                                  Effect.mapError(
+                                    (cause) =>
+                                      new PortError({ key: "api", message: cause.message, cause }),
+                                  ),
+                                );
+                              const tls = saved?.gateway?.tls;
+                              const proxy = yield* makeHttpProxy({
+                                host,
+                                port,
+                                ...(tls === undefined ? {} : { tls }),
+                              });
+                              const runtimeClaim = saved?.ports.find(
+                                (value) => value.key === "api-runtime",
+                              );
+                              const runtimeProxy =
+                                tls === undefined || runtimeClaim === undefined
+                                  ? undefined
+                                  : yield* makeHttpProxy({
+                                      host: listenHost,
+                                      port: runtimeClaim.port,
+                                    });
+                              return { proxy, runtimeProxy };
                             }
                             if (endpoint.protocol === "http") {
                               const proxy = yield* makeHttpProxy({ host, port });
@@ -169,32 +206,54 @@ const makeNetwork = (options: {
                     const current = previous ?? {
                       claim: result.port,
                       proxy: result.listener.proxy,
-                      routes: [],
+                      runtimeProxy: result.listener.runtimeProxy,
                       scope: endpointScope,
                     };
                     if (previous !== undefined) yield* Scope.close(endpointScope, Exit.void);
-                    const routes = [
-                      ...current.routes,
-                      ...endpoint.shared.map((route) => ({
-                        id,
-                        prefix: route.prefix,
-                        upstreamPrefix: route.upstreamPrefix,
-                        upstreamHost: route.upstreamHost,
-                        ...(route.keyRewrite === undefined ? {} : { keyRewrite: route.keyRewrite }),
-                        target: endpoint.backend,
-                      })),
-                    ];
-                    yield* current.proxy.setRoutes(routes);
-                    yield* Ref.set(shared, { ...current, routes });
+                    yield* Ref.set(shared, current);
                   } else {
                     yield* Ref.update(scopes, (current) =>
                       new Map(current).set(name, endpointScope),
                     );
                   }
+                  const descriptors = endpoint.shared ?? endpoint.routes ?? [];
+                  if (descriptors.length > 0) {
+                    const contribution = descriptors.map((route) => ({
+                      id,
+                      prefix: route.prefix,
+                      upstreamPrefix: route.upstreamPrefix,
+                      upstreamHost: route.upstreamHost,
+                      addHeaders: route.addHeaders,
+                      ...(route.keyRewrite === undefined ? {} : { keyRewrite: route.keyRewrite }),
+                      target: route.target ?? endpoint.backend,
+                    }));
+                    const contributions = new Map(yield* Ref.get(routeContributions));
+                    contributions.set(id, {
+                      api: endpoint.shared !== undefined,
+                      routes: contribution,
+                    });
+                    yield* Ref.set(routeContributions, contributions);
+                    const routes = [...contributions.values()].flatMap(({ routes }) => routes);
+                    const current = yield* Ref.get(shared);
+                    if (current !== undefined) {
+                      yield* current.proxy.setRoutes(routes);
+                      yield* current.runtimeProxy?.setRoutes(routes) ?? Effect.void;
+                    }
+                  }
+                  const saved =
+                    endpoint.shared === undefined
+                      ? undefined
+                      : yield* options.state
+                          .read(options.stackId)
+                          .pipe(Effect.mapError((cause) => errorFor("bind", cause)));
+                  const bindingProtocol: NetworkBinding["protocol"] =
+                    endpoint.shared !== undefined && saved?.gateway?.tls !== undefined
+                      ? "https"
+                      : endpoint.protocol;
                   yield* Ref.update(bound, (current) =>
                     new Map(current).set(name, {
                       name,
-                      protocol: endpoint.protocol,
+                      protocol: bindingProtocol,
                       host: hostAddress,
                       port: result.port,
                     }),
@@ -214,14 +273,18 @@ const makeNetwork = (options: {
             for (const endpoint of Object.values(endpoints)) if (yield* endpoint.enabled) return;
 
             const current = yield* Ref.get(shared);
-            let remainingRoutes = current?.routes ?? [];
+            const contributions = new Map(yield* Ref.get(routeContributions));
+            contributions.delete(id);
+            yield* Ref.set(routeContributions, contributions);
+            const remainingRoutes = [...contributions.values()].flatMap(({ routes }) => routes);
+            const hasApiEndpoint = [...contributions.values()].some(({ api }) => api);
             if (current !== undefined) {
-              remainingRoutes = current.routes.filter((route) => route.id !== id);
-              yield* Ref.set(shared, { ...current, routes: remainingRoutes });
-              yield* current.proxy
-                .setRoutes(remainingRoutes)
-                .pipe(Effect.mapError((cause) => errorFor("close", cause)));
-              if (remainingRoutes.length === 0) {
+              if (hasApiEndpoint) {
+                yield* current.proxy
+                  .setRoutes(remainingRoutes)
+                  .pipe(Effect.mapError((cause) => errorFor("close", cause)));
+                yield* current.runtimeProxy?.setRoutes(remainingRoutes) ?? Effect.void;
+              } else {
                 yield* Scope.close(current.scope, Exit.void);
                 yield* Ref.set(shared, undefined);
               }
@@ -272,15 +335,35 @@ const makeNetwork = (options: {
           const saved = yield* options.state
             .read(options.stackId)
             .pipe(Effect.mapError((cause) => errorFor("address", cause)));
+          if (saved === undefined) return yield* errorFor("address", "Stack is not registered");
           const key = endpoint.shared === undefined ? `${id}:${name}` : "api";
-          const claim = saved?.ports.find((value) => value.key === key);
+          const claim = saved.ports.find((value) => value.key === key);
           if (claim === undefined)
             return yield* errorFor("address", `Endpoint ${name} is not assigned`);
+          const tls = saved.gateway?.tls;
+          const runtimeClaim =
+            tls === undefined
+              ? undefined
+              : saved.ports.find((value) => value.key === "api-runtime");
+          if (
+            endpoint.shared !== undefined &&
+            from === "runtime" &&
+            tls !== undefined &&
+            runtimeClaim === undefined
+          )
+            return yield* errorFor("address", "Runtime gateway port is not assigned");
+          const protocol: NetworkBinding["protocol"] =
+            endpoint.shared !== undefined && tls !== undefined && from === "host"
+              ? "https"
+              : endpoint.protocol;
           return {
             name,
-            protocol: endpoint.protocol,
+            protocol,
             host: from === "host" ? hostAddress : runtimeAddress,
-            port: claim.port,
+            port:
+              endpoint.shared !== undefined && from === "runtime" && runtimeClaim !== undefined
+                ? runtimeClaim.port
+                : claim.port,
           };
         }),
       );
@@ -301,10 +384,98 @@ const makeNetwork = (options: {
           yield* ports
             .release(options.stackId, "api")
             .pipe(Effect.mapError((cause) => errorFor("release", cause)));
+          yield* ports
+            .release(options.stackId, "api-runtime")
+            .pipe(Effect.mapError((cause) => errorFor("release", cause)));
         }),
       ),
     );
-    return { register, release: release() } satisfies Interface;
+    const gatewayConfigure = Effect.fn("Network.configureGateway")(function* (input: {
+      readonly tls?: GatewayConfig["tls"];
+      readonly port: number | "auto";
+    }) {
+      const config = yield* validateGatewayConfig(
+        input.tls === undefined ? {} : { tls: input.tls },
+      ).pipe(Effect.mapError((cause) => errorFor("gateway.configure", cause)));
+      return yield* gate.withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* Ref.get(shared);
+          const saved = yield* options.state
+            .read(options.stackId)
+            .pipe(Effect.mapError((cause) => errorFor("gateway.configure", cause)));
+          if (saved === undefined)
+            return yield* errorFor("gateway.configure", "Stack is not registered");
+          if (current !== undefined) {
+            const currentTls = saved.gateway?.tls;
+            const sameTls =
+              currentTls?.cert === config.tls?.cert && currentTls?.key === config.tls?.key;
+            if (!sameTls || (input.port !== "auto" && input.port !== current.claim))
+              return yield* errorFor(
+                "gateway.configure",
+                "Stop the shared API listener before changing gateway configuration",
+              );
+            const runtimePort = saved.ports.find((value) => value.key === "api-runtime")?.port;
+            if (config.tls !== undefined && runtimePort === undefined)
+              return yield* errorFor("gateway.configure", "Runtime gateway port is not assigned");
+            const hostScheme = config.tls === undefined ? "http" : "https";
+            return {
+              hostUrl: `${hostScheme}://127.0.0.1:${current.claim}`,
+              runtimeUrl: `http://${runtimeAddress}:${config.tls === undefined ? current.claim : runtimePort}`,
+            };
+          }
+
+          const api = yield* Effect.scoped(
+            ports.acquire(
+              {
+                stackId: options.stackId,
+                key: "api",
+                host: listenHost,
+                port: input.port,
+              },
+              (host, port) => bindTcp(host, port),
+            ),
+          ).pipe(Effect.mapError((cause) => errorFor("gateway.configure", cause)));
+          if (config.tls === undefined)
+            yield* ports
+              .release(options.stackId, "api-runtime")
+              .pipe(Effect.mapError((cause) => errorFor("gateway.configure", cause)));
+          const runtime =
+            config.tls === undefined
+              ? undefined
+              : yield* Effect.scoped(
+                  ports.acquire(
+                    {
+                      stackId: options.stackId,
+                      key: "api-runtime",
+                      host: listenHost,
+                      port: "auto",
+                    },
+                    (host, port) => bindTcp(host, port),
+                  ),
+                ).pipe(Effect.mapError((cause) => errorFor("gateway.configure", cause)));
+          yield* options.state
+            .withLock(
+              Effect.gen(function* () {
+                const latest = yield* options.state.read(options.stackId);
+                if (latest === undefined)
+                  return yield* errorFor("gateway.configure", "Stack is not registered");
+                yield* options.state.save({ ...latest, gateway: config });
+              }),
+            )
+            .pipe(Effect.mapError((cause) => errorFor("gateway.configure", cause)));
+          const hostScheme = config.tls === undefined ? "http" : "https";
+          return {
+            hostUrl: `${hostScheme}://127.0.0.1:${api.port}`,
+            runtimeUrl: `http://${runtimeAddress}:${runtime?.port ?? api.port}`,
+          };
+        }),
+      );
+    });
+    return {
+      register,
+      gateway: { configure: gatewayConfigure },
+      release: release(),
+    } satisfies Interface;
   });
 
 export const layer = (options: { readonly stackId: string; readonly runtime: NetworkRuntime }) =>

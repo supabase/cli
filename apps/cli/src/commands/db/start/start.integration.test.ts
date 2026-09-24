@@ -1672,6 +1672,7 @@ describe("db start stack backend", () => {
           serviceRoleKeyIsOverride: false,
         }),
       },
+      gateway: { configure: () => Effect.die("unused") },
       composition: {
         describe: Effect.sync(() => ({
           members: members.map(({ id }) => ({ id, activation: "eager" as const })),

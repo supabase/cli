@@ -1,13 +1,14 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
 import { expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Path, Redacted, Ref } from "effect";
-import { HttpClient } from "effect/unstable/http";
+import { Context, Effect, FileSystem, Layer, Path, Redacted, Ref, Schema } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { tmpdir } from "node:os";
 import * as Owner from "./Owner.ts";
 import * as State from "./State.ts";
 import type { SavedStack } from "./State.ts";
 import { DEFAULT_LOCAL_JWT_SECRET } from "./Defaults.ts";
+import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
@@ -314,6 +315,138 @@ it.effect("rejects a malformed persisted composition", () =>
       expect(failure.operation).toBe("configure");
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live(
+  "serves configured Auth templates through the scoped container host listener",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stackId = "owner-auth-templates";
+        const projectRoot = yield* makeDockerDatabaseRoot("stack-owner-auth-templates-", stackId);
+        const state = yield* stateFor(path.dirname(path.dirname(projectRoot)));
+        const saved = {
+          ...initial(stackId),
+          identity: {
+            projectRoot,
+            branchContext: "owner-auth-templates",
+            stackName: stackId,
+          },
+          runtime: "docker" as const,
+        };
+        yield* state.save(saved);
+        const owner = yield* ownerFor({ saved, state, root: projectRoot, cacheRoot });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+
+        const templatePath = path.join(projectRoot, "confirmation.html");
+        yield* fs.writeFileString(
+          templatePath,
+          "<html><body>first-marker {{ .ConfirmationURL }}</body></html>",
+        );
+        const created = yield* owner.composition.supabase([
+          {
+            service: "database",
+            config: {
+              version: "17",
+              databasePassword: Redacted.make("owner-auth-template-password"),
+              jwtSecret: Redacted.make("owner-auth-template-jwt-secret-long-enough"),
+              jwtExpiry: 3600,
+            },
+            endpoints: { sql: { port: "auto" } },
+          },
+          {
+            service: "auth",
+            config: {
+              databaseUrl: "postgresql://placeholder",
+              templates: [{ id: "confirmation", filePath: templatePath }],
+              settings: {
+                email: {
+                  enable_signup: true,
+                  double_confirm_changes: false,
+                  enable_confirmations: true,
+                  secure_password_change: false,
+                  max_frequency: "1m",
+                  otp_length: 6,
+                  otp_expiry: 3600,
+                  template: {},
+                  notification: {},
+                },
+              },
+            },
+            endpoints: { http: { port: "auto" } },
+          },
+          {
+            service: "mail",
+            config: {},
+            endpoints: { http: { port: "auto" }, smtp: { port: "auto" } },
+          },
+        ]);
+        const auth = created.find((entry) => entry.creation.service === "auth");
+        const mail = created.find((entry) => entry.creation.service === "mail");
+        if (auth === undefined || mail === undefined)
+          return yield* Effect.die("Auth or Mail service is missing");
+
+        yield* owner.composition.start;
+        const authCredentials = yield* owner.credentials(auth.id, "host");
+        const mailCredentials = yield* owner.credentials(mail.id, "host");
+        if (authCredentials.url === undefined || mailCredentials.url === undefined)
+          return yield* Effect.die("Auth or Mail HTTP URL is missing");
+        const client = yield* HttpClient.HttpClient;
+        const confirmationHtml = (email: string) =>
+          Effect.gen(function* () {
+            const signup = yield* client.execute(
+              yield* HttpClientRequest.bodyJson({
+                email,
+                password: "owner-auth-template-password-123",
+              })(HttpClientRequest.post(`${authCredentials.url}/signup`)),
+            );
+            const signupBody = yield* signup.text;
+            expect(signup.status, signupBody).toBe(200);
+
+            const messagesResponse = yield* client.execute(
+              HttpClientRequest.get(`${mailCredentials.url}/api/v1/messages`),
+            );
+            const messages = yield* Schema.decodeUnknownEffect(
+              Schema.Struct({
+                messages: Schema.Array(
+                  Schema.Struct({
+                    ID: Schema.String,
+                    To: Schema.Array(Schema.Struct({ Address: Schema.String })),
+                  }),
+                ),
+              }),
+            )(yield* messagesResponse.json);
+            const sent = messages.messages.find((message) =>
+              message.To.some((recipient) => recipient.Address === email),
+            );
+            if (sent === undefined)
+              return yield* Effect.die(`Confirmation email for ${email} is missing`);
+
+            const messageResponse = yield* client.execute(
+              HttpClientRequest.get(`${mailCredentials.url}/api/v1/message/${sent.ID}`),
+            );
+            const message = yield* Schema.decodeUnknownEffect(
+              Schema.Struct({ HTML: Schema.optionalKey(Schema.String) }),
+            )(yield* messageResponse.json);
+            return message.HTML ?? "";
+          });
+
+        expect(yield* confirmationHtml("template-first@example.test")).toContain("first-marker");
+        yield* fs.writeFileString(
+          templatePath,
+          "<html><body>edited-marker {{ .ConfirmationURL }}</body></html>",
+        );
+        yield* owner.core.stop(auth.id);
+        yield* owner.core.start(auth.id);
+        yield* owner.core.ready(auth.id);
+        expect(yield* confirmationHtml("template-edited@example.test")).toContain("edited-marker");
+        const savedAuth = yield* owner.services.get(auth.id);
+        expect(savedAuth.creation.config).not.toHaveProperty("templateBaseUrl");
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  { timeout: 240_000 },
 );
 
 it.effect("publishes service removal and composition pruning together", () =>

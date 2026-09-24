@@ -156,7 +156,7 @@ import {
   START_INTERNAL_DB_NAME,
   START_INTERNAL_DB_PORT,
 } from "../../command-internal/db-bootstrap/internal-db-connection.ts";
-import { KONG_LOCAL_TLS_CERT, KONG_LOCAL_TLS_KEY } from "./templates/kong-local-tls.ts";
+import { DEFAULT_LOCAL_TLS_CERT, DEFAULT_LOCAL_TLS_KEY } from "@supabase/stack/defaults";
 import { buildLogflareContainerSpec } from "./services/logflare.service.ts";
 import {
   buildVectorContainerSpec,
@@ -878,8 +878,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     );
     // These seed from the embedded defaults, then get replaced from disk
     // (below) before any Docker mutation.
-    let tlsCertContent = KONG_LOCAL_TLS_CERT;
-    let tlsKeyContent = KONG_LOCAL_TLS_KEY;
+    let tlsCertContent = DEFAULT_LOCAL_TLS_CERT;
+    let tlsKeyContent = DEFAULT_LOCAL_TLS_KEY;
     if (
       apiEnabled &&
       apiTlsEnabled &&

@@ -248,12 +248,14 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   const requestedPort = source.endpoints?.http?.port;
   const port =
     savedPort ?? (typeof requestedPort === "number" ? requestedPort : config.source.api.port);
-  const databaseAddress = URL.parse(databaseUrl);
-  if (databaseAddress === null) return yield* invalidConfig("Invalid runtime database URL.");
-  const apiUrl =
-    apiSource === undefined
-      ? `http://${databaseAddress.hostname}:${port}`
-      : (yield* apiSource.credentials({ from: "runtime" })).apiUrl;
+  let apiUrl: string | undefined;
+  if (apiSource === undefined) {
+    const gatewayConfig = yield* config.gateway;
+    const gateway = yield* stack.gateway.configure({ ...gatewayConfig, port });
+    apiUrl = gateway.runtimeUrl;
+  } else {
+    apiUrl = (yield* apiSource.credentials({ from: "runtime" })).apiUrl;
+  }
   if (apiUrl === undefined) return yield* invalidConfig("The stack has no runtime API URL.");
   const env =
     envOverride ?? (yield* readStackFunctionsEnv(`${source.config.functionsRoot}/.env`, true));

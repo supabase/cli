@@ -127,6 +127,7 @@ const makeStack = (
     list: Effect.succeed([...services]),
   },
   credentials: { get: Effect.succeed(credentials) },
+  gateway: { configure: () => Effect.die("unused") },
   composition: {
     supabase: (_services, _options) => Effect.die("unused"),
     configure: (_config) => Effect.die("unused"),
@@ -256,7 +257,7 @@ it.live("reports observed lifecycle and health without requesting credentials", 
         creation: rest,
         statusCalls: restCalls,
         observation: makeObservation("rest-id", rest, {
-          endpoints: [{ name: "http", protocol: "http", host: "127.0.0.1", port: 54321 }],
+          endpoints: [{ name: "http", protocol: "https", host: "127.0.0.1", port: 54321 }],
         }),
       }),
       makeService({
@@ -274,6 +275,7 @@ it.live("reports observed lifecycle and health without requesting credentials", 
     expect(run.out.stdoutText).toContain("Owner: reachable");
     expect(run.out.stdoutText).toContain("database (database-id): running");
     expect(run.out.stdoutText).toContain("rest (rest-id): sleeping");
+    expect(run.out.stdoutText).toContain("http: https://127.0.0.1:54321");
     expect(run.out.stdoutText).toContain("auth (auth-id): unhealthy");
     expect(run.out.stdoutText).toContain("health=unhealthy");
     expect(run.out.stdoutText).toContain("Readiness: unhealthy");

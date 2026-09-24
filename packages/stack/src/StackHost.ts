@@ -289,6 +289,10 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           owner.composition.get.pipe(
             Effect.mapError((cause) => stackError("getComposition", cause)),
           ),
+        configureGateway: (configuration: Parameters<Owner.Interface["gateway"]["configure"]>[0]) =>
+          owner.gateway
+            .configure(configuration)
+            .pipe(Effect.mapError((cause) => stackError("configureGateway", cause))),
         startComposition: () =>
           owner.composition.start.pipe(
             Effect.mapError((cause) => stackError("startComposition", cause)),

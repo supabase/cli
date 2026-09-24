@@ -15,7 +15,7 @@ import {
   envOverridePort,
   resolveJwtSecret,
 } from "./local-config-values.ts";
-import { KONG_LOCAL_CA_CERT } from "./kong-local-ca-cert.ts";
+import { DEFAULT_LOCAL_TLS_CERT } from "@supabase/stack/defaults";
 import { extractServiceKeys } from "./tenant-keys.ts";
 import {
   StorageApiKeysNetworkError,
@@ -104,10 +104,34 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
     } satisfies StorageCredentials;
   }
 
-  // Stack backend: endpoint and JWT come from the stack; no `[api]`/SUPABASE_API_*/jwt_secret/
-  // Kong CA, and no legacy fallback.
+  // Stack backend endpoints and JWT come from the stack; TLS trust uses the configured legacy CA.
   const backend = yield* currentStackBackend;
-  if (backend.kind === "stack") return yield* stackStorageEndpoint;
+  if (backend.kind === "stack") {
+    const credentials = yield* stackStorageEndpoint;
+    if (!credentials.baseUrl.startsWith("https:")) return credentials;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const projectEnvValues =
+      opts.projectEnvValues ??
+      (yield* loadProjectEnv(fs, path, cliSettings.workdir).pipe(
+        Effect.mapError((cause) => new StorageConfigError({ message: cause.message })),
+      ));
+    const api = yield* resolveLocalApiConfig(opts.config.api, projectEnvValues);
+    const localKongCa =
+      api.enabled && api.tls.enabled
+        ? yield* validateLocalKongTls(
+            fs,
+            path,
+            cliSettings.workdir,
+            api.tls.cert_path,
+            api.tls.key_path,
+          )
+        : undefined;
+    return {
+      ...credentials,
+      localKongCa: localKongCa ?? DEFAULT_LOCAL_TLS_CERT,
+    } satisfies StorageCredentials;
+  }
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -139,7 +163,7 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
         )
       : undefined;
   if (baseUrl.startsWith("https:")) {
-    localKongCa = validatedCa ?? KONG_LOCAL_CA_CERT;
+    localKongCa = validatedCa ?? DEFAULT_LOCAL_TLS_CERT;
   }
   return { baseUrl, apiKey, localKongCa } satisfies StorageCredentials;
 });
@@ -289,7 +313,7 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
     return certContent;
   }
 
-  return KONG_LOCAL_CA_CERT;
+  return DEFAULT_LOCAL_TLS_CERT;
 });
 
 /**
