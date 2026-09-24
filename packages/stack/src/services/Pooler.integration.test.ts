@@ -18,6 +18,7 @@ const options = (root: string) => ({
 
 const dockerOptions = (root: string) => ({
   ...options(root),
+  cacheRoot: `${root}/cache`,
   runtime: "docker" as const,
 });
 
