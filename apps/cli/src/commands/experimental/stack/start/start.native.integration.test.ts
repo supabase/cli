@@ -194,6 +194,7 @@ describe("experimental stack start native lifecycle", () => {
             const services = yield* reopened.services.list;
             const secondDatabase = services.find((instance) => instance.service === "database");
             if (secondDatabase === undefined) return yield* Effect.die("reopened database missing");
+            expect(services.some((instance) => instance.service === "rest")).toBe(false);
             expect(secondDatabase.id).toBe(firstDatabase.id);
             const secondCredentials = yield* secondDatabase.credentials({ from: "host" });
             expect(secondCredentials.databaseUrl).toBe(firstDatabaseUrl);
@@ -209,7 +210,39 @@ describe("experimental stack start native lifecycle", () => {
               }),
             );
             expect(rows).toEqual([{ value: "preserved" }]);
-            expect(services.some((instance) => instance.service === "rest")).toBe(true);
+            yield* reopened.stop;
+            const restartedId = yield* stackStart(flags([]));
+            expect(restartedId).toBe(stackId);
+            const restarted = yield* api.open({
+              id: restartedId,
+              stateRoot: path.join(root, "stacks"),
+              cacheRoot: path.join(root, "cache"),
+            });
+            const restartedServices = yield* restarted.services.list;
+            const restartedDatabase = restartedServices.find(
+              (instance) => instance.service === "database",
+            );
+            if (restartedDatabase === undefined)
+              return yield* Effect.die("restarted database missing");
+            expect(restartedServices.some((instance) => instance.service === "rest")).toBe(true);
+            expect(restartedDatabase.id).toBe(firstDatabase.id);
+            const restartedCredentials = yield* restartedDatabase.credentials({ from: "host" });
+            expect(restartedCredentials.databaseUrl).toBe(firstDatabaseUrl);
+            const restartedConnection = parseConnectionString(
+              restartedCredentials.databaseUrl ?? "",
+            );
+            if (restartedConnection === undefined)
+              return yield* Effect.die("restarted URL invalid");
+            const restartedRows = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const session = yield* db.connect(restartedConnection, {
+                  isLocal: true,
+                  dnsResolver: "native",
+                });
+                return yield* session.query("SELECT value FROM native_start_probe");
+              }),
+            );
+            expect(restartedRows).toEqual([{ value: "preserved" }]);
           }),
           Effect.exit(
             Effect.gen(function* () {

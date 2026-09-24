@@ -80,7 +80,6 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                       stack,
                       database,
                       databaseServices: ["auth", "storage", "realtime"],
-                      jwtSecret,
                     },
                     overlay: {
                       webhooks: "disabled",

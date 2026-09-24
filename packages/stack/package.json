@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./effect": "./src/effect.ts",
+    "./defaults": "./src/Defaults.ts",
     "./tools": "./src/Tools.ts",
     "./internal/dispatch": "./src/internal/dispatch.ts",
     "./internal/identity": "./src/identity/Identity.ts",

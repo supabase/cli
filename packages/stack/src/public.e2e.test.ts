@@ -182,8 +182,8 @@ it.live(
                 service: "database",
                 config: {
                   version: "17",
-                  databasePassword: "plain-secret",
-                  jwtSecret: "plain-jwt-secret",
+                  databasePassword: "public-pgprove-password",
+                  jwtSecret: "public-pgprove-jwt-secret",
                   jwtExpiry: 3600,
                 },
                 endpoints: { sql: { port: "auto" } },
@@ -194,8 +194,8 @@ it.live(
               database.restart({
                 config: {
                   version: "17",
-                  databasePassword: "replacement-secret",
-                  jwtSecret: "replacement-jwt",
+                  databasePassword: "public-pgprove-password",
+                  jwtSecret: "public-pgprove-jwt-secret",
                   jwtExpiry: 3600,
                 },
               }),
@@ -285,8 +285,8 @@ it.live(
                 service: "database",
                 config: {
                   version: "17",
-                  databasePassword: "restored-secret",
-                  jwtSecret: "restored-jwt-secret",
+                  databasePassword: "public-pgprove-password",
+                  jwtSecret: "public-pgprove-jwt-secret",
                   jwtExpiry: 3600,
                 },
                 endpoints: { sql: { port: "auto" } },
