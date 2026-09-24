@@ -822,6 +822,29 @@ describe("compute new", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  it.live("leaves a dangling symlink at the destination in place", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* project();
+      const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+      const target = path.join(repo.dir, "supabase", "compute", "missing");
+      yield* fs.makeDirectory(path.dirname(computeDir), { recursive: true });
+      yield* fs.symlink(target, computeDir);
+      const { layer } = setupCompute({ workdir: repo.dir });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeNew(
+          flags({ name: Option.some("api"), runtime: Option.some("node") }),
+        ).pipe(Effect.flip);
+
+        expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+        expect(yield* fs.readLink(computeDir)).toBe(target);
+        expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.live.each([false, true])(
     "refuses JSON before prompts or writes (TOML present: %s)",
     (withToml) =>

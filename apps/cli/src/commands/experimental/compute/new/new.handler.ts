@@ -349,9 +349,9 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         )
       : fs.remove(destination, { recursive: true }).pipe(Effect.ignore);
 
-    yield* Effect.gen(function* () {
-      yield* fs.makeDirectory(destination, { recursive: true });
+    yield* fs.makeDirectory(destination, { recursive: true });
 
+    yield* Effect.gen(function* () {
       for (const [filename, contents] of starters) {
         yield* fs.writeFileString(path.join(destination, filename), contents);
       }
