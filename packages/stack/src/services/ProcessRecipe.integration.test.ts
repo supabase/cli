@@ -107,6 +107,7 @@ describe("ProcessRecipe launch cleanup", () => {
           });
           const container: ContainerRuntime = {
             prepare: () => Effect.void,
+            prepareImage: (image) => Effect.succeed(image),
             launchTool: () =>
               Effect.gen(function* () {
                 const launch = yield* Ref.updateAndGet(startupLaunches, (value) => value + 1);

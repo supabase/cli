@@ -69,6 +69,7 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
     if (input.content.includes("\u0000"))
       return yield* failure("Functions bootstrap contains an invalid character");
     const target = path.join(root, "index.ts");
+    const configFile = path.join(root, "deno.json");
     return yield* Effect.gen(function* () {
       const token = yield* crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) =>
@@ -83,6 +84,13 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
           fs.makeDirectory(root, { recursive: true, mode: 0o700 }),
         );
         yield* mapFs(root, "secure functions bootstrap directory", fs.chmod(root, 0o700));
+        // An empty workspace root stops Deno config discovery before any ancestor package.json or
+        // workspace; a plain `{}` still joins an ancestor Deno workspace and fails membership.
+        yield* mapFs(
+          configFile,
+          "write functions bootstrap config",
+          fs.writeFileString(configFile, '{"workspace":[]}\n', { mode: 0o600 }),
+        );
         yield* Effect.scoped(
           Effect.gen(function* () {
             const file = yield* mapFs(

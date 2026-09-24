@@ -11,6 +11,10 @@ type ServeOptions = {
 };
 
 class MissingFixture extends Data.TaggedError("MissingFixture") {}
+// oxlint-disable-next-line effecttsgo/extends-native-error -- stands in for Deno.errors.WorkerAlreadyRetired, matched by instanceof at the sandbox boundary.
+class WorkerAlreadyRetired extends Error {}
+// oxlint-disable-next-line effecttsgo/extends-native-error -- stands in for Deno.errors.InvalidWorkerResponse, matched by instanceof at the sandbox boundary.
+class InvalidWorkerResponse extends Error {}
 
 describe("stack-owned functions bootstrap", () => {
   it.live("produces an executable offline service with the expected runtime contract", () => {
@@ -368,4 +372,146 @@ describe("stack-owned functions bootstrap", () => {
       expect(fetchCalls).toBe(1);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  describe("retired worker dispatch", () => {
+    const envRecord: Record<string, string> = {
+      SUPABASE_INTERNAL_FUNCTIONS_ROOT: "/functions",
+      SUPABASE_INTERNAL_FUNCTIONS_CONFIG: '{"hello":{"verifyJWT":false}}',
+    };
+    // Every create() hands out a distinct worker: worker n always rejects with failures[n - 1] when
+    // one is given, otherwise it answers with its own number so the response names the worker.
+    const serve = (failures: ReadonlyArray<Error>) =>
+      Effect.gen(function* () {
+        const bundled = yield* bundleServeMainTemplate;
+        let serveOptions: ServeOptions | undefined;
+        let creates = 0;
+        const sandbox = {
+          Deno: {
+            env: {
+              get: (name: string) => envRecord[name],
+              toObject: () => envRecord,
+            },
+            errors: { WorkerAlreadyRetired, InvalidWorkerResponse },
+            lstat: (path: string) => {
+              const isDirectory = path === "/functions" || path === "/functions/hello";
+              const isFile = path === "/functions/hello/index.ts";
+              return isDirectory || isFile
+                ? Promise.resolve({ isDirectory, isFile, isSymlink: false })
+                : Promise.reject(new MissingFixture());
+            },
+            realPath: (path: string) => Promise.resolve(path),
+            readDir: () => Stream.toAsyncIterable(Stream.empty),
+            makeTempDirSync: () => "/tmp/worker",
+            version: { deno: "test" },
+            serve: (options: ServeOptions) => {
+              serveOptions = options;
+            },
+          },
+          EdgeRuntime: {
+            applySupabaseTag: () => undefined,
+            userWorkers: {
+              create: () => {
+                const worker = ++creates;
+                const failure = failures[worker - 1];
+                return Promise.resolve({
+                  fetch: (request: Request) => {
+                    if (failure !== undefined) return Promise.reject(failure);
+                    return request
+                      .text()
+                      .then(
+                        (body) => new Response(`fn-ok worker-${worker} ${request.method} ${body}`),
+                      );
+                  },
+                });
+              },
+            },
+          },
+          AbortController,
+          AbortSignal,
+          Headers,
+          Request,
+          Response,
+          URL,
+          console,
+          crypto,
+          CryptoKey,
+          Uint8Array,
+          ArrayBuffer,
+          atob,
+          btoa,
+          setTimeout,
+          clearTimeout,
+          TextEncoder,
+          TextDecoder,
+          structuredClone,
+        };
+        const module = new SourceTextModule(bundled, {
+          context: createContext(sandbox),
+          identifier: "serve.main.retired-worker.bundle.js",
+        });
+        yield* Effect.tryPromise(() =>
+          module.link(() => {
+            throw new Error("Bundled service unexpectedly imported another module");
+          }),
+        );
+        yield* Effect.tryPromise(() => module.evaluate());
+        if (serveOptions === undefined)
+          return yield* Effect.die("Bundled service did not register a server");
+        return { handler: serveOptions.handler, creates: () => creates };
+      });
+
+    it.live("serves a bodyless request with a fresh worker after WorkerAlreadyRetired", () =>
+      Effect.gen(function* () {
+        const { handler, creates } = yield* serve([new WorkerAlreadyRetired()]);
+        const response = yield* Effect.tryPromise(() =>
+          handler(new Request("http://127.0.0.1/hello")),
+        );
+        expect(response.status).toBe(200);
+        expect(yield* Effect.tryPromise(() => response.text())).toBe("fn-ok worker-2 GET ");
+        expect(creates()).toBe(2);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
+    it.live("does not retry a second consecutive WorkerAlreadyRetired", () =>
+      Effect.gen(function* () {
+        const { handler, creates } = yield* serve([
+          new WorkerAlreadyRetired(),
+          new WorkerAlreadyRetired(),
+        ]);
+        const response = yield* Effect.tryPromise(() =>
+          handler(new Request("http://127.0.0.1/hello")),
+        );
+        expect(response.status).toBe(500);
+        expect(creates()).toBe(2);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
+    it.live("does not retry other worker failures", () =>
+      Effect.gen(function* () {
+        const { handler, creates } = yield* serve([new InvalidWorkerResponse()]);
+        const response = yield* Effect.tryPromise(() =>
+          handler(new Request("http://127.0.0.1/hello")),
+        );
+        expect(response.status).toBe(500);
+        expect(yield* Effect.tryPromise(() => response.json())).toMatchObject({
+          code: "WORKER_ERROR",
+        });
+        expect(creates()).toBe(1);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
+    it.live("does not replay a request whose body was already forwarded", () =>
+      Effect.gen(function* () {
+        const { handler, creates } = yield* serve([new WorkerAlreadyRetired()]);
+        const response = yield* Effect.tryPromise(() =>
+          handler(new Request("http://127.0.0.1/hello", { method: "POST", body: "payload" })),
+        );
+        expect(response.status).toBe(500);
+        expect(yield* Effect.tryPromise(() => response.json())).toMatchObject({
+          code: "Internal Server Error",
+        });
+        expect(creates()).toBe(1);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  });
 });
