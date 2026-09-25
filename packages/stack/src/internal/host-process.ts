@@ -74,10 +74,15 @@ const program = (args: ReadonlyArray<string>) =>
     yield* runStackHost(host).pipe(
       Effect.catchCause((cause) => {
         const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
-        const reason = causeCode(failure?.cause) === "EADDRINUSE" ? "bind-conflict" : undefined;
+        const reason =
+          causeCode(failure?.cause) === "EADDRINUSE"
+            ? "bind-conflict"
+            : failure?.reason === "runtime-unavailable"
+              ? "runtime-unavailable"
+              : undefined;
         return report({
           type: "error",
-          message: String(cause),
+          message: failure?.message ?? Cause.pretty(cause),
           ...(reason === undefined ? {} : { reason }),
         }).pipe(Effect.exit, Effect.andThen(Effect.failCause(cause)));
       }),

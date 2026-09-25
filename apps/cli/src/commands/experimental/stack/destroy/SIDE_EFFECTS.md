@@ -21,6 +21,11 @@ Cleanup failures remain errors; the command does not claim success on failure.
 A failed destroy may leave its owner running; retry destruction or use
 `stack stop` to shut down that owner.
 
+When no owner is running and the stack's container engine is unreachable,
+destruction removes the local namespace and data anyway, warns on stderr that
+the engine's containers for the stack were not removed, and exits 0. Those
+containers are removed the next time the same stack starts with that engine.
+
 ## Files and network
 
 Reads identity/state under `<SUPABASE_HOME or ~/.supabase>/stacks/<id>/` and, for

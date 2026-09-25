@@ -91,7 +91,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       })
       .pipe(Effect.mapError(destroyError));
     const destroying = yield* output.task(`Destroying stack ${target.id}...`);
-    yield* stack.destroy.pipe(
+    const result = yield* stack.destroy.pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit)
           ? destroying.clear()
@@ -101,6 +101,13 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       ),
       Effect.mapError(destroyError),
     );
+    if (result.runtimeCleanup === "skipped") {
+      const engine = result.engine;
+      const engineName = engine === "docker" ? "Docker" : "Podman";
+      yield* output.warn(
+        `${engineName} was unavailable, so containers for stack ${target.id} were not removed. Once it is running, remove them with: ${engine} rm --force $(${engine} ps --all --quiet --filter label=com.supabase.stack=${target.id})`,
+      );
+    }
     if (output.format === "text") yield* output.raw(`Stack ${target.id} destroyed.\n`);
     else yield* output.success("", { destroyed: true, id: target.id });
   });

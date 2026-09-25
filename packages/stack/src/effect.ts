@@ -4,10 +4,12 @@ import {
   Deferred,
   Effect,
   Exit,
+  FileSystem,
   Fiber,
   Layer,
   Match,
   Option,
+  Path,
   Ref,
   Scope,
   Schema,
@@ -17,7 +19,7 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
-import { connectHost, launchHost, waitForOwnerExit } from "./HostProcess.ts";
+import { connectHost, HostProcessError, launchHost, waitForOwnerExit } from "./HostProcess.ts";
 import type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import * as State from "./State.ts";
@@ -131,6 +133,14 @@ export type ServiceInstances = {
   [K in Kind]: K extends "database" ? DatabaseInstance : ServiceInstance<K>;
 };
 type AnyInstance = ServiceInstances[Kind];
+/**
+ * The outcome of {@link Stack.destroy}. `skipped` means the stack's registration and data were
+ * removed without its container engine, because the engine was unreachable; its containers were
+ * not removed and remain until the engine sweeps them on a later start of the same stack.
+ */
+export type DestroyResult =
+  | { readonly runtimeCleanup: "complete" }
+  | { readonly runtimeCleanup: "skipped"; readonly engine: "docker" | "podman" };
 /** An attached finite command with backpressured byte streams. */
 export interface ToolOptions<E, R> {
   readonly args?: ReadonlyArray<string>;
@@ -165,7 +175,7 @@ export interface Stack {
     readonly restart: Effect.Effect<ReadonlyArray<Observation>, StackError>;
   };
   readonly stop: Effect.Effect<void, StackError>;
-  readonly destroy: Effect.Effect<void, StackError>;
+  readonly destroy: Effect.Effect<DestroyResult, StackError>;
   readonly tools: {
     readonly run: <E, R>(
       tool: PostgresTool,
@@ -192,6 +202,8 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   const http = yield* HttpClient.HttpClient;
   const crypto = yield* Crypto.Crypto;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const endpointFor = (live: boolean) =>
     (live
       ? launchHost(state, { ...locations, stackId: saved.id })
@@ -218,19 +230,56 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     Stream.unwrap(Effect.map(client(false), run)).pipe(
       Stream.mapError((cause) => failure(operation, cause)),
     );
+  /**
+   * Removes the stack's registration and data without its owner, for a destroy that finds no
+   * owner running and can't start one because its container engine is unreachable. Its
+   * containers are not removed; a later start of the same stack sweeps them.
+   */
+  const offlineDestroy = Effect.fn("Stack.offlineDestroy")(function* (engine: "docker" | "podman") {
+    return yield* state
+      .withLock(
+        Effect.gen(function* () {
+          const current = yield* state.read(saved.id);
+          if (current !== undefined) {
+            yield* fs.remove(path.join(locations.stateRoot, saved.id, "data"), {
+              recursive: true,
+              force: true,
+            });
+            yield* state.remove(saved.id);
+          }
+        }),
+      )
+      .pipe(
+        Effect.as({ runtimeCleanup: "skipped", engine } as const),
+        Effect.mapError((cause) => failure("destroy", cause)),
+      );
+  });
+
   const shutdown = Effect.fn("Stack.shutdown")(function* (destroy: boolean) {
     const operation = destroy ? "destroy" : "shutdown";
-    const { endpoint, shutdownExit } = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const endpoint = yield* endpointFor(destroy);
-        const shutdownExit = yield* clientFor(endpoint.port).pipe(
-          Effect.provideService(HttpClient.HttpClient, http),
-          Effect.flatMap((rpc) => rpc.shutdown({ destroy })),
-          Effect.exit,
-        );
-        return { endpoint, shutdownExit };
-      }),
-    ).pipe(Effect.mapError((cause) => failure(operation, cause)));
+    const endpointExit = yield* Effect.scoped(endpointFor(destroy)).pipe(Effect.exit);
+    if (Exit.isFailure(endpointExit)) {
+      const endpointFailure = Option.getOrUndefined(Cause.findErrorOption(endpointExit.cause));
+      if (
+        destroy &&
+        saved.runtime !== "native" &&
+        endpointFailure instanceof HostProcessError &&
+        endpointFailure.reason === "runtime-unavailable"
+      )
+        return yield* offlineDestroy(saved.runtime);
+      return yield* Option.match(Cause.findErrorOption(endpointExit.cause), {
+        onNone: () => Effect.fail(failure(operation, Cause.pretty(endpointExit.cause))),
+        onSome: (cause) => Effect.fail(failure(operation, cause)),
+      });
+    }
+    const endpoint = endpointExit.value;
+    const shutdownExit = yield* Effect.scoped(
+      clientFor(endpoint.port).pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.flatMap((rpc) => rpc.shutdown({ destroy })),
+        Effect.exit,
+      ),
+    );
     if (Exit.isFailure(shutdownExit)) {
       const shutdownFailure = Option.match(Cause.findErrorOption(shutdownExit.cause), {
         onNone: () => failure(operation, Cause.pretty(shutdownExit.cause)),
@@ -259,6 +308,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     yield* waitForOwnerExit(endpoint.pid).pipe(
       Effect.mapError((cause) => failure("shutdown-exit", cause)),
     );
+    return { runtimeCleanup: "complete" } as const;
   });
 
   const common = <K extends Kind>(id: string, service: K): ServiceInstance<K> => ({
@@ -468,7 +518,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       stop: call("stopComposition", (rpc) => rpc.stopComposition()),
       restart: call("restartComposition", (rpc) => rpc.restartComposition()),
     },
-    stop: shutdown(false),
+    stop: shutdown(false).pipe(Effect.asVoid),
     destroy: shutdown(true),
     tools: { run },
   } satisfies Stack;

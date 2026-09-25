@@ -22,6 +22,7 @@ type HostFailureReason =
   | "missing-control-listener"
   | "connection-failure"
   | "bind-conflict"
+  | "runtime-unavailable"
   | "invalid-owner-pid"
   | "owner-exit-pending"
   | "owner-exit-probe";
@@ -151,7 +152,7 @@ const readyLine = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("error"),
     message: Schema.String,
-    reason: Schema.optionalKey(Schema.Literal("bind-conflict")),
+    reason: Schema.optionalKey(Schema.Literals(["bind-conflict", "runtime-unavailable"])),
   }),
 ]);
 const spawnDetached = Effect.fn("HostProcess.spawnDetached")(function* (

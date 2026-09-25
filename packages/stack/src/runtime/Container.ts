@@ -22,6 +22,7 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
+  readonly reason?: "engine-unavailable";
 }> {}
 
 interface ContainerSpec {
@@ -555,7 +556,21 @@ export const removeStackContainers = Effect.fn("Container.removeStackContainers"
         `label=com.supabase.stack-root=${stackRoot}`,
       ];
       const list = () => run(["ps", "--all", "--quiet", "--no-trunc", ...filters]);
-      const ids = (yield* list()).split("\n").filter((id) => id.length > 0);
+      // Only the initial listing failing means the engine itself is unreachable; a later `rm` or
+      // leftover check failing is a per-container cleanup problem instead.
+      const ids = (yield* list().pipe(
+        Effect.mapError(
+          (cause) =>
+            new ContainerError({
+              operation: cause.operation,
+              message: cause.message,
+              cause: cause.cause,
+              reason: "engine-unavailable",
+            }),
+        ),
+      ))
+        .split("\n")
+        .filter((id) => id.length > 0);
       yield* Effect.forEach(
         ids,
         (id) =>

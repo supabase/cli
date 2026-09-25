@@ -119,7 +119,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
       restart: Effect.succeed([]),
     },
     stop: Effect.void,
-    destroy: Effect.void,
+    destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
     tools: {
       run: <E, R>(
         _tool: { readonly command: string; readonly major: number },
