@@ -1,4 +1,14 @@
-import { Crypto, Effect, FileSystem, Option, Path, PlatformError, Predicate, Schema } from "effect";
+import {
+  Clock,
+  Crypto,
+  Effect,
+  FileSystem,
+  Option,
+  Path,
+  PlatformError,
+  Predicate,
+  Schema,
+} from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
@@ -585,6 +595,51 @@ const cleanup = (fs: FileSystem.FileSystem, path: string): Effect.Effect<void, P
       ),
     );
 
+const orphanMaxAgeMillis = 24 * 60 * 60 * 1000;
+
+const isOrphanCandidate = (name: string): boolean =>
+  name.startsWith(".") && (name.endsWith(".tmp") || name.endsWith(".invalid"));
+
+/**
+ * Best-effort sweep of temp/quarantine leftovers a hard kill left behind. Only entries whose own
+ * mtime is older than `orphanMaxAgeMillis` are removed, so a concurrent in-progress download by
+ * another process is never touched. Every failure is swallowed: this is opportunistic cleanup,
+ * not a correctness requirement.
+ */
+const reapOrphanedArtifacts = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  cacheRoot: string,
+): Effect.Effect<void> =>
+  Clock.currentTimeMillis.pipe(
+    Effect.flatMap((now) =>
+      fs.readDirectory(cacheRoot, { recursive: true }).pipe(
+        Effect.flatMap((entries) =>
+          Effect.forEach(
+            entries.filter((entry) => isOrphanCandidate(path.basename(entry))),
+            (entry) => {
+              const candidate = path.join(cacheRoot, entry);
+              return fs.stat(candidate).pipe(
+                Effect.flatMap((info) =>
+                  Option.match(info.mtime, {
+                    onNone: () => Effect.void,
+                    onSome: (mtime) =>
+                      now - mtime.getTime() > orphanMaxAgeMillis
+                        ? fs.remove(candidate, { recursive: true, force: true })
+                        : Effect.void,
+                  }),
+                ),
+                Effect.ignore,
+              );
+            },
+            { discard: true },
+          ),
+        ),
+      ),
+    ),
+    Effect.ignore,
+  );
+
 const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -817,6 +872,7 @@ export const makeArtifactStore = Effect.fn("ArtifactStore.makeStore")(function* 
   if (rootInfo.type !== "Directory")
     return yield* artifactError("Artifact cache root must be a directory", { path: cacheRoot });
   yield* mapFs(cacheRoot, "secure artifact cache root", restrictDirectoryToOwner(fs, cacheRoot));
+  yield* reapOrphanedArtifacts(fs, path, cacheRoot);
   const prepare = Effect.fn("ArtifactStore.prepare")(function* (
     request: ArtifactRequest,
     onProgress?: (state: "downloading" | "preparing") => void,

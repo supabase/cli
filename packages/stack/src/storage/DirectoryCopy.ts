@@ -1,7 +1,5 @@
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no lstat or clone-copy operation.
-import { copyFile as nativeCopyFile, lstat, readdir } from "node:fs/promises";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no clone-copy flags.
-import { constants as fsConstants } from "node:fs";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no lstat or typed directory listing.
+import { lstat, readdir } from "node:fs/promises";
 import { Cause, Effect, FileSystem, Option, Path, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -24,43 +22,16 @@ type NativeStats = Awaited<ReturnType<typeof lstat>>;
 const errorFor = (operation: string, source: string, destination: string, cause: unknown) =>
   new DirectoryCopyError({ operation, source, destination, cause });
 
-const isCloneUnsupported = (cause: unknown): boolean => {
-  if (Schema.is(NativeFileError)(cause)) return isCloneUnsupported(cause.cause);
-  if (typeof cause !== "object" || cause === null || !("code" in cause)) return false;
-  const code = cause.code;
-  return (
-    code === "ENOTSUP" ||
-    code === "EOPNOTSUPP" ||
-    code === "ENOSYS" ||
-    code === "EXDEV" ||
-    code === "EINVAL"
-  );
-};
-
 const isNotFound = (cause: unknown): boolean =>
   Schema.is(NativeFileError)(cause)
     ? isNotFound(cause.cause)
     : typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT";
 
-// FileSystem does not expose lstat or clone flags, so these two operations stay at the
-// native boundary while the traversal and directory operations use the Effect service.
+// FileSystem does not expose lstat, which link detection needs.
 const nativeLstat = (target: string): Effect.Effect<NativeStats, NativeFileError> =>
   Effect.uninterruptible(
     Effect.tryPromise({
       try: () => lstat(target),
-      catch: (cause) => new NativeFileError({ cause }),
-    }),
-  );
-
-const nativeCopy = (
-  source: string,
-  destination: string,
-  clone: boolean,
-): Effect.Effect<void, NativeFileError> =>
-  Effect.uninterruptible(
-    Effect.tryPromise({
-      try: () =>
-        nativeCopyFile(source, destination, clone ? fsConstants.COPYFILE_FICLONE_FORCE : 0),
       catch: (cause) => new NativeFileError({ cause }),
     }),
   );
@@ -73,93 +44,7 @@ const inspect = (
     Effect.mapError((cause) => errorFor("lstat", source, destination, cause)),
   );
 
-const copyFile = (source: string, destination: string): Effect.Effect<void, DirectoryCopyError> => {
-  const regular = nativeCopy(source, destination, false).pipe(
-    Effect.mapError((cause) => errorFor("copyFile", source, destination, cause)),
-  );
-  if (process.platform === "win32") return regular;
-  return nativeCopy(source, destination, true).pipe(
-    Effect.catch((cause: NativeFileError) =>
-      isCloneUnsupported(cause)
-        ? regular
-        : Effect.fail(errorFor("copyFile", source, destination, cause)),
-    ),
-  );
-};
-
-const validateTree = (
-  source: string,
-  destination: string,
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-): Effect.Effect<void, DirectoryCopyError, FileSystem.FileSystem | Path.Path> =>
-  Effect.gen(function* () {
-    const stats = yield* inspect(source, destination);
-    if (stats.isSymbolicLink())
-      return yield* errorFor("validate", source, destination, "symbolic link");
-    if (!stats.isDirectory())
-      return yield* errorFor("validate", source, destination, "not a directory");
-    const entries = yield* fs
-      .readDirectory(source)
-      .pipe(Effect.mapError((cause) => errorFor("readDirectory", source, destination, cause)));
-    for (const entry of entries) {
-      const childSource = path.join(source, entry);
-      const childDestination = path.join(destination, entry);
-      const childStats = yield* inspect(childSource, childDestination);
-      if (childStats.isSymbolicLink())
-        return yield* errorFor("validate", childSource, childDestination, "symbolic link");
-      if (childStats.isDirectory()) yield* validateTree(childSource, childDestination, fs, path);
-      else if (!childStats.isFile())
-        return yield* errorFor("validate", childSource, childDestination, "special file");
-    }
-  });
-
-const copyTree = (
-  source: string,
-  destination: string,
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-): Effect.Effect<void, DirectoryCopyError, FileSystem.FileSystem | Path.Path> =>
-  Effect.gen(function* () {
-    const sourceStats = yield* inspect(source, destination);
-    if (sourceStats.isSymbolicLink())
-      return yield* errorFor("validate", source, destination, "symbolic link");
-    if (sourceStats.isDirectory() === false)
-      return yield* errorFor("validate", source, destination, "not a directory");
-
-    yield* fs
-      .makeDirectory(destination, {
-        mode: (Number(sourceStats.mode) | 0o700) & 0o7777,
-      })
-      .pipe(Effect.mapError((cause) => errorFor("makeDirectory", source, destination, cause)));
-
-    const entries = yield* fs
-      .readDirectory(source)
-      .pipe(Effect.mapError((cause) => errorFor("readDirectory", source, destination, cause)));
-    for (const entry of entries) {
-      const childSource = path.join(source, entry);
-      const childDestination = path.join(destination, entry);
-      const childStats = yield* inspect(childSource, childDestination);
-      if (childStats.isSymbolicLink())
-        return yield* errorFor("validate", childSource, childDestination, "symbolic link");
-      if (childStats.isDirectory()) {
-        yield* copyTree(childSource, childDestination, fs, path);
-      } else if (childStats.isFile()) {
-        yield* copyFile(childSource, childDestination);
-        yield* fs
-          .chmod(childDestination, Number(childStats.mode) & 0o7777)
-          .pipe(
-            Effect.mapError((cause) => errorFor("chmod", childSource, childDestination, cause)),
-          );
-      } else {
-        return yield* errorFor("validate", childSource, childDestination, "special file");
-      }
-    }
-    yield* fs
-      .chmod(destination, Number(sourceStats.mode) & 0o7777)
-      .pipe(Effect.mapError((cause) => errorFor("chmod", source, destination, cause)));
-  });
-
+/** Copies a plain directory tree with one host copy process; links and special files fail. */
 export const copyDirectory = Effect.fn("DirectoryCopy.copyDirectory")(function* (
   source: string,
   destination: string,
@@ -175,39 +60,45 @@ export const copyDirectory = Effect.fn("DirectoryCopy.copyDirectory")(function* 
       onSuccess: () => Effect.fail(errorFor("validate", source, destination, "destination exists")),
     }),
   );
-  // cp and robocopy keep or follow links. Only a plain directory tree can use them.
-  const copies = hostCopies(source, destination);
-  if (copies.length > 0 && (yield* directoryTreeIsCopyable(source, destination, path))) {
-    for (const copy of copies) {
-      const copied = yield* runExec(
-        copy.command,
-        copy.args,
-        source,
-        destination,
-        "copy",
-        copy.acceptStatus,
-      ).pipe(
-        Effect.asVoid,
-        // matchCauseEffect does not observe an external interrupt.
-        Effect.onInterrupt(() => removePartial(destination, fs, path)),
-        Effect.matchCauseEffect({
-          onSuccess: () => Effect.succeed("copied" as const),
-          onFailure: (cause) =>
-            removePartial(destination, fs, path).pipe(
-              Effect.flatMap(() => {
-                if (Cause.hasInterrupts(cause)) return Effect.failCause(cause);
-                const outcome = isUsageFailure(cause) ? "usage" : "failed";
-                return Effect.succeed(outcome);
+  const stats = yield* inspect(source, destination);
+  if (stats.isSymbolicLink() || !stats.isDirectory())
+    return yield* errorFor("validate", source, destination, "not a plain directory");
+  // cp and robocopy keep or follow links, so only a plain tree reaches them.
+  const unsupported = yield* process.platform === "win32"
+    ? scanUnsupported(source, destination, path)
+    : findUnsupportedEntry(source, destination);
+  if (unsupported) return yield* errorFor("validate", source, destination, "link or special file");
+  let failure: DirectoryCopyError | undefined;
+  for (const copy of hostCopies(source, destination)) {
+    const copied = yield* runExec(
+      copy.command,
+      copy.args,
+      source,
+      destination,
+      "copy",
+      copy.acceptStatus,
+    ).pipe(
+      Effect.asVoid,
+      // matchCauseEffect does not observe an external interrupt.
+      Effect.onInterrupt(() => removePartial(destination, fs, path)),
+      Effect.matchCauseEffect({
+        onSuccess: () => Effect.succeedNone,
+        onFailure: (cause) =>
+          removePartial(destination, fs, path).pipe(
+            Effect.flatMap(() =>
+              Option.match(Cause.findErrorOption(cause), {
+                onNone: () => Effect.failCause(cause),
+                onSome: (error) => Effect.succeedSome(error),
               }),
             ),
-        }),
-      );
-      if (copied === "copied") return;
-      if (copied === "failed") break;
-    }
+          ),
+      }),
+    );
+    if (Option.isNone(copied)) return;
+    failure = copied.value;
+    if (!isUsageError(failure.cause)) break;
   }
-  yield* validateTree(source, destination, fs, path);
-  return yield* copyTree(source, destination, fs, path);
+  return yield* failure ?? errorFor("copy", source, destination, "no host copy tool");
 });
 
 const runExec = (
@@ -240,27 +131,6 @@ const runExec = (
       return text;
     }),
   );
-
-const directoryTreeIsCopyable = (
-  source: string,
-  destination: string,
-  path: Path.Path,
-): Effect.Effect<boolean, DirectoryCopyError, ChildProcessSpawner.ChildProcessSpawner> =>
-  Effect.gen(function* () {
-    const stats = yield* inspect(source, destination);
-    if (!stats.isDirectory() || stats.isSymbolicLink()) return false;
-    return yield* (
-      process.platform === "win32"
-        ? scanUnsupported(source, destination, path)
-        : findUnsupportedEntry(source, destination)
-    ).pipe(
-      Effect.matchCauseEffect({
-        onSuccess: (found) => Effect.succeed(!found),
-        onFailure: (cause) =>
-          Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(false),
-      }),
-    );
-  });
 
 const findUnsupportedEntry = (
   source: string,
@@ -389,12 +259,6 @@ const isUsageError = (cause: unknown): boolean => {
     /unrecognized option|invalid option|unknown option|illegal option/iu.test(message)
   );
 };
-
-const isUsageFailure = (cause: Cause.Cause<DirectoryCopyError>): boolean =>
-  Option.match(Cause.findErrorOption(cause), {
-    onNone: () => false,
-    onSome: (error) => isUsageError(error.cause),
-  });
 
 // One process copies the tree. macOS clones, and Linux reflinks when the filesystem can.
 const hostCopies = (source: string, destination: string): ReadonlyArray<HostCopy> => {

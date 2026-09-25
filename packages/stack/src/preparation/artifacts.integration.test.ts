@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Crypto,
+  DateTime,
   Deferred,
   Effect,
   Exit,
@@ -744,6 +745,38 @@ describe("verified native artifact preparation", () => {
         expect(errorOf(exit)).toBeInstanceOf(PreparationError);
         expect(called).toBe(false);
         expect(yield* fs.exists(`${outside}/postgres`)).toBe(false);
+      }),
+    ),
+  );
+});
+
+describe("orphaned temp/quarantine sweep", () => {
+  it.live("removes only leftovers older than the sweep threshold on construction", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-sweep-",
+        });
+        const old = DateTime.toDate(DateTime.subtract(yield* DateTime.now, { hours: 25 }));
+        const oldTemp = `${root}/.postgres.oldtoken.tmp`;
+        const freshTemp = `${root}/.postgres.freshtoken.tmp`;
+        const oldQuarantine = `${root}/.postgres.oldtoken.invalid`;
+        const freshQuarantine = `${root}/.postgres.freshtoken.invalid`;
+
+        for (const leftover of [oldTemp, freshTemp, oldQuarantine, freshQuarantine]) {
+          yield* fs.makeDirectory(leftover, { recursive: true });
+          yield* fs.writeFileString(`${leftover}/marker`, "leftover");
+        }
+        yield* fs.utimes(oldTemp, old, old);
+        yield* fs.utimes(oldQuarantine, old, old);
+
+        yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+
+        expect(yield* fs.exists(oldTemp)).toBe(false);
+        expect(yield* fs.exists(oldQuarantine)).toBe(false);
+        expect(yield* fs.exists(freshTemp)).toBe(true);
+        expect(yield* fs.exists(freshQuarantine)).toBe(true);
       }),
     ),
   );
