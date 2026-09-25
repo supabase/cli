@@ -15,6 +15,7 @@ import {
 } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { startupTrace } from "./runtime/StartupTrace.ts";
 import * as Network from "./Network.ts";
 import * as Container from "./runtime/Container.ts";
 import type { NetworkBinding, NetworkNamespace } from "./Network.ts";
@@ -1157,7 +1158,13 @@ const makeOwnerWithDependencies = (
 
     const prepare = Effect.fn("Owner.prepare")(function* (id: string) {
       return yield* getRecipe(id).pipe(
-        Effect.flatMap((recipe) => recipe.definition.prepare?.(recipe.creation) ?? Effect.void),
+        Effect.flatMap((recipe) => {
+          const fields = { member_id: id, service: recipe.creation.service };
+          return startupTrace("service.prepare.begin", fields).pipe(
+            Effect.andThen(recipe.definition.prepare?.(recipe.creation) ?? Effect.void),
+            Effect.ensuring(startupTrace("service.prepare.end", fields)),
+          );
+        }),
         Effect.mapError((cause) => errorFor("prepare", cause)),
       );
     });

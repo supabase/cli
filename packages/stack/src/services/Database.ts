@@ -50,6 +50,7 @@ import {
   type NativeProcess,
 } from "../runtime/NativeProcess.ts";
 import type { StackId } from "../identity/StackId.ts";
+import { startupTrace } from "../runtime/StartupTrace.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeDatabaseSnapshots } from "./DatabaseSnapshot.ts";
@@ -266,6 +267,7 @@ const health = Effect.fn("Database.health")((
   context: {
     readonly fs: FileSystem.FileSystem;
     readonly instanceRoot: string;
+    readonly instanceId: string;
     readonly version: string;
     readonly runtime: DatabaseRuntime;
     readonly markInitialized?: Effect.Effect<void, ServiceError>;
@@ -289,8 +291,18 @@ const health = Effect.fn("Database.health")((
     }),
   );
   const retryProbe = probe.pipe(Effect.retry(Schedule.spaced("250 millis")));
-  return reconcile.pipe(
-    Effect.andThen(retryProbe),
+  const identity = { member_id: context.instanceId, runtime: context.runtime };
+  return startupTrace("database.reconcile.begin", identity).pipe(
+    Effect.andThen(
+      reconcile.pipe(Effect.ensuring(startupTrace("database.reconcile.end", identity))),
+    ),
+    Effect.andThen(
+      startupTrace("database.probe.begin", identity).pipe(
+        Effect.andThen(
+          retryProbe.pipe(Effect.ensuring(startupTrace("database.probe.end", identity))),
+        ),
+      ),
+    ),
     Effect.andThen(
       Effect.scoped(
         Effect.gen(function* () {
@@ -327,14 +339,20 @@ const health = Effect.fn("Database.health")((
                 }),
             ),
           );
+          yield* startupTrace("database.internal_db.ensure.begin", identity);
           yield* ensureInternalDatabase(session, openInternal).pipe(
             Effect.mapError((cause) => errorFor("bootstrap", cause)),
+            Effect.ensuring(startupTrace("database.internal_db.ensure.end", identity)),
           );
+          yield* startupTrace("database.bootstrap.begin", identity);
           yield* runDatabaseBootstrap(session, {
             databasePassword: config.databasePassword,
             jwtSecret: config.jwtSecret,
             jwtExpiry: config.jwtExpiry,
-          }).pipe(Effect.mapError((cause) => errorFor("bootstrap", cause)));
+          }).pipe(
+            Effect.mapError((cause) => errorFor("bootstrap", cause)),
+            Effect.ensuring(startupTrace("database.bootstrap.end", identity)),
+          );
           const readyMarker = yield* Schema.encodeEffect(
             Schema.fromJsonString(DatabaseReadyMarker),
           )({
@@ -888,6 +906,7 @@ export const makeDatabase = (
               health: health(selectedEndpoint, config, Effect.void, {
                 fs,
                 instanceRoot,
+                instanceId: context.id,
                 version: config.version,
                 runtime: options.runtime,
                 markInitialized:
@@ -927,6 +946,7 @@ export const makeDatabase = (
               {
                 fs,
                 instanceRoot,
+                instanceId: context.id,
                 version: config.version,
                 runtime: options.runtime,
                 markInitialized:

@@ -17,6 +17,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { startupTrace } from "./StartupTrace.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
@@ -128,6 +129,12 @@ export const makeContainerRuntime = (options: {
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
     const stackRoot = path.resolve(options.root);
+    let commandSequence = 0;
+    const nextTraceId = () =>
+      // oxlint-disable-next-line effecttsgo/process-env -- Benchmark command IDs are disabled when tracing is off.
+      process.env.SUPABASE_STARTUP_TRACE_FILE === undefined
+        ? undefined
+        : `${process.pid}:${++commandSequence}`;
 
     const command = (
       args: ReadonlyArray<string>,
@@ -140,7 +147,23 @@ export const makeContainerRuntime = (options: {
     const run = Effect.fn("Container.command")(function* (
       args: ReadonlyArray<string>,
       commandOptions: { readonly timeout?: Duration.Input } = { timeout: "30 seconds" },
+      identity?: { readonly stackId: string; readonly instanceId: string; readonly image?: string },
     ) {
+      const traceId = nextTraceId();
+      const fields = {
+        ...(traceId === undefined ? {} : { trace_id: traceId }),
+        engine: options.engine,
+        operation: args[0] ?? "command",
+        suboperation: args[1],
+        ...(identity === undefined
+          ? {}
+          : {
+              stack_id: identity.stackId,
+              member_id: identity.instanceId,
+              ...(identity.image === undefined ? {} : { image: identity.image }),
+            }),
+      };
+      yield* startupTrace("docker.command.begin", fields);
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const child = yield* spawner.spawn(command(args));
@@ -169,6 +192,7 @@ export const makeContainerRuntime = (options: {
             ? effect
             : effect.pipe(Effect.timeout(commandOptions.timeout)),
         Effect.mapError((cause) => errorFor(args[0] ?? "command", cause)),
+        Effect.ensuring(startupTrace("docker.command.end", fields)),
       );
     });
 
@@ -307,11 +331,16 @@ export const makeContainerRuntime = (options: {
         image,
         ...(spec.args ?? []),
       ];
+      const identity = {
+        stackId: spec.stackId,
+        instanceId: spec.instanceId,
+        image: spec.image,
+      };
 
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           // Creation must settle before cleanup can safely run.
-          const creation = yield* run(args, { timeout: undefined }).pipe(
+          const creation = yield* run(args, { timeout: undefined }, identity).pipe(
             Effect.mapError(
               (error) =>
                 new ContainerError({
@@ -338,6 +367,7 @@ export const makeContainerRuntime = (options: {
                 "{{.State}}",
               ],
               { timeout: "5 seconds" },
+              identity,
             ).pipe(
               Effect.map((output) =>
                 output === ""
@@ -377,26 +407,30 @@ export const makeContainerRuntime = (options: {
               spec.stopGraceSeconds <= 60
                 ? String(spec.stopGraceSeconds)
                 : "10";
-            yield* run(["stop", "--time", grace, name]).pipe(
+            yield* run(["stop", "--time", grace, name], undefined, identity).pipe(
               Effect.catchTag("ContainerError", reconcileAbsent),
             );
             yield* Ref.set(stopped, true);
           });
           const discard = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-            yield* run(["stop", "--time", "0", name]).pipe(
+            yield* run(["stop", "--time", "0", name], undefined, identity).pipe(
               Effect.catchTag("ContainerError", reconcileAbsent),
             );
             yield* Ref.set(stopped, true);
           });
           const kill = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-            yield* run(["kill", name]).pipe(Effect.catchTag("ContainerError", reconcileAbsent));
+            yield* run(["kill", name], undefined, identity).pipe(
+              Effect.catchTag("ContainerError", reconcileAbsent),
+            );
             yield* Ref.set(stopped, true);
           });
           const remove = Effect.gen(function* () {
             if (yield* Ref.get(removed)) return;
-            yield* run(["rm", name]).pipe(Effect.catchTag("ContainerError", reconcileAbsent));
+            yield* run(["rm", name], undefined, identity).pipe(
+              Effect.catchTag("ContainerError", reconcileAbsent),
+            );
             yield* Ref.set(stopped, true);
             yield* Ref.set(removed, true);
           });
@@ -433,20 +467,37 @@ export const makeContainerRuntime = (options: {
           }
           return yield* restore(
             Effect.gen(function* () {
+              const attachedTraceId = nextTraceId();
+              const attachedTraceFields = {
+                ...(attachedTraceId === undefined ? {} : { trace_id: attachedTraceId }),
+                engine: options.engine,
+                operation: "start",
+                suboperation: "attach",
+                stack_id: spec.stackId,
+                member_id: spec.instanceId,
+                image: spec.image,
+              };
               const attached = interactive
-                ? yield* spawner
-                    .spawn(
-                      command(["start", "--attach", "--interactive", name], {
-                        stdin: "pipe",
-                        forceKillAfter: "5 seconds",
-                      }),
-                    )
-                    .pipe(Effect.mapError((cause) => errorFor("start", cause)))
+                ? yield* startupTrace("docker.command.begin", attachedTraceFields).pipe(
+                    Effect.andThen(
+                      spawner
+                        .spawn(
+                          command(["start", "--attach", "--interactive", name], {
+                            stdin: "pipe",
+                            forceKillAfter: "5 seconds",
+                          }),
+                        )
+                        .pipe(
+                          Effect.mapError((cause) => errorFor("start", cause)),
+                          Effect.ensuring(startupTrace("docker.command.end", attachedTraceFields)),
+                        ),
+                    ),
+                  )
                 : undefined;
-              if (!interactive) yield* run(["start", name]);
+              if (!interactive) yield* run(["start", name], undefined, identity);
               const wait: Effect.Effect<number, ContainerError> =
                 attached === undefined
-                  ? run(["wait", name], {}).pipe(
+                  ? run(["wait", name], {}, identity).pipe(
                       Effect.flatMap((output) => {
                         const code = Number(output);
                         return /^\d+$/u.test(output) && Number.isSafeInteger(code)
@@ -463,12 +514,11 @@ export const makeContainerRuntime = (options: {
                 getWaiter,
               ).pipe(Effect.flatMap((fiber) => Fiber.join(fiber)));
               owned = { ...partial, exitCode };
-              const text = yield* run([
-                "inspect",
-                "--format",
-                "{{json .NetworkSettings.Ports}}",
-                name,
-              ]);
+              const text = yield* run(
+                ["inspect", "--format", "{{json .NetworkSettings.Ports}}", name],
+                undefined,
+                identity,
+              );
               const bindings = yield* Schema.decodeEffect(Schema.fromJsonString(PublishedPorts))(
                 text,
               ).pipe(Effect.mapError((cause) => errorFor("inspect", cause)));
