@@ -375,6 +375,7 @@ jobs:
             cp "dist/supabase_${VERSION}_${triple}.tar.gz" "dist/supabase_${triple}.tar.gz"
           done
 
+      # Created empty; the next step uploads the assets so each one can be retried on its own.
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
@@ -382,29 +383,18 @@ jobs:
           name: v${{ inputs.version }}
           draft: true
           prerelease: ${{ inputs.prerelease }}
-          files: |
-            dist/supabase_${{ inputs.version }}_darwin_arm64.tar.gz
-            dist/supabase_${{ inputs.version }}_darwin_amd64.tar.gz
-            dist/supabase_${{ inputs.version }}_linux_arm64.tar.gz
-            dist/supabase_${{ inputs.version }}_linux_amd64.tar.gz
-            dist/supabase_${{ inputs.version }}_linux_arm64.deb
-            dist/supabase_${{ inputs.version }}_linux_amd64.deb
-            dist/supabase_${{ inputs.version }}_linux_arm64.rpm
-            dist/supabase_${{ inputs.version }}_linux_amd64.rpm
-            dist/supabase_${{ inputs.version }}_linux_arm64.apk
-            dist/supabase_${{ inputs.version }}_linux_amd64.apk
-            dist/supabase_${{ inputs.version }}_windows_amd64.zip
-            dist/supabase_${{ inputs.version }}_windows_arm64.zip
-            dist/supabase_${{ inputs.version }}_windows_amd64.tar.gz
-            dist/supabase_${{ inputs.version }}_windows_arm64.tar.gz
-            dist/checksums.txt
-            dist/supabase_darwin_arm64.tar.gz
-            dist/supabase_darwin_amd64.tar.gz
-            dist/supabase_linux_arm64.tar.gz
-            dist/supabase_linux_amd64.tar.gz
-            dist/supabase_windows_arm64.tar.gz
-            dist/supabase_windows_amd64.tar.gz
-            install
+
+      # One asset at a time with per-asset retries; see apps/cli/scripts/upload-release-assets.ts.
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts upload --version "${VERSION}"
+
+      # Publishing makes the release immutable, so require every expected asset to be uploaded first.
+      - name: Verify release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts verify --version "${VERSION}"
 
       - name: Publish GitHub Release (immutable)
         env:
