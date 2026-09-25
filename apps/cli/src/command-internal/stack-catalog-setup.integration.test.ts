@@ -32,7 +32,7 @@ const jwtSecret = "stack-catalog-setup-integration-secret";
 describe("stack catalog setup", { timeout: 180_000 }, () => {
   for (const runtime of ["native", "docker"] as const) {
     it.live(
-      `initializes selected schemas and cleans up temporary services on a stopped ${runtime} composition`,
+      `initializes service schemas and cleans up temporary services on a stopped ${runtime} composition`,
       () => {
         const buildOutput = mockOutput();
         const callOutput = mockOutput();
@@ -43,7 +43,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
             yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
             yield* fs.writeFileString(
               `${root}/supabase/roles.sql`,
-              "CREATE TABLE IF NOT EXISTS public.catalog_overlay(owner uuid REFERENCES auth.users(id), value text NOT NULL);\n",
+              "CREATE TABLE IF NOT EXISTS public.catalog_overlay(owner uuid REFERENCES auth.users(id), session_id uuid REFERENCES auth.sessions(id), upload_id text REFERENCES storage.s3_multipart_uploads(id), value text NOT NULL);\n",
             );
             const stack = yield* create({
               projectRoot: root,
@@ -119,7 +119,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                     args: ["--dbname", databaseUrl, "-At"],
                     stdin: Stream.make(
                       new TextEncoder().encode(
-                        "select coalesce(to_regclass('auth.users')::text,'missing'), coalesce(to_regclass('storage.objects')::text,'missing'), coalesce(to_regclass('realtime.messages')::text,'missing'), coalesce(to_regclass('realtime.subscription')::text,'missing'), coalesce(to_regclass('public.catalog_overlay')::text,'missing');",
+                        "select coalesce(to_regclass('auth.users')::text,'missing'), coalesce(to_regclass('auth.sessions')::text,'missing'), coalesce(to_regclass('storage.objects')::text,'missing'), coalesce(to_regclass('storage.s3_multipart_uploads')::text,'missing'), coalesce(to_regclass('realtime.messages')::text,'missing'), coalesce(to_regclass('realtime.subscription')::text,'missing'), coalesce(to_regclass('public.catalog_overlay')::text,'missing');",
                       ),
                     ),
                     stdout: (bytes) =>
@@ -129,7 +129,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                   });
                   expect(query.exitCode, errors.join("")).toBe(0);
                   expect(rows.join("").trim()).toBe(
-                    "users|storage.objects|realtime.messages|realtime.subscription|catalog_overlay",
+                    "users|sessions|storage.objects|s3_multipart_uploads|realtime.messages|realtime.subscription|catalog_overlay",
                   );
 
                   const realtime = members.find((member) => member.service === "realtime");

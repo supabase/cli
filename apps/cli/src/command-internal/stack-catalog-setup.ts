@@ -1,4 +1,4 @@
-import { Context, Data, Effect, FileSystem, Layer, Path } from "effect";
+import { Context, Data, Deferred, Effect, FileSystem, Layer, Path, Ref } from "effect";
 import {
   type DatabaseInstance,
   type ServiceCreationInput,
@@ -174,6 +174,8 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         .makeTempDirectoryScoped({ prefix: "supabase-stack-catalog-storage-" })
         .pipe(Effect.mapError(catalogError));
 
+      const allServicesReady = yield* Deferred.make<void>();
+      const readyServices = yield* Ref.make(0);
       yield* Effect.forEach(
         input.target.databaseServices,
         (service) =>
@@ -181,7 +183,17 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
             input.target.stack.services
               .create(serviceDefinition(service, serviceCredentials, storagePath))
               .pipe(Effect.mapError(catalogError)),
-            startTemporaryService,
+            (instance) =>
+              startTemporaryService(instance).pipe(
+                Effect.andThen(Ref.updateAndGet(readyServices, (count) => count + 1)),
+                Effect.flatMap((count) =>
+                  count === input.target.databaseServices.length
+                    ? Deferred.succeed(allServicesReady, undefined).pipe(Effect.asVoid)
+                    : Effect.void,
+                ),
+                // Unregistering a ready sibling invalidates other services' pending admission plans.
+                Effect.andThen(Deferred.await(allServicesReady)),
+              ),
             destroyTemporaryService,
           ),
         { concurrency: "unbounded", discard: true },
