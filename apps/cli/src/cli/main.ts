@@ -8,6 +8,7 @@ import { defaultCompleteDeps, tryComplete } from "./complete.ts";
 import { resolveStackBackend } from "../command-internal/stack-backend.ts";
 import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
 import { rootCommandForFeatures } from "./root.ts";
+import { startupTrace } from "../command-internal/startup-trace.ts";
 
 const args = await Effect.runPromise(
   Effect.gen(function* () {
@@ -44,4 +45,6 @@ if (
     afterSuccess: upgradeNoticeHook,
     ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
   });
+  if (process.env.SUPABASE_STARTUP_TRACE_FILE !== undefined)
+    Effect.runSync(startupTrace("cli.process.end"));
 }

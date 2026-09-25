@@ -12,6 +12,7 @@ import {
   SubscriptionRef,
 } from "effect";
 import type { Stream } from "effect";
+import { startupTrace } from "./runtime/StartupTrace.ts";
 
 type ServiceLifecycle = "stopped" | "starting" | "running" | "stopping";
 type ServiceHealth = "starting" | "healthy" | "unhealthy";
@@ -325,8 +326,10 @@ export const makeService = <Config>(
           ),
         );
         const runtimeScope = yield* Scope.fork(owner, "parallel");
+        yield* startupTrace("service.launch.begin", { member_id: options.id });
         const launchExit = yield* Effect.exit(
           definition.launch(contextFor(options.id, yield* Ref.get(config), runtimeScope)).pipe(
+            Effect.ensuring(startupTrace("service.launch.end", { member_id: options.id })),
             Effect.map((runtime) => ({ runtime, failure: undefined })),
             Effect.catchTag("ServiceLaunchError", ({ runtime, failure }) =>
               Effect.succeed({ runtime, failure }),
@@ -468,10 +471,13 @@ export const makeService = <Config>(
         if (existing.lifecycle === "running") return;
       }
       const nextConfig = candidate ?? (yield* Ref.get(config));
-      if (definition.prepare !== undefined)
-        yield* definition
-          .prepare(nextConfig)
-          .pipe(Effect.tapError((error) => recordPreparationFailure(expectedRevision, error)));
+      if (definition.prepare !== undefined) {
+        yield* startupTrace("service.prepare.begin", { member_id: options.id });
+        yield* definition.prepare(nextConfig).pipe(
+          Effect.ensuring(startupTrace("service.prepare.end", { member_id: options.id })),
+          Effect.tapError((error) => recordPreparationFailure(expectedRevision, error)),
+        );
+      }
       yield* run(
         Effect.gen(function* () {
           const observation = yield* SubscriptionRef.get(observations);
@@ -588,41 +594,46 @@ export const makeService = <Config>(
         if (owned !== undefined && owned.launchId === launchId) return yield* owned.error;
         return yield* staleLaunch(launchId, `Service ${options.id} stopped before it was ready`);
       });
-    const ready = Effect.fn("Service.ready")(function* () {
-      const initial = yield* SubscriptionRef.get(observations);
-      if (!initial.registered) return yield* new ServiceDestroyed({ id: options.id });
-      const expectedRevision = yield* Ref.get(revision);
-      const expectedLaunchId = initial.lifecycle === "starting" ? initial.launchId : undefined;
-      let record = yield* Ref.get(current);
-      if (record === undefined && initial.lifecycle === "starting") {
-        yield* run(Effect.void);
-        record = yield* Ref.get(current);
-      }
-      if (record === undefined) {
+    const ready = Effect.fn("Service.ready")(
+      function* () {
+        yield* startupTrace("service.ready.begin", { member_id: options.id });
+        const initial = yield* SubscriptionRef.get(observations);
+        if (!initial.registered) return yield* new ServiceDestroyed({ id: options.id });
+        const expectedRevision = yield* Ref.get(revision);
+        const expectedLaunchId = initial.lifecycle === "starting" ? initial.launchId : undefined;
+        let record = yield* Ref.get(current);
+        if (record === undefined && initial.lifecycle === "starting") {
+          yield* run(Effect.void);
+          record = yield* Ref.get(current);
+        }
+        if (record === undefined) {
+          if ((yield* Ref.get(revision)) !== expectedRevision)
+            return yield* staleLaunch(
+              yield* Ref.get(launchCounter),
+              `Service ${options.id} changed before it was ready`,
+            );
+          return yield* new ServiceNotRunning({ id: options.id });
+        }
+        const launchId = record.launchId;
         if ((yield* Ref.get(revision)) !== expectedRevision)
-          return yield* staleLaunch(
-            yield* Ref.get(launchCounter),
-            `Service ${options.id} changed before it was ready`,
-          );
-        return yield* new ServiceNotRunning({ id: options.id });
-      }
-      const launchId = record.launchId;
-      if ((yield* Ref.get(revision)) !== expectedRevision)
-        return yield* staleLaunch(launchId, `Service ${options.id} changed before it was ready`);
-      if (expectedLaunchId !== undefined && record.launchId !== expectedLaunchId)
-        return yield* staleLaunch(launchId, `Service ${options.id} changed before it was ready`);
-      if ((yield* SubscriptionRef.get(observations)).lifecycle === "stopping") {
-        return yield* diedBeforeReady(launchId);
-      }
-      const healthResult = yield* Deferred.await(record.health);
-      if (
-        (yield* Ref.get(current)) !== record ||
-        (yield* SubscriptionRef.get(observations)).lifecycle !== "running"
-      ) {
-        return yield* diedBeforeReady(launchId);
-      }
-      yield* healthResult;
-    });
+          return yield* staleLaunch(launchId, `Service ${options.id} changed before it was ready`);
+        if (expectedLaunchId !== undefined && record.launchId !== expectedLaunchId)
+          return yield* staleLaunch(launchId, `Service ${options.id} changed before it was ready`);
+        if ((yield* SubscriptionRef.get(observations)).lifecycle === "stopping") {
+          return yield* diedBeforeReady(launchId);
+        }
+        const healthResult = yield* Deferred.await(record.health);
+        if (
+          (yield* Ref.get(current)) !== record ||
+          (yield* SubscriptionRef.get(observations)).lifecycle !== "running"
+        ) {
+          return yield* diedBeforeReady(launchId);
+        }
+        yield* healthResult;
+      },
+      (effect) =>
+        effect.pipe(Effect.ensuring(startupTrace("service.ready.end", { member_id: options.id }))),
+    );
 
     const storage = Effect.fn("Service.storage")(function* <A>(
       operation: Effect.Effect<A, ServiceError>,

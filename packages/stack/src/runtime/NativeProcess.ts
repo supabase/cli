@@ -1,6 +1,7 @@
 import { Data, Duration, Effect, Fiber, Option, Scope, Stream } from "effect";
 import { fileURLToPath } from "node:url";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { startupTrace } from "./StartupTrace.ts";
 import type { PlatformError } from "effect/PlatformError";
 import { isBunVirtualPath } from "../internal/dispatch-markers.ts";
 import type {
@@ -121,6 +122,13 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
             `supabase-stack-id=${identity.stackId}`,
             `supabase-workload-id=${identity.workloadId}`,
           ];
+    const traceFields = {
+      ...(identity === undefined
+        ? {}
+        : { stack_id: identity.stackId, member_id: identity.workloadId }),
+      executable: spec.executable,
+    };
+    yield* startupTrace("native.spawn.begin", traceFields);
     const handle: ChildProcessHandle = yield* ChildProcess.make(launcher.command, launcherArgs, {
       cwd: spec.cwd,
       detached: true,
@@ -132,6 +140,7 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
         fd4: { type: "input" },
       },
     }).pipe(Scope.provide(processScope));
+    yield* startupTrace("native.spawn.end", traceFields);
     const mapError = <A>(
       effect: Effect.Effect<A, PlatformError>,
     ): Effect.Effect<A, NativeProcessError> =>

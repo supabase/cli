@@ -22,6 +22,7 @@ import {
   type SetupDatabaseOptions,
 } from "./db-bootstrap/db-setup.ts";
 import type { MigrationVaultError, VaultSecret } from "./vault.ts";
+import { startupTrace } from "./startup-trace.ts";
 
 const DATABASE_SERVICES = ["auth", "storage", "realtime"] as const;
 type DatabaseService = (typeof DATABASE_SERVICES)[number];
@@ -135,21 +136,60 @@ const serviceDefinition = (
 const startTemporaryService = (
   instance: TemporaryServiceInstance,
 ): Effect.Effect<void, StackCatalogSetupError> =>
-  instance.start.pipe(
-    Effect.andThen(instance.ready),
-    Effect.mapError((cause) => temporaryServiceError("start", instance, cause)),
-  );
+  Effect.gen(function* () {
+    yield* startupTrace("catalog.service.start.begin", {
+      service: instance.service,
+      member_id: instance.id,
+    });
+    yield* instance.start.pipe(
+      Effect.ensuring(
+        startupTrace("catalog.service.start.end", {
+          service: instance.service,
+          member_id: instance.id,
+        }),
+      ),
+      Effect.mapError((cause) => temporaryServiceError("start", instance, cause)),
+    );
+    yield* startupTrace("catalog.service.ready.begin", {
+      service: instance.service,
+      member_id: instance.id,
+    });
+    yield* instance.ready.pipe(
+      Effect.ensuring(
+        startupTrace("catalog.service.ready.end", {
+          service: instance.service,
+          member_id: instance.id,
+        }),
+      ),
+      Effect.mapError((cause) => temporaryServiceError("start", instance, cause)),
+    );
+  });
 
 const destroyTemporaryService = (
   instance: TemporaryServiceInstance,
 ): Effect.Effect<void, StackCatalogSetupError> =>
-  instance.destroy.pipe(
-    Effect.mapError((cause) => temporaryServiceError("destroy", instance, cause)),
-  );
+  Effect.gen(function* () {
+    yield* startupTrace("catalog.service.destroy.begin", {
+      service: instance.service,
+      member_id: instance.id,
+    });
+    yield* instance.destroy.pipe(
+      Effect.ensuring(
+        startupTrace("catalog.service.destroy.end", {
+          service: instance.service,
+          member_id: instance.id,
+        }),
+      ),
+      Effect.mapError((cause) => temporaryServiceError("destroy", instance, cause)),
+    );
+  });
 
 const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
   input: StackCatalogSetupInput,
 ) {
+  yield* startupTrace("catalog.migrations.begin", {
+    services: input.target.databaseServices,
+  });
   const dbConn = yield* DbConnection;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -178,9 +218,15 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         input.target.databaseServices,
         (service) =>
           Effect.acquireUseRelease(
-            input.target.stack.services
-              .create(serviceDefinition(service, serviceCredentials, storagePath))
-              .pipe(Effect.mapError(catalogError)),
+            startupTrace("catalog.service.create.begin", { service }).pipe(
+              Effect.andThen(
+                input.target.stack.services.create(
+                  serviceDefinition(service, serviceCredentials, storagePath),
+                ),
+              ),
+              Effect.ensuring(startupTrace("catalog.service.create.end", { service })),
+              Effect.mapError(catalogError),
+            ),
             startTemporaryService,
             destroyTemporaryService,
           ),
@@ -196,14 +242,29 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         isLocal: true,
         dnsResolver: "native",
       });
+      yield* startupTrace("catalog.overlay.begin", {
+        services: input.target.databaseServices,
+      });
       yield* applyDatabaseOverlay(session, fs, path, input.overlay.workdir, {
         webhooksEnabled: input.overlay.webhooksEnabled,
         apiAutoExposeNewTables: input.overlay.apiAutoExposeNewTables,
         vault: input.overlay.vault,
         webhooks: input.overlay.webhooks,
         announceRoles: input.overlay.announceRoles,
-      });
+      }).pipe(
+        Effect.ensuring(
+          startupTrace("catalog.overlay.end", {
+            services: input.target.databaseServices,
+          }),
+        ),
+      );
     }),
+  ).pipe(
+    Effect.ensuring(
+      startupTrace("catalog.migrations.end", {
+        services: input.target.databaseServices,
+      }),
+    ),
   );
 });
 

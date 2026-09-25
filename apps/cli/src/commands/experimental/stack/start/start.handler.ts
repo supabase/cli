@@ -38,6 +38,7 @@ import {
 import type { StackStartFlags } from "./start.command.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
+import { startupTrace } from "../../../../command-internal/startup-trace.ts";
 
 const validateExclusions = (exclusions: ReadonlyArray<string>) => {
   const supported = new Set<string>(STACK_START_EXCLUDABLE_CAPABILITIES);
@@ -217,6 +218,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
   const body = Effect.gen(function* () {
     const output = yield* Output;
     const settings = yield* CommandSettings;
+    yield* startupTrace("cli.handler.begin", { project_root: settings.workdir });
     const runtime = yield* RuntimeInfo;
     const resolver = yield* StackTargetResolver;
     const stackApi = yield* StackApi;
@@ -238,8 +240,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       })
       .pipe(Effect.mapError(mapTargetError));
     const selectedRuntime = target.runtime ?? defaultStackRuntime(runtime);
+    yield* startupTrace("cli.config.begin", { project_root: target.projectRoot });
     const configBeforeCreate =
       target.id === undefined ? yield* loadStartConfig(target.projectRoot, fs, path) : undefined;
+    yield* startupTrace("cli.config.end", { project_root: target.projectRoot });
     if (target.id === undefined) {
       const rootError = nativePostgresRootError(selectedRuntime, process.getuid?.());
       if (rootError !== undefined)
@@ -247,6 +251,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     }
     const stateRoot = path.join(settings.supabaseHome, "stacks");
     const cacheRoot = path.join(settings.supabaseHome, "cache", "stack");
+    yield* startupTrace(target.id === undefined ? "stack.create.begin" : "stack.open.begin", {
+      runtime: selectedRuntime,
+    });
     const stack =
       target.id === undefined
         ? yield* stackApi
@@ -261,6 +268,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         : yield* stackApi
             .open({ id: target.id, stateRoot, cacheRoot, startOwner: true })
             .pipe(Effect.mapError(stackError));
+    yield* startupTrace(target.id === undefined ? "stack.create.end" : "stack.open.end", {
+      stack_id: stack.id,
+    });
+    yield* startupTrace("stack.discovery.begin", { stack_id: stack.id });
     const existingServices = yield* stack.services.list.pipe(Effect.mapError(stackError));
     const composition = yield* stack.composition.describe.pipe(Effect.mapError(stackError));
     const currentInstances = yield* Effect.forEach(composition.members, ({ id }) =>
@@ -269,6 +280,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const currentStatuses = yield* Effect.forEach(currentInstances, (instance) =>
       instance.status.pipe(Effect.mapError(stackError)),
     );
+    yield* startupTrace("stack.discovery.end", {
+      stack_id: stack.id,
+      member_count: currentInstances.length,
+    });
     const primaryDatabase = currentInstances.find((instance) => instance.service === "database");
     const databaseStatus = currentStatuses.find(({ id }) => id === primaryDatabase?.id);
     const fullyStarted =
@@ -289,6 +304,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         "Stack is already running with its current services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
         { id: stack.id, endpoints },
       );
+      yield* startupTrace("cli.output.end", { stack_id: stack.id, already_running: true });
       return stack.id;
     }
     const fullyStopped = currentStatuses.every(
@@ -305,6 +321,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       if (rootError !== undefined)
         return yield* new StackCommandStartError({ reason: "lifecycle", message: rootError });
     }
+    yield* startupTrace("cli.members.build.begin", { stack_id: stack.id });
     const shadowDatabase =
       composition.members.length === 0
         ? existingServices.find((instance) => instance.service === "database")
@@ -455,6 +472,14 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       Effect.tapError((error) => starting.fail(error.message)),
       Effect.mapError(stackError),
     );
+    yield* startupTrace("composition.members.created", {
+      stack_id: stack.id,
+      members: members.map(({ id, service }) => ({ member_id: id, service })),
+    });
+    yield* startupTrace("cli.members.build.end", {
+      stack_id: stack.id,
+      member_count: members.length,
+    });
     const initialCleanupComplete = yield* Ref.make(!initialComposition);
     if (initialComposition) {
       const existingIds = new Set(existingServices.map(({ id }) => id));
@@ -506,9 +531,17 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       );
     });
     if (activationChanged) {
+      yield* startupTrace("composition.configure.begin", {
+        stack_id: stack.id,
+        member_count: desiredMembers.length,
+      });
       yield* stack.composition
         .configure({ ...configured, members: desiredMembers })
         .pipe(Effect.mapError(stackError));
+      yield* startupTrace("composition.configure.end", {
+        stack_id: stack.id,
+        member_count: desiredMembers.length,
+      });
     }
     const database = members.find((instance) => instance.service === "database");
     if (database === undefined)
@@ -524,13 +557,21 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             { concurrency: "unbounded" },
           )
         : [];
+    yield* startupTrace("database.start.begin", { stack_id: stack.id, member_id: database.id });
     yield* database.start.pipe(
       Effect.tapError((error) => starting.fail(error.message)),
       Effect.mapError(stackError),
+      Effect.ensuring(
+        startupTrace("database.start.end", { stack_id: stack.id, member_id: database.id }),
+      ),
     );
+    yield* startupTrace("database.ready.begin", { stack_id: stack.id, member_id: database.id });
     yield* database.ready.pipe(
       Effect.tapError((error) => starting.fail(error.message)),
       Effect.mapError(stackError),
+      Effect.ensuring(
+        startupTrace("database.ready.end", { stack_id: stack.id, member_id: database.id }),
+      ),
     );
     const stackCredentials = yield* stack.credentials.get.pipe(Effect.mapError(stackError));
     if (stackCredentials === undefined)
@@ -568,9 +609,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           Effect.mapError(stackError),
         );
       const experimental = yield* resolveExperimentalWithProjectEnv({ ...toml.projectEnv });
+      yield* startupTrace("project.migrations.begin", { stack_id: stack.id });
       yield* applyStackMigrateAndSeed(database, target.projectRoot, toml, experimental).pipe(
         Effect.tapError((error) => starting.fail(error.message)),
         Effect.mapError(stackError),
+        Effect.ensuring(startupTrace("project.migrations.end", { stack_id: stack.id })),
       );
     } else if (serviceKindsChanged) {
       yield* catalog
@@ -635,9 +678,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         }
       }
     }
+    yield* startupTrace("composition.start.begin", { stack_id: stack.id });
     yield* stack.composition.start.pipe(
       Effect.tapError((error) => starting.fail(error.message)),
       Effect.mapError(stackError),
+      Effect.ensuring(startupTrace("composition.start.end", { stack_id: stack.id })),
     );
     yield* Effect.forEach(preparation, (fiber) => Fiber.join(fiber));
     yield* Ref.set(initialCleanupComplete, true);
@@ -656,7 +701,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     );
     yield* starting.succeed("Stack is ready.");
     yield* output.success("", { id: stack.id, endpoints });
+    yield* startupTrace("cli.output.end", { stack_id: stack.id });
     return stack.id;
   });
-  return yield* body.pipe(Effect.ensuring(telemetryState.flush));
+  return yield* body.pipe(
+    Effect.ensuring(startupTrace("cli.handler.end")),
+    Effect.ensuring(telemetryState.flush),
+  );
 });

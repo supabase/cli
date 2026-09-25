@@ -17,6 +17,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { startupTrace } from "./StartupTrace.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
@@ -125,11 +126,33 @@ export const makeContainerRuntime = (options: {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
+    let commandSequence = 0;
+    const nextTraceId = () =>
+      // oxlint-disable-next-line effecttsgo/process-env -- Benchmark command IDs are disabled when tracing is off.
+      process.env.SUPABASE_STARTUP_TRACE_FILE === undefined
+        ? undefined
+        : `${process.pid}:${++commandSequence}`;
 
     const run = Effect.fn("Container.command")(function* (
       args: ReadonlyArray<string>,
       commandOptions: { readonly timeout?: Duration.Input } = { timeout: "30 seconds" },
+      identity?: { readonly stackId: string; readonly instanceId: string; readonly image?: string },
     ) {
+      const traceId = nextTraceId();
+      const fields = {
+        ...(traceId === undefined ? {} : { trace_id: traceId }),
+        engine: options.engine,
+        operation: args[0] ?? "command",
+        suboperation: args[1],
+        ...(identity === undefined
+          ? {}
+          : {
+              stack_id: identity.stackId,
+              member_id: identity.instanceId,
+              ...(identity.image === undefined ? {} : { image: identity.image }),
+            }),
+      };
+      yield* startupTrace("docker.command.begin", fields);
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const child = yield* spawner.spawn(
@@ -160,6 +183,7 @@ export const makeContainerRuntime = (options: {
             ? effect
             : effect.pipe(Effect.timeout(commandOptions.timeout)),
         Effect.mapError((cause) => errorFor(args[0] ?? "command", cause)),
+        Effect.ensuring(startupTrace("docker.command.end", fields)),
       );
     });
 
@@ -298,10 +322,21 @@ export const makeContainerRuntime = (options: {
         image,
         ...(spec.args ?? []),
       ];
+      const identity = {
+        stackId: spec.stackId,
+        instanceId: spec.instanceId,
+        image: spec.image,
+      };
 
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
-          const creation = yield* restore(run(args)).pipe(Effect.exit);
+          const creation = yield* restore(
+            run(args, undefined, {
+              stackId: spec.stackId,
+              instanceId: spec.instanceId,
+              image: spec.image,
+            }),
+          ).pipe(Effect.exit);
           const recorded = yield* fs.readFileString(cidPath).pipe(Effect.option);
           const fromFile =
             Option.isSome(recorded) && recorded.value.trim().length > 0
@@ -331,22 +366,22 @@ export const makeContainerRuntime = (options: {
               spec.stopGraceSeconds <= 60
                 ? String(spec.stopGraceSeconds)
                 : "10";
-            yield* run(["stop", "--time", grace, id]);
+            yield* run(["stop", "--time", grace, id], undefined, identity);
             yield* Ref.set(stopped, true);
           });
           const discard = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-            yield* run(["stop", "--time", "0", id]);
+            yield* run(["stop", "--time", "0", id], undefined, identity);
             yield* Ref.set(stopped, true);
           });
           const kill = Effect.gen(function* () {
             if ((yield* Ref.get(removed)) || (yield* Ref.get(stopped))) return;
-            yield* run(["kill", id]);
+            yield* run(["kill", id], undefined, identity);
             yield* Ref.set(stopped, true);
           });
           const remove = Effect.gen(function* () {
             if (yield* Ref.get(removed)) return;
-            yield* run(["rm", id]);
+            yield* run(["rm", id], undefined, identity);
             yield* Ref.set(removed, true);
           });
           yield* Scope.addFinalizer(
@@ -379,18 +414,46 @@ export const makeContainerRuntime = (options: {
           }
           return yield* restore(
             Effect.gen(function* () {
+              const attachedTraceId = nextTraceId();
               const attached = interactive
-                ? yield* spawner
-                    .spawn(
-                      ChildProcess.make(
-                        options.engine,
-                        ["start", "--attach", "--interactive", id],
-                        { stdin: "pipe", forceKillAfter: "5 seconds" },
-                      ),
-                    )
-                    .pipe(Effect.mapError((cause) => errorFor("start", cause)))
+                ? yield* startupTrace("docker.command.begin", {
+                    ...(attachedTraceId === undefined ? {} : { trace_id: attachedTraceId }),
+                    engine: options.engine,
+                    operation: "start",
+                    suboperation: "attach",
+                    stack_id: spec.stackId,
+                    member_id: spec.instanceId,
+                    image: spec.image,
+                  }).pipe(
+                    Effect.andThen(
+                      spawner
+                        .spawn(
+                          ChildProcess.make(
+                            options.engine,
+                            ["start", "--attach", "--interactive", id],
+                            { stdin: "pipe", forceKillAfter: "5 seconds" },
+                          ),
+                        )
+                        .pipe(
+                          Effect.mapError((cause) => errorFor("start", cause)),
+                          Effect.ensuring(
+                            startupTrace("docker.command.end", {
+                              ...(attachedTraceId === undefined
+                                ? {}
+                                : { trace_id: attachedTraceId }),
+                              engine: options.engine,
+                              operation: "start",
+                              suboperation: "attach",
+                              stack_id: spec.stackId,
+                              member_id: spec.instanceId,
+                              image: spec.image,
+                            }),
+                          ),
+                        ),
+                    ),
+                  )
                 : undefined;
-              if (attached === undefined) yield* run(["start", id]);
+              if (attached === undefined) yield* run(["start", id], undefined, identity);
               const wait: Effect.Effect<number, ContainerError> =
                 attached === undefined
                   ? run(["wait", id], {}).pipe(
@@ -410,12 +473,11 @@ export const makeContainerRuntime = (options: {
                 getWaiter,
               ).pipe(Effect.flatMap((fiber) => Fiber.join(fiber)));
               owned = { ...partial, exitCode };
-              const text = yield* run([
-                "inspect",
-                "--format",
-                "{{json .NetworkSettings.Ports}}",
-                id,
-              ]);
+              const text = yield* run(
+                ["inspect", "--format", "{{json .NetworkSettings.Ports}}", id],
+                undefined,
+                identity,
+              );
               const bindings = yield* Schema.decodeEffect(Schema.fromJsonString(PublishedPorts))(
                 text,
               ).pipe(Effect.mapError((cause) => errorFor("inspect", cause)));
