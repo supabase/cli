@@ -1,11 +1,10 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option } from "effect";
+import { Effect, FileSystem, Option, Path, Schema } from "effect";
+import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import {
-  makeNotebooksProject,
   notebookListPage,
   notebookResource,
+  notebooksProject,
   notebooksRoute,
   setupNotebooks,
 } from "../../../../tests/helpers/notebooks.ts";
@@ -30,24 +29,17 @@ function flags(overrides: Partial<NotebooksPushFlags> = {}): NotebooksPushFlags 
   return { notebookName: Option.none(), projectRef: Option.none(), ...overrides };
 }
 
-function project(files: Readonly<Record<string, string>> = {}) {
-  const created = makeNotebooksProject(files);
-  return {
-    dir: created.dir,
-    read: (name: string) =>
-      readFileSync(join(created.dir, "supabase", "notebooks", `${name}.json`), "utf8"),
-    exists: (name: string) =>
-      existsSync(join(created.dir, "supabase", "notebooks", `${name}.json`)),
-    cleanup: () => rmSync(created.dir, { recursive: true, force: true }),
-  };
+const temp = useTempWorkdir("supabase-notebooks-push-");
+
+const jsonValue = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+function project() {
+  return notebooksProject(temp.current);
 }
 
 describe("notebooks push", () => {
   it.live("updates the notebook of that name and creates the ones with no match", () => {
-    const repo = project({
-      "supabase/notebooks/sales-dashboard.json": SALES_FILE,
-      "supabase/notebooks/brand-new.json": '{"content":{"cells":[]}}',
-    });
+    const repo = project();
     const { layer, http, out } = setupNotebooks({
       command: "push",
       workdir: repo.dir,
@@ -68,12 +60,14 @@ describe("notebooks push", () => {
     });
 
     return Effect.gen(function* () {
+      yield* repo.write("sales-dashboard", SALES_FILE);
+      yield* repo.write("brand-new", '{"content":{"cells":[]}}');
       yield* notebooksPush(flags());
 
       // Matched by name, so the existing notebook is updated in place rather
       // than duplicated.
       const patched = http.requests.find((request) => request.method === "PATCH");
-      expect(JSON.parse(patched?.body ?? "{}")).toEqual({
+      expect(yield* jsonValue(patched?.body ?? "{}")).toEqual({
         data: {
           type: "notebook",
           attributes: {
@@ -88,14 +82,11 @@ describe("notebooks push", () => {
       });
       expect(http.requests.filter((request) => request.method === "POST")).toHaveLength(1);
       expect(out.stdoutText).toContain("(1 created, 1 updated)");
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("pushes a single notebook by name without touching the rest", () => {
-    const repo = project({
-      "supabase/notebooks/sales-dashboard.json": SALES_FILE,
-      "supabase/notebooks/other.json": '{"content":{"cells":[]}}',
-    });
+    const repo = project();
     const { layer, http } = setupNotebooks({
       command: "push",
       workdir: repo.dir,
@@ -112,13 +103,15 @@ describe("notebooks push", () => {
     });
 
     return Effect.gen(function* () {
+      yield* repo.write("sales-dashboard", SALES_FILE);
+      yield* repo.write("other", '{"content":{"cells":[]}}');
       yield* notebooksPush(flags({ notebookName: Option.some("sales-dashboard") }));
 
       expect(http.routeKeys).toEqual([
         `GET ${notebooksRoute()}`,
         `PATCH ${notebooksRoute(`/${SALES_ID}`)}`,
       ]);
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("fails when the named notebook is not in the notebooks directory", () => {
@@ -133,28 +126,27 @@ describe("notebooks push", () => {
       expect(error).toBeInstanceOf(NotebookNotFoundError);
       // Refused before the project was read, let alone written.
       expect(http.requests).toEqual([]);
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   // One unreadable file stops the whole push: the alternative is a project left
   // half-written, with no way to tell how far it got.
   it.live("sends nothing when one of the files is not a notebook", () => {
-    const repo = project({
-      "supabase/notebooks/good.json": '{"content":{"cells":[]}}',
-      "supabase/notebooks/broken.json": "{ not json",
-    });
+    const repo = project();
     const { layer, http } = setupNotebooks({ command: "push", workdir: repo.dir });
 
     return Effect.gen(function* () {
+      yield* repo.write("good", '{"content":{"cells":[]}}');
+      yield* repo.write("broken", "{ not json");
       const error = yield* notebooksPush(flags()).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(NotebookFileError);
       expect(http.requests).toEqual([]);
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("deletes the project notebooks the directory does not have when asked to", () => {
-    const repo = project({ "supabase/notebooks/kept.json": '{"content":{"cells":[]}}' });
+    const repo = project();
     const { layer, http, out } = setupNotebooks({
       command: "push",
       workdir: repo.dir,
@@ -178,12 +170,13 @@ describe("notebooks push", () => {
     });
 
     return Effect.gen(function* () {
+      yield* repo.write("kept", '{"content":{"cells":[]}}');
       yield* notebooksPush(flags());
 
       expect(http.routeKeys).toContain(`DELETE ${notebooksRoute(`/${ERRORS_ID}`)}`);
       expect(out.stderrText).toContain(" • stale");
       expect(out.stdoutText).toContain("Deleted 1 notebook(s) from the project.");
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("writes them into the notebooks directory instead when asked to", () => {
@@ -207,9 +200,9 @@ describe("notebooks push", () => {
     return Effect.gen(function* () {
       yield* notebooksPush(flags());
 
-      expect(repo.exists("error-rates")).toBe(true);
+      expect(yield* repo.exists("error-rates")).toBe(true);
       expect(http.routeKeys).not.toContain(`DELETE ${notebooksRoute(`/${ERRORS_ID}`)}`);
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("leaves both sides alone when there is nobody to ask", () => {
@@ -237,19 +230,23 @@ describe("notebooks push", () => {
           data: expect.objectContaining({ created: [], updated: [], deleted: [] }),
         }),
       );
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("fails instead of treating an unreadable notebooks path as empty", () => {
-    const repo = project({ "supabase/notebooks": "not a directory" });
+    const repo = project();
     const { layer, http } = setupNotebooks({ command: "push", workdir: repo.dir });
 
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(repo.dir, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(repo.dir, "supabase", "notebooks"), "not a directory");
       const error = yield* notebooksPush(flags()).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(NotebookFileError);
       expect(http.requests).toEqual([]);
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("refuses an unsafe remote name before it can escape the notebooks directory", () => {
@@ -267,19 +264,21 @@ describe("notebooks push", () => {
     });
 
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const error = yield* notebooksPush(flags()).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(NotebookFileError);
-      expect(existsSync(join(repo.dir, "supabase", "config.json"))).toBe(false);
+      expect(yield* fs.exists(path.join(repo.dir, "supabase", "config.json"))).toBe(false);
       expect(http.routeKeys).toEqual([`GET ${notebooksRoute()}`]);
       expect(out.promptSelectCalls).toHaveLength(1);
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   // A directory of files cannot say which of two notebooks of one name it means,
   // and guessing would write one user's notebook over another's.
   it.live("refuses a project holding two notebooks of the same name", () => {
-    const repo = project({ "supabase/notebooks/sales-dashboard.json": SALES_FILE });
+    const repo = project();
     const { layer, http } = setupNotebooks({
       command: "push",
       workdir: repo.dir,
@@ -297,11 +296,12 @@ describe("notebooks push", () => {
     });
 
     return Effect.gen(function* () {
+      yield* repo.write("sales-dashboard", SALES_FILE);
       const error = yield* notebooksPush(flags()).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(NotebookNameConflictError);
       expect(http.routeKeys).toEqual([`GET ${notebooksRoute()}`]);
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("emits the machine payload without text output", () => {
@@ -318,9 +318,9 @@ describe("notebooks push", () => {
     return Effect.gen(function* () {
       yield* notebooksPush(flags());
 
-      expect(JSON.parse(out.stdoutText)).toEqual(
+      expect(yield* jsonValue(out.stdoutText)).toEqual(
         expect.objectContaining({ created: [], updated: [], deleted: [], pulled: [] }),
       );
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    }).pipe(Effect.provide(layer));
   });
 });

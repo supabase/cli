@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, FileSystem, Path, Predicate, Schema } from "effect";
+import { Effect, Option, FileSystem, Path, PlatformError, Predicate, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { makeComputeProject, setupCompute } from "../../../../../tests/helpers/compute.ts";
 import {
@@ -18,6 +18,7 @@ import {
   COMPUTE_RUNTIME_EXCLUSIONS,
   type ComputeRuntime,
 } from "../../../../shared/compute/compute-runtimes.ts";
+import { COMPUTE_STACKS } from "../../../../shared/compute/compute-stacks.ts";
 import { computeNew } from "./new.handler.ts";
 import { ComputeNewWorkdirError } from "./new.errors.ts";
 import type { ComputeNewFlags } from "./new.command.ts";
@@ -51,6 +52,17 @@ function flags(overrides: Partial<ComputeNewFlags> = {}): ComputeNewFlags {
     source: Option.none(),
     ...overrides,
   };
+}
+
+function writeDenied(target: string) {
+  return Effect.fail(
+    PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "writeFileString",
+      pathOrDescriptor: target,
+    }),
+  );
 }
 
 const project = Effect.fnUntraced(function* (files: Readonly<Record<string, string>> = {}) {
@@ -775,6 +787,126 @@ describe("compute new", () => {
         // No directory, and config.toml exactly as it was.
         expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute", "api"))).toBe(false);
         expect(yield* repo.config).toBe('project_id = "demo"\n\ncompute.api.runtime = "node"\n');
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live.each([false, true])(
+    "takes the scaffold back when config.toml cannot be written (destination already there: %s)",
+    (destinationExisted) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* project();
+        const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+        if (destinationExisted) yield* fs.makeDirectory(computeDir, { recursive: true });
+        const { layer } = setupCompute({ workdir: repo.dir });
+
+        return yield* Effect.gen(function* () {
+          const error = yield* computeNew(
+            flags({ name: Option.some("api"), runtime: Option.some("node") }),
+          ).pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              writeFileString: (target, data, options) =>
+                path.basename(target) === "config.toml"
+                  ? writeDenied(target)
+                  : fs.writeFileString(target, data, options),
+            }),
+            Effect.flip,
+          );
+
+          expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+          expect(yield* fs.exists(computeDir)).toBe(destinationExisted);
+          if (destinationExisted) expect(yield* fs.readDirectory(computeDir)).toEqual([]);
+          expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+
+          yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
+          expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(true);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("takes back the starters it wrote when a later one cannot be written", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* project();
+      const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+      const starters = Object.keys(COMPUTE_STACKS.dockerfile);
+      const { layer } = setupCompute({ workdir: repo.dir });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeNew(
+          flags({ name: Option.some("api"), runtime: Option.some("dockerfile") }),
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (target, data, options) =>
+              path.basename(target) === starters.at(-1)
+                ? writeDenied(target)
+                : fs.writeFileString(target, data, options),
+          }),
+          Effect.flip,
+        );
+
+        expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+        expect(yield* fs.exists(computeDir)).toBe(false);
+        expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+
+        yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("dockerfile") }));
+        expect((yield* fs.readDirectory(computeDir)).toSorted()).toEqual(starters.toSorted());
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("keeps a file that lands in the destination before the config write fails", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* project();
+      const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+      const { layer } = setupCompute({ workdir: repo.dir });
+
+      return yield* Effect.gen(function* () {
+        yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("node") })).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (target, data, options) =>
+              path.basename(target) === "config.toml"
+                ? fs
+                    .writeFileString(path.join(computeDir, "notes.txt"), "mine\n")
+                    .pipe(Effect.andThen(writeDenied(target)))
+                : fs.writeFileString(target, data, options),
+          }),
+          Effect.flip,
+        );
+
+        expect(yield* fs.readDirectory(computeDir)).toEqual(["notes.txt"]);
+        expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("leaves a dangling symlink at the destination in place", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* project();
+      const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+      const target = path.join(repo.dir, "supabase", "compute", "missing");
+      yield* fs.makeDirectory(path.dirname(computeDir), { recursive: true });
+      yield* fs.symlink(target, computeDir);
+      const { layer } = setupCompute({ workdir: repo.dir });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeNew(
+          flags({ name: Option.some("api"), runtime: Option.some("node") }),
+        ).pipe(Effect.flip);
+
+        expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+        expect(yield* fs.readLink(computeDir)).toBe(target);
+        expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
