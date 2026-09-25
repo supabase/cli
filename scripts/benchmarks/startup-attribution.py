@@ -594,8 +594,6 @@ def main() -> int:
                     )
                     record["failures"].append({"phase": label, "reason": phase["failure"]})
                 persist(root / f"{label}.json", phase)
-                result_record[f"active_{variant}"] = phase
-                persist(result_path, result_record)
             return phase
 
         variants = (("baseline", args.baseline_cli), ("changed", args.changed_cli))
