@@ -387,6 +387,24 @@ export const actionability = {
     has_suggestion: true,
     suggestion_type: CliSuggestionType.RerunDebug,
   },
+  /**
+   * A toolchain the command shells out to is missing from the user's project or host (for
+   * example `dart` for `gen types --lang dart`). The remedy is an install step that varies per
+   * tool, carried as instance text, so there is no canonical suggestion.
+   */
+  toolNotInstalled: {
+    error_kind: CliErrorKind.UserActionable,
+    error_category: CliErrorCategory.InvalidConfig,
+    has_suggestion: false,
+    suggestion_type: CliSuggestionType.None,
+  },
+  /** A tool the command shells out to exited unsuccessfully; its stderr is in the message. */
+  toolFailed: {
+    error_kind: CliErrorKind.Unknown,
+    error_category: CliErrorCategory.Unknown,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.RerunDebug,
+  },
   apiStatus: {
     error_kind: CliErrorKind.ExternalService,
     error_category: CliErrorCategory.ApiStatus,
