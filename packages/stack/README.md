@@ -73,6 +73,8 @@ Omitted database `jwtSecret` and `rootKey` inputs use the shared local-developme
 as `DEFAULT_LOCAL_JWT_SECRET` and `DEFAULT_POSTGRES_ROOT_KEY`. Explicit values override these defaults.
 The effective root key is supplied through a stack-owned file for both native and container runtimes.
 
+Native PostgreSQL refuses to run as uid 0. When the stack runs as root inside a detected agent sandbox (Claude Code), or `SUPABASE_NATIVE_POSTGRES_USER=<name>` names a non-root system user, only the PostgreSQL process runs as that user: the instance data directory, root key file, socket directory, and the bundle's `pgsodium_getkey.sh` are chowned to it, and the instance directory, the PostgreSQL bundle directory, and their ancestors receive traverse-only (`o+x`) permission, which the artifact cache and stack state keep when they restrict their roots to the owner. Running as root elsewhere fails before PostgreSQL launches.
+
 ## Composition and operation scope
 
 Registering a service does not add it to the application composition. For a fresh composition, `composition.supabase` registers the selected recipes and supplies their standard bindings:

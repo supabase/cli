@@ -90,6 +90,30 @@ describe("verified native artifact preparation", () => {
     ),
   );
 
+  it.live.skipIf(process.platform === "win32")(
+    "restricts cache directories to their owner while keeping a traverse-only grant",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-traverse-",
+          });
+          yield* (yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() })).prepare(
+            request,
+          );
+          yield* fs.chmod(root, 0o755);
+          yield* fs.chmod(`${root}/database`, 0o755);
+
+          const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+          expect((yield* store.prepare(request)).outcome).toBe("cached");
+
+          expect((yield* fs.stat(root)).mode & 0o777).toBe(0o701);
+          expect((yield* fs.stat(`${root}/database`)).mode & 0o777).toBe(0o701);
+        }),
+      ),
+  );
+
   it.live("returns a verified cache hit without invoking the source again", () =>
     withPlatform(
       Effect.gen(function* () {

@@ -1,13 +1,12 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Data, Effect, FileSystem, Path } from "effect";
 
-import { describe } from "vitest";
 import {
   makeTempCliStackProject,
   overrideStackPorts,
   requireCliSuccess,
-  runSupabase,
+  runSupabaseEffect,
 } from "../../../../../../tests/helpers/cli.ts";
 
 const CLI_COMMAND_TIMEOUT_MS = 60_000;
@@ -18,6 +17,12 @@ const CLEANUP_HOOK_TIMEOUT_MS = CLEANUP_TIMEOUT_MS + LIFECYCLE_MARGIN_MS;
 const SCENARIO_COMMAND_TIMEOUT_MS = 280_000;
 const BEFORE_ALL_TIMEOUT_MS = CLI_COMMAND_TIMEOUT_MS + STACK_START_TIMEOUT_MS + LIFECYCLE_MARGIN_MS;
 const SCENARIO_TIMEOUT_MS = 900_000;
+const TEST_TIMEOUT_MS = BEFORE_ALL_TIMEOUT_MS + SCENARIO_TIMEOUT_MS + CLEANUP_HOOK_TIMEOUT_MS;
+
+class SyncE2eSetupError extends Data.TaggedError("SyncE2eSetupError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
 
 const initialDesiredSchema = `create type public.account_state as enum ('pending', 'active');
 
@@ -35,35 +40,57 @@ function commandFailure(result: { stdout: string; stderr: string }): string {
   return `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
 }
 
-function migrationFiles(projectDir: string): ReadonlyArray<string> {
-  const migrationsDir = path.join(projectDir, "supabase", "migrations");
-  return existsSync(migrationsDir)
-    ? readdirSync(migrationsDir)
-        .filter((file) => file.endsWith(".sql"))
-        .sort()
-    : [];
-}
+const migrationFiles = (projectDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const migrationsDir = path.join(projectDir, "supabase", "migrations");
+    return (yield* fs.exists(migrationsDir))
+      ? (yield* fs.readDirectory(migrationsDir)).filter((file) => file.endsWith(".sql")).sort()
+      : [];
+  });
 
-describe("db schema declarative sync (e2e)", () => {
-  let project: Awaited<ReturnType<typeof makeTempCliStackProject>> | undefined;
+const withTempStackProject = <A, E, R>(
+  use: (project: Awaited<ReturnType<typeof makeTempCliStackProject>>) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | SyncE2eSetupError, R> =>
+  Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: () => makeTempCliStackProject("sb-pgdelta-next-e2e-"),
+      catch: (cause) =>
+        new SyncE2eSetupError({ message: "temp stack project setup failed", cause }),
+    }),
+    use,
+    (project) =>
+      Effect.tryPromise({
+        try: () => project.cleanup(),
+        catch: (cause) =>
+          new SyncE2eSetupError({ message: "temp stack project cleanup failed", cause }),
+      }).pipe(Effect.ignore),
+  );
 
-  beforeAll(async () => {
-    project = await makeTempCliStackProject("sb-pgdelta-next-e2e-");
-    const projectDir = project.dir;
-
-    const init = await runSupabase(["init"], {
+const setUpProject = (projectDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const init = yield* runSupabaseEffect(["init"], {
       cwd: projectDir,
       exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
     });
     requireCliSuccess(init, "init setup");
-    await overrideStackPorts(projectDir);
+    yield* Effect.tryPromise({
+      try: () => overrideStackPorts(projectDir),
+      catch: (cause) =>
+        new SyncE2eSetupError({ message: `failed to override ports in ${projectDir}`, cause }),
+    });
 
     const configPath = path.join(projectDir, "supabase", "config.toml");
-    const config = readFileSync(configPath, "utf8");
+    const config = yield* fs.readFileString(configPath);
     if (!config.includes("[experimental.pgdelta]\nenabled = true")) {
-      throw new Error("init setup did not enable experimental pg-delta in config.toml");
+      return yield* new SyncE2eSetupError({
+        message: "init setup did not enable experimental pg-delta in config.toml",
+      });
     }
-    writeFileSync(
+    yield* fs.writeFileString(
       configPath,
       config.replace(
         '# declarative_schema_path = "./schemas"',
@@ -72,25 +99,25 @@ describe("db schema declarative sync (e2e)", () => {
     );
 
     const schemasDir = path.join(projectDir, "supabase", "schemas");
-    mkdirSync(schemasDir, { recursive: true });
-    writeFileSync(path.join(schemasDir, "public.sql"), initialDesiredSchema);
+    yield* fs.makeDirectory(schemasDir, { recursive: true });
+    yield* fs.writeFileString(path.join(schemasDir, "public.sql"), initialDesiredSchema);
     const extensionsDir = path.join(schemasDir, "cluster", "extensions");
-    mkdirSync(extensionsDir, { recursive: true });
+    yield* fs.makeDirectory(extensionsDir, { recursive: true });
     for (const extension of ["pg_net", "pgcrypto", "uuid-ossp"]) {
-      writeFileSync(
+      yield* fs.writeFileString(
         path.join(extensionsDir, `${extension}.sql`),
         `CREATE EXTENSION IF NOT EXISTS "${extension}" WITH SCHEMA "extensions";\n`,
       );
     }
     // Both install into a fixed schema, so no `WITH SCHEMA` clause.
     for (const extension of ["pg_cron", "pgmq"]) {
-      writeFileSync(
+      yield* fs.writeFileString(
         path.join(extensionsDir, `${extension}.sql`),
         `CREATE EXTENSION IF NOT EXISTS "${extension}";\n`,
       );
     }
 
-    const start = await runSupabase(
+    const start = yield* runSupabaseEffect(
       [
         "start",
         "--exclude",
@@ -109,121 +136,130 @@ describe("db schema declarative sync (e2e)", () => {
       { cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
     );
     requireCliSuccess(start, "start setup");
-  }, BEFORE_ALL_TIMEOUT_MS);
+  });
 
-  afterAll(async () => {
-    await project?.cleanup().catch(() => undefined);
-    project = undefined;
-  }, CLEANUP_HOOK_TIMEOUT_MS);
-
-  test(
+describe("db schema declarative sync (e2e)", () => {
+  it.live(
     "applies a representative declarative schema and converges",
-    { timeout: SCENARIO_TIMEOUT_MS },
-    async () => {
-      const projectDir = project?.dir;
-      if (projectDir === undefined) throw new Error("declarative sync project was not initialized");
+    () =>
+      withTempStackProject((project) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const projectDir = project.dir;
+          yield* setUpProject(projectDir);
 
-      const sync = await runSupabase(
-        [
-          "db",
-          "schema",
-          "declarative",
-          "sync",
-          "--no-apply",
-          "--name",
-          "initial_declarative",
-          "--experimental",
-        ],
-        {
-          cwd: projectDir,
-          exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(sync.exitCode, commandFailure(sync)).toBe(0);
+          const sync = yield* runSupabaseEffect(
+            [
+              "db",
+              "schema",
+              "declarative",
+              "sync",
+              "--no-apply",
+              "--name",
+              "initial_declarative",
+              "--experimental",
+            ],
+            {
+              cwd: projectDir,
+              exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
+            },
+          );
+          expect(sync.exitCode, commandFailure(sync)).toBe(0);
 
-      const migrations = migrationFiles(projectDir);
-      expect(migrations.length).toBeGreaterThan(0);
-      const sql = migrations
-        .map((file) => readFileSync(path.join(projectDir, "supabase", "migrations", file), "utf8"))
-        .join("\n");
-      expect(sql).toContain("account_state");
-      expect(sql).toContain("disposable_note");
-      expect(sql).toContain("auth_user_emails");
-      expect(sql).toContain("auth.users");
-      expect(sql).not.toMatch(
-        /CREATE\s+(?:SCHEMA|TABLE)\s+(?:IF\s+NOT\s+EXISTS\s+)?["']?(?:auth|storage|realtime)["']?/iu,
-      );
+          const migrations = yield* migrationFiles(projectDir);
+          expect(migrations.length).toBeGreaterThan(0);
+          const sql = (yield* Effect.forEach(migrations, (file) =>
+            fs.readFileString(path.join(projectDir, "supabase", "migrations", file)),
+          )).join("\n");
+          expect(sql).toContain("account_state");
+          expect(sql).toContain("disposable_note");
+          expect(sql).toContain("auth_user_emails");
+          expect(sql).toContain("auth.users");
+          expect(sql).not.toMatch(
+            /CREATE\s+(?:SCHEMA|TABLE)\s+(?:IF\s+NOT\s+EXISTS\s+)?["']?(?:auth|storage|realtime)["']?/iu,
+          );
 
-      const reset = await runSupabase(["db", "reset", "--local", "--no-seed"], {
-        cwd: projectDir,
-        exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
-      });
-      requireCliSuccess(reset, "db reset setup");
-
-      const converged = await runSupabase(
-        ["db", "schema", "declarative", "sync", "--no-apply", "--experimental"],
-        {
-          cwd: projectDir,
-          exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(converged.exitCode, commandFailure(converged)).toBe(0);
-      expect(`${converged.stdout}${converged.stderr}`).toContain("No schema changes found");
-
-      // Extension-managed objects on the converged tree. The stack teardown after every test
-      // means this continues in the same test rather than a second one.
-      const jobsPath = path.join(projectDir, "supabase", "schemas", "jobs.sql");
-      const runSync = (name: string) =>
-        runSupabase(
-          ["db", "schema", "declarative", "sync", "--no-apply", "--name", name, "--experimental"],
-          {
+          const reset = yield* runSupabaseEffect(["db", "reset", "--local", "--no-seed"], {
             cwd: projectDir,
             exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
-          },
-        );
-      // A next-engine plan may span several ordered migration files; read every
-      // file a sync added rather than only the last one.
-      const syncAndReadSql = async (name: string) => {
-        const before = new Set(migrationFiles(projectDir));
-        const result = await runSync(name);
-        expect(result.exitCode, commandFailure(result)).toBe(0);
-        const added = migrationFiles(projectDir).filter((file) => !before.has(file));
-        expect(added.length, "sync did not write a migration").toBeGreaterThan(0);
-        return {
-          result,
-          sql: added
-            .map((file) =>
-              readFileSync(path.join(projectDir, "supabase", "migrations", file), "utf8"),
-            )
-            .join("\n"),
-        };
-      };
+          });
+          requireCliSuccess(reset, "db reset setup");
 
-      writeFileSync(
-        jobsPath,
-        [
-          "select cron.schedule('nightly_cleanup', '0 3 * * *', $$delete from public.disposable_note$$);",
-          "select pgmq.create('emails');",
-          "",
-        ].join("\n"),
-      );
-      // pg-delta renders a job through `cron.schedule_in_database(...)`.
-      const added = await syncAndReadSql("add_jobs");
-      expect(added.sql).toMatch(/cron\.schedule(?:_in_database)?\('nightly_cleanup'/);
-      expect(added.sql).toContain("pgmq.create('emails')");
+          const converged = yield* runSupabaseEffect(
+            ["db", "schema", "declarative", "sync", "--no-apply", "--experimental"],
+            {
+              cwd: projectDir,
+              exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
+            },
+          );
+          expect(converged.exitCode, commandFailure(converged)).toBe(0);
+          expect(`${converged.stdout}${converged.stderr}`).toContain("No schema changes found");
 
-      // Rename the job and drop the queue — this must not be refused as a legacy export.
-      writeFileSync(
-        jobsPath,
-        "select cron.schedule('weekly_cleanup', '0 3 * * 0', $$delete from public.disposable_note$$);\n",
-      );
-      const removed = await syncAndReadSql("rename_job_drop_queue");
-      expect(`${removed.result.stdout}${removed.result.stderr}`).not.toContain(
-        "legacy pg-delta export",
-      );
-      expect(removed.sql).toContain("cron.unschedule('nightly_cleanup')");
-      expect(removed.sql).toMatch(/cron\.schedule(?:_in_database)?\('weekly_cleanup'/);
-      expect(removed.sql).toContain("pgmq.drop_queue('emails')");
-    },
+          // Extension-managed objects on the converged tree. The stack teardown after every test
+          // means this continues in the same test rather than a second one.
+          const jobsPath = path.join(projectDir, "supabase", "schemas", "jobs.sql");
+          const runSync = (name: string) =>
+            runSupabaseEffect(
+              [
+                "db",
+                "schema",
+                "declarative",
+                "sync",
+                "--no-apply",
+                "--name",
+                name,
+                "--experimental",
+              ],
+              {
+                cwd: projectDir,
+                exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
+              },
+            );
+          // A next-engine plan may span several ordered migration files; read every
+          // file a sync added rather than only the last one.
+          const syncAndReadSql = (name: string) =>
+            Effect.gen(function* () {
+              const before = new Set(yield* migrationFiles(projectDir));
+              const result = yield* runSync(name);
+              expect(result.exitCode, commandFailure(result)).toBe(0);
+              const added = (yield* migrationFiles(projectDir)).filter((file) => !before.has(file));
+              expect(added.length, "sync did not write a migration").toBeGreaterThan(0);
+              return {
+                result,
+                sql: (yield* Effect.forEach(added, (file) =>
+                  fs.readFileString(path.join(projectDir, "supabase", "migrations", file)),
+                )).join("\n"),
+              };
+            });
+
+          yield* fs.writeFileString(
+            jobsPath,
+            [
+              "select cron.schedule('nightly_cleanup', '0 3 * * *', $$delete from public.disposable_note$$);",
+              "select pgmq.create('emails');",
+              "",
+            ].join("\n"),
+          );
+          // pg-delta renders a job through `cron.schedule_in_database(...)`.
+          const added = yield* syncAndReadSql("add_jobs");
+          expect(added.sql).toMatch(/cron\.schedule(?:_in_database)?\('nightly_cleanup'/);
+          expect(added.sql).toContain("pgmq.create('emails')");
+
+          // Rename the job and drop the queue — this must not be refused as a legacy export.
+          yield* fs.writeFileString(
+            jobsPath,
+            "select cron.schedule('weekly_cleanup', '0 3 * * 0', $$delete from public.disposable_note$$);\n",
+          );
+          const removed = yield* syncAndReadSql("rename_job_drop_queue");
+          expect(`${removed.result.stdout}${removed.result.stderr}`).not.toContain(
+            "legacy pg-delta export",
+          );
+          expect(removed.sql).toContain("cron.unschedule('nightly_cleanup')");
+          expect(removed.sql).toMatch(/cron\.schedule(?:_in_database)?\('weekly_cleanup'/);
+          expect(removed.sql).toContain("pgmq.drop_queue('emails')");
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    TEST_TIMEOUT_MS,
   );
 });

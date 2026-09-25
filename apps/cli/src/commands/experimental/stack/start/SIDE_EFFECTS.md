@@ -31,7 +31,12 @@ use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project dir
 
 For a new stack, `--runtime auto` selects native on Linux x64/arm64 and macOS arm64, and Docker
 elsewhere. An existing stack keeps its saved runtime. Explicit runtime selection has no fallback.
-Native startup refuses root because PostgreSQL `initdb` cannot run as root.
+Native startup refuses root because PostgreSQL `initdb` cannot run as root, unless a Claude Code
+sandbox is detected or `SUPABASE_NATIVE_POSTGRES_USER` names a non-root user. PostgreSQL then runs
+as that user: the CLI chowns the instance data, root key, socket directory, and the cached bundle's
+`pgsodium_getkey.sh` to it, and adds traverse-only `o+x` to their parent directories, including
+root's home directory. Later commands that restrict the artifact cache and stack state roots to
+their owner keep that grant.
 
 Database is eager by default. Other services are lazy; traffic wakes them through their listeners.
 Lazy services with idle policies stop after 60 seconds without traffic; Functions has no automatic
