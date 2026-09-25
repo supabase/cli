@@ -2,21 +2,12 @@ import { languages, type OptionSpec, type OptionValue, type OptionValues } from 
 import { Flag } from "effect/unstable/cli";
 import { Option } from "effect";
 
-/**
- * Everything `gen types` derives from the `@supabase/typegen` registry, so the command, the
- * handler and the tests read one definition. Adding a language or a language flag is a bump of
- * that dependency; nothing here names a language.
- */
-
 /** `--lang` values, in the registry's display order. */
 export const GEN_TYPES_LANGUAGES: ReadonlyArray<string> = languages.map(
   (language) => language.name,
 );
 
-/**
- * Language flags users set, for example `--swift-access-control`; consumer options are not flags.
- * A name two languages both declare is one flag, so it is listed once.
- */
+/** User-facing language options, one entry per flag name. */
 const GEN_TYPES_LANGUAGE_OPTIONS: ReadonlyArray<OptionSpec> = [
   ...new Map(
     languages

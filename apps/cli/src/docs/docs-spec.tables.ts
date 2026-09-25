@@ -122,8 +122,6 @@ export const DOCS_EXCLUDED: ReadonlySet<string> = new Set([
  * flags add entries by hand.
  */
 export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
-  // `gen types` language flags come from the `@supabase/typegen` registry, so their defaults do
-  // too; a registry bump that adds a flag needs no entry here.
   ...genTypesLanguageFlagDefaults(),
   "supabase agent": "auto",
   "supabase dns-resolver": "native",

@@ -16,9 +16,6 @@ import {
   resolveDeadline,
 } from "../../../../tests/helpers/docker-image.ts";
 
-// Every in-process language of the `@supabase/typegen` registry; `dart` runs the project's own
-// Dart toolchain and is covered end to end in supabase-flutter instead. The registry check below
-// fails when a bump adds an in-process language without a shape assertion here.
 const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
 type TypegenLang = (typeof TYPEGEN_LANGS)[number];
 

@@ -18,12 +18,7 @@ export interface GenTypesGenerateInput {
   /** A `--lang` value: the name of one of the registry's `languages`. */
   readonly lang: string;
   readonly includedSchemas: ReadonlyArray<string>;
-  /**
-   * Registry option values keyed by option name: the language flags the user set plus the
-   * consumer settings the CLI derives itself (`detect-one-to-one-relationships`). Names the
-   * chosen language does not declare are dropped before generation, so every path passes the
-   * full set.
-   */
+  /** Registry option values by name; ones the language does not declare are dropped. */
   readonly options: OptionValues;
 }
 
@@ -49,11 +44,7 @@ export class GenTypesGenerationError extends Data.TaggedError("GenTypesGeneratio
   }
 }
 
-/**
- * The toolchain or package an out-of-process language runs (for example `dart` and the
- * `supabase_typegen` package for `--lang dart`) is not available in the working directory.
- * `suggestion` carries the registry's install hint.
- */
+/** An out-of-process language's toolchain is missing; `suggestion` carries the install hint. */
 export class GenTypesToolNotInstalledError extends Data.TaggedError(
   "GenTypesToolNotInstalledError",
 )<{
@@ -65,10 +56,7 @@ export class GenTypesToolNotInstalledError extends Data.TaggedError(
   }
 }
 
-/**
- * An out-of-process language's tool exited unsuccessfully or rejected the metadata document;
- * the message carries the tool's own stderr.
- */
+/** An out-of-process language's tool failed; the message carries its stderr. */
 export class GenTypesToolFailedError extends Data.TaggedError("GenTypesToolFailedError")<{
   readonly message: string;
   readonly cause?: unknown;
@@ -78,11 +66,7 @@ export class GenTypesToolFailedError extends Data.TaggedError("GenTypesToolFaile
   }
 }
 
-/**
- * Generates PostgREST client types through the `@supabase/typegen` registry: introspection runs
- * in-process, then the language's registry entry either calls its generator in-process or runs
- * the language's own tool in the working directory.
- */
+/** Introspects the target database and generates `lang` through the `@supabase/typegen` registry. */
 export class GenTypesGenerator extends Context.Service<GenTypesGenerator, GenTypesGeneratorShape>()(
   "supabase/cli/GenTypesGenerator",
 ) {}

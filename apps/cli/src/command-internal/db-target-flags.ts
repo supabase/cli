@@ -110,8 +110,6 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "source",
   "status",
   "sub",
-  // `gen types` language flags (`--swift-access-control` today) come from the registry, so the
-  // static scan never sees them declared; a registry bump keeps this list current.
   ...GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
   "tail",
   "template",

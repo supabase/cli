@@ -25,11 +25,6 @@ const emptyMetadata: GeneratorMetadata = {
 /** A host for in-process languages only: no process runner, TypeScript left unformatted. */
 const inProcessHost = { cwd: "/tmp", env: {}, format: (code: string) => Promise.resolve(code) };
 
-/**
- * Both typegen packages are consumed from source through their `bun` exports condition, at
- * type-check time and at runtime alike; these assertions pin the runtime surface the generator
- * layer relies on.
- */
 describe("typegen registry runtime contract", () => {
   it("exposes the registry and the re-exported introspection entry point", () => {
     expect(typeof introspect).toBe("function");

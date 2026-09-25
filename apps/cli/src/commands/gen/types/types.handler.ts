@@ -116,9 +116,7 @@ const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
 
 // Validation reports only the first violated group, in this listed order — e.g. `--db-url X
 // --postgrest-v9-compat --project-id Y` reports the postgrest group, not the
-// local/linked/project-id/db-url group. Every language flag the registry declares
-// (`--swift-access-control` today) is mutually exclusive with an explicit project ref, since
-// TypeScript on those paths comes from the Management API, which takes none of them.
+// local/linked/project-id/db-url group.
 const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
   ["linked", "project-id", "postgrest-v9-compat"],
   ["linked", "project-id", "query-timeout"],
@@ -539,7 +537,6 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       });
     }
 
-    // Cobra prints a flag's deprecation line while parsing, so it precedes every guard below.
     if (occurrences.has("postgrest-v9-compat")) {
       yield* output.raw(`${POSTGREST_V9_COMPAT_DEPRECATION_LINE}\n`, "stderr");
     }

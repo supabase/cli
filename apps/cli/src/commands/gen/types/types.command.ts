@@ -24,7 +24,6 @@ const config = {
     Flag.withDescription("Generate types from a project ID."),
     Flag.optional,
   ),
-  // Every language `@supabase/typegen` registers; a bump of that dependency can add one.
   lang: Flag.choice("lang", GEN_TYPES_LANGUAGES).pipe(
     Flag.withDescription("Output language of the generated types. (default typescript)"),
     Flag.withDefault("typescript"),
@@ -38,9 +37,7 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  // Deprecated: PostgREST 9 reached end of life in 2023 and the registry no longer exposes a
-  // compatibility switch; the flag still turns one-to-one relationship detection off. Hidden
-  // because Effect V4 has no `Flag.withDeprecated`; the handler prints cobra's deprecation line.
+  // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints cobra's deprecation line.
   postgrestV9Compat: Flag.boolean("postgrest-v9-compat").pipe(
     Flag.withDescription("Generate types compatible with PostgREST v9 and below."),
     Flag.withHidden,
@@ -52,8 +49,6 @@ const config = {
   ),
 } as const;
 
-// Language flags (`--swift-access-control` today) come from the registry's user-facing option
-// specs, keyed by flag name, so a new language's flags arrive with the dependency bump.
 const flagsConfig = { ...config, ...genTypesLanguageFlags };
 
 const commandConfig = {
@@ -61,10 +56,7 @@ const commandConfig = {
   language: Argument.string("language").pipe(Argument.optional, Param.withHidden),
 } as const;
 
-/**
- * The registry's language flags are only known at runtime, so they appear here as an index
- * signature; read them through `languageOptionValues` rather than by name.
- */
+/** The registry's language flags are only known at runtime; read them through `languageOptionValues`. */
 export type GenTypesFlags = CliCommand.Command.Config.Infer<typeof flagsConfig> &
   Readonly<Record<string, unknown>>;
 
