@@ -18,6 +18,7 @@
     "!apps/cli/src/commands/db/push/**",
     "!apps/cli/src/commands/db/query/**",
     "!apps/cli/src/commands/db/reset/**",
+    "!apps/cli/src/commands/db/shared/**",
     "!apps/cli/src/commands/db/start/**",
     "!apps/cli/src/commands/domains/**",
     "!apps/cli/src/commands/encryption/**",

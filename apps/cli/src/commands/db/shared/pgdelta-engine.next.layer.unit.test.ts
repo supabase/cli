@@ -1,5 +1,7 @@
 import { Effect } from "effect";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+
+import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 
 import type { PgDeltaDatabaseEndpoint } from "./pgdelta-engine.service.ts";
 import { parsePgDeltaNextEndpoint } from "./pgdelta-engine.next.layer.ts";
@@ -67,17 +69,6 @@ describe("parsePgDeltaNextEndpoint", () => {
   });
 
   describe("shell env precedence", () => {
-    const ORIGINAL_PGPASSWORD = process.env.PGPASSWORD;
-
-    beforeEach(() => {
-      process.env.PGPASSWORD = "from-shell";
-    });
-
-    afterEach(() => {
-      if (ORIGINAL_PGPASSWORD === undefined) delete process.env.PGPASSWORD;
-      else process.env.PGPASSWORD = ORIGINAL_PGPASSWORD;
-    });
-
     it("prefers the shell-set PGPASSWORD over the project .env value", () => {
       const endpoint = {
         kind: "database",
@@ -86,7 +77,11 @@ describe("parsePgDeltaNextEndpoint", () => {
       } satisfies PgDeltaDatabaseEndpoint;
 
       const conn = Effect.runSync(
-        parsePgDeltaNextEndpoint(endpoint, { PGPASSWORD: "from-project" }),
+        withEnvVar(
+          "PGPASSWORD",
+          "from-shell",
+          parsePgDeltaNextEndpoint(endpoint, { PGPASSWORD: "from-project" }),
+        ),
       );
 
       expect(conn?.password).toBe("from-shell");

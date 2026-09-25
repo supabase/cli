@@ -206,14 +206,12 @@ export const reportPgDeltaNextDiagnostics = Effect.fnUntraced(function* (
   if (feedback !== undefined) yield* output.info(feedback);
 
   if (report.blocking.length > 0) {
-    return yield* Effect.fail(
-      new PgDeltaEngineError({
-        message: pgDeltaNextBlockingDiagnosticMessage(
-          operation,
-          strictCoverage && report.coverage.length > 0,
-        ),
-        cause: report.blocking,
-      }),
-    );
+    return yield* new PgDeltaEngineError({
+      message: pgDeltaNextBlockingDiagnosticMessage(
+        operation,
+        strictCoverage && report.coverage.length > 0,
+      ),
+      cause: report.blocking,
+    });
   }
 });

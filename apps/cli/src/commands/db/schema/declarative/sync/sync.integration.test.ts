@@ -195,21 +195,20 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     defaultLocalResetRoute("test", { running: opts.resetShouldFail !== true }),
   );
   const seam = Layer.succeed(DeclarativeSeam, {
-    ensureLocalDatabaseStarted: () => Effect.void,
-    ensureLocalPostgresImageCurrent: () =>
-      Effect.sync(() => {
-        localPostgresImageChecks.push(true);
-      }).pipe(
-        Effect.flatMap(() =>
-          opts.staleLocalImage === true
-            ? Effect.fail(
-                new DeclarativeShadowDbError({
-                  message: "local Postgres container image is stale",
-                }),
-              )
-            : Effect.void,
-        ),
+    ensureLocalDatabaseStarted: Effect.void,
+    ensureLocalPostgresImageCurrent: Effect.sync(() => {
+      localPostgresImageChecks.push(true);
+    }).pipe(
+      Effect.flatMap(() =>
+        opts.staleLocalImage === true
+          ? Effect.fail(
+              new DeclarativeShadowDbError({
+                message: "local Postgres container image is stale",
+              }),
+            )
+          : Effect.void,
       ),
+    ),
   });
   const dbExec: string[] = [];
   const dbBatches: Array<ReadonlyArray<string>> = [];

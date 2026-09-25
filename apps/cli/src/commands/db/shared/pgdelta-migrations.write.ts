@@ -36,6 +36,10 @@ export class PgDeltaMigrationWriteError extends Data.TaggedError("PgDeltaMigrati
  */
 const MAX_VERSION_COLLISION_ATTEMPTS = 60;
 
+function quoteJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+
 /**
  * Writes one migration file per plan unit, giving multi-unit plans strictly increasing
  * timestamps so execution and history order stay stable. The full version set is
@@ -62,11 +66,9 @@ export const writePgDeltaMigrations = (
     const { workdir, name, files } = opts;
     for (const file of files) {
       if (file.transactionMode !== "transactional" && file.transactionMode !== "none") {
-        return yield* Effect.fail(
-          new PgDeltaMigrationWriteError({
-            message: `unknown pg-delta transaction mode ${JSON.stringify(file.transactionMode)}`,
-          }),
-        );
+        return yield* new PgDeltaMigrationWriteError({
+          message: `unknown pg-delta transaction mode ${quoteJson(file.transactionMode)}`,
+        });
       }
     }
     const single = files.length === 1;
@@ -137,11 +139,9 @@ export const writePgDeltaMigrations = (
       }
       if (!collision) break;
       if (attempt + 1 >= MAX_VERSION_COLLISION_ATTEMPTS) {
-        return yield* Effect.fail(
-          new PgDeltaMigrationWriteError({
-            message: `failed to find a unique migration version after ${MAX_VERSION_COLLISION_ATTEMPTS} attempts`,
-          }),
-        );
+        return yield* new PgDeltaMigrationWriteError({
+          message: `failed to find a unique migration version after ${MAX_VERSION_COLLISION_ATTEMPTS} attempts`,
+        });
       }
       baseMillis += 1000;
       set = buildSet(baseMillis);

@@ -174,9 +174,9 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       if (Option.isSome(flags.local)) {
         // Target selection keys off flag presence, but auto-start gates on the boolean value, so
         // `--local=false` selects the local target but must not start a stopped stack.
-        yield* seam.ensureLocalPostgresImageCurrent();
+        yield* seam.ensureLocalPostgresImageCurrent;
         if (Option.getOrElse(flags.local, () => false)) {
-          yield* seam.ensureLocalDatabaseStarted();
+          yield* seam.ensureLocalDatabaseStarted;
         }
         target = yield* resolveLocalTargetEndpoint(local, dnsResolver);
       } else {
@@ -233,7 +233,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         path,
         cliSettings.workdir,
         linkedRef,
-        (yield* DeclarativeSeam).ensureLocalPostgresImageCurrent(),
+        (yield* DeclarativeSeam).ensureLocalPostgresImageCurrent,
       );
       overwrite = true;
     }
