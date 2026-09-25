@@ -106,7 +106,7 @@ it.live("forwards and rotates saved identity across composed services in one own
           endpoints: { http: { port: "auto" as const } },
         },
       ];
-      const stackKeys = (suffix: string, gotrueJwtKeys: string): State.StackIdentityInput => ({
+      const stackKeys = (suffix: string, gotrueJwtKeys: string): State.StackKeysInput => ({
         publishableKey: `publishable-${suffix}`,
         secretKey: `secret-${suffix}`,
         anonKey: `anon-${suffix}`,

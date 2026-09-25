@@ -1,10 +1,10 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Redacted, Schema, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Redacted, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import { tmpdir } from "node:os";
-import { open, postgres } from "./effect.ts";
+import { find, open, postgres } from "./effect.ts";
 import * as PromiseStack from "./index.ts";
 import { assertOwnerExited, captureOwnerPid } from "../tests/owner.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
@@ -425,3 +425,40 @@ it.live(
     ),
   { timeout: 60_000 },
 );
+
+for (const runtime of ["node", "bun"] as const) {
+  it.live(
+    `${runtime}: a Promise test stack resets to its checkpoint and is destroyed on disposal`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const child = yield* ChildProcess.make(
+          runtime === "bun" ? process.execPath : "node",
+          [new URL("../tests/test-stack-client.ts", import.meta.url).pathname],
+          { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+        );
+        const [stdout, stderr, code] = yield* Effect.all(
+          [
+            child.stdout.pipe(Stream.decodeText, Stream.mkString),
+            child.stderr.pipe(Stream.decodeText, Stream.mkString),
+            child.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(Number(code), stderr).toBe(0);
+        const disposed = yield* Schema.decodeEffect(
+          Schema.fromJsonString(
+            Schema.Struct({ stackId: Schema.String, projectRoot: Schema.String }),
+          ),
+        )(stdout.trim());
+        expect(
+          yield* find({ stateRoot: `${tmpdir()}/supabase-stack-tests`, id: disposed.stackId }),
+        ).toEqual(Option.none());
+        expect(yield* fs.exists(disposed.projectRoot)).toBe(false);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      ),
+    { timeout: 300_000 },
+  );
+}

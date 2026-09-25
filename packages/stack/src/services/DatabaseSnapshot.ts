@@ -71,10 +71,20 @@ export type SnapshotRun = Data.TaggedEnum<{
 }>;
 export const SnapshotRun = Data.taggedEnum<SnapshotRun>();
 
+/**
+ * Where a snapshot lives: the shared cache keeps a bounded number of entries across stacks, and an
+ * instance keeps its own entries, outside that retention, until the instance is destroyed.
+ */
+export const snapshotScopes = ["cache", "instance"] as const;
+export type SnapshotScope = (typeof snapshotScopes)[number];
+
+/** Directory in a database instance root that holds its instance-scoped snapshots. */
+export const instanceSnapshotsDirectory = ".supabase-snapshots";
+
 /** Filesystem namespace in which one engine stores snapshots and database data. */
 export interface SnapshotBackend {
-  /** Identifies the snapshot store for the host-side lock. */
-  readonly lockKey: string;
+  /** Host file whose SQLite write lock serializes operations on this snapshot store. */
+  readonly lockFile: string;
   readonly entries: string;
   readonly stages: string;
   /** Holds restore stages on the filesystem that holds `data`. */
@@ -87,7 +97,7 @@ export interface SnapshotBackend {
   ) => Effect.Effect<SnapshotRun, DatabaseSnapshotError>;
 }
 
-/** Snapshot entries kept besides the one just saved. */
+/** Cache-scoped entries kept besides the one just saved; instance-scoped checkpoints are never pruned. */
 const retainedPrevious = 2;
 const format = "supabase-database-snapshot-v1" as const;
 const runtimes = Schema.Literals(["native", "docker", "podman"]);
@@ -138,10 +148,9 @@ const withStoreLock = <A, E>(lockFile: string, effect: Effect.Effect<A, E>) =>
       }),
   );
 
-/** Saves and restores database data through the snapshot protocol on one backend. */
+/** Saves and restores database data through the snapshot protocol, with one backend per scope. */
 export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(function* (options: {
-  readonly backend: SnapshotBackend;
-  readonly cacheRoot: string;
+  readonly backends: { readonly [Scope in SnapshotScope]: SnapshotBackend };
   readonly instanceRoot: string;
   readonly runtime: DatabaseRuntime;
   readonly version: string;
@@ -149,12 +158,11 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
-  const { backend, runtime, version } = options;
+  const { backends, runtime, version } = options;
   const { Adopt, Clear, Copy, Ensure, Expect, ExpectEmpty, ExpectText } = SnapshotStep;
   const { Prune, Recover, Remove, Rename, Touch, Write } = SnapshotStep;
   const major = version.split(".")[0] ?? version;
   const markerPath = path.join(options.instanceRoot, ".supabase-database-ready.json");
-  const locks = path.join(options.cacheRoot, "stack-database-snapshots", "locks");
   const mapError = <A, E>(operation: string, effect: Effect.Effect<A, E>) =>
     effect.pipe(Effect.mapError((cause) => errorFor(operation, cause)));
 
@@ -184,15 +192,16 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
     Effect.mapError((cause) => errorFor("descriptor", cause)),
   );
 
-  const locked = <A>(effect: Effect.Effect<A, DatabaseSnapshotError>) =>
-    mapError("lock", fs.makeDirectory(locks, { recursive: true, mode: 0o700 })).pipe(
-      Effect.andThen(withStoreLock(path.join(locks, `${backend.lockKey}.sqlite`), effect)),
-    );
+  const locked = <A>(backend: SnapshotBackend, effect: Effect.Effect<A, DatabaseSnapshotError>) =>
+    mapError(
+      "lock",
+      fs.makeDirectory(path.dirname(backend.lockFile), { recursive: true, mode: 0o700 }),
+    ).pipe(Effect.andThen(withStoreLock(backend.lockFile, effect)));
   const token = mapError("stage", crypto.randomUUIDv4);
   // Compensation also runs after an interrupt; a failed compensation must not hide the
   // failure it follows.
   const compensate =
-    (steps: ReadonlyArray<SnapshotStep>) =>
+    (backend: SnapshotBackend, steps: ReadonlyArray<SnapshotStep>) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
         Effect.onExit((exit) =>
@@ -203,12 +212,16 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
               ),
         ),
       );
-  const reclaimStages = [
+  const reclaimStages = (backend: SnapshotBackend) => [
     Recover({ stages: backend.stages, entries: backend.entries }),
     Clear({ directory: backend.stages }),
   ];
 
-  const saveSnapshot = Effect.fn("DatabaseSnapshot.save")(function* (logicalKey: string) {
+  const saveSnapshot = Effect.fn("DatabaseSnapshot.save")(function* (
+    logicalKey: string,
+    scope: SnapshotScope = "cache",
+  ) {
+    const backend = backends[scope];
     const ready = yield* mapError(
       "ready",
       fs
@@ -219,6 +232,7 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
       return yield* errorFor("ready", "Database readiness marker does not match the instance");
     const { keyDigest, descriptor } = yield* describe(logicalKey);
     yield* locked(
+      backend,
       Effect.gen(function* () {
         const id = yield* token;
         const stage = backend.join(backend.stages, id);
@@ -227,7 +241,7 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
         const result = yield* backend
           .run([
             Ensure({ directory: backend.entries }),
-            ...reclaimStages,
+            ...reclaimStages(backend),
             Expect({
               path: backend.join(backend.data, "postmaster.pid"),
               present: false,
@@ -245,10 +259,12 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
             Rename({ from: stage, to: target, optional: false }),
             Remove({ path: retired }),
             Touch({ path: target }),
-            Prune({ directory: backend.entries, keep: retainedPrevious, except: keyDigest }),
+            ...(scope === "cache"
+              ? [Prune({ directory: backend.entries, keep: retainedPrevious, except: keyDigest })]
+              : []),
           ])
           .pipe(
-            compensate([
+            compensate(backend, [
               Rename({ from: retired, to: target, optional: true }),
               Remove({ path: stage }),
             ]),
@@ -277,9 +293,14 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
     Effect.mapError((cause) => errorFor("ready", cause)),
   );
 
-  const restoreSnapshot = Effect.fn("DatabaseSnapshot.restore")(function* (logicalKey: string) {
+  const restoreSnapshot = Effect.fn("DatabaseSnapshot.restore")(function* (
+    logicalKey: string,
+    scope: SnapshotScope = "cache",
+  ) {
+    const backend = backends[scope];
     const { keyDigest, descriptor } = yield* describe(logicalKey);
     return yield* locked(
+      backend,
       Effect.gen(function* () {
         const id = yield* token;
         const stage = backend.join(backend.restoreStages, id);
@@ -296,7 +317,7 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
             const result = yield* restore(
               backend.run([
                 Ensure({ directory: backend.entries }),
-                ...reclaimStages,
+                ...reclaimStages(backend),
                 ...(backend.restoreStages === backend.stages
                   ? []
                   : [Clear({ directory: backend.restoreStages })]),
@@ -350,7 +371,7 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
             yield* publishReadyMarker(id);
             return true;
           }),
-        ).pipe(compensate(rollback));
+        ).pipe(compensate(backend, rollback));
       }),
     );
   });
@@ -358,15 +379,16 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
   return { saveSnapshot, restoreSnapshot };
 });
 
-/** Interprets snapshot programs directly on the host filesystem. */
-const makeNativeSnapshotBackend = Effect.fnUntraced(function* (
-  instanceRoot: string,
-  cacheRoot: string,
-) {
+/** Interprets snapshot programs directly on the host filesystem, keeping entries under `root`. */
+const makeNativeSnapshotBackend = Effect.fnUntraced(function* (options: {
+  readonly instanceRoot: string;
+  readonly root: string;
+  readonly lockFile: string;
+}) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const root = path.join(cacheRoot, "stack-database-snapshots");
+  const { instanceRoot, root } = options;
   const exists = (target: string) => fs.exists(target);
   const isEmptyDirectory = (target: string) =>
     fs.readDirectory(target).pipe(Effect.map((names) => names.length === 0));
@@ -468,7 +490,7 @@ const makeNativeSnapshotBackend = Effect.fnUntraced(function* (
         }),
     });
   const backend: SnapshotBackend = {
-    lockKey: "native",
+    lockFile: options.lockFile,
     entries: path.join(root, "entries"),
     stages: path.join(root, "stages"),
     restoreStages: path.join(instanceRoot, ".supabase-restore"),
@@ -487,16 +509,29 @@ const makeNativeSnapshotBackend = Effect.fnUntraced(function* (
   return backend;
 });
 
-/** Snapshots a native database instance into the host cache. */
+/** Wires a native database instance's cache-scoped and instance-scoped snapshot backends. */
 export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function* (options: {
   readonly instanceRoot: string;
   readonly cacheRoot: string;
   readonly runtime: DatabaseRuntime;
   readonly version: string;
 }) {
+  const path = yield* Path.Path;
+  const cache = path.join(options.cacheRoot, "stack-database-snapshots");
+  const instance = path.join(options.instanceRoot, instanceSnapshotsDirectory);
   return yield* makeSnapshotStore({
-    backend: yield* makeNativeSnapshotBackend(options.instanceRoot, options.cacheRoot),
-    cacheRoot: options.cacheRoot,
+    backends: {
+      cache: yield* makeNativeSnapshotBackend({
+        instanceRoot: options.instanceRoot,
+        root: cache,
+        lockFile: path.join(cache, "locks", "native.sqlite"),
+      }),
+      instance: yield* makeNativeSnapshotBackend({
+        instanceRoot: options.instanceRoot,
+        root: instance,
+        lockFile: path.join(instance, "lock.sqlite"),
+      }),
+    },
     instanceRoot: options.instanceRoot,
     runtime: options.runtime,
     version: postgresVersion(options.version),

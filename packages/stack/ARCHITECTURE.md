@@ -57,7 +57,9 @@ Organize by cohesive responsibilities. The package shape is:
 - `runtime/`: native and container adapters.
 - `Tools.ts`: public finite-tool descriptors.
 - `effect.ts`: Effect-facing composition and services.
-- `index.ts`: Promise-facing public boundary.
+- `index.ts`: Promise-facing public boundary. `PromiseClient.ts` derives its types from the Effect handles and adapts them by shape: Effects become cancellable calls, Streams async iterables, and returned handles are adapted recursively. Only operations whose inputs differ (plain creations, Promise tool sinks) and the per-kind creation type are written by hand.
+- `testing.ts`: disposable, composed session stacks for tests, with database checkpoints, in Promise and Effect forms.
+- `Defaults.ts`: shared local-development credentials, exported once as `./defaults`.
 
 This is navigational guidance, not a required file scaffold. Split modules when a responsibility needs it; avoid one folder or interface per operation. Keep service definitions narrow, with graph edges and input wiring in composition. Do not introduce capabilities, projections, recovery journals, reservations, public sleep APIs, or extra lifecycle states to force this shape.
 
@@ -382,16 +384,19 @@ CLI policy remains CLI policy: SQL scripts, migrations, seeds, hosted targets, o
 Expose one awaited `stack.tools.run` operation. The Promise facade below has an Effect counterpart for CLI consumers; both use the same owner-side runner.
 
 ```ts
-import { postgres } from "@supabase/stack/tools";
+import { postgres } from "@supabase/stack";
 
 // Connection values are plain data, rendered for the stack runtime.
 const { databaseUrl } = await database.credentials({ from: "runtime" });
-const result = await stack.tools.run(postgres.pgDump({ major: 17 }), {
-  args: ["--dbname", databaseUrl, "--schema-only", "--no-owner"],
-  stdout: (bytes) => destination.write(bytes),
-  stderr: (bytes) => diagnostics.write(bytes),
-  signal,
-});
+const result = await stack.tools.run(
+  postgres.pgDump({ major: 17 }),
+  {
+    args: ["--dbname", databaseUrl, "--schema-only", "--no-owner"],
+    stdout: (bytes) => destination.write(bytes),
+    stderr: (bytes) => diagnostics.write(bytes),
+  },
+  { signal },
+);
 
 // result: { jobId, exitCode }
 ```
@@ -472,9 +477,11 @@ During Starting, acquire the exclusive stack lease, load the instance definition
 
 **Release handshake.** `/identity` reports the owner's release: the package version plus a build identifier. The identifier is a digest of this package's module sources and its Effect version: the CLI build scripts embed it in every compiled binary and a source checkout computes it, so a binary and a source run of the same sources interoperate, and any change to the owner or its protocol is a new release. Operations fail with an error asking the user to stop or destroy the stack when the releases differ. `stop` and `destroy` use `POST /shutdown` with the bearer secret and a `{ "destroy": boolean }` body, which do not depend on the RPC schema and so reach owners of any release.
 
-**Session lifetime.** A session stack is registered by its owner under the lease, so it never exists without a live owner except after that owner dies. Its spawner keeps the owner's stdin pipe open for the life of the creating handle. End of input means the creator is gone, whether it closed the handle or its process died: the owner destroys the stack and exits. Only the creating handle starts a session stack's owner; other handles attach.
+**Session lifetime.** A session stack is registered by its owner under the lease, so it never exists without a live owner except after that owner dies. Its spawner keeps the owner's stdin pipe open for the life of the creating handle. End of input means the creator is gone, whether it closed the handle or its process died: the owner destroys the stack and exits. Only the creating handle starts a session stack's owner; other handles attach. `create({ startOwner: true })` registers a detached stack through its owner the same way; an owner whose startup fails removes the registration it made, so a failed or interrupted first launch leaves no stack behind.
 
 **Orphan sweep.** Stack-labelled containers and session stacks exist only while their lease is held. After readiness, each owner visits every other stack in its state root in the background, with a bounded time per stack. It skips stacks whose lease is held. For a free lease it takes that lease for the duration of the visit, publishing a sweeper record in `owner.json` so clients wait for the visit instead of mistaking it for a starting owner, removes containers labelled with the stack and its data root, and destroys the stack through the owner's own destroy path when its lifetime is `session`. Filtering on the data-root label keeps other state roots untouched. Creating a stack whose identity belongs to a dead session stack reclaims that stack the same way first.
+
+**Unreachable engine.** An owner of a container stack fails startup with a `runtime-unavailable` reason when its first container sweep finds the engine CLI missing or its daemon not listening; permission, TLS, authentication and timeout failures are ordinary startup errors. `destroy` then proceeds without an owner: it takes the free lease, publishing a sweeper record like the orphan sweep, refuses when any stack data directory cannot be deleted by the current user, removes the host data and the registration with its port claims, and returns the shell commands that remove the stack's containers and engine-volume data once the engine runs. `stop` without a live owner already succeeds without contacting the engine.
 
 During Serving, keep the owner alive independently of callers. Sleeping instances still need its public listeners. This is process lifetime management, not automatic service restart or continuous reconciliation.
 
@@ -650,8 +657,8 @@ Expose `saveSnapshot` and `restoreSnapshot` on `DatabaseInstance` only. The comm
 ```ts
 interface DatabaseInstance extends ServiceInstance {
   readonly service: "database";
-  saveSnapshot(key: string): Promise<void>;
-  restoreSnapshot(key: string): Promise<boolean>;
+  saveSnapshot(key: string, options?: { scope?: "cache" | "instance" }): Promise<void>;
+  restoreSnapshot(key: string, options?: { scope?: "cache" | "instance" }): Promise<boolean>;
 }
 
 // `baseline` has already been initialized; `shadow` is a fresh instance.
@@ -665,7 +672,7 @@ await shadow.start();
 await shadow.ready();
 ```
 
-The database implementation owns the snapshot format, PostgreSQL data selection, compatibility validation, initialization metadata and credential reconciliation. It uses native filesystem clone/copy operations or container volume/helper operations through the runtime backend. Native entries live below `cacheRoot`; Docker entries share the data volume, in a separate namespace derived from `cacheRoot`. Docker cache reuse requires the same daemon, `stateRoot`, and `cacheRoot`. Each store retains three entries by last use; saving a key replaces the previous complete entry for that key. Cache entries are disposable and do not promise durability across power loss. The orchestrator knows only admission, instance ownership and operation settlement; it never needs to understand PostgreSQL data contents.
+The database implementation owns the snapshot format, PostgreSQL data selection, compatibility validation, initialization metadata and credential reconciliation. It uses native filesystem clone/copy operations or container volume/helper operations through the runtime backend. Native entries live below `cacheRoot`; Docker entries share the data volume, in a separate namespace derived from `cacheRoot`. Docker cache reuse requires the same daemon, `stateRoot`, and `cacheRoot`. The cache store retains three entries by last use; saving a key replaces the previous complete entry for that key. Instance-scoped snapshots, which test checkpoints use, live beside the instance's data (native instance root, Docker data namespace or host-backed instance root), are outside cache retention, and are removed when the instance is destroyed; reset keeps them. Cache entries are disposable and do not promise durability across power loss. The orchestrator knows only admission, instance ownership and operation settlement; it never needs to understand PostgreSQL data contents.
 
 Keep the contract narrow:
 
@@ -673,7 +680,7 @@ Keep the contract narrow:
 - Restore requires a confirmed stopped instance with empty data. Validate format, artifact/runtime compatibility and initialization profile before installing restored data. A missing key returns `false`; a compatible published entry returns `true`; reject a nonempty target rather than overwriting it.
 - Both operations occupy the instance's existing serial operation gate and leave lifecycle stopped. Queued start, destroy or another storage operation waits for settlement and revalidates. No new lifecycle states are necessary; the observable pending operation identifies snapshot work. An armed wake route is not a substitute for explicit stop.
 - Native snapshots copy or clone the host data; container snapshots copy database data through a managed volume and helper. Docker data normally lives in a managed volume, while existing host data can be retained through the host-backed fallback. The host storage marker detects a missing or mismatched Docker volume; deleting that volume loses its database data.
-- Restore transfers compatible database contents, not the source instance's identity, public port claims or composition membership. The target retains its own data location and configuration, with database-specific credentials reconciled before readiness. Snapshots survive destruction of the source instance because their managed storage is separate.
+- Restore transfers compatible database contents, not the source instance's identity, public port claims or composition membership. The target retains its own data location and configuration, with database-specific credentials reconciled before readiness. Cache snapshots survive destruction of the source instance because their managed storage is separate; instance snapshots restore only into their own instance.
 
 These are physical database snapshots for the cache use case. A `pg_dump` invocation remains an ordinary client tool for logical exports. CLI code owns cache keys, migrations and the decision to fall back to rebuilding a baseline; managed storage owns publication and retention. The snapshot API does not acquire CLI cache policy.
 

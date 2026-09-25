@@ -3,7 +3,7 @@ import { postgresVersion } from "../Artifacts.ts";
 import { causeMessage, type CompositionConfig } from "../Orchestrator.ts";
 import type { Observation } from "../Rpc.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
-import type { SavedStack, StackIdentityInput } from "../State.ts";
+import type { SavedStack, StackKeysInput } from "../State.ts";
 import { credentialInputNames } from "../host/Credentials.ts";
 import { apiRoute, endpointNames, endpointPort } from "../host/Endpoints.ts";
 
@@ -170,7 +170,7 @@ export interface SupabaseCompositionOperations<E = SupabaseCompositionError> {
 export interface SupabaseCompositionOptions {
   /** Reuses stopped instances; inputs declare desired bindings, not previous resolved creations. */
   readonly reuseIds?: ReadonlyArray<string>;
-  readonly keys?: StackIdentityInput;
+  readonly keys?: StackKeysInput;
   /**
    * Starts every member with the composition. By default the database and members without an
    * endpoint start eagerly, and other members start on their first connection.

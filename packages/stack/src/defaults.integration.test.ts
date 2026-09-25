@@ -2,17 +2,9 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
 import { tmpdir } from "node:os";
-import {
-  create as createEffect,
-  DEFAULT_LOCAL_JWT_SECRET,
-  DEFAULT_POSTGRES_ROOT_KEY,
-  StackError,
-} from "./effect.ts";
-import {
-  create as createPromise,
-  DEFAULT_LOCAL_JWT_SECRET as PROMISE_DEFAULT_JWT_SECRET,
-  DEFAULT_POSTGRES_ROOT_KEY as PROMISE_DEFAULT_ROOT_KEY,
-} from "./index.ts";
+import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.ts";
+import { create as createEffect, StackError } from "./effect.ts";
+import { create as createPromise } from "./index.ts";
 
 const artifactCacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 const effectLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
@@ -134,10 +126,8 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
               expect(initial.config.service).toBe("database");
               if (initial.config.service !== "database")
                 return yield* Effect.die("Expected a database status");
-              expect(redactedValue(initial.config.config.jwtSecret)).toBe(
-                PROMISE_DEFAULT_JWT_SECRET,
-              );
-              expect(redactedValue(initial.config.config.rootKey)).toBe(PROMISE_DEFAULT_ROOT_KEY);
+              expect(redactedValue(initial.config.config.jwtSecret)).toBe(DEFAULT_LOCAL_JWT_SECRET);
+              expect(redactedValue(initial.config.config.rootKey)).toBe(DEFAULT_POSTGRES_ROOT_KEY);
 
               yield* promise(() => database.restart({ config: promiseDatabaseConfig }));
               yield* promise(() => database.ready());
@@ -146,9 +136,11 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
               if (restarted.config.service !== "database")
                 return yield* Effect.die("Expected a restarted database status");
               expect(redactedValue(restarted.config.config.jwtSecret)).toBe(
-                PROMISE_DEFAULT_JWT_SECRET,
+                DEFAULT_LOCAL_JWT_SECRET,
               );
-              expect(redactedValue(restarted.config.config.rootKey)).toBe(PROMISE_DEFAULT_ROOT_KEY);
+              expect(redactedValue(restarted.config.config.rootKey)).toBe(
+                DEFAULT_POSTGRES_ROOT_KEY,
+              );
 
               const conflict = yield* Effect.flip(
                 promise(() =>
@@ -173,10 +165,10 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
               if (composedStatus.config.service !== "database")
                 return yield* Effect.die("Expected a composed database status");
               expect(redactedValue(composedStatus.config.config.jwtSecret)).toBe(
-                PROMISE_DEFAULT_JWT_SECRET,
+                DEFAULT_LOCAL_JWT_SECRET,
               );
               expect(redactedValue(composedStatus.config.config.rootKey)).toBe(
-                PROMISE_DEFAULT_ROOT_KEY,
+                DEFAULT_POSTGRES_ROOT_KEY,
               );
             }),
           (current) =>

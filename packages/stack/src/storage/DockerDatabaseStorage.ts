@@ -17,7 +17,12 @@ import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import type { ContainerRuntime } from "../runtime/Container.ts";
 import type { DatabaseRuntime } from "../services/Database.ts";
-import { DatabaseSnapshotError, makeSnapshotStore } from "../services/DatabaseSnapshot.ts";
+import {
+  DatabaseSnapshotError,
+  instanceSnapshotsDirectory,
+  makeSnapshotStore,
+  type SnapshotScope,
+} from "../services/DatabaseSnapshot.ts";
 import type { DockerHelperRegistry } from "./DockerHelperRegistry.ts";
 import { makeDockerSnapshotBackend, shellQuote } from "./DockerSnapshotBackend.ts";
 
@@ -71,10 +76,12 @@ export interface DockerDatabaseStorage {
   readonly saveSnapshot: (
     version: string,
     key: string,
+    scope?: SnapshotScope,
   ) => Effect.Effect<void, DockerDatabaseStorageError>;
   readonly restoreSnapshot: (
     version: string,
     key: string,
+    scope?: SnapshotScope,
   ) => Effect.Effect<boolean, DockerDatabaseStorageError>;
 }
 
@@ -825,7 +832,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               );
           } else {
             yield* runHelper(
-              `set -eu; mkdir -p ${shellQuote(`${store}/data`)} ${shellQuote(`${cache}/entries`)} ${shellQuote(`${cache}/stages`)}; chown -R 100:101 ${shellQuote(store)}`,
+              `set -eu; mkdir -p ${shellQuote(`${store}/data`)} ${shellQuote(`${cache}/entries`)} ${shellQuote(`${cache}/stages`)}; chown -R 100:101 ${shellQuote(`${store}/data`)}`,
               [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
               version,
             );
@@ -907,7 +914,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           const marker = markerOption.value;
           if (marker.backend === "host") {
             yield* runHelper(
-              `set -eu; rm -rf /instance/data /instance/.supabase-restore*`,
+              `set -eu; rm -rf /instance/data /instance/.supabase-restore* ${shellQuote(`/instance/${instanceSnapshotsDirectory}`)}`,
               snapshotPaths(marker).mounts,
               version,
               true,
@@ -960,25 +967,48 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       const snapshots = (store: Marker, version: string) => {
         const paths = snapshotPaths(store);
         const host = store.backend === "host";
+        const instanceSnapshotRoot = host
+          ? `/instance/${instanceSnapshotsDirectory}`
+          : `/store/${store.namespace}/snapshots`;
+        const exec = (script: string) => runHelper(script, paths.mounts, version);
         return makeSnapshotStore({
-          backend: makeDockerSnapshotBackend({
-            lockKey: host
-              ? `host-${store.cacheNamespace}`
-              : `${store.volume ?? "volume"}-${store.cacheNamespace}`,
-            root: paths.root,
-            data: paths.source,
-            restoreStages: host ? "/instance/.supabase-restore" : `${paths.root}/stages`,
-            // Host-backed snapshots stay removable by the host user; restored data belongs
-            // to the database user.
-            ...(host
-              ? {
-                  adoptOwner: "100:101",
-                  epilogue: `owner=$(/usr/bin/busybox stat -c "%u:%g" /cache); /usr/bin/busybox mkdir -p /cache/stack-database-snapshots-helper; /usr/bin/busybox chown "$owner" /cache/stack-database-snapshots-helper; /usr/bin/busybox chown -R "$owner" ${shellQuote(paths.root)}`,
-                }
-              : {}),
-            exec: (script) => runHelper(script, paths.mounts, version),
-          }),
-          cacheRoot: options.cacheRoot,
+          backends: {
+            cache: makeDockerSnapshotBackend({
+              lockFile: options.path.join(
+                options.cacheRoot,
+                "stack-database-snapshots",
+                "locks",
+                `${host ? "host" : (store.volume ?? "volume")}-${store.cacheNamespace}.sqlite`,
+              ),
+              root: paths.root,
+              data: paths.source,
+              restoreStages: host ? "/instance/.supabase-restore" : `${paths.root}/stages`,
+              // Host-backed snapshots stay removable by the host user; restored data belongs
+              // to the database user.
+              ...(host
+                ? {
+                    adoptOwner: "100:101",
+                    epilogue: `owner=$(/usr/bin/busybox stat -c "%u:%g" /cache); /usr/bin/busybox mkdir -p /cache/stack-database-snapshots-helper; /usr/bin/busybox chown "$owner" /cache/stack-database-snapshots-helper; /usr/bin/busybox chown -R "$owner" ${shellQuote(paths.root)}`,
+                  }
+                : {}),
+              exec,
+            }),
+            // Instance snapshots live beside the instance data, so destroying it removes them.
+            instance: makeDockerSnapshotBackend({
+              lockFile: options.path.join(
+                options.instanceRoot,
+                instanceSnapshotsDirectory,
+                "lock.sqlite",
+              ),
+              root: instanceSnapshotRoot,
+              data: paths.source,
+              restoreStages: host
+                ? "/instance/.supabase-restore"
+                : `${instanceSnapshotRoot}/stages`,
+              ...(host ? { adoptOwner: "100:101" } : {}),
+              exec,
+            }),
+          },
           instanceRoot: options.instanceRoot,
           runtime: options.runtime,
           version,
@@ -989,21 +1019,22 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         );
       };
       const saveSnapshot = Effect.fn("DockerDatabaseStorage.saveSnapshot")(
-        (version: string, key: string) =>
+        (version: string, key: string, scope: SnapshotScope = "cache") =>
           Effect.gen(function* () {
             yield* selected;
             const store = yield* getMarker;
             if (!store.initialized)
               return yield* errorFor("snapshot", "Database is not initialized");
-            yield* (yield* snapshots(store, version)).saveSnapshot(key);
+            yield* (yield* snapshots(store, version)).saveSnapshot(key, scope);
           }).pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
       );
       const restoreSnapshot = Effect.fn("DockerDatabaseStorage.restoreSnapshot")(
-        (version: string, key: string) =>
+        (version: string, key: string, scope: SnapshotScope = "cache") =>
           Effect.gen(function* () {
             yield* selected;
             const store = yield* getMarker;
-            if (!(yield* (yield* snapshots(store, version)).restoreSnapshot(key))) return false;
+            if (!(yield* (yield* snapshots(store, version)).restoreSnapshot(key, scope)))
+              return false;
             yield* writeMarker({ ...store, initialized: true });
             return true;
           }).pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),

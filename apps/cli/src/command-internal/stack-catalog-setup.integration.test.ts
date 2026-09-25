@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { create, postgres } from "@supabase/stack/effect";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { stackCatalogSetupLayer, StackCatalogSetup } from "./stack-catalog-setup.ts";
-import { destroyTestStack } from "../../../../packages/stack/tests/stack-cleanup.ts";
+import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 const jwtSecret = "stack-catalog-setup-integration-secret";

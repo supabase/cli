@@ -36,7 +36,8 @@ const SavedInstance = Schema.Struct({
 });
 interface SavedInstance extends Schema.Schema.Type<typeof SavedInstance> {}
 
-export const StackIdentityInput = Schema.Struct({
+/** API and JWT signing keys that override the keys a stack derives by default. */
+export const StackKeysInput = Schema.Struct({
   publishableKey: Schema.optionalKey(Schema.String),
   secretKey: Schema.optionalKey(Schema.String),
   anonKey: Schema.optionalKey(Schema.String),
@@ -47,7 +48,7 @@ export const StackIdentityInput = Schema.Struct({
   publicSigningKeys: Schema.optionalKey(Schema.String),
   remoteJwks: Schema.optionalKey(Schema.String),
 });
-export interface StackIdentityInput extends Schema.Schema.Type<typeof StackIdentityInput> {}
+export interface StackKeysInput extends Schema.Schema.Type<typeof StackKeysInput> {}
 
 export const StackCredentials = Schema.Struct({
   jwtSecret: Schema.String,
