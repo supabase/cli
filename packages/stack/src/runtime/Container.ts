@@ -620,5 +620,6 @@ export const removeStackContainersCommand = (options: {
   ]
     .map((filter) => `--filter ${shellQuote(filter)}`)
     .join(" ");
-  return `ids=$(${options.engine} ps --all --quiet --no-trunc ${filters}) && { [ -z "$ids" ] || ${options.engine} rm --force $ids; }`;
+  // `sh -c` keeps POSIX word splitting of `$ids` when pasted into shells like zsh that skip it.
+  return `sh -c ${shellQuote(`ids=$(${options.engine} ps --all --quiet --no-trunc ${filters}) && { [ -z "$ids" ] || ${options.engine} rm --force $ids; }`)}`;
 };

@@ -61,7 +61,7 @@ it.live(
         runtimeCleanup: "skipped",
         engine: "docker",
         cleanupCommands: [
-          `ids=$(docker ps --all --quiet --no-trunc --filter 'label=com.supabase.stack=${stack.id}' --filter 'label=com.supabase.stack-root=${resolvedDataRoot}') && { [ -z "$ids" ] || docker rm --force $ids; }`,
+          `sh -c 'ids=$(docker ps --all --quiet --no-trunc --filter '\\''label=com.supabase.stack=${stack.id}'\\'' --filter '\\''label=com.supabase.stack-root=${resolvedDataRoot}'\\'') && { [ -z "$ids" ] || docker rm --force $ids; }'`,
           expect.stringMatching(
             new RegExp(
               `^docker run --rm --mount 'type=volume,src=supabase-db-0123456789abcdef,dst=/store' '[^']+' /bin/sh -c 'rm -rf /store/instance-${stack.id}-db-instance'$`,
@@ -154,7 +154,7 @@ it.live("removes a stack offline when Docker reports its API socket is missing",
 );
 
 it.live(
-  "prints a container cleanup command that fails while the engine is down and succeeds when nothing is left",
+  "prints a container cleanup command that fails while the engine is down and removes every listed container once it is back",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -183,6 +183,12 @@ it.live(
       yield* fs.writeFileString(
         `${root}/bin/docker`,
         '#!/bin/sh\nif [ "$1" = "ps" ]; then exit 0; fi\necho "docker rm requires at least 1 argument" >&2\nexit 1\n',
+      );
+      expect(Number(yield* run)).toBe(0);
+      // Removal succeeds only when both listed IDs arrive as separate arguments.
+      yield* fs.writeFileString(
+        `${root}/bin/docker`,
+        '#!/bin/sh\nif [ "$1" = "ps" ]; then printf "aaa111\\nbbb222\\n"; exit 0; fi\nif [ "$1" = "rm" ] && [ "$2" = "--force" ] && [ "$#" -eq 4 ] && [ "$3" = "aaa111" ] && [ "$4" = "bbb222" ]; then exit 0; fi\necho "unexpected arguments: $*" >&2\nexit 1\n',
       );
       expect(Number(yield* run)).toBe(0);
     }).pipe(Effect.scoped, Effect.provide(layer)),
