@@ -10,6 +10,7 @@ import {
   StackApi,
   StackTargetError,
   rejectStackOutput,
+  skippedRuntimeCleanupWarning,
   StackTargetResolver,
   validateStackTarget,
 } from "../stack.shared.ts";
@@ -91,7 +92,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       })
       .pipe(Effect.mapError(destroyError));
     const destroying = yield* output.task(`Destroying stack ${target.id}...`);
-    yield* stack.destroy.pipe(
+    const result = yield* stack.destroy.pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit)
           ? destroying.clear()
@@ -101,8 +102,16 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       ),
       Effect.mapError(destroyError),
     );
-    if (output.format === "text") yield* output.raw(`Stack ${target.id} destroyed.\n`);
-    else yield* output.success("", { destroyed: true, id: target.id });
+    if (result.runtimeCleanup === "skipped")
+      yield* output.warn(skippedRuntimeCleanupWarning(`stack ${target.id}`, result));
+    if (output.format !== "text")
+      yield* output.success("", { destroyed: true, id: target.id, ...result });
+    else if (result.runtimeCleanup === "complete")
+      yield* output.raw(`Stack ${target.id} destroyed.\n`);
+    else
+      yield* output.raw(
+        `Stack ${target.id} was removed locally; its ${result.engine === "docker" ? "Docker" : "Podman"} resources remain until the commands above are run.\n`,
+      );
   });
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));
 });

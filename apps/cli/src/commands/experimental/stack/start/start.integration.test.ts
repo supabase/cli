@@ -33,7 +33,7 @@ import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
-import { StackApi, StackTargetResolver } from "../stack.shared.ts";
+import { StackApi, stackApiLayer, StackTargetResolver } from "../stack.shared.ts";
 import { stackStart } from "./start.handler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 
@@ -174,6 +174,8 @@ const requireConcreteCreation = (creation: ServiceCreationInput): ServiceCreatio
 const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   let stopped = 0;
+  let hostStopped = 0;
+  let hostDestroyed = 0;
   let composed = 0;
   let catalogApplied = 0;
   let lifecycle: "stopped" | "running" = "stopped";
@@ -280,8 +282,13 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
       }),
       restart: Effect.succeed([]),
     },
-    stop: Effect.void,
-    destroy: Effect.void,
+    stop: Effect.sync(() => {
+      hostStopped += 1;
+    }),
+    destroy: Effect.sync(() => {
+      hostDestroyed += 1;
+      return { runtimeCleanup: "complete" as const };
+    }),
     tools: { run: () => Effect.die("tool not used") },
   };
   return {
@@ -291,6 +298,12 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     },
     get stopped() {
       return stopped;
+    },
+    get hostStopped() {
+      return hostStopped;
+    },
+    get hostDestroyed() {
+      return hostDestroyed;
     },
     get composed() {
       return composed;
@@ -781,5 +794,84 @@ describe("experimental stack start", () => {
       expect(fixture.members.find(({ service }) => service === "database")?.id).toBe(database.id);
       expect(fixture.composed).toBe(2);
     }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("leaves no stack registered when a new stack's owner cannot reach Docker", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-create-failure-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "create-failure"\n');
+      yield* fs.makeDirectory(`${root}/bin`);
+      yield* fs.writeFileString(
+        `${root}/bin/docker`,
+        "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///shim/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
+      );
+      yield* fs.chmod(`${root}/bin/docker`, 0o755);
+      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
+      const originalPath = process.env.PATH;
+      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
+      process.env.PATH = `${root}/bin:${originalPath ?? ""}`;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
+          process.env.PATH = originalPath;
+        }),
+      );
+      const output = mockOutput();
+      const target = Layer.succeed(StackTargetResolver, {
+        resolve: () =>
+          Effect.succeed({ projectRoot: root, runtime: "docker" as const, hostRunning: false }),
+      });
+      const api = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+
+      const error = yield* stackStart(flags()).pipe(
+        Effect.flip,
+        Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
+      );
+      expect(error.message).toContain("Cannot connect to the Docker daemon");
+      expect(output.stderrText).not.toContain("Failed to stop");
+
+      const stacks = yield* StackApi.pipe(
+        Effect.flatMap((stackApi) => stackApi.discover({ stateRoot: `${root}/.supabase/stacks` })),
+        Effect.provide(api),
+      );
+      expect(stacks).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "stops, without destroying, the owner when startup fails after the stack is acquired",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        for (const isExisting of [false, true]) {
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "stack-start-startup-failure-",
+          });
+          yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+          yield* fs.writeFileString(
+            `${root}/supabase/config.toml`,
+            'project_id = "startup-failure"\n',
+          );
+          const fixture = fakeStack(
+            Effect.fail(
+              new StackError({
+                operation: "composition.start",
+                message: "Composition start had failures",
+              }),
+            ),
+          );
+          const error = yield* Effect.scoped(
+            stackStart(flags()).pipe(
+              Effect.flip,
+              Effect.provide(layers(root, fixture, mockOutput(), isExisting)),
+            ),
+          );
+          expect(error).toBeInstanceOf(StackCommandStartError);
+          expect(fixture.hostStopped).toBe(1);
+          expect(fixture.hostDestroyed).toBe(0);
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 });

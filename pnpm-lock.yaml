@@ -231,7 +231,7 @@ catalogs:
 overrides:
   '@launchql/protobufjs>@types/node': 24.10.4
 
-packageExtensionsChecksum: sha256-+q1Reu9SIvF0cNyYHg1TxU5zvG0d67iLruu2/1HlPHo=
+packageExtensionsChecksum: sha256-gAA6Mc6Jn3jUpogzVWO9hE5trVRioaB8peQBgDbyG6I=
 
 patchedDependencies:
   '@effect/vitest@4.0.0-rc.112': fbd126f7e68e041231312d90b8c02f705f12b66c2cb2d6fc246f5c12a4ed9787
@@ -11835,6 +11835,7 @@ snapshots:
 
   plpgsql-deparser@0.7.13:
     dependencies:
+      '@libpg-query/parser': 17.6.10(patch_hash=ed67c0ca88b6ced3ec50fd6862f191d6192a246cf20d9c777d45efdb8373bed3)
       '@pgsql/types': 17.6.2
       pgsql-deparser: 17.18.5
 

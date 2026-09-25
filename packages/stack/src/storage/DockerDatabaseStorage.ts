@@ -1124,3 +1124,43 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       };
     }),
 );
+
+/** Shell commands that delete the Docker-volume data recorded by the database instances under a stack's data root. */
+export const volumeDataCleanupCommands = Effect.fn(
+  "DockerDatabaseStorage.volumeDataCleanupCommands",
+)(
+  function* (options: {
+    readonly engine: "docker" | "podman";
+    readonly root: string;
+    readonly fs: FileSystem.FileSystem;
+    readonly path: Path.Path;
+  }) {
+    if (!(yield* options.fs.exists(options.root))) return [];
+    const markers: Array<Marker> = [];
+    for (const entry of yield* options.fs.readDirectory(options.root)) {
+      const markerPath = options.path.join(options.root, entry, ".supabase-database-storage.json");
+      if (!(yield* options.fs.exists(markerPath))) continue;
+      const marker = yield* options.fs
+        .readFileString(markerPath)
+        .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Marker))));
+      if (marker.backend !== "docker") continue;
+      if (
+        marker.volume === undefined ||
+        !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u.test(marker.volume) ||
+        !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u.test(marker.namespace)
+      )
+        return yield* errorFor(
+          "destroy",
+          `Recorded database storage identity is invalid: ${markerPath}`,
+        );
+      markers.push(marker);
+    }
+    if (markers.length === 0) return [];
+    const { image } = yield* resolveArtifact({ service: "database" });
+    return markers.map(
+      (marker) =>
+        `${options.engine} run --rm --mount ${shellQuote(`type=volume,src=${marker.volume},dst=/store`)} ${shellQuote(image)} /bin/sh -c ${shellQuote(`rm -rf /store/${marker.namespace}`)}`,
+    );
+  },
+  Effect.mapError((cause) => errorFor("destroy", cause)),
+);
