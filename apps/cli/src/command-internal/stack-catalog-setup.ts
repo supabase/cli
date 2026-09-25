@@ -135,14 +135,7 @@ const serviceDefinition = (
 const initializeTemporaryService = (
   instance: TemporaryServiceInstance,
 ): Effect.Effect<void, StackCatalogSetupError> => {
-  const initialize = instance.initialize;
-  if (initialize === undefined)
-    return Effect.fail(
-      new StackCatalogSetupError({
-        message: `temporary ${instance.service} service cannot initialize`,
-      }),
-    );
-  return initialize.pipe(
+  return instance.initialize.pipe(
     Effect.mapError((cause) => temporaryServiceError("initialize", instance, cause)),
     Effect.withSpan("StackCatalogSetup.temporaryService.initialize", {
       attributes: { service: instance.service, member_id: instance.id, operation: "initialize" },

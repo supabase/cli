@@ -189,17 +189,9 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                                         target.service === "storage" &&
                                         property === "initialize"
                                       ) {
-                                        const initialize = target.initialize;
-                                        if (initialize === undefined)
-                                          return Effect.fail(
-                                            new StackError({
-                                              operation: "initialize",
-                                              message: "Storage initialization is unavailable",
-                                            }),
-                                          );
                                         return Deferred.succeed(storageReady, undefined).pipe(
                                           Effect.andThen(Deferred.await(releaseStorage)),
-                                          Effect.andThen(initialize),
+                                          Effect.andThen(target.initialize),
                                         );
                                       }
                                       if (
@@ -207,17 +199,9 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                                         target.service === "auth" &&
                                         property === "initialize"
                                       ) {
-                                        const initialize = target.initialize;
-                                        if (initialize === undefined)
-                                          return Effect.fail(
-                                            new StackError({
-                                              operation: "initialize",
-                                              message: "Auth initialization is unavailable",
-                                            }),
-                                          );
                                         return Deferred.succeed(authReady, undefined).pipe(
                                           Effect.andThen(Deferred.await(releaseAuth)),
-                                          Effect.andThen(initialize),
+                                          Effect.andThen(target.initialize),
                                         );
                                       }
                                       if (

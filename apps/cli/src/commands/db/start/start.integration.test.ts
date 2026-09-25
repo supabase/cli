@@ -1607,6 +1607,7 @@ describe("db start stack backend", () => {
       state.destroyed = true;
       onDestroy();
     }),
+    initialize: Effect.void,
     prepare: Effect.void,
     status: Effect.sync(() => ({
       id: "database-primary",

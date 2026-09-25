@@ -559,6 +559,7 @@ const stackService = (
     stop: overrides.stop ?? Effect.void,
     restart: () => Effect.void,
     destroy: Effect.void,
+    initialize: Effect.void,
     prepare: Effect.void,
     status: observation,
     followStatus: Stream.empty,

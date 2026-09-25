@@ -178,6 +178,7 @@ const instance = <K extends ServiceCreation["service"]>(
   stop: Effect.void,
   restart: () => Effect.void,
   destroy: Effect.void,
+  initialize: Effect.void,
   prepare: Effect.void,
   status,
   followStatus: Stream.empty,
