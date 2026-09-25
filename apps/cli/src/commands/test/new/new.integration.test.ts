@@ -235,6 +235,23 @@ describe("test new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("follows an existing symlink to a shared test directory", () => {
+    const { layer, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const testsDir = path.join(workdir, "supabase", "tests");
+      const sharedDir = path.join(workdir, "shared-tests");
+      yield* fs.makeDirectory(testsDir, { recursive: true });
+      yield* fs.makeDirectory(sharedDir);
+      yield* fs.symlink(sharedDir, path.join(testsDir, "shared"));
+
+      yield* testNew(flags("shared/pet"));
+
+      expect(yield* fs.readFileString(path.join(sharedDir, "pet_test.sql"))).toBe(PGTAP_TEMPLATE);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("rejects a name that escapes into a sibling directory sharing the tests prefix", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
@@ -244,6 +261,15 @@ describe("test new integration", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
       expect(yield* fs.exists(path.join(workdir, "supabase", "tests2"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("sanitizes control characters in an invalid-name diagnostic", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      const error = yield* testNew(flags("../../\u001b[2Jbad\r\n\t\u009bname")).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(TestNewInvalidNameError);
+      expect(error.message).toContain('invalid test name: "../../[2Jbad name"');
     }).pipe(Effect.provide(layer));
   });
 

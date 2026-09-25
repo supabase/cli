@@ -4,6 +4,7 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
+import { sanitizeInlineName } from "../../../command-internal/http-errors.ts";
 import type { TestNewFlags } from "./new.command.ts";
 import {
   TestNewFileExistsError,
@@ -37,7 +38,7 @@ export const testNew = Effect.fn("test.new")(function* (flags: TestNewFlags) {
     if (!target.startsWith(testsDir + path.sep)) {
       return yield* new TestNewInvalidNameError({
         path: relPath,
-        message: `invalid test name: "${flags.name}" must not escape the ${path.join("supabase", "tests")} directory`,
+        message: `invalid test name: "${sanitizeInlineName(flags.name)}" must not escape the ${path.join("supabase", "tests")} directory`,
       });
     }
 

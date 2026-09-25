@@ -8,9 +8,9 @@
 
 ## Files Written
 
-| Path                                       | Format | When                                                                           |
-| ------------------------------------------ | ------ | ------------------------------------------------------------------------------ |
-| `<workdir>/supabase/tests/<name>_test.sql` | SQL    | always, unless the file already exists or the name escapes the tests directory |
+| Path                                       | Format | When                                                                         |
+| ------------------------------------------ | ------ | ---------------------------------------------------------------------------- |
+| `<workdir>/supabase/tests/<name>_test.sql` | SQL    | if the name is valid, the file does not already exist, and creation succeeds |
 
 The parent directory `<workdir>/supabase/tests/` is created if missing. A name whose path,
 with `..` segments collapsed, lands outside that directory is rejected before any
