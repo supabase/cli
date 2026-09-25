@@ -9,6 +9,7 @@ import json
 import os
 import platform
 import shutil
+import statistics
 import subprocess
 import sys
 import time
@@ -274,8 +275,45 @@ def lifecycle(
             else:
                 destroyed = phase_window(api_command(api, "destroy", runtime, project, home, mode=mode, stack_id=stack_id), cwd=project, env=env, timeout=120)
             phase["destroy"] = destroyed
-            phase["cleanup_verified"] = bool(destroyed.get("ok"))
             phase["commands"].append({"name": "destroy", "window": {"started_epoch_ms": destroyed["started_epoch_ms"], "finished_epoch_ms": destroyed["finished_epoch_ms"]}, "result": destroyed})
+            remaining_stack_id, listing = stack.find_project_stack_id(cli, project, env)
+            phase["cleanup_verification"] = {"stack_list": listing, "remaining_stack_id": remaining_stack_id}
+            cleanup_checks = [destroyed.get("ok") is True, listing.get("ok") is True, remaining_stack_id is None]
+            if runtime == "docker":
+                snapshot = stack.docker_snapshot(None, stack_id, env, project)
+                phase["cleanup_verification"]["docker_snapshot"] = snapshot
+                commands = snapshot.get("commands") if isinstance(snapshot, dict) else None
+                ps = commands.get("ps") if isinstance(commands, dict) else None
+                cleanup_checks.append(
+                    isinstance(snapshot, dict)
+                    and snapshot.get("available") is True
+                    and isinstance(ps, dict)
+                    and ps.get("ok") is True
+                    and not ps.get("stdout", "").strip()
+                )
+            else:
+                processes = stack.process_snapshot(stack_id)
+                phase["cleanup_verification"]["native_processes"] = processes
+                cleanup_checks.append(
+                    isinstance(processes, dict)
+                    and processes.get("processes") == []
+                )
+            if traced and implementation == "cli" and phase.get("start", {}).get("ok") is True:
+                events = [
+                    stack.json_value(line)
+                    for line in trace_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ] if trace_path.exists() else []
+                completed = {
+                    str(event.get("attributes", {}).get("service"))
+                    for event in events
+                    if isinstance(event, dict)
+                    and event.get("event") == "StackCatalogSetup.temporaryService.destroy"
+                    and event.get("status") == "ok"
+                }
+                phase["cleanup_verification"]["temporary_service_destroyed"] = sorted(completed)
+                cleanup_checks.append({"auth", "storage", "realtime"}.issubset(completed))
+            phase["cleanup_verified"] = all(cleanup_checks)
         phase["docker_events"] = docker_events(env, project, stack_id, phase["start"].get("started_epoch_ms") if phase.get("start") else None) if runtime == "docker" else None
         if traced and trace_path.exists():
             phase["trace"] = {
@@ -296,6 +334,8 @@ def main() -> int:
     parser.add_argument("--runtime", choices=("native", "docker"), required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--samples", type=int, default=3)
+    parser.add_argument("--baseline-cli", type=Path, help="Baseline compiled CLI for a paired CLI comparison")
+    parser.add_argument("--changed-cli", type=Path, help="Changed compiled CLI for a paired CLI comparison")
     args = parser.parse_args()
     cli, api = args.cli.resolve(), args.api.resolve()
     for label, executable in (("CLI", cli), ("API", api)):
@@ -303,6 +343,14 @@ def main() -> int:
             parser.error(f"{label} must be an executable file: {executable}")
     if args.samples < 1:
         parser.error("--samples must be >= 1")
+    if (args.baseline_cli is None) != (args.changed_cli is None):
+        parser.error("--baseline-cli and --changed-cli must be supplied together")
+    if args.baseline_cli is not None and args.changed_cli is not None:
+        args.baseline_cli = args.baseline_cli.resolve()
+        args.changed_cli = args.changed_cli.resolve()
+        for label, executable in (("baseline CLI", args.baseline_cli), ("changed CLI", args.changed_cli)):
+            if not executable.is_file() or not os.access(executable, os.X_OK):
+                parser.error(f"{label} must be an executable file: {executable}")
 
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -319,6 +367,104 @@ def main() -> int:
         base_env.pop(name, None)
     if args.runtime == "native":
         base_env["DOCKER_HOST"] = f"unix://{root / 'docker-unavailable.sock'}"
+
+    if args.baseline_cli is not None and args.changed_cli is not None:
+        record: dict[str, Any] = {
+            "schema_version": 1,
+            "benchmark": "paired-fresh-cli-startup-catalog-concurrency",
+            "status": "running",
+            "started_at": timestamp(),
+            "runtime": args.runtime,
+            "samples_requested_per_mode": args.samples,
+            "baseline_cli": str(args.baseline_cli),
+            "changed_cli": str(args.changed_cli),
+            "host": runner_metadata(),
+            "paths": {"root": str(root), "home": str(home)},
+            "warmups": {},
+            "pairs": [],
+            "failures": [],
+        }
+        persist(output, record)
+
+        def run_cli(executable: Path, variant: str, mode: str, label: str) -> dict[str, Any]:
+            return lifecycle(
+                cli=executable,
+                api=executable,
+                implementation="cli",
+                runtime=args.runtime,
+                mode=mode,
+                label=label,
+                root=root,
+                home=home,
+                base_env=base_env,
+                traced=True,
+                result_record=record,
+                result_key=f"active_{variant}",
+                result_path=output,
+            )
+
+        variants = (("baseline", args.baseline_cli), ("changed", args.changed_cli))
+        for variant, executable in variants:
+            label = f"warmup_{variant}"
+            phase = run_cli(executable, variant, "eager", label)
+            record["warmups"][variant] = phase
+            record.pop(f"active_{variant}", None)
+            if phase.get("failure") or phase.get("exception") or not phase.get("cleanup_verified"):
+                record["failures"].append({"phase": label, "reason": phase.get("failure", phase.get("exception", "warmup cleanup failed"))})
+                record["status"] = "warmup_failed"
+                persist(output, record)
+                return 1
+            persist(output, record)
+
+        for mode in ("default", "eager"):
+            for sample in range(1, args.samples + 1):
+                order = variants if sample % 2 == 1 else tuple(reversed(variants))
+                pair: dict[str, Any] = {
+                    "mode": mode,
+                    "sample": sample,
+                    "order": [variant for variant, _ in order],
+                    "cache_before": stack.cache_inventory(home / "cache" / "stack"),
+                    "results": {},
+                }
+                record["pairs"].append(pair)
+                persist(output, record)
+                for variant, executable in order:
+                    label = f"{mode}_sample_{sample}_{variant}"
+                    phase = run_cli(executable, variant, mode, label)
+                    record.pop(f"active_{variant}", None)
+                    pair["results"][variant] = phase
+                    pair[f"cache_after_{variant}"] = stack.cache_inventory(home / "cache" / "stack")
+                    if phase.get("failure") or phase.get("exception"):
+                        record["failures"].append({"phase": label, "reason": phase.get("failure", phase.get("exception"))})
+                    persist(output, record)
+                    if not phase.get("cleanup_verified"):
+                        record["failures"].append({"phase": label, "reason": "cleanup verification failed; stopping before another lifecycle"})
+                        record["status"] = "cleanup_failed"
+                        persist(output, record)
+                        return 1
+
+        summary: dict[str, Any] = {}
+        for mode in ("default", "eager"):
+            summary[mode] = {}
+            for variant in ("baseline", "changed"):
+                samples = [
+                    result["start"]["elapsed_ms"]
+                    for pair in record["pairs"]
+                    if pair["mode"] == mode
+                    and isinstance((result := pair["results"].get(variant)), dict)
+                    and isinstance(result.get("start"), dict)
+                    and isinstance(result["start"].get("elapsed_ms"), (int, float))
+                ]
+                summary[mode][variant] = {
+                    "samples_ms": samples,
+                    "median_ms": statistics.median(samples) if samples else None,
+                }
+        record["summary"] = summary
+
+        record["status"] = "complete" if not record["failures"] else "completed_with_failures"
+        record["finished_at"] = timestamp()
+        persist(output, record)
+        return 0 if not record["failures"] else 1
 
     record: dict[str, Any] = {
         "schema_version": 1, "benchmark": "compiled-cli-versus-stack-api-startup-attribution",

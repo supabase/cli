@@ -1,11 +1,22 @@
-name: Validate Effect startup traces
+name: Measure fresh CLI catalog initialization
 
 on:
   push:
-    branches: [bench/startup-effect-traces-2026-09-25]
+    branches: [bench/startup-concurrent-ci-20260925]
     paths:
       - .github/workflows/benchmark-startup-attribution.yml
+      - scripts/benchmarks/startup-attribution.py
   workflow_dispatch:
+    inputs:
+      baseline_ref:
+        description: Instrumented base revision
+        required: true
+        default: 9b1d07032
+        type: string
+      changed_ref:
+        description: Instrumented product revision
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -15,77 +26,93 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: ubuntu-22.04
-            platform: linux
-    runs-on: ${{ matrix.runner }}
+        variant: [baseline, changed]
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ matrix.variant == 'baseline' && (github.event.inputs.baseline_ref || '9b1d07032') || (github.event.inputs.changed_ref || github.sha) }}
           persist-credentials: false
           fetch-depth: 0
       - uses: ./.github/actions/setup
         with:
           dependency-cache: "false"
-      - name: Verify product base
-        run: git merge-base --is-ancestor 4cebcf8779ef8ba983f38632eb4c48a86c5e829e HEAD
-      - name: Build instrumented CLI
+      - name: Build compiled CLI
         run: pnpm exec turbo run supabase#build
-      - name: Build direct API entrypoint
-        run: pnpm exec bun apps/cli/scripts/startup-api-build.ts
-      - name: Record provenance and package binaries
+      - name: Record provenance and package binary
         run: |
           mkdir -p bundle
-          git rev-parse HEAD > bundle/instrumentation-commit.txt
-          printf '%s\n' '4cebcf8779ef8ba983f38632eb4c48a86c5e829e' > bundle/product-commit.txt
-          shasum -a 256 apps/cli/dist/supabase apps/cli/dist/startup-api > bundle/binary-sha256.txt
-          tar -czf bundle/binaries.tar.gz -C apps/cli/dist supabase supabase-go startup-api
+          git rev-parse HEAD > bundle/commit.txt
+          shasum -a 256 apps/cli/dist/supabase > bundle/binary-sha256.txt
+          tar -czf bundle/cli.tar.gz -C apps/cli/dist supabase supabase-go
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: attribution-binaries-${{ matrix.platform }}
+          name: startup-cli-${{ matrix.variant }}
           path: bundle/
           retention-days: 14
+
+  catalog-integration:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.inputs.changed_ref || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          dependency-cache: "false"
+      - name: Run catalog initialization integration coverage (native and Docker)
+        working-directory: apps/cli
+        run: pnpm run test:integration:run -- src/command-internal/stack-catalog-setup.integration.test.ts
+
   measure:
     needs: build
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: ubuntu-22.04
-            platform: linux
-            runtime: native
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+        runtime: [native, docker]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: attribution-binaries-${{ matrix.platform }}
-          path: bundle
-      - name: Unpack binaries
+          name: startup-cli-baseline
+          path: bundle/baseline
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: startup-cli-changed
+          path: bundle/changed
+      - name: Unpack binaries and record provenance
         run: |
           mkdir -p benchmark-bin benchmark-results
-          tar -xzf bundle/binaries.tar.gz -C benchmark-bin
-          cp bundle/*.txt benchmark-results/
-      - name: Run paired startup measurements
+          tar -xzf bundle/baseline/cli.tar.gz -C benchmark-bin
+          mv benchmark-bin/supabase benchmark-bin/supabase-baseline
+          tar -xzf bundle/changed/cli.tar.gz -C benchmark-bin
+          mv benchmark-bin/supabase benchmark-bin/supabase-changed
+          cp bundle/baseline/commit.txt benchmark-results/baseline-commit.txt
+          cp bundle/baseline/binary-sha256.txt benchmark-results/baseline-binary-sha256.txt
+          cp bundle/changed/commit.txt benchmark-results/changed-commit.txt
+          cp bundle/changed/binary-sha256.txt benchmark-results/changed-binary-sha256.txt
+      - name: Run alternating fresh cached CLI measurements
         run: |
-          runtimes='${{ matrix.runtime }}'
-          if [ "$runtimes" = both ]; then runtimes='native docker'; fi
-          for runtime in $runtimes; do
-            python3 scripts/benchmarks/startup-attribution.py \
-              --cli "$GITHUB_WORKSPACE/benchmark-bin/supabase" \
-              --api "$GITHUB_WORKSPACE/benchmark-bin/startup-api" \
-              --runtime "$runtime" \
-              --output "$GITHUB_WORKSPACE/benchmark-results/$runtime/startup-results.json" \
-              --samples 1
-          done
+          python3 scripts/benchmarks/startup-attribution.py \
+            --cli "$GITHUB_WORKSPACE/benchmark-bin/supabase-baseline" \
+            --api "$GITHUB_WORKSPACE/benchmark-bin/supabase-baseline" \
+            --baseline-cli "$GITHUB_WORKSPACE/benchmark-bin/supabase-baseline" \
+            --changed-cli "$GITHUB_WORKSPACE/benchmark-bin/supabase-changed" \
+            --runtime '${{ matrix.runtime }}' \
+            --output "$GITHUB_WORKSPACE/benchmark-results/${{ matrix.runtime }}-startup-results.json" \
+            --samples 3
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: startup-attribution-${{ matrix.platform }}-${{ matrix.runtime }}
+          name: startup-catalog-${{ matrix.runtime }}
           path: benchmark-results/
           if-no-files-found: error
           retention-days: 30
