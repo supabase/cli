@@ -1001,10 +1001,13 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       } satisfies RuntimeSession;
     });
 
+    const hasApplicableStartup = spec.startup.some(
+      (process) => options.runtime === "native" || process.skipInContainer !== true,
+    );
     return {
       definition: {
         prepare,
-        ...(spec.startup.length === 0
+        ...(!hasApplicableStartup
           ? {}
           : {
               initialize: Effect.fn("ProcessRecipe.initializeStartup")(function* (context) {

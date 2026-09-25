@@ -25,6 +25,7 @@ import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
 import { prepareNativeArtifact } from "../Artifacts.ts";
+import * as Analytics from "./Analytics.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -462,6 +463,33 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
 });
 
 const platform = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+
+it.effect(
+  "does not expose a one-shot initializer when every startup command is skipped in containers",
+  () =>
+    Effect.gen(function* () {
+      const creation: Analytics.Creation = {
+        service: "analytics",
+        config: { databaseUrl: "postgresql://postgres:postgres@localhost:54322/postgres" },
+      };
+      const dependencies = {
+        fs: yield* FileSystem.FileSystem,
+        path: yield* Path.Path,
+        crypto: yield* Crypto.Crypto,
+        client: yield* HttpClient.HttpClient,
+        spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        container: undefined,
+      } satisfies ProcessDependencies;
+      const recipe = yield* makeProcessRecipe(
+        creation,
+        { ...options, runtime: "docker" },
+        dependencies,
+        Analytics.makeSpec(),
+      );
+
+      expect(recipe.definition.initialize).toBeUndefined();
+    }).pipe(Effect.provide(platform)),
+);
 
 const nativePoolerArtifact = Effect.fn(function* (cacheRoot: string) {
   const platformName = `${process.platform}-${process.arch}`;
