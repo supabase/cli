@@ -7,6 +7,8 @@ import {
 import { Effect, Predicate, Stream } from "effect";
 import { ChildProcess, type ChildProcessSpawner } from "effect/unstable/process";
 
+import { collectText } from "../../../command-internal/container-cli.ts";
+
 export interface TypegenHostOptions {
   /** The user's project directory; out-of-process tools run here. */
   readonly cwd: string;
@@ -35,14 +37,11 @@ type TypegenSpawnOutcome =
 
 const WINDOWS_SCRIPT = /\.(bat|cmd)$/i;
 
-const collectText = <E>(stream: Stream.Stream<Uint8Array, E>) => {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
-};
+/**
+ * In shell mode the spawner joins the command and its arguments with spaces into one `cmd.exe /c`
+ * line without quoting, so a token holding whitespace must be quoted here.
+ */
+const quoteForCmd = (token: string): string => (/\s/.test(token) ? `"${token}"` : token);
 
 const isNotFound = (error: unknown): boolean =>
   Predicate.hasProperty(error, "reason") && Predicate.isTagged(error.reason, "NotFound");
@@ -62,15 +61,17 @@ const spawnForTypegen = (
   Effect.scoped(
     Effect.gen(function* () {
       let command = request.command;
+      let args: ReadonlyArray<string> = request.args;
       let shell = false;
       if (platform === "win32") {
         const resolved = resolveWindowsCommand(request.command, request.env);
         if (resolved === undefined) return { _tag: "NotFound" } as const;
-        command = resolved;
         shell = WINDOWS_SCRIPT.test(resolved);
+        command = shell ? quoteForCmd(resolved) : resolved;
+        if (shell) args = request.args.map(quoteForCmd);
       }
       const child = yield* spawner.spawn(
-        ChildProcess.make(command, [...request.args], {
+        ChildProcess.make(command, [...args], {
           cwd: request.cwd,
           env: request.env,
           extendEnv: true,
@@ -84,7 +85,12 @@ const spawnForTypegen = (
         [
           collectText(child.stdout),
           collectText(child.stderr),
-          child.exitCode.pipe(Effect.map(Number)),
+          // The spawner fails `exitCode` when a signal ended the process; the registry's
+          // `SpawnResult` contract reports that case as a `null` exit code instead.
+          child.exitCode.pipe(
+            Effect.map(Number),
+            Effect.orElseSucceed((): number | null => null),
+          ),
         ],
         { concurrency: "unbounded" },
       );

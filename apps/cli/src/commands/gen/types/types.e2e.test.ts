@@ -1,3 +1,4 @@
+import { languages } from "@supabase/typegen";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Clock, Config, Data, Effect, FileSystem, Option, Path, Schedule } from "effect";
@@ -15,6 +16,9 @@ import {
   resolveDeadline,
 } from "../../../../tests/helpers/docker-image.ts";
 
+// Every in-process language of the `@supabase/typegen` registry; `dart` runs the project's own
+// Dart toolchain and is covered end to end in supabase-flutter instead. The registry check below
+// fails when a bump adds an in-process language without a shape assertion here.
 const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
 type TypegenLang = (typeof TYPEGEN_LANGS)[number];
 
@@ -309,6 +313,14 @@ function expectLocalSmokeTable(lang: TypegenLang, stdout: string) {
 }
 
 describe("gen types e2e", () => {
+  it("covers every in-process language the registry offers", () => {
+    const inProcess = languages
+      .filter((language) => language.inProcess)
+      .map((language) => language.name)
+      .sort();
+    expect(inProcess).toEqual([...TYPEGEN_LANGS].sort());
+  });
+
   it.live(
     "generates all supported languages from a tokenless local stack",
     () =>

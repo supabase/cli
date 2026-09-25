@@ -13,10 +13,17 @@ export const GEN_TYPES_LANGUAGES: ReadonlyArray<string> = languages.map(
   (language) => language.name,
 );
 
-/** Language flags users set, for example `--swift-access-control`; consumer options are not flags. */
-const GEN_TYPES_LANGUAGE_OPTIONS: ReadonlyArray<OptionSpec> = languages.flatMap((language) =>
-  language.options.filter((option) => option.audience === "user"),
-);
+/**
+ * Language flags users set, for example `--swift-access-control`; consumer options are not flags.
+ * A name two languages both declare is one flag, so it is listed once.
+ */
+const GEN_TYPES_LANGUAGE_OPTIONS: ReadonlyArray<OptionSpec> = [
+  ...new Map(
+    languages
+      .flatMap((language) => language.options.filter((option) => option.audience === "user"))
+      .map((option) => [option.name, option] as const),
+  ).values(),
+];
 
 export const GEN_TYPES_LANGUAGE_FLAG_NAMES: ReadonlyArray<string> = GEN_TYPES_LANGUAGE_OPTIONS.map(
   (option) => option.name,
@@ -55,6 +62,14 @@ const languageFlag = (spec: OptionSpec): Flag.Flag<GenTypesLanguageFlagValue> =>
 /** One flag per user-facing language option, keyed by the flag name. */
 export const genTypesLanguageFlags: Readonly<Record<string, Flag.Flag<GenTypesLanguageFlagValue>>> =
   Object.fromEntries(GEN_TYPES_LANGUAGE_OPTIONS.map((spec) => [spec.name, languageFlag(spec)]));
+
+/** Documented defaults of the language flags, keyed the way `DOCS_DEFAULT_OVERRIDES` expects. */
+export const genTypesLanguageFlagDefaults = (): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    GEN_TYPES_LANGUAGE_OPTIONS.flatMap((spec) =>
+      spec.default === undefined ? [] : [[`supabase-gen-types ${spec.name}`, String(spec.default)]],
+    ),
+  );
 
 /** Reads the parsed language flags back into registry option values. */
 export const languageOptionValues = (flags: Readonly<Record<string, unknown>>): OptionValues => {

@@ -539,6 +539,11 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       });
     }
 
+    // Cobra prints a flag's deprecation line while parsing, so it precedes every guard below.
+    if (occurrences.has("postgrest-v9-compat")) {
+      yield* output.raw(`${POSTGREST_V9_COMPAT_DEPRECATION_LINE}\n`, "stderr");
+    }
+
     // This guard runs before flag-group validation, so its error wins when both apply. Both
     // run after the telemetry context is installed, so every return here must stay inside the
     // `Effect.ensuring(telemetryState.flush)` below.
@@ -548,9 +553,6 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       return yield* new GenTypesFlagUsageError({
         message: "--postgrest-v9-compat must used together with --db-url",
       });
-    }
-    if (occurrences.has("postgrest-v9-compat")) {
-      yield* output.raw(`${POSTGREST_V9_COMPAT_DEPRECATION_LINE}\n`, "stderr");
     }
     const positionalLang = findPositionalLanguage(rawArgs);
     if (
@@ -572,8 +574,10 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       "project-id": Option.isSome(flags.projectId),
       "db-url": Option.isSome(flags.dbUrl),
       "postgrest-v9-compat": occurrences.has("postgrest-v9-compat"),
-      "swift-access-control": occurrences.has("swift-access-control"),
       "query-timeout": occurrences.has("query-timeout"),
+      ...Object.fromEntries(
+        GEN_TYPES_LANGUAGE_FLAG_NAMES.map((name) => [name, occurrences.has(name)]),
+      ),
     };
     for (const group of GEN_TYPES_MUTEX_GROUPS) {
       const set = group.filter((flagName) => changedMutexFlags[flagName]);
