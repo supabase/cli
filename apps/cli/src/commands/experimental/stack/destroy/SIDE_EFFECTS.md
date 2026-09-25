@@ -26,8 +26,10 @@ reached, destruction removes the local namespace and host data anyway, warns on
 stderr that the stack's engine resources were not removed, and exits 0. The
 warning lists the commands that remove them once the engine is running: one for
 the stack's containers, and one per database whose data is kept in an engine
-volume. Any other engine failure, or an owner starting during destruction,
-fails the command and keeps the stack registered.
+volume. Any other engine failure, an owner starting during destruction, or
+host data the current user cannot delete (such as database files a container
+wrote as its own user), fails the command before anything is removed and keeps
+the stack registered; the last case asks to start the engine and retry.
 
 ## Files and network
 

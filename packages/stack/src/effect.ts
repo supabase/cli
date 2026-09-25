@@ -248,6 +248,21 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
    * no owner running and can't start one because its container engine is unreachable. Its
    * engine resources remain, and the result carries the commands that remove them.
    */
+  const firstUnremovableDirectory = (directory: string): Effect.Effect<string | undefined> =>
+    Effect.gen(function* () {
+      const entries = yield* fs.readDirectory(directory).pipe(Effect.option);
+      const writable = yield* fs.access(directory, { writable: true }).pipe(Effect.isSuccess);
+      if (Option.isNone(entries) || !writable) return directory;
+      for (const entry of entries.value) {
+        const child = path.join(directory, entry);
+        const info = yield* fs.stat(child).pipe(Effect.option);
+        if (Option.isNone(info) || info.value.type !== "Directory") continue;
+        if (yield* fs.readLink(child).pipe(Effect.isSuccess)) continue;
+        const blocked = yield* firstUnremovableDirectory(child);
+        if (blocked !== undefined) return blocked;
+      }
+      return undefined;
+    });
   const offlineDestroy = Effect.fn("Stack.offlineDestroy")(function* (engine: "docker" | "podman") {
     const dataRoot = path.join(locations.stateRoot, saved.id, "data");
     return yield* state
@@ -259,6 +274,19 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
               "destroy",
               "An owner for this stack started during destroy; run destroy again",
             );
+          // Container-written host data, such as database files below Docker 26, can belong to the
+          // container user; only the engine can delete it, so refuse before deleting anything.
+          const blocked =
+            current !== undefined && (yield* fs.exists(dataRoot))
+              ? yield* firstUnremovableDirectory(dataRoot)
+              : undefined;
+          if (blocked !== undefined) {
+            const engineName = engine === "docker" ? "Docker" : "Podman";
+            return yield* failure(
+              "destroy",
+              `Stack data at ${blocked} can only be removed by ${engineName}; start ${engineName} and run destroy again`,
+            );
+          }
           // Containers are labelled with the resolved data root the owner ran with.
           const root = yield* fs.realPath(dataRoot).pipe(Effect.orElseSucceed(() => dataRoot));
           const cleanupCommands = [
@@ -565,23 +593,20 @@ export const create = Effect.fn("Stack.create")(
         yield* state.save(saved);
       }),
     );
+    // Keeps the stack when an owner holds it: one that reported ready before an interrupt, or one
+    // another caller launched after this registration was saved.
+    const rollback = state.withLock(
+      Effect.gen(function* () {
+        const current = yield* state.read(id);
+        if (current !== undefined && !(yield* controlPortHeld(current))) yield* state.remove(id);
+      }),
+    );
     if (options.startOwner)
       yield* Effect.scoped(launchHost(state, { ...options, stackId: id })).pipe(
-        // An interrupt after the owner reported readiness leaves it running, so keep its stack.
-        Effect.onInterrupt(() =>
-          state
-            .withLock(
-              Effect.gen(function* () {
-                const current = yield* state.read(id);
-                if (current !== undefined && !(yield* controlPortHeld(current)))
-                  yield* state.remove(id);
-              }),
-            )
-            .pipe(Effect.ignore),
-        ),
+        Effect.onInterrupt(() => rollback.pipe(Effect.ignore)),
         Effect.matchEffect({
           onFailure: (launchError) =>
-            state.withLock(state.remove(id)).pipe(
+            rollback.pipe(
               Effect.matchEffect({
                 onFailure: (removeError) =>
                   Effect.fail(

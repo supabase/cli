@@ -65,7 +65,7 @@ const fixture = Effect.fn("StackDestroyRuntimeUnavailableTest.fixture")(function
 });
 
 const containerCleanup = (id: string) =>
-  `docker rm --force \\$\\(docker ps --all --quiet --no-trunc --filter 'label=com\\.supabase\\.stack=${id}' --filter 'label=com\\.supabase\\.stack-root=[^']+/${id}/data'\\)`;
+  `ids=\\$\\(docker ps --all --quiet --no-trunc --filter 'label=com\\.supabase\\.stack=${id}' --filter 'label=com\\.supabase\\.stack-root=[^']+/${id}/data'\\) && \\{ \\[ -z "\\$ids" \\] \\|\\| docker rm --force \\$ids; \\}`;
 
 it.live(
   "removes a stack locally and lists its cleanup commands when its engine is unreachable",

@@ -90,14 +90,14 @@ const rateLimited = (error: ContainerError) =>
 
 /**
  * Matches an engine CLI that is missing or reports a daemon that is not listening, not one that
- * rejects the caller. On Windows only the daemon-down forms of `error during connect` match, so
- * TLS and authentication failures behind that wrapper stay distinct.
+ * rejects the caller. Podman's connection wrappers and Windows' `error during connect` also wrap
+ * authentication and TLS failures, so only their refused or missing-endpoint causes match.
  */
 const engineUnreachable = (error: ContainerError) =>
   (error.cause instanceof PlatformError.PlatformError &&
     error.cause.reason._tag === "NotFound" &&
     error.cause.reason.method === "spawn") ||
-  /cannot connect to (?:the docker daemon|podman)|unable to connect to podman|connection refused|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)/iu.test(
+  /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)/iu.test(
     error.message,
   );
 
@@ -608,7 +608,7 @@ export const removeStackContainers = Effect.fn("Container.removeStackContainers"
     }),
 );
 
-/** Shell command that removes the same containers as `removeStackContainers`. */
+/** Shell command that removes the same containers as `removeStackContainers`, succeeding when none remain. */
 export const removeStackContainersCommand = (options: {
   readonly engine: "docker" | "podman";
   readonly stackId: string;
@@ -620,5 +620,5 @@ export const removeStackContainersCommand = (options: {
   ]
     .map((filter) => `--filter ${shellQuote(filter)}`)
     .join(" ");
-  return `${options.engine} rm --force $(${options.engine} ps --all --quiet --no-trunc ${filters})`;
+  return `ids=$(${options.engine} ps --all --quiet --no-trunc ${filters}) && { [ -z "$ids" ] || ${options.engine} rm --force $ids; }`;
 };
