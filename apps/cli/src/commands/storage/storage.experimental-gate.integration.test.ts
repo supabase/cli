@@ -57,7 +57,7 @@ describe("storage experimental gate vs mutual-exclusivity ordering (Go Persisten
   for (const { name, args } of leaves) {
     const conflictingArgs = [...args, "--linked", "--local"];
 
-    it.live(
+    it.effect(
       `${name} --linked --local without --experimental fails with the gate error, not the mutex error`,
       () => {
         const { layer } = setup(conflictingArgs);
@@ -76,7 +76,7 @@ describe("storage experimental gate vs mutual-exclusivity ordering (Go Persisten
       },
     );
 
-    it.live(`${name} --linked --local with --experimental fails with the mutex error`, () => {
+    it.effect(`${name} --linked --local with --experimental fails with the mutex error`, () => {
       const withExperimental = [...conflictingArgs, "--experimental"];
       const { layer } = setup(withExperimental);
       return Effect.gen(function* () {

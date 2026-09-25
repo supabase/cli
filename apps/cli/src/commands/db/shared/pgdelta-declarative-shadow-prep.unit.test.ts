@@ -55,7 +55,7 @@ describe("filesForDeclarativeShadowLoad", () => {
 });
 
 describe("prepareDeclarativeShadow", () => {
-  it.live("skips the shadow when declarations omit image-default extensions", () => {
+  it.effect("skips the shadow when declarations omit image-default extensions", () => {
     const queries: string[] = [];
     const client = fakeShadowClient((sql) => {
       queries.push(sql);
@@ -70,7 +70,7 @@ describe("prepareDeclarativeShadow", () => {
     });
   });
 
-  it.live("names the failing prep statement", () => {
+  it.effect("names the failing prep statement", () => {
     const client = fakeShadowClient((sql) => {
       if (sql === "SHOW server_version") {
         return Promise.resolve({ rows: [{ server_version: "15.8" }] });
@@ -95,7 +95,7 @@ describe("prepareDeclarativeShadow", () => {
     });
   });
 
-  it.live("runs the version-selected prep statements against the shadow", () => {
+  it.effect("runs the version-selected prep statements against the shadow", () => {
     const queries: string[] = [];
     const client = fakeShadowClient((sql) => {
       queries.push(sql);
@@ -115,7 +115,7 @@ describe("prepareDeclarativeShadow", () => {
     });
   });
 
-  it.live("detaches PG14 storage.objects before dropping declared uuid-ossp", () => {
+  it.effect("detaches PG14 storage.objects before dropping declared uuid-ossp", () => {
     const queries: string[] = [];
     const client = fakeShadowClient((sql) => {
       queries.push(sql);
@@ -135,7 +135,7 @@ describe("prepareDeclarativeShadow", () => {
     });
   });
 
-  it.live("restores pgjwt only when the image had it installed", () => {
+  it.effect("restores pgjwt only when the image had it installed", () => {
     const queries: string[] = [];
     const withPgjwt = fakeShadowClient((sql) => {
       queries.push(sql);

@@ -28,7 +28,7 @@ function project() {
 }
 
 describe("notebooks pull", () => {
-  it.live("writes missing project notebooks without replacing local notebooks", () => {
+  it.effect("writes missing project notebooks without replacing local notebooks", () => {
     const localSales = '{"content":{"cells":[{"type":"markdown","text":"# Local"}]}}';
     const repo = project();
     const { layer, http, out } = setupNotebooks({
@@ -75,7 +75,7 @@ describe("notebooks pull", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("replaces a single local notebook by id without listing or reconciling", () => {
+  it.effect("replaces a single local notebook by id without listing or reconciling", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({
       workdir: repo.dir,
@@ -104,7 +104,7 @@ describe("notebooks pull", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a non-UUID notebook id before calling the API", () => {
+  it.effect("rejects a non-UUID notebook id before calling the API", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({ workdir: repo.dir });
 
@@ -118,7 +118,7 @@ describe("notebooks pull", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("deletes the local notebooks the project does not have when asked to", () => {
+  it.effect("deletes the local notebooks the project does not have when asked to", () => {
     const repo = project();
     const { layer, out } = setupNotebooks({
       workdir: repo.dir,
@@ -141,7 +141,7 @@ describe("notebooks pull", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("creates the local notebooks in the project instead when asked to", () => {
+  it.effect("creates the local notebooks in the project instead when asked to", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({
       workdir: repo.dir,
@@ -176,7 +176,7 @@ describe("notebooks pull", () => {
 
   // Both other answers delete something, so an unattended run reports the
   // divergence and resolves nothing.
-  it.live("leaves both sides alone when there is nobody to ask", () => {
+  it.effect("leaves both sides alone when there is nobody to ask", () => {
     const repo = project();
     const { layer, out } = setupNotebooks({
       workdir: repo.dir,
@@ -203,7 +203,7 @@ describe("notebooks pull", () => {
 
   // `page[after]` has to reach the wire as its own query parameter, or the
   // second page is the first one again and the walk never ends.
-  it.live("follows the cursor the list route hands back", () => {
+  it.effect("follows the cursor the list route hands back", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({
       workdir: repo.dir,
@@ -249,7 +249,7 @@ describe("notebooks pull", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("skips a notebook whose name cannot be a file name", () => {
+  it.effect("skips a notebook whose name cannot be a file name", () => {
     const repo = project();
     const { layer, out } = setupNotebooks({
       workdir: repo.dir,
@@ -270,7 +270,7 @@ describe("notebooks pull", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("refuses duplicate remote names before writing either notebook", () => {
+  it.effect("refuses duplicate remote names before writing either notebook", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({
       workdir: repo.dir,
@@ -296,7 +296,7 @@ describe("notebooks pull", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the machine payload without text output", () => {
+  it.effect("emits the machine payload without text output", () => {
     const repo = project();
     const { layer, out } = setupNotebooks({
       workdir: repo.dir,

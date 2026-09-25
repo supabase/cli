@@ -107,7 +107,7 @@ function sentQuery(request: { readonly urlParams: Readonly<Record<string, string
 }
 
 describe("compute logs", () => {
-  it.live("captures shorthand follow and kind flags through command wiring", () =>
+  it.effect("captures shorthand follow and kind flags through command wiring", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const out = mockOutput({ format: "text" });
@@ -154,7 +154,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("prints a compute's own output oldest first", () =>
+  it.effect("prints a compute's own output oldest first", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -182,7 +182,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("composes a request line from attributes rather than the message", () =>
+  it.effect("composes a request line from attributes rather than the message", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -208,7 +208,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("prints a build event with its reason", () =>
+  it.effect("prints a build event with its reason", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -228,7 +228,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("always sends both timestamp bounds, under a 24 hour span", () =>
+  it.effect("always sends both timestamp bounds, under a 24 hour span", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -259,7 +259,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("filters on the subservice attribute, never the empty source column", () =>
+  it.effect("filters on the subservice attribute, never the empty source column", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -280,7 +280,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("narrows to one stream for --kind, and to all three without it", () =>
+  it.effect("narrows to one stream for --kind, and to all three without it", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -302,7 +302,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("renders a stream it has never heard of rather than failing", () =>
+  it.effect("renders a stream it has never heard of rather than failing", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -324,7 +324,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("strips escape sequences a compute printed", () =>
+  it.effect("strips escape sequences a compute printed", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -345,7 +345,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("keeps a blank guest line as a line", () =>
+  it.effect("keeps a blank guest line as a line", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -367,7 +367,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("makes no request at all for --tail 0", () =>
+  it.effect("makes no request at all for --tail 0", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -386,7 +386,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("passes --tail through as the row limit", () =>
+  it.effect("passes --tail through as the row limit", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -402,7 +402,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports a compute that is not deployed rather than an empty screen", () =>
+  it.effect("reports a compute that is not deployed rather than an empty screen", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -423,7 +423,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("says so when a deployed compute has simply been quiet", () =>
+  it.effect("says so when a deployed compute has simply been quiet", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -442,7 +442,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("treats absent, null and empty result identically", () =>
+  it.effect("treats absent, null and empty result identically", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -467,7 +467,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails on a 200 that carries a query error", () =>
+  it.effect("fails on a 200 that carries a query error", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -489,7 +489,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reads the structured form of a query error too", () =>
+  it.effect("reads the structured form of a query error too", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -514,7 +514,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("maps 402 to a usage error and 429 to a rate limit error", () =>
+  it.effect("maps 402 to a usage error and 429 to a rate limit error", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -532,7 +532,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("points at the project ref when the logs 404 names no such project", () =>
+  it.effect("points at the project ref when the logs 404 names no such project", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -556,7 +556,7 @@ describe("compute logs", () => {
 
   // The analytics route is not gated on the alpha's allow-list, so only a body
   // no other branch claims is left to read as the family's refusal.
-  it.live("reports a project outside the alpha for an unclassifiable 404", () =>
+  it.effect("reports a project outside the alpha for an unclassifiable 404", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -572,7 +572,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports an unexpected status, which is where a rejected query lands", () =>
+  it.effect("reports an unexpected status, which is where a rejected query lands", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -588,7 +588,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports a transport failure", () =>
+  it.effect("reports a transport failure", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -604,7 +604,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects an impossible compute name before any request", () =>
+  it.effect("rejects an impossible compute name before any request", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({ workdir: repo.dir, routes: {} });
@@ -618,7 +618,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses -o env before spending the query", () =>
+  it.effect("refuses -o env before spending the query", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -636,7 +636,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits only the payload on stdout for -o json", () =>
+  it.effect("emits only the payload on stdout for -o json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -678,7 +678,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits exactly one structured result for --output-format json", () =>
+  it.effect("emits exactly one structured result for --output-format json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -697,7 +697,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("flushes telemetry even when the query fails", () =>
+  it.effect("flushes telemetry even when the query fails", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, telemetry } = setupCompute({
@@ -716,7 +716,7 @@ describe("compute logs", () => {
   // The command has run by the time the ref fails to resolve, so its post-run
   // event still has to be written. Resolution sits above the query, so the
   // failing-query test above does not cover this path.
-  it.live("flushes telemetry when the project ref cannot be resolved", () =>
+  it.effect("flushes telemetry when the project ref cannot be resolved", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, telemetry, http } = setupCompute({
@@ -735,7 +735,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("uses the project ref from the flag and echoes it in suggestions", () =>
+  it.effect("uses the project ref from the flag and echoes it in suggestions", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -796,7 +796,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("does not reprint a line an overlapping window returns again", () =>
+  it.effect("does not reprint a line an overlapping window returns again", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -822,7 +822,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("still emits a line that arrived late, inside the grace window", () =>
+  it.effect("still emits a line that arrived late, inside the grace window", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -879,7 +879,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits a log-entry event per line under stream-json", () =>
+  it.effect("emits a log-entry event per line under stream-json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -913,7 +913,7 @@ describe("compute logs", () => {
 
   // `-o` outranks `--output-format` when both are set, and `-o pretty` encodes
   // nothing — so this pair asks for the text rendering, not for JSON.
-  it.live("renders text when -o pretty overrides --output-format json", () =>
+  it.effect("renders text when -o pretty overrides --output-format json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -934,7 +934,7 @@ describe("compute logs", () => {
 
   // Same precedence, on the branch that refuses a tail: `-o pretty` means this
   // run has no single-payload format to be incompatible with.
-  it.live("allows --follow when -o pretty overrides --output-format json", () =>
+  it.effect("allows --follow when -o pretty overrides --output-format json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -952,7 +952,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses --follow for the single-payload output formats", () =>
+  it.effect("refuses --follow for the single-payload output formats", () =>
     Effect.gen(function* () {
       const repo = yield* project();
 
@@ -1012,7 +1012,7 @@ describe("compute logs", () => {
 
   // No history query means zero rows proves nothing, so the tail has to ask
   // directly — otherwise a typo waits forever on logs that cannot arrive.
-  it.live("still checks the compute exists for --tail 0 --follow", () =>
+  it.effect("still checks the compute exists for --tail 0 --follow", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -1037,7 +1037,7 @@ describe("compute logs", () => {
   // `ts_ms` feeds `new Date(...).toISOString()` while the payload is built, which
   // happens for text runs too. Out of Date range that throws `RangeError`, which
   // is a defect rather than the typed unreadable-response failure.
-  it.live("fails typed rather than throwing on an out-of-range timestamp", () =>
+  it.effect("fails typed rather than throwing on an out-of-range timestamp", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -1057,7 +1057,7 @@ describe("compute logs", () => {
 
   // A 404 answers the same way every time. Retrying it held the error back for a
   // minute and spent the endpoint's ten-per-minute allowance getting nowhere.
-  it.live("surfaces a definitive poll failure without retrying it", () =>
+  it.effect("surfaces a definitive poll failure without retrying it", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -1081,7 +1081,7 @@ describe("compute logs", () => {
   );
 
   // A rate limit is the server asking for exactly that, so it still rides out.
-  it.live("retries a rate-limited poll", () =>
+  it.effect("retries a rate-limited poll", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -1108,7 +1108,7 @@ describe("compute logs", () => {
 
   // `--tail` bounds the history a run opens with; reusing it as the poll size
   // meant `--tail 1 --follow` asked each poll for a single row.
-  it.live("polls with a page size independent of --tail", () =>
+  it.effect("polls with a page size independent of --tail", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -1248,7 +1248,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("records exit 130 on SIGINT and still runs its finalizers", () =>
+  it.effect("records exit 130 on SIGINT and still runs its finalizers", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, processControl, telemetry } = setupCompute({

@@ -19,8 +19,8 @@ import {
   resolveBucketProps,
 } from "../../../command-internal/storage-bucket-config.ts";
 import type { StorageGateway } from "../../../command-internal/storage-gateway.ts";
-import {
-  type StorageGatewayError,
+import type {
+  StorageGatewayError,
   StorageGatewayStatusError,
 } from "../../../command-internal/storage-gateway.errors.ts";
 import {
@@ -392,8 +392,7 @@ const uploadOneWithAutoCreate = (ctx: UploadCtx, dstPath: string, filePath: stri
       overwrite: true,
     });
     yield* upload.pipe(
-      Effect.catch((error) =>
-        error instanceof StorageGatewayStatusError &&
+      Effect.catchTag("StorageGatewayStatusError", (error) =>
         error.body.includes('"error":"Bucket not found"')
           ? autoCreateAndRetry(ctx, dstPath, upload, error)
           : Effect.fail(error),

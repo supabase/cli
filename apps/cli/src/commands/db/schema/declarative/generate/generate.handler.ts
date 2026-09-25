@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate } from "effect";
 
 import {
   DnsResolverFlag,
@@ -271,7 +271,9 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
 const hasDeclarativeFiles = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, dir: string) {
   const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false));
   if (!exists) return false;
-  const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]));
+  const entries = yield* fs
+    .readDirectory(dir)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   return entries.length > 0;
 });
 
@@ -287,7 +289,7 @@ const confirmOverwriteHasFiles = Effect.fnUntraced(function* (
     .readDirectory(dir)
     .pipe(
       Effect.catchTag("PlatformError", (error) =>
-        error.reason._tag === "NotFound"
+        Predicate.isTagged(error.reason, "NotFound")
           ? Effect.succeed<ReadonlyArray<string>>([])
           : Effect.fail(error),
       ),
@@ -304,7 +306,7 @@ const hasMigrationFiles = Effect.fnUntraced(function* (
   // path-is-a-file, not-exist, …), so generate continues into the no-migrations local flow. The
   // real diff path keeps `listLocalMigrations`'s hard error behavior instead.
   const migrations = yield* listLocalMigrations(fs, path, migrationsDir).pipe(
-    Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
   );
   return migrations.length > 0;
 });

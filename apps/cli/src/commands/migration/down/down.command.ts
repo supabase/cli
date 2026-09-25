@@ -12,14 +12,9 @@ const config = {
   last: Flag.integer("last").pipe(
     Flag.withDescription("Reset up to the last n migration versions."),
     Flag.withDefault(1),
-    Flag.mapTryCatch(
-      (value) => {
-        if (value < 0) {
-          throw new Error(`invalid argument "${value}" for "--last" flag: must be greater than 0`);
-        }
-        return value;
-      },
-      (err) => (err instanceof Error ? err.message : String(err)),
+    Flag.filter(
+      (value) => value >= 0,
+      (value) => `invalid argument "${value}" for "--last" flag: must be greater than 0`,
     ),
   ),
   dbUrl: Flag.string("db-url").pipe(

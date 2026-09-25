@@ -51,7 +51,7 @@ function parseCsvRecords(text: string): Array<Array<string>> {
     started = false;
   };
   for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
+    const ch = text.charAt(i);
     if (inQuotes) {
       started = true;
       if (ch === '"') {
@@ -93,16 +93,15 @@ function parseCsvRecords(text: string): Array<Array<string>> {
 /** Parse CSV bytes/text into a header-indexed table. */
 export function parseReportCsv(input: Uint8Array | string): CsvTable {
   const text = typeof input === "string" ? input : new TextDecoder().decode(input);
-  const records = parseCsvRecords(text);
-  if (records.length === 0) {
+  const [header, ...rows] = parseCsvRecords(text);
+  if (header === undefined) {
     return { columns: new Map(), rows: [] };
   }
-  const header = records[0]!;
   const columns = new Map<string, number>();
   header.forEach((name, index) => {
     columns.set(name.toLowerCase(), index);
   });
-  return { columns, rows: records.slice(1) };
+  return { columns, rows };
 }
 
 type Token =
@@ -121,7 +120,7 @@ function tokenize(sql: string): Array<Token> {
   const tokens: Array<Token> = [];
   let i = 0;
   while (i < sql.length) {
-    const ch = sql[i]!;
+    const ch = sql.charAt(i);
     if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") {
       i++;
       continue;
@@ -159,7 +158,7 @@ function tokenize(sql: string): Array<Token> {
     }
     if (/[0-9]/.test(ch) || (ch === "." && /[0-9]/.test(sql[i + 1] ?? ""))) {
       let raw = "";
-      while (i < sql.length && /[0-9.eE+-]/.test(sql[i]!)) {
+      while (i < sql.length && /[0-9.eE+-]/.test(sql.charAt(i))) {
         // Stop a sign that is not part of an exponent (e.g. `1-2`).
         if ((sql[i] === "+" || sql[i] === "-") && !/[eE]/.test(sql[i - 1] ?? "")) break;
         raw += sql[i];
@@ -173,7 +172,7 @@ function tokenize(sql: string): Array<Token> {
     }
     if (IDENT_START.test(ch)) {
       let value = "";
-      while (i < sql.length && IDENT_PART.test(sql[i]!)) {
+      while (i < sql.length && IDENT_PART.test(sql.charAt(i))) {
         value += sql[i];
         i++;
       }
@@ -236,31 +235,54 @@ type CondNode =
   | { readonly k: "cmp"; readonly op: string; readonly l: ValNode; readonly r: ValNode }
   | { readonly k: "isnull"; readonly e: ValNode; readonly negated: boolean };
 
-interface AggNode {
-  readonly fn: "LISTAGG" | "COUNT" | "SUM" | "MIN" | "MAX" | "AVG";
-  readonly col?: string; // undefined for COUNT(*)
-  readonly star?: boolean;
-  readonly sep?: string; // LISTAGG separator
-}
+type AggFn = "LISTAGG" | "COUNT" | "SUM" | "MIN" | "MAX" | "AVG";
 
-interface SelectStmt {
-  readonly agg?: AggNode;
-  readonly expr?: ValNode; // plain (non-aggregate) scalar expression
+type AggNode =
+  | { readonly fn: "COUNT"; readonly star: true }
+  | {
+      readonly fn: AggFn;
+      readonly star?: undefined;
+      readonly col: string;
+      readonly sep?: string; // LISTAGG separator
+    };
+
+type SelectExpr =
+  | { readonly agg: AggNode; readonly expr?: undefined }
+  | { readonly agg?: undefined; readonly expr: ValNode }; // plain (non-aggregate) scalar expression
+
+type SelectStmt = SelectExpr & {
   readonly table: string;
   readonly where?: CondNode;
-}
+};
 
-const AGG_FNS = new Set(["LISTAGG", "COUNT", "SUM", "MIN", "MAX", "AVG"]);
+const EOF_TOKEN: Token = { t: "eof" };
+
+const AGG_FNS: ReadonlySet<string> = new Set<AggFn>([
+  "LISTAGG",
+  "COUNT",
+  "SUM",
+  "MIN",
+  "MAX",
+  "AVG",
+]);
+
+function isAggFn(name: string): name is AggFn {
+  return AGG_FNS.has(name);
+}
 
 class Parser {
   private pos = 0;
   constructor(private readonly tokens: ReadonlyArray<Token>) {}
 
   private peek(): Token {
-    return this.tokens[this.pos]!;
+    return this.tokens[this.pos] ?? EOF_TOKEN;
   }
   private next(): Token {
-    return this.tokens[this.pos++]!;
+    return this.tokens[this.pos++] ?? EOF_TOKEN;
+  }
+  private peekOp(...ops: ReadonlyArray<string>): string | undefined {
+    const tok = this.peek();
+    return tok.t === "op" && ops.includes(tok.v) ? tok.v : undefined;
   }
   private isKeyword(word: string): boolean {
     const tok = this.peek();
@@ -291,7 +313,7 @@ class Parser {
 
   parse(): SelectStmt {
     this.expectKeyword("SELECT");
-    const { agg, expr } = this.parseSelectExpr();
+    const select = this.parseSelectExpr();
     if (this.eatKeyword("AS")) {
       const tok = this.next();
       if (tok.t !== "ident") throw new InspectCsvqError({ message: "expected alias after AS" });
@@ -313,27 +335,25 @@ class Parser {
     if (this.peek().t !== "eof") {
       throw new InspectCsvqError({ message: "unexpected trailing tokens" });
     }
-    return { agg, expr, table: tableTok.v, where };
+    return { ...select, table: tableTok.v, where };
   }
 
-  private parseSelectExpr(): { agg?: AggNode; expr?: ValNode } {
+  private parseSelectExpr(): SelectExpr {
     const tok = this.peek();
-    if (
-      tok.t === "ident" &&
-      AGG_FNS.has(tok.v.toUpperCase()) &&
-      this.tokens[this.pos + 1]?.t === "punct" &&
-      (this.tokens[this.pos + 1] as { v: string }).v === "("
-    ) {
-      return { agg: this.parseAgg() };
+    const after = this.tokens[this.pos + 1];
+    if (tok.t === "ident" && after?.t === "punct" && after.v === "(") {
+      const fn = tok.v.toUpperCase();
+      if (isAggFn(fn)) {
+        return { agg: this.parseAgg(fn) };
+      }
     }
     return { expr: this.parseValueExpr() };
   }
 
-  private parseAgg(): AggNode {
-    const fnTok = this.next();
-    const fn = (fnTok as { v: string }).v.toUpperCase() as AggNode["fn"];
+  private parseAgg(fn: AggFn): AggNode {
+    this.pos++;
     this.expectPunct("(");
-    if (fn === "COUNT" && this.peek().t === "op" && (this.peek() as { v: string }).v === "*") {
+    if (fn === "COUNT" && this.peekOp("*") !== undefined) {
       this.pos++;
       this.expectPunct(")");
       return { fn, star: true };
@@ -413,30 +433,24 @@ class Parser {
   }
   private parseConcat(): ValNode {
     let left = this.parseArith();
-    while (this.peek().t === "op" && (this.peek() as { v: string }).v === "||") {
-      const op = (this.next() as { v: string }).v;
+    for (let op = this.peekOp("||"); op !== undefined; op = this.peekOp("||")) {
+      this.pos++;
       left = { k: "binop", op, l: left, r: this.parseArith() };
     }
     return left;
   }
   private parseArith(): ValNode {
     let left = this.parseTerm();
-    while (
-      this.peek().t === "op" &&
-      ((this.peek() as { v: string }).v === "+" || (this.peek() as { v: string }).v === "-")
-    ) {
-      const op = (this.next() as { v: string }).v;
+    for (let op = this.peekOp("+", "-"); op !== undefined; op = this.peekOp("+", "-")) {
+      this.pos++;
       left = { k: "binop", op, l: left, r: this.parseTerm() };
     }
     return left;
   }
   private parseTerm(): ValNode {
     let left = this.parseFactor();
-    while (
-      this.peek().t === "op" &&
-      ((this.peek() as { v: string }).v === "*" || (this.peek() as { v: string }).v === "/")
-    ) {
-      const op = (this.next() as { v: string }).v;
+    for (let op = this.peekOp("*", "/"); op !== undefined; op = this.peekOp("*", "/")) {
+      this.pos++;
       left = { k: "binop", op, l: left, r: this.parseFactor() };
     }
     return left;
@@ -643,12 +657,12 @@ function evalAggregate(
   table: CsvTable,
   rows: Array<ReadonlyArray<string>>,
 ): Option.Option<string> {
-  if (agg.fn === "COUNT" && agg.star === true) {
+  if (agg.star === true) {
     return Option.some(String(rows.length));
   }
   // Resolves the column before checking any rows, so an unknown column always errors —
   // matching csvq's schema validation, even when the matched set would otherwise be empty.
-  const index = columnIndex(table, agg.col!);
+  const index = columnIndex(table, agg.col);
   if (agg.fn === "COUNT") {
     // CSV cells are never NULL, so COUNT(col) == COUNT(*) == the matched-row count.
     return Option.some(String(rows.length));
@@ -708,7 +722,7 @@ export function evalCsvqScalar(query: string, provider: CsvTableProvider): Optio
   const first = rows[0];
   return first === undefined
     ? Option.none()
-    : Option.some(toStringValue(evalVal(stmt.expr!, table, first)));
+    : Option.some(toStringValue(evalVal(stmt.expr, table, first)));
 }
 
 const DUPLICATE_INDEXES_QUERY =

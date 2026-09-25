@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Predicate, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -107,18 +107,14 @@ export function parseSnippetUuid(
   return { canonical: canonicalFromHex(segments.join("")) };
 }
 
-// Tolerant body parse — see `list.handler.ts` for the rationale. The real
-// `/v1/snippets/{id}` payload omits `description`, which the generated schema
-// requires, so routing through the typed client fails on real responses.
+// Tolerant body parse — see `SnippetRow` in `snippets.format.ts` for the
+// rationale. The real `/v1/snippets/{id}` payload omits `description`, which the
+// generated schema requires, so routing through the typed client fails on real responses.
 function asRecord(obj: unknown): Record<string, unknown> {
-  return typeof obj === "object" && obj !== null ? (obj as Record<string, unknown>) : {};
+  return Predicate.isObjectOrArray(obj) ? { ...obj } : {};
 }
 
-function readSql(body: unknown): string {
-  const content = asRecord(asRecord(body)["content"]);
-  const sql = content["sql"];
-  return typeof sql === "string" ? sql : "";
-}
+const SnippetSql = Schema.Struct({ content: Schema.Struct({ sql: Schema.String }) });
 
 export const snippetsDownload = Effect.fn("snippets.download")(function* (
   flags: SnippetsDownloadFlags,
@@ -155,7 +151,7 @@ export const snippetsDownload = Effect.fn("snippets.download")(function* (
         output.format === "text" ? yield* output.task("Downloading snippet...") : undefined;
       const response = yield* httpClient.execute(request).pipe(
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.catch(
+        Effect.mapError(
           (cause) =>
             new SnippetsDownloadNetworkError({
               message: `failed to download snippet: ${cause.reason.description ?? cause.reason._tag}`,
@@ -175,7 +171,7 @@ export const snippetsDownload = Effect.fn("snippets.download")(function* (
       }
 
       const rawBody = yield* response.json.pipe(
-        Effect.catch(
+        Effect.mapError(
           (cause) =>
             new SnippetsDownloadNetworkError({
               message: `failed to download snippet: ${String(cause)}`,
@@ -197,7 +193,11 @@ export const snippetsDownload = Effect.fn("snippets.download")(function* (
 
       // `-o`/`--output` is ignored entirely; this always prints the raw SQL —
       // no branching on `OutputFlag`.
-      yield* output.raw(readSql(rawBody) + "\n");
+      const sql = yield* Schema.decodeUnknownEffect(SnippetSql)(rawBody).pipe(
+        Effect.map(({ content }) => content.sql),
+        Effect.catchTag("SchemaError", () => Effect.succeed("")),
+      );
+      yield* output.raw(sql + "\n");
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

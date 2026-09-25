@@ -65,7 +65,7 @@ export const functionsList = Effect.fn("functions.list")(function* (flags: Funct
     }
     const rawBody = yield* response.text.pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
-      Effect.catch(
+      Effect.mapError(
         (cause) => new FunctionsListNetworkError({ message: `failed to list functions: ${cause}` }),
       ),
     );

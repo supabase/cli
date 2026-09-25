@@ -1,4 +1,4 @@
-import { Result, Schema } from "effect";
+import { Predicate, Result, Schema } from "effect";
 
 import { renderGlamourTable } from "../../output/glamour-table.ts";
 import { SsoInvalidUuidError } from "./sso.errors.ts";
@@ -38,25 +38,26 @@ export interface SsoProviderView {
  * without throwing on missing fields.
  */
 export function toSsoProviderView(value: unknown): SsoProviderView {
-  if (typeof value !== "object" || value === null) {
+  const root = fieldsOf(value);
+  if (root === undefined) {
     return { id: "" };
   }
-  const root = value as Record<string, unknown>;
-  const samlRaw = root["saml"];
-  const saml =
-    samlRaw !== undefined && typeof samlRaw === "object" && samlRaw !== null
-      ? (samlRaw as Record<string, unknown>)
-      : undefined;
+  const saml = fieldsOf(root["saml"]);
 
   const domainsRaw = root["domains"];
   const domains = Array.isArray(domainsRaw)
-    ? domainsRaw
-        .filter((d): d is Record<string, unknown> => typeof d === "object" && d !== null)
-        .map((d) => ({
-          domain: typeof d["domain"] === "string" ? d["domain"] : undefined,
-          created_at: typeof d["created_at"] === "string" ? d["created_at"] : undefined,
-          updated_at: typeof d["updated_at"] === "string" ? d["updated_at"] : undefined,
-        }))
+    ? domainsRaw.flatMap((item) => {
+        const d = fieldsOf(item);
+        return d === undefined
+          ? []
+          : [
+              {
+                domain: typeof d["domain"] === "string" ? d["domain"] : undefined,
+                created_at: typeof d["created_at"] === "string" ? d["created_at"] : undefined,
+                updated_at: typeof d["updated_at"] === "string" ? d["updated_at"] : undefined,
+              },
+            ];
+      })
     : undefined;
 
   return {
@@ -78,6 +79,11 @@ export function toSsoProviderView(value: unknown): SsoProviderView {
     created_at: typeof root["created_at"] === "string" ? root["created_at"] : undefined,
     updated_at: typeof root["updated_at"] === "string" ? root["updated_at"] : undefined,
   };
+}
+
+function fieldsOf(value: unknown): { readonly [key: string]: unknown } | undefined {
+  if (!Predicate.isObjectOrArray(value)) return undefined;
+  return Array.isArray(value) ? {} : value;
 }
 
 /**
@@ -269,8 +275,8 @@ export function renderSingleProvider(provider: SsoProviderView): string {
 }
 
 function hasAtLeastOneKey(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) return false;
-  const keys = (value as { keys?: unknown }).keys;
+  if (!Predicate.hasProperty(value, "keys")) return false;
+  const keys = value.keys;
   if (typeof keys !== "object" || keys === null) return false;
   return Object.keys(keys).length > 0;
 }

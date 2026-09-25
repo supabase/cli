@@ -78,9 +78,6 @@ export function reportIgnoreSchemas(): string {
  * since a placeholder can repeat), then wraps the result in `COPY (...) TO STDOUT WITH CSV HEADER`.
  */
 export function wrapReportQuery(sql: string, ...args: ReadonlyArray<string>): string {
-  let query = sql;
-  for (let index = 0; index < args.length; index++) {
-    query = query.replaceAll(`$${index + 1}`, args[index]!);
-  }
+  const query = args.reduce((text, arg, index) => text.replaceAll(`$${index + 1}`, arg), sql);
   return `COPY (${query}) TO STDOUT WITH CSV HEADER`;
 }

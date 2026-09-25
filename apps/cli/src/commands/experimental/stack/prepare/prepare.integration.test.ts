@@ -168,7 +168,7 @@ const makeFixture = (root: string, failPreparation = false) => {
 const databaseOnlyConfig = `project_id = "prepare-test"\n\n[api]\nenabled = false\n`;
 
 describe("stack prepare", () => {
-  it.live("prepares a temporary Database without changing the composition", () =>
+  it.effect("prepares a temporary Database without changing the composition", () =>
     makeProject(databaseOnlyConfig).pipe(
       Effect.flatMap((root) => {
         const fixture = makeFixture(root);
@@ -188,7 +188,7 @@ describe("stack prepare", () => {
     ),
   );
 
-  it.live("prepares Studio together with its configured Pgmeta companion", () =>
+  it.effect("prepares Studio together with its configured Pgmeta companion", () =>
     makeProject(databaseOnlyConfig).pipe(
       Effect.flatMap((root) => {
         const fixture = makeFixture(root);
@@ -212,7 +212,7 @@ describe("stack prepare", () => {
     ),
   );
 
-  it.live("removes its temporary instance after a preparation failure", () =>
+  it.effect("removes its temporary instance after a preparation failure", () =>
     makeProject(databaseOnlyConfig).pipe(
       Effect.flatMap((root) => {
         const fixture = makeFixture(root, true);
@@ -233,7 +233,7 @@ describe("stack prepare", () => {
     ),
   );
 
-  it.live("rejects a disabled requested service before preparing an instance", () =>
+  it.effect("rejects a disabled requested service before preparing an instance", () =>
     makeProject(databaseOnlyConfig).pipe(
       Effect.flatMap((root) => {
         const fixture = makeFixture(root);
@@ -253,7 +253,7 @@ describe("stack prepare", () => {
     ),
   );
 
-  it.live("rejects malformed config before creating a stack", () =>
+  it.effect("rejects malformed config before creating a stack", () =>
     makeProject("project_id = [\n").pipe(
       Effect.flatMap((root) => {
         const fixture = makeFixture(root);

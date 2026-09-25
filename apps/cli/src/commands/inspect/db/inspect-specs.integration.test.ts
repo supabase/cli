@@ -256,7 +256,7 @@ describe("inspect db specs (per-subcommand correctness)", () => {
   });
 
   for (const testCase of cases) {
-    it.live(`runs the ${testCase.spec.name} query and renders its cells`, () => {
+    it.effect(`runs the ${testCase.spec.name} query and renders its cells`, () => {
       const ctx = setup([testCase.row]);
       return Effect.gen(function* () {
         yield* runInspectQuery(testCase.spec, localFlags, "native");

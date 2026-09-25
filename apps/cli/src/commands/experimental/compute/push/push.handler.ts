@@ -1,5 +1,4 @@
-import { Effect, FileSystem, Option, Path, Predicate, type Schedule } from "effect";
-import type { PlatformError } from "effect/PlatformError";
+import { Effect, FileSystem, Option, Path, type Schedule } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { renderComputeDetails } from "../compute.format.ts";
@@ -263,13 +262,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     // reason (permission, I/O) propagates as itself rather than misdiagnosing it.
     const info = yield* fs
       .stat(compute.sourceDir)
-      .pipe(
-        Effect.catchTag("PlatformError", (error) =>
-          Predicate.isTagged(error.reason, "NotFound")
-            ? Effect.fail<ComputeSourceMissingError | PlatformError>(sourceMissing)
-            : Effect.fail(error),
-        ),
-      );
+      .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.fail(sourceMissing)));
     // Something is there, it's just not a directory — reporting "no compute
     // source" would be false, and the path is occupied besides.
     if (info.type !== "Directory") {

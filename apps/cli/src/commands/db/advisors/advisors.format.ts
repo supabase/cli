@@ -6,6 +6,8 @@
  * byte-for-byte. The only `omitempty` field is `metadata`.
  */
 
+import { Predicate } from "effect";
+
 import { encodeGoJsonIndented } from "../../../command-internal/go-json.ts";
 import { makeLevelEnum } from "../../../command-internal/fail-on.ts";
 
@@ -132,10 +134,10 @@ export function scanAdvisorLintRow(row: Record<string, unknown>): AdvisorLint {
  */
 function projectApiMetadata(value: unknown): Record<string, unknown> | undefined {
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) {
+  if (!Predicate.isObject(value)) {
     throw new TypeError("cannot unmarshal advisor metadata");
   }
-  const record = value as Record<string, unknown>;
+  const record = value;
   const out: Record<string, unknown> = {};
   // Each string subfield decodes absent/null to omitted and a present
   // non-string throws. Add in the established output-contract order: entity,
@@ -190,10 +192,10 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
  */
 export function apiResponseToAdvisorLints(parsed: unknown): ReadonlyArray<AdvisorLint> {
   if (parsed === null) return [];
-  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!Predicate.isObject(parsed)) {
     throw new TypeError("cannot unmarshal advisors response");
   }
-  const lintsRaw = (parsed as { lints?: unknown }).lints;
+  const lintsRaw = parsed["lints"];
   if (lintsRaw === undefined || lintsRaw === null) return [];
   if (!Array.isArray(lintsRaw)) {
     throw new TypeError("cannot unmarshal lints into []Lint");
@@ -216,10 +218,10 @@ export function apiResponseToAdvisorLints(parsed: unknown): ReadonlyArray<Adviso
       });
       continue;
     }
-    if (typeof entry !== "object" || Array.isArray(entry)) {
+    if (!Predicate.isObject(entry)) {
       throw new TypeError("cannot unmarshal lint entry into Lint");
     }
-    const record = entry as Record<string, unknown>;
+    const record = entry;
     const metadata = projectApiMetadata(record["metadata"]);
     lints.push({
       name: requireApiString(record["name"], "name"),

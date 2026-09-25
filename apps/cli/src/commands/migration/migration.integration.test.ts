@@ -23,7 +23,7 @@ const testRoot = Command.make("supabase").pipe(
 const tmp = useTempWorkdir("supabase-migration-alias-int-");
 
 describe("migration command integration", () => {
-  it.live("accepts the Go-compatible plural migrations alias", () => {
+  it.effect("accepts the Go-compatible plural migrations alias", () => {
     const layer = Layer.mergeAll(
       buildTestRuntime({
         out: mockOutput({ format: "text" }),

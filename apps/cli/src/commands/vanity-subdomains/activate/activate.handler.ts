@@ -65,26 +65,24 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
         .pipe(
           Effect.tapError(() => activating?.fail() ?? Effect.void),
           Effect.catch((cause) =>
-            Effect.gen(function* () {
-              // Flip the always-failing mapper into a success so we can inspect the
-              // tagged error before deciding whether to suggest an upgrade, then re-fail.
-              const mapped = yield* Effect.flip(mapActivateError(cause));
-              if (mapped._tag === "VanitySubdomainsActivateUnexpectedStatusError") {
-                const upgradeSuggested = yield* suggestUpgrade({
-                  projectRef: ref,
-                  featureKey: "vanity_subdomain",
-                  statusCode: mapped.status,
-                  response: gateResponse(cause),
-                });
-                return yield* new VanitySubdomainsActivateUnexpectedStatusError({
-                  status: mapped.status,
-                  body: mapped.body,
-                  message: mapped.message,
-                  upgradeSuggested,
-                });
-              }
-              return yield* Effect.fail(mapped);
-            }),
+            mapActivateError(cause).pipe(
+              Effect.catchTag("VanitySubdomainsActivateUnexpectedStatusError", (mapped) =>
+                Effect.gen(function* () {
+                  const upgradeSuggested = yield* suggestUpgrade({
+                    projectRef: ref,
+                    featureKey: "vanity_subdomain",
+                    statusCode: mapped.status,
+                    response: gateResponse(cause),
+                  });
+                  return yield* new VanitySubdomainsActivateUnexpectedStatusError({
+                    status: mapped.status,
+                    body: mapped.body,
+                    message: mapped.message,
+                    upgradeSuggested,
+                  });
+                }),
+              ),
+            ),
           ),
         );
       yield* activating?.clear() ?? Effect.void;

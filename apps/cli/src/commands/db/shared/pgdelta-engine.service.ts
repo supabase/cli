@@ -136,7 +136,7 @@ export interface PgDeltaDatabaseDiffInput extends PgDeltaCommonInput {
   readonly target: PgDeltaDatabaseEndpoint;
 }
 
-interface PgDeltaDeclarativeExportInput extends PgDeltaCommonInput {
+export interface PgDeltaDeclarativeExportInput extends PgDeltaCommonInput {
   readonly target: PgDeltaDatabaseEndpoint;
 }
 

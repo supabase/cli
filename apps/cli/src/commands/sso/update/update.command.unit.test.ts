@@ -9,7 +9,7 @@ import {
 } from "./update.command.ts";
 
 describe("sso update domain flags (pflag StringSlice parity)", () => {
-  it.live("--domains splits a comma-separated value into multiple domains", () =>
+  it.effect("--domains splits a comma-separated value into multiple domains", () =>
     Effect.gen(function* () {
       const [, domains] = yield* ssoUpdateDomainsFlag
         .parse({
@@ -22,7 +22,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("--add-domains splits a comma-separated value into multiple domains", () =>
+  it.effect("--add-domains splits a comma-separated value into multiple domains", () =>
     Effect.gen(function* () {
       const [, addDomains] = yield* ssoUpdateAddDomainsFlag
         .parse({
@@ -35,7 +35,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("--remove-domains splits a comma-separated value into multiple domains", () =>
+  it.effect("--remove-domains splits a comma-separated value into multiple domains", () =>
     Effect.gen(function* () {
       const [, removeDomains] = yield* ssoUpdateRemoveDomainsFlag
         .parse({
@@ -48,7 +48,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("--domains defaults to an empty array when unset", () =>
+  it.effect("--domains defaults to an empty array when unset", () =>
     Effect.gen(function* () {
       const [, domains] = yield* ssoUpdateDomainsFlag
         .parse({
@@ -61,7 +61,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("--add-domains defaults to an empty array when unset", () =>
+  it.effect("--add-domains defaults to an empty array when unset", () =>
     Effect.gen(function* () {
       const [, addDomains] = yield* ssoUpdateAddDomainsFlag
         .parse({
@@ -74,7 +74,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("--remove-domains defaults to an empty array when unset", () =>
+  it.effect("--remove-domains defaults to an empty array when unset", () =>
     Effect.gen(function* () {
       const [, removeDomains] = yield* ssoUpdateRemoveDomainsFlag
         .parse({
@@ -87,7 +87,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("--domains= (explicit empty value) parses to an empty array, not a missing flag", () =>
+  it.effect("--domains= (explicit empty value) parses to an empty array, not a missing flag", () =>
     Effect.gen(function* () {
       // The handler's `hasExplicitLongFlag` reads raw argv rather than this
       // parsed value, since `--domains=` collapses to `[]` here — indistinguishable
@@ -103,7 +103,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("keeps only the first CSV record of a multiline value (pflag reads ONE record)", () =>
+  it.effect("keeps only the first CSV record of a multiline value (pflag reads ONE record)", () =>
     Effect.gen(function* () {
       const [, domains] = yield* ssoUpdateDomainsFlag
         .parse({
@@ -116,7 +116,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("--domains rejects malformed CSV (bare quote) with pflag's exact diagnostic", () =>
+  it.effect("--domains rejects malformed CSV (bare quote) with pflag's exact diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* ssoUpdateDomainsFlag
         .parse({
@@ -134,7 +134,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("--add-domains rejects malformed CSV with pflag's exact diagnostic", () =>
+  it.effect("--add-domains rejects malformed CSV with pflag's exact diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* ssoUpdateAddDomainsFlag
         .parse({
@@ -152,7 +152,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("--remove-domains rejects malformed CSV with pflag's exact diagnostic", () =>
+  it.effect("--remove-domains rejects malformed CSV with pflag's exact diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* ssoUpdateRemoveDomainsFlag
         .parse({
@@ -170,7 +170,7 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("rejects a blank-only value with pflag's EOF diagnostic", () =>
+  it.effect("rejects a blank-only value with pflag's EOF diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* ssoUpdateAddDomainsFlag
         .parse({

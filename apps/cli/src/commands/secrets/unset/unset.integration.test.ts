@@ -76,7 +76,7 @@ function parseDeleteBody(body: unknown): string[] {
 }
 
 describe("secrets unset integration", () => {
-  it.live("unsets a single secret given explicitly (with --yes)", () => {
+  it.effect("unsets a single secret given explicitly (with --yes)", () => {
     const { layer, out, api } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
@@ -88,7 +88,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("unsets multiple secrets given explicitly", () => {
+  it.effect("unsets multiple secrets given explicitly", () => {
     const { layer, api } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* secretsUnset({
@@ -100,7 +100,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("empty-args path lists secrets and DELETEs the non-SUPABASE_ subset", () => {
+  it.effect("empty-args path lists secrets and DELETEs the non-SUPABASE_ subset", () => {
     const { layer, api } = setup({
       yes: true,
       list: [
@@ -118,7 +118,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("empty-args path with all-SUPABASE_ secrets writes stderr no-op and exits 0", () => {
+  it.effect("empty-args path with all-SUPABASE_ secrets writes stderr no-op and exits 0", () => {
     const { layer, out, api } = setup({
       yes: true,
       list: [{ name: "SUPABASE_ONLY", value: "d" }],
@@ -130,7 +130,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("empty-args path with empty server list writes the stderr no-op and exits 0", () => {
+  it.effect("empty-args path with empty server list writes the stderr no-op and exits 0", () => {
     const { layer, out, api } = setup({ yes: true, list: [] });
     return Effect.gen(function* () {
       yield* secretsUnset({ projectRef: Option.none(), names: [] });
@@ -139,7 +139,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--yes bypasses the prompt and echoes [Y/n] y to stderr", () => {
+  it.effect("--yes bypasses the prompt and echoes [Y/n] y to stderr", () => {
     const { layer, out } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
@@ -149,20 +149,23 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("non-TTY with empty stdin prints the label and takes the Yes default (Go parity)", () => {
-    const { layer, out, api } = setup({ yes: false, stdinIsTty: false });
-    return Effect.gen(function* () {
-      yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
-      // The 100ms non-TTY read scans nothing here, and the empty input is echoed back before
-      // the true default wins.
-      expect(out.stderrText).toContain(
-        "Do you want to unset these function secrets?\n • FOO\n\n [Y/n] \n",
-      );
-      expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "non-TTY with empty stdin prints the label and takes the Yes default (Go parity)",
+    () => {
+      const { layer, out, api } = setup({ yes: false, stdinIsTty: false });
+      return Effect.gen(function* () {
+        yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
+        // The 100ms non-TTY read scans nothing here, and the empty input is echoed back before
+        // the true default wins.
+        expect(out.stderrText).toContain(
+          "Do you want to unset these function secrets?\n • FOO\n\n [Y/n] \n",
+        );
+        expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("non-TTY with piped `n` declines like Go (echoed answer, no DELETE)", () => {
+  it.effect("non-TTY with piped `n` declines like Go (echoed answer, no DELETE)", () => {
     const { layer, out, api } = setup({ yes: false, stdinIsTty: false, stdinInput: "n\n" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: ["FOO"] }));
@@ -175,7 +178,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("non-TTY with piped `y` confirms like Go", () => {
+  it.effect("non-TTY with piped `y` confirms like Go", () => {
     const { layer, out, api } = setup({ yes: false, stdinIsTty: false, stdinInput: "y\n" });
     return Effect.gen(function* () {
       yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
@@ -184,7 +187,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("SUPABASE_YES=1 in the environment auto-confirms with the [Y/n] y echo", () => {
+  it.effect("SUPABASE_YES=1 in the environment auto-confirms with the [Y/n] y echo", () => {
     const { layer, out, api } = setup();
     // Inner provide so the layer builds inside the pinned-env sandbox.
     return withEnvVar(
@@ -200,7 +203,7 @@ describe("secrets unset integration", () => {
     );
   });
 
-  it.live("TTY without --yes prompts via output.promptConfirm and proceeds on accept", () => {
+  it.effect("TTY without --yes prompts via output.promptConfirm and proceeds on accept", () => {
     const { layer, api } = setup({ yes: false, stdinIsTty: true, confirm: true });
     return Effect.gen(function* () {
       yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
@@ -208,7 +211,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("TTY without --yes fails with SecretsUnsetCancelledError on decline", () => {
+  it.effect("TTY without --yes fails with SecretsUnsetCancelledError on decline", () => {
     const { layer, api } = setup({ yes: false, stdinIsTty: true, confirm: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: ["FOO"] }));
@@ -220,7 +223,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SecretsListNetworkError on GET failure (empty-args path)", () => {
+  it.effect("fails with SecretsListNetworkError on GET failure (empty-args path)", () => {
     const { layer } = setup({ yes: true, listNetwork: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: [] }));
@@ -231,7 +234,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SecretsListUnexpectedStatusError on GET 503 (empty-args path)", () => {
+  it.effect("fails with SecretsListUnexpectedStatusError on GET 503 (empty-args path)", () => {
     const { layer } = setup({ yes: true, listStatus: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: [] }));
@@ -242,7 +245,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SecretsUnsetNetworkError on DELETE transport failure", () => {
+  it.effect("fails with SecretsUnsetNetworkError on DELETE transport failure", () => {
     const { layer } = setup({ yes: true, deleteNetwork: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: ["FOO"] }));
@@ -255,7 +258,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SecretsUnsetUnexpectedStatusError on DELETE 500", () => {
+  it.effect("fails with SecretsUnsetUnexpectedStatusError on DELETE 500", () => {
     const { layer } = setup({ yes: true, deleteStatus: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: ["FOO"] }));
@@ -268,7 +271,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event with { project_ref, count } for --output-format=json", () => {
+  it.effect("emits a success event with { project_ref, count } for --output-format=json", () => {
     const { layer, out } = setup({ yes: true, format: "json" });
     return Effect.gen(function* () {
       yield* secretsUnset({
@@ -281,7 +284,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output-format=json without --yes takes the Yes default silently", () => {
+  it.effect("--output-format=json without --yes takes the Yes default silently", () => {
     // json/stream-json never prompts and takes the call site's default, which for unset is
     // Yes — pass --yes explicitly in automation for clarity.
     const { layer, out, api } = setup({ yes: false, format: "json" });
@@ -293,7 +296,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event for --output-format=stream-json", () => {
+  it.effect("emits a success event for --output-format=stream-json", () => {
     const { layer, out } = setup({ yes: true, format: "stream-json" });
     return Effect.gen(function* () {
       yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
@@ -302,7 +305,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "text mode prints `Finished supabase secrets unset.\\n` regardless of --output value",
     () => {
       const { layer, out } = setup({ yes: true, goOutput: "json" });

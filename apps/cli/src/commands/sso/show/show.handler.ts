@@ -29,16 +29,19 @@ const mapStatusOrNetwork = mapHttpError({
 });
 
 const handleShowError = (providerId: string, cause: SupabaseApiError) =>
-  Effect.gen(function* () {
-    const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
+  mapStatusOrNetwork(cause).pipe(
     // `show` does not fire upgrade-suggestion telemetry, unlike add/update/list.
-    if (mapped._tag === "SsoShowUnexpectedStatusError" && mapped.status === 404) {
-      return yield* new SsoShowNotFoundError({
-        message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
-      });
-    }
-    return yield* Effect.fail(mapped);
-  });
+    Effect.catchTag("SsoShowUnexpectedStatusError", (mapped) =>
+      Effect.gen(function* () {
+        if (mapped.status === 404) {
+          return yield* new SsoShowNotFoundError({
+            message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
+          });
+        }
+        return yield* mapped;
+      }),
+    ),
+  );
 
 export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
   const output = yield* Output;

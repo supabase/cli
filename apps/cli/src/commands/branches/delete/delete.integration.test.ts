@@ -82,7 +82,7 @@ const baseFlags: BranchesDeleteFlags = {
 };
 
 describe("branches delete integration", () => {
-  it.live("deletes a branch and emits 'Deleted preview branch: <ref>' to stderr", () => {
+  it.effect("deletes a branch and emits 'Deleted preview branch: <ref>' to stderr", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) });
@@ -93,7 +93,7 @@ describe("branches delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits the force query param (Go passes nil)", () => {
+  it.effect("omits the force query param (Go passes nil)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) });
@@ -102,7 +102,7 @@ describe("branches delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesDeleteUnexpectedStatusError on non-200", () => {
+  it.effect("fails with BranchesDeleteUnexpectedStatusError on non-200", () => {
     const { layer } = setup({ deleteStatus: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -117,7 +117,7 @@ describe("branches delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on success", () => {
+  it.effect("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
       yield* branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) });
@@ -126,7 +126,7 @@ describe("branches delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on failure", () => {
+  it.effect("writes linked-project cache + telemetry state on failure", () => {
     const { layer, telemetry, cache } = setupTracked({ deleteStatus: 500 });
     return Effect.gen(function* () {
       yield* Effect.exit(branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) }));
@@ -135,7 +135,7 @@ describe("branches delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "resolves a branch NAME against the linked PARENT (not the branch's own ref) after `supabase link <branch>` (CLI-2167 follow-up)",
     () => {
       const PARENT_REF = "parentprojectrefxxxx";

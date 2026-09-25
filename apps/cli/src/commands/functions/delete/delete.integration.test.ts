@@ -18,7 +18,7 @@ import { functionsDelete } from "./delete.handler.ts";
 const tempRoot = useTempWorkdir("supabase-functions-delete-");
 
 describe("functions delete", () => {
-  it.live("deletes a function natively through the Management API", () => {
+  it.effect("deletes a function natively through the Management API", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
     const linkedProjectCache = mockLinkedProjectCacheTracked();
@@ -50,7 +50,7 @@ describe("functions delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses an explicit project ref", () => {
+  it.effect("uses an explicit project ref", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
     const layer = buildTestRuntime({
@@ -72,7 +72,7 @@ describe("functions delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "does not redact --project-ref in cli_command_executed (Go parity: cmd/functions.go:153)",
     () => {
       const out = mockOutput({ format: "text" });

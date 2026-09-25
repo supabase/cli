@@ -35,13 +35,13 @@ export const warnFormerDeclarativeDefault = Effect.fnUntraced(function* (
   const defaultDirRel = resolveDeclarativeDir(path, pgDelta);
   const defaultEntries = yield* fs
     .readDirectory(path.resolve(workdir, defaultDirRel))
-    .pipe(Effect.orElseSucceed(() => [] as string[]));
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   if (defaultEntries.length > 0) return;
 
   const formerDirRel = path.join(...FORMER_DEFAULT_SEGMENTS);
   const formerDir = path.resolve(workdir, formerDirRel);
   const formerSqlFiles = yield* walkSqlFiles(fs, formerDir, "").pipe(
-    Effect.orElseSucceed(() => [] as string[]),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
   );
   const formerHasManifest = yield* fs
     .exists(path.join(formerDir, ".pgdelta-export.json"))

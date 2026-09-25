@@ -143,7 +143,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       // so a deprecated first migration that `listLocalMigrations` excludes is still accepted.
       const entries = yield* fs
         .readDirectory(migrationsDir)
-        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
       const found = entries.some((name) => pathMatch(`${v}_*.sql`, path.basename(name)).matched);
       if (!found) {
         return yield* new DbResetMigrationFileError({
@@ -159,7 +159,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       });
       const total = versions.length;
       const last = flags.last.value;
-      resolvedVersion = last < total ? versions[total - last - 1]! : "-";
+      resolvedVersion = versions[total - last - 1] ?? "-";
     }
 
     const connType = target.connType ?? "local";

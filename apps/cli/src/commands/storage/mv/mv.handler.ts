@@ -7,7 +7,6 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import type { StorageGateway } from "../../../command-internal/storage-gateway.ts";
-import { StorageGatewayStatusError } from "../../../command-internal/storage-gateway.errors.ts";
 import { splitBucketPrefix } from "../../../command-internal/storage-url.ts";
 import {
   assertStorageWorkdir,
@@ -78,10 +77,8 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
           yield* output.raw(`Moving object: ${srcParsed} => ${dstParsed}\n`, "stderr");
           const result = yield* gateway.moveObject(srcBucket, srcPrefix, dstPrefix).pipe(
             Effect.map((message) => ({ moved: true, message })),
-            Effect.catch((error) =>
-              error instanceof StorageGatewayStatusError &&
-              error.body.includes('"error":"not_found"') &&
-              flags.recursive
+            Effect.catchTag("StorageGatewayStatusError", (error) =>
+              error.body.includes('"error":"not_found"') && flags.recursive
                 ? Effect.succeed({ moved: false, message: "" })
                 : Effect.fail(error),
             ),

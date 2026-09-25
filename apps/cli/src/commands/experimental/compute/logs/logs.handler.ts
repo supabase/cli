@@ -1,4 +1,4 @@
-import { Clock, DateTime, Effect, Option, Ref, Schedule } from "effect";
+import { Clock, DateTime, Effect, Option, Ref, Schedule, Stream } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { aqua } from "../../../../command-internal/colors.ts";
@@ -108,6 +108,16 @@ function isRetryableFollowFailure(error: unknown): boolean {
 export interface ComputeLogsOptions {
   readonly pollSchedule?: Schedule.Schedule<unknown>;
   readonly retrySchedule?: Schedule.Schedule<unknown>;
+}
+
+interface FollowPage {
+  readonly rows: ReadonlyArray<ComputeLogEntry>;
+  readonly drained: boolean;
+}
+
+interface FollowCursor {
+  readonly end: DateTime.Utc;
+  readonly page: number;
 }
 
 /** The machine-format row for one line. */
@@ -317,10 +327,11 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
       const seenIds = yield* Ref.make(new Set(entries.map((entry) => entry.id)));
       // Same reason: a notice already shown on a previous run would stay silent on the next.
       const skipNoticeShown = yield* Ref.make(false);
+      const newestEntry = entries.at(-1);
       const newestSeen = yield* Ref.make<DateTime.Utc>(
-        entries.length === 0
+        newestEntry === undefined
           ? yield* DateTime.now
-          : DateTime.makeUnsafe(entries[entries.length - 1]!.timestampMs),
+          : DateTime.makeUnsafe(newestEntry.timestampMs),
       );
 
       // `--tail 0` asked for no history, but `followWindow` still reaches a grace
@@ -334,33 +345,44 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
         // One request only ever answers with the newest page of its window, so a
         // burst bigger than a page needs several. Walk `end` backwards while
         // pages come back full; a short page means the window is drained.
-        const collected: Array<ComputeLogEntry> = [];
-        let end = yield* DateTime.now;
-        // A short page is the only proof the window is empty below this point.
-        // Both other exits — the page budget running out, and a full page too
-        // narrow to walk past — leave rows unfetched underneath.
-        let drained = false;
-        for (let page = 0; page < FOLLOW_MAX_PAGES; page += 1) {
-          const rows = yield* fetchComputeLogs(api, projectRef, {
-            name,
-            streams,
-            tail: FOLLOW_PAGE_SIZE,
-            window: followWindow(end, cursor),
-          });
-          collected.push(...rows);
-          if (rows.length < FOLLOW_PAGE_SIZE) {
-            drained = true;
-            break;
-          }
-          // Rows arrive oldest-first, so the next page ends where this one began.
-          const nextEnd = DateTime.makeUnsafe(rows[0]!.timestampMs);
-          // A full page whose rows all share one timestamp cannot narrow the
-          // window: re-requesting it would return the same page forever.
-          if (DateTime.toEpochMillis(nextEnd) >= DateTime.toEpochMillis(end)) {
-            break;
-          }
-          end = nextEnd;
-        }
+        const pages = yield* Stream.paginate(
+          { end: yield* DateTime.now, page: 0 },
+          ({ end, page }) =>
+            fetchComputeLogs(api, projectRef, {
+              name,
+              streams,
+              tail: FOLLOW_PAGE_SIZE,
+              window: followWindow(end, cursor),
+            }).pipe(
+              Effect.map(
+                (rows): readonly [ReadonlyArray<FollowPage>, Option.Option<FollowCursor>] => {
+                  const oldestRow = rows[0];
+                  // A short page is the only proof the window is empty below this point.
+                  // Both other exits — the page budget running out, and a full page too
+                  // narrow to walk past — leave rows unfetched underneath.
+                  if (rows.length < FOLLOW_PAGE_SIZE || oldestRow === undefined) {
+                    return [[{ rows, drained: true }], Option.none()];
+                  }
+                  // Rows arrive oldest-first, so the next page ends where this one began.
+                  const nextEnd = DateTime.makeUnsafe(oldestRow.timestampMs);
+                  // A full page whose rows all share one timestamp cannot narrow the
+                  // window: re-requesting it would return the same page forever.
+                  if (
+                    page + 1 >= FOLLOW_MAX_PAGES ||
+                    DateTime.toEpochMillis(nextEnd) >= DateTime.toEpochMillis(end)
+                  ) {
+                    return [[{ rows, drained: false }], Option.none()];
+                  }
+                  return [
+                    [{ rows, drained: false }],
+                    Option.some({ end: nextEnd, page: page + 1 }),
+                  ];
+                },
+              ),
+            ),
+        ).pipe(Stream.runCollect);
+        const collected = pages.flatMap(({ rows }) => rows);
+        const drained = pages.at(-1)?.drained === true;
 
         // Shown once per run, not once per poll, so a sustained burst doesn't repeat
         // this every interval. Emitted in every format (unlike the "Waiting for new

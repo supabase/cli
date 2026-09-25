@@ -1,4 +1,4 @@
-import { Effect, type FileSystem, type Path, Schema } from "effect";
+import { Effect, type FileSystem, type Path, Predicate, Schema } from "effect";
 import { classifySqlFiles } from "@supabase/pg-delta/frontends";
 
 import { Output } from "../../../shared/output/output.service.ts";
@@ -32,13 +32,13 @@ export interface DeclarativeWriteResult {
   readonly preservedUnmanagedFiles: ReadonlyArray<string>;
 }
 
-function safeDeclarativeExportName(path: Path.Path, name: string): string {
+const safeDeclarativeExportName = Effect.fnUntraced(function* (path: Path.Path, name: string) {
   const rel = path.normalize(name.split("\\").join("/"));
   if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw declarativeWriteError(`unsafe declarative export path: ${name}`);
+    return yield* declarativeWriteError(`unsafe declarative export path: ${name}`);
   }
   return rel.split("\\").join("/");
-}
+});
 
 function isCustomDeclarativePath(name: string): boolean {
   return name.split("/")[0] === "_custom";
@@ -89,18 +89,14 @@ export const writeDeclarativeSchemas = Effect.fnUntraced(function* (
   output: PgDeltaDeclarativeExportResult,
 ) {
   const proposed = yield* Effect.forEach(output.files, (file) =>
-    Effect.try({
-      try: () => {
-        const name = safeDeclarativeExportName(path, file.name);
-        if (isCustomDeclarativePath(name)) {
-          throw declarativeWriteError(
-            `refusing to write into reserved declarative schema path: ${file.name}`,
-          );
-        }
-        return { name, sql: file.sql };
-      },
-      catch: (error) =>
-        error instanceof DeclarativeWriteError ? error : declarativeWriteError(String(error)),
+    Effect.gen(function* () {
+      const name = yield* safeDeclarativeExportName(path, file.name);
+      if (isCustomDeclarativePath(name)) {
+        return yield* declarativeWriteError(
+          `refusing to write into reserved declarative schema path: ${file.name}`,
+        );
+      }
+      return { name, sql: file.sql };
     }),
   );
 
@@ -268,7 +264,7 @@ export const updateDeclarativeSchemaPathsConfig = Effect.fnUntraced(function* (
   const existing = yield* fs.readFileString(configPath).pipe(
     Effect.catchTag("PlatformError", (error) =>
       // A missing config file is tolerated; other read errors abort.
-      error.reason._tag === "NotFound"
+      Predicate.isTagged(error.reason, "NotFound")
         ? Effect.succeed("")
         : Effect.fail(
             new DeclarativeWriteError({

@@ -12,7 +12,7 @@
  * "trailing data" failure. See `SIDE_EFFECTS.md` for the user-facing behavior.
  */
 
-import { Effect, Option, Result } from "effect";
+import { Effect, Option, Result, Schema } from "effect";
 
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { COMPOSE_PROJECT_LABEL } from "../../../command-internal/db-bootstrap/container-lifecycle.ts";
@@ -75,62 +75,30 @@ export function processPgAdminDiffProgress(stderr: string): ReadonlyArray<string
   return statuses;
 }
 
+const OptionalNullableString = Schema.optionalKey(Schema.NullOr(Schema.String));
+
 /** Field name is snake_case to match the differ's wire JSON key. */
-interface PgAdminDiffDependency {
-  readonly type?: string | null;
-}
-
-/** One `--json-diff` array element. */
-interface PgAdminDiffEntry {
-  readonly type?: string | null;
-  readonly status?: string | null;
-  readonly diff_ddl?: string | null;
-  readonly group_name?: string | null;
-  readonly dependencies?: ReadonlyArray<PgAdminDiffDependency | null> | null;
-  readonly source_schema_name?: string | null;
-}
-
-/** See {@link isPgAdminDiffEntryElement} for the null-tolerance rule this follows. */
-function isPgAdminDiffDependencyElement(value: unknown): value is PgAdminDiffDependency | null {
-  if (value === null) return true;
-  if (typeof value !== "object" || Array.isArray(value)) return false;
-  if ("type" in value && value.type !== null && typeof value.type !== "string") return false;
-  return true;
-}
+const PgAdminDiffDependency = Schema.Struct({ type: OptionalNullableString });
 
 /**
- * Structural guard for the differ's `DiffEntry` JSON shape: a bare `null` element is
- * accepted, `null` for a declared scalar field is tolerated as its zero value, and any
- * wrong-typed field (including `dependencies[].type`) is rejected.
+ * One `--json-diff` array element: a bare `null` element is accepted, `null` for a declared
+ * scalar field is tolerated as its zero value, and any wrong-typed field (including
+ * `dependencies[].type`) is rejected.
  */
-function isPgAdminDiffEntryElement(value: unknown): value is PgAdminDiffEntry | null {
-  if (value === null) return true;
-  if (typeof value !== "object" || Array.isArray(value)) return false;
-  if ("type" in value && value.type !== null && typeof value.type !== "string") return false;
-  if ("status" in value && value.status !== null && typeof value.status !== "string") return false;
-  if ("diff_ddl" in value && value.diff_ddl !== null && typeof value.diff_ddl !== "string") {
-    return false;
-  }
-  if ("group_name" in value && value.group_name !== null && typeof value.group_name !== "string") {
-    return false;
-  }
-  if (
-    "source_schema_name" in value &&
-    value.source_schema_name !== null &&
-    typeof value.source_schema_name !== "string"
-  ) {
-    return false;
-  }
-  if ("dependencies" in value && value.dependencies !== null) {
-    if (
-      !Array.isArray(value.dependencies) ||
-      !value.dependencies.every(isPgAdminDiffDependencyElement)
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
+const PgAdminDiffEntry = Schema.Struct({
+  type: OptionalNullableString,
+  status: OptionalNullableString,
+  diff_ddl: OptionalNullableString,
+  group_name: OptionalNullableString,
+  dependencies: Schema.optionalKey(
+    Schema.NullOr(Schema.Array(Schema.NullOr(PgAdminDiffDependency))),
+  ),
+  source_schema_name: OptionalNullableString,
+});
+
+const decodePgAdminDiffEntries = Schema.decodeUnknownResult(
+  Schema.Array(Schema.NullOr(PgAdminDiffEntry)),
+);
 
 /**
  * Parses the differ's `--json-diff` stdout into the ordered, filtered list of DDL
@@ -156,15 +124,15 @@ export function parsePgAdminDiffEntries(
     });
   }
   // A top-level JSON `null` is treated as an empty array, matching `isPgDeltaApplyResult`.
-  const entries: unknown = parsed === null ? [] : parsed;
-  if (!Array.isArray(entries) || !entries.every(isPgAdminDiffEntryElement)) {
+  const entries = decodePgAdminDiffEntries(parsed === null ? [] : parsed);
+  if (Result.isFailure(entries)) {
     return Result.fail({
       message: "failed to parse schema diff output: not a valid schema-diff entry array",
     });
   }
 
   const filteredDdls: Array<string> = [];
-  for (const rawEntry of entries) {
+  for (const rawEntry of entries.success) {
     const entry = rawEntry ?? {};
     const status = entry.status ?? "";
     const diffDdl = entry.diff_ddl ?? "";

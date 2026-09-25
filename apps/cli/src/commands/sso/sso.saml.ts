@@ -1,4 +1,4 @@
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Predicate } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { quoteSsoString } from "./sso.format.ts";
@@ -11,8 +11,8 @@ export type SsoFileErrorReason =
   | "other";
 
 function fileErrorReason(cause: PlatformError): SsoFileErrorReason {
-  if (cause.reason._tag === "NotFound") return "not_found";
-  if (cause.reason._tag === "PermissionDenied") return "permission";
+  if (Predicate.isTagged(cause.reason, "NotFound")) return "not_found";
+  if (Predicate.isTagged(cause.reason, "PermissionDenied")) return "permission";
   return "other";
 }
 
@@ -110,8 +110,7 @@ export const readAttributeMappingFile =
         ),
       );
       const parsed = yield* Effect.try({
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native parser errors are CLI output; schema decoding discards their messages.
-        try: (): unknown => JSON.parse(content),
+        try: () => parseAttributeMappingJson(content),
         catch: (cause) =>
           factory.openError({
             message: `failed to parse attribute mapping: ${String(cause)}`,
@@ -120,3 +119,8 @@ export const readAttributeMappingFile =
       });
       return parsed;
     });
+
+// Native parser errors are CLI output; schema decoding discards their messages.
+function parseAttributeMappingJson(content: string): unknown {
+  return JSON.parse(content);
+}

@@ -97,7 +97,8 @@ const runDown = Effect.fnUntraced(function* (
 
         const remote = yield* listRemoteMigrations(session);
         const total = remote.length;
-        if (total <= flags.last) {
+        const version = remote[total - flags.last - 1];
+        if (total <= flags.last || version === undefined) {
           return yield* new MigrationLastTooLargeError({
             message: `--last must be smaller than total applied migrations: ${total}`,
             suggestion: `Try ${aqua("supabase db reset")} if you want to revert all migrations.`,
@@ -115,7 +116,6 @@ const runDown = Effect.fnUntraced(function* (
           return yield* new OperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE });
         }
 
-        const version = remote[total - flags.last - 1]!;
         yield* output.raw(`Resetting database to version: ${version}\n`, "stderr");
         yield* dropUserSchemas(session);
         yield* upsertVaultSecrets(session, toml.vault);

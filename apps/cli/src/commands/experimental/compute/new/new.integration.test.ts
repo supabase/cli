@@ -79,7 +79,7 @@ const project = Effect.fnUntraced(function* (files: Readonly<Record<string, stri
 });
 
 describe("compute new", () => {
-  it.live("scaffolds the runtime's starter files and records the choice", () =>
+  it.effect("scaffolds the runtime's starter files and records the choice", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -106,7 +106,7 @@ describe("compute new", () => {
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
-  it.live("asks for the name when the command line carries none", () =>
+  it.effect("asks for the name when the command line carries none", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -133,7 +133,7 @@ describe("compute new", () => {
 
   // The prompt is the last place a mistyped or taken name can be corrected
   // without ending the run, so it refuses both there rather than after asking.
-  it.live("refuses a bad or already-recorded name at the name prompt", () =>
+  it.effect("refuses a bad or already-recorded name at the name prompt", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -161,7 +161,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live.each([
+  it.effect.each([
     { label: "not interactive", setup: { interactive: false } },
     // Stdout is a TTY, but claimed by the payload, so a prompt would corrupt it.
     { label: "-o json", setup: { goOutput: "json" as const } },
@@ -199,7 +199,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("prompts for runtime, size and exposure when none is given", () =>
+  it.effect("prompts for runtime, size and exposure when none is given", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -230,7 +230,7 @@ describe("compute new", () => {
   // The whole reason `new` records it: `push` sends a complete spec every time,
   // so an entry with no `exposure` is deployed public by the next bare `push`.
   // Recording the answer is what makes a private compute stay private.
-  it.live("records the chosen exposure so a later push keeps it", () =>
+  it.effect("records the chosen exposure so a later push keeps it", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -245,7 +245,7 @@ describe("compute new", () => {
 
   // The count a scaffold cannot guess: `--instances` has no prompt, so it is
   // recorded when given and left out when not.
-  it.live("records an instance count that differs from the default", () =>
+  it.effect("records an instance count that differs from the default", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -265,7 +265,7 @@ describe("compute new", () => {
   // schema types `instances` as one, so a quoted `"3"` renders a config.toml
   // that no longer decodes — which only shows up on the *next* load, not on the
   // write that caused it. Scaffolding a second compute is that next load.
-  it.live("writes a count the config loader can read back", () =>
+  it.effect("writes a count the config loader can read back", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -282,7 +282,7 @@ describe("compute new", () => {
 
   // Zero is an explicit count — it scales the compute to nothing — not an absent
   // one, so it has to survive the "only record a non-default" rule.
-  it.live("records a zero instance count", () =>
+  it.effect("records a zero instance count", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -297,7 +297,7 @@ describe("compute new", () => {
 
   // An absent `instances` and `instances = 1` mean the same thing to `push`, so
   // the scaffold does not commit a line that says nothing.
-  it.live("writes no instance count when nothing names one", () =>
+  it.effect("writes no instance count when nothing names one", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -310,7 +310,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("writes no instance count when the default is named explicitly", () =>
+  it.effect("writes no instance count when the default is named explicitly", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -326,7 +326,7 @@ describe("compute new", () => {
   // Written even when it is the default, the same way `runtime` and `size` are:
   // an absent key and `public` mean the same thing to `push` today, but only the
   // written one survives a change of default.
-  it.live("records the default exposure when nothing names one", () =>
+  it.effect("records the default exposure when nothing names one", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir, format: "json" });
@@ -342,7 +342,7 @@ describe("compute new", () => {
   // Written into config.toml rather than applied invisibly at push time, so the list is
   // visible and editable and `push` needs no built-in defaults of its own.
   describe("the chosen runtime's default exclude patterns", () => {
-    it.live.each(["node", "deno", "dockerfile"] as const)(
+    it.effect.each(["node", "deno", "dockerfile"] as const)(
       "records the %s runtime's own list",
       (runtime) =>
         Effect.gen(function* () {
@@ -360,7 +360,7 @@ describe("compute new", () => {
     // The written entry has to be loadable, or the scaffold leaves behind a project whose
     // config nothing can read — the patterns are quoted strings in a TOML array, which is
     // exactly the shape a hand-rolled renderer gets wrong.
-    it.live("writes them as a list the config loader reads back", () =>
+    it.effect("writes them as a list the config loader reads back", () =>
       Effect.gen(function* () {
         const repo = yield* project();
         const { layer } = setupCompute({ workdir: repo.dir });
@@ -376,7 +376,7 @@ describe("compute new", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     );
 
-    it.live("reports them alongside the compute's other dials", () =>
+    it.effect("reports them alongside the compute's other dials", () =>
       Effect.gen(function* () {
         const repo = yield* project();
         const { layer, out } = setupCompute({ workdir: repo.dir });
@@ -393,7 +393,7 @@ describe("compute new", () => {
 
   // The runtime and size prompts do have defaults to fall back on, so a piped
   // stdin must leave them unasked rather than consuming the pipe.
-  it.live("takes the defaults without prompting when stdin is piped", () =>
+  it.effect("takes the defaults without prompting when stdin is piped", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -413,7 +413,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("falls back to the defaults without prompting when not interactive", () =>
+  it.effect("falls back to the defaults without prompting when not interactive", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({ workdir: repo.dir, format: "json" });
@@ -430,7 +430,7 @@ describe("compute new", () => {
 
   // A second `new` for the same name is refused rather than re-recorded. Changing
   // a compute that exists is a `config.toml` edit, and the file is the user's.
-  it.live("refuses a name that config.toml already records", () =>
+  it.effect("refuses a name that config.toml already records", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({ workdir: repo.dir });
@@ -460,7 +460,7 @@ describe("compute new", () => {
 
   // Refused whichever way the entry happens to be written — the decoded config
   // is what answers "does this exist", so no TOML shape matters here.
-  it.live.each(['compute.api.runtime = "node"', "[compute.api]"])(
+  it.effect.each(['compute.api.runtime = "node"', "[compute.api]"])(
     "refuses an entry recorded as %s",
     (entry) =>
       Effect.gen(function* () {
@@ -483,7 +483,7 @@ describe("compute new", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses a JSON-only ancestor even when the name is already configured", () =>
+  it.effect("refuses a JSON-only ancestor even when the name is already configured", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -509,7 +509,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "does not refuse the same name when --workdir is explicit (writer and reader agree on the same root)",
     () =>
       Effect.gen(function* () {
@@ -537,7 +537,7 @@ describe("compute new", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("records a --source compute relative to the project root", () =>
+  it.effect("records a --source compute relative to the project root", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -560,7 +560,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses a --source outside the directories a compute may own", () =>
+  it.effect("refuses a --source outside the directories a compute may own", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -587,7 +587,7 @@ describe("compute new", () => {
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
-  it.live("scaffolds in a directory that has no Supabase project yet", () =>
+  it.effect("scaffolds in a directory that has no Supabase project yet", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -609,7 +609,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses a destination that already has something in it", () =>
+  it.effect("refuses a destination that already has something in it", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -631,7 +631,7 @@ describe("compute new", () => {
 
   // Scaffolding into an empty directory is fine — it is only a destination with
   // contents that is refused.
-  it.live("scaffolds into a directory that exists but is empty", () =>
+  it.effect("scaffolds into a directory that exists but is empty", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -651,7 +651,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("tells the user how to proceed when the destination is occupied", () =>
+  it.effect("tells the user how to proceed when the destination is occupied", () =>
     Effect.gen(function* () {
       const repo = yield* project({ "supabase/compute/api/leftover.txt": "old" });
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -671,7 +671,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects a name that could not become a hostname", () =>
+  it.effect("rejects a name that could not become a hostname", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -688,7 +688,7 @@ describe("compute new", () => {
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
-  it.live("keeps stdout parseable under -o json", () =>
+  it.effect("keeps stdout parseable under -o json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({ workdir: repo.dir, goOutput: "json" });
@@ -718,7 +718,7 @@ describe("compute new", () => {
   // The count and the exposure are recorded sparsely — `instances` is left out
   // of config.toml at the default — so the payload is the only place a caller
   // can read what this scaffold will actually deploy as.
-  it.live("reports the chosen exposure and count under -o json", () =>
+  it.effect("reports the chosen exposure and count under -o json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({ workdir: repo.dir, goOutput: "json" });
@@ -742,7 +742,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("shows the exposure and declared count in the details block", () =>
+  it.effect("shows the exposure and declared count in the details block", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({ workdir: repo.dir });
@@ -769,7 +769,7 @@ describe("compute new", () => {
   // Why the config edit is planned before the starter files are written: this
   // failure is knowable up front, and discovering it afterwards would leave a
   // scaffold on disk that nothing records.
-  it.live("writes no scaffold at all when the config edit cannot be made", () =>
+  it.effect("writes no scaffold at all when the config edit cannot be made", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -791,7 +791,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live.each([false, true])(
+  it.effect.each([false, true])(
     "takes the scaffold back when config.toml cannot be written (destination already there: %s)",
     (destinationExisted) =>
       Effect.gen(function* () {
@@ -827,7 +827,7 @@ describe("compute new", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("takes back the starters it wrote when a later one cannot be written", () =>
+  it.effect("takes back the starters it wrote when a later one cannot be written", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -860,7 +860,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("keeps a file that lands in the destination before the config write fails", () =>
+  it.effect("keeps a file that lands in the destination before the config write fails", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -888,7 +888,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("leaves a dangling symlink at the destination in place", () =>
+  it.effect("leaves a dangling symlink at the destination in place", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -911,7 +911,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live.each([false, true])(
+  it.effect.each([false, true])(
     "refuses JSON before prompts or writes (TOML present: %s)",
     (withToml) =>
       Effect.gen(function* () {
@@ -939,7 +939,7 @@ describe("compute new", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses an unconfigured JSON-only ancestor before asking for a name", () =>
+  it.effect("refuses an unconfigured JSON-only ancestor before asking for a name", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -969,7 +969,7 @@ describe("compute new", () => {
   // "supabase/compute/api"`, which resolves against the ancestor root to a
   // directory the scaffold never created, while the scaffold itself lands under
   // the workdir. Both sides have to name the same project.
-  it.live("records the compute in --workdir's own project, not an ancestor's", () =>
+  it.effect("records the compute in --workdir's own project, not an ancestor's", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -999,7 +999,7 @@ describe("compute new", () => {
   // the name is absent from the decoded section, so the already-configured
   // check does not fire. Parsing the plan is what refuses it — before the
   // scaffold is written, like every other refusal here.
-  it.live("writes no scaffold when [compute] is a sealed inline table", () =>
+  it.effect("writes no scaffold when [compute] is a sealed inline table", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -1021,7 +1021,7 @@ describe("compute new", () => {
 
   // A plain file must not read as an empty directory: that fails with a bare
   // EEXIST from `makeDirectory` instead of naming what is in the way.
-  it.live("refuses a plain file at the destination", () =>
+  it.effect("refuses a plain file at the destination", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -1043,7 +1043,7 @@ describe("compute new", () => {
 
   // A relative `--source` is something typed at a shell prompt, so it means
   // what it would mean to the shell: relative to where you are.
-  it.live("resolves a relative --source against the directory it was typed in", () =>
+  it.effect("resolves a relative --source against the directory it was typed in", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -1075,7 +1075,7 @@ describe("compute new", () => {
   // Clack writes its prompt UI to stdout with no stream override, and `-o json`
   // leaves `output.format` as `text` — so a prompt lands in front of the payload
   // exactly as the notices did.
-  it.live("does not prompt under -o json, so stdout stays parseable", () =>
+  it.effect("does not prompt under -o json, so stdout stays parseable", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -1103,7 +1103,7 @@ describe("compute new", () => {
   // means the prompt layer handed back something off-menu. Recording it verbatim
   // would put a runtime into config.toml that `push` then refuses; the default
   // is the one answer that still scaffolds something deployable.
-  it.live("falls back to the defaults when a prompt answers off-menu", () =>
+  it.effect("falls back to the defaults when a prompt answers off-menu", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -1128,7 +1128,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses --source pointed at the project config file", () =>
+  it.effect("refuses --source pointed at the project config file", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const repo = yield* project();
@@ -1156,7 +1156,7 @@ describe("compute new", () => {
   // supabase/compute/<name>/ tree (plus a new config.toml) at the wrong path.
   // `validateWorkdirIsDirectory` must now fail first, before anything on
   // disk changes.
-  it.live(
+  it.effect(
     "fails without scaffolding anything when --workdir names a directory that does not exist at all",
     () =>
       Effect.gen(function* () {

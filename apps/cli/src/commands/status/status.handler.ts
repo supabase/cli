@@ -54,19 +54,15 @@ import type { StatusFlags } from "./status.command.ts";
  * Parses `--override-name api.url=NEXT_PUBLIC_SUPABASE_URL` entries into a `fieldKey -> outputName`
  * map. Each entry must be `KEY=VALUE`; an unknown `KEY` is silently ignored, not an error.
  */
-function parseOverrides(
-  entries: ReadonlyArray<string>,
-): Effect.Effect<ReadonlyMap<string, string>, StatusOverrideParseError> {
+const parseOverrides = Effect.fnUntraced(function* (entries: ReadonlyArray<string>) {
   const knownKeys = new Set(STATUS_FIELDS.map((field) => field.fieldKey));
   const overrides = new Map<string, string>();
   for (const entry of entries) {
     const separatorIndex = entry.indexOf("=");
     if (separatorIndex <= 0) {
-      return Effect.fail(
-        new StatusOverrideParseError({
-          message: `invalid override-name entry, expected KEY=VALUE: ${entry}`,
-        }),
-      );
+      return yield* new StatusOverrideParseError({
+        message: `invalid override-name entry, expected KEY=VALUE: ${entry}`,
+      });
     }
     const key = entry.slice(0, separatorIndex);
     const value = entry.slice(separatorIndex + 1);
@@ -75,8 +71,8 @@ function parseOverrides(
     }
     overrides.set(key, value);
   }
-  return Effect.succeed(overrides);
-}
+  return overrides;
+});
 
 /** The established `"Stopped services:", stopped` slice format. */
 function formatGoStringSlice(items: ReadonlyArray<string>): string {

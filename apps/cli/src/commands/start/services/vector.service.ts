@@ -9,7 +9,7 @@
  * Podman each take a different branch.
  */
 
-import { Effect, Stream } from "effect";
+import { Effect, Option, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
@@ -150,12 +150,14 @@ export function resolveVectorDockerSocketPlan(
 }
 
 function collectText<E, R>(stream: Stream.Stream<Uint8Array, E, R>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
+  return Effect.suspend(() => {
+    const decoder = new TextDecoder();
+    return Stream.runFold(
+      stream,
+      () => "",
+      (text, chunk) => text + decoder.decode(chunk, { stream: true }),
+    ).pipe(Effect.map((text) => text + decoder.decode()));
+  });
 }
 
 /**
@@ -165,33 +167,25 @@ function collectText<E, R>(stream: Stream.Stream<Uint8Array, E, R>) {
  * equivalent `Endpoints.docker.Host` shape, and a Podman-only host is expected to set
  * `DOCKER_HOST` directly, checked first by {@link resolveDockerDaemonHost}.
  */
-function inspectDockerContextHost(spawner: Spawner): Effect.Effect<string, string> {
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const child = yield* spawner
-        .spawn(
-          ChildProcess.make(
-            "docker",
-            ["context", "inspect", "--format", "{{ .Endpoints.docker.Host }}"],
-            { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
-          ),
-        )
-        .pipe(Effect.mapError(() => "failed to spawn docker"));
-      const [exitCode, stdout] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stdout)],
-        { concurrency: "unbounded" },
-      ).pipe(Effect.mapError(() => "failed to read docker context inspect output"));
-      if (exitCode !== 0) {
-        return yield* Effect.fail("docker context inspect exited non-zero");
-      }
-      const host = stdout.trim();
-      if (host.length === 0) {
-        return yield* Effect.fail("docker context inspect returned an empty host");
-      }
-      return host;
-    }),
+const inspectDockerContextHost = Effect.fnUntraced(function* (spawner: Spawner) {
+  const child = yield* spawner.spawn(
+    ChildProcess.make(
+      "docker",
+      ["context", "inspect", "--format", "{{ .Endpoints.docker.Host }}"],
+      {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+      },
+    ),
   );
-}
+  const [exitCode, stdout] = yield* Effect.all(
+    [child.exitCode.pipe(Effect.map(Number)), collectText(child.stdout)],
+    { concurrency: "unbounded" },
+  );
+  const host = stdout.trim();
+  return exitCode === 0 && host.length > 0 ? Option.some(host) : Option.none<string>();
+}, Effect.scoped);
 
 /**
  * Discovers the daemon host string {@link resolveVectorDockerSocketPlan} branches on: an explicit
@@ -210,6 +204,7 @@ export function resolveDockerDaemonHost(
     return Effect.succeed(fromEnv);
   }
   return inspectDockerContextHost(spawner).pipe(
+    Effect.map(Option.getOrElse(() => platformDefaultDockerHost(platform))),
     Effect.orElseSucceed(() => platformDefaultDockerHost(platform)),
   );
 }

@@ -7,7 +7,7 @@ import { suggestAppStart } from "./bootstrap.suggest.ts";
 // Colour is identity here so the assertions match the established non-TTY
 // (uncoloured) output byte-for-byte.
 describe("suggestAppStart", () => {
-  it.live("suggests the start command when the workdir is the current directory", () =>
+  it.effect("suggests the start command when the workdir is the current directory", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       expect(suggestAppStart(path, "/home/me/app", "/home/me/app", "npm ci && npm run dev")).toBe(
@@ -16,7 +16,7 @@ describe("suggestAppStart", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("prefixes a cd line when the workdir is nested", () =>
+  it.effect("prefixes a cd line when the workdir is nested", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       expect(suggestAppStart(path, "/home/me", "/home/me/app", "npm ci && npm run dev")).toBe(
@@ -25,7 +25,7 @@ describe("suggestAppStart", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("omits the cd line for a '.' relative path", () =>
+  it.effect("omits the cd line for a '.' relative path", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       expect(suggestAppStart(path, "/home/me/app", "/home/me/app", "supabase start")).toBe(
@@ -34,7 +34,7 @@ describe("suggestAppStart", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("omits the command line when the start command is empty", () =>
+  it.effect("omits the command line when the start command is empty", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       expect(suggestAppStart(path, "/home/me", "/home/me/app", "")).toBe(
@@ -43,7 +43,7 @@ describe("suggestAppStart", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("applies the colorize callback to each command line", () =>
+  it.effect("applies the colorize callback to each command line", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const aqua = (line: string) => `<${line}>`;

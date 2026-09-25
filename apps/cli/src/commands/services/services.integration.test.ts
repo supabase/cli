@@ -215,7 +215,7 @@ function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string) {
 }
 
 describe("services", () => {
-  it.live("surfaces credential storage permission failures", () => {
+  it.effect("surfaces credential storage permission failures", () => {
     const { layer } = setup({
       accessTokenFailure: PlatformError.systemError({
         _tag: "PermissionDenied",
@@ -277,7 +277,7 @@ describe("services", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("prints the services table by default", () => {
+  it.effect("prints the services table by default", () => {
     const { layer, out } = setup();
 
     return Effect.gen(function* () {
@@ -290,7 +290,7 @@ describe("services", () => {
     });
   });
 
-  it.live("emits a services JSON array for --output json", () => {
+  it.effect("emits a services JSON array for --output json", () => {
     const { layer, out } = setup({ goOutput: Option.some("json") });
 
     return Effect.gen(function* () {
@@ -305,7 +305,7 @@ describe("services", () => {
     });
   });
 
-  it.live("reports the configured Postgres version for local projects", () =>
+  it.effect("reports the configured Postgres version for local projects", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithDbMajorVersion(15);
       const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
@@ -322,7 +322,7 @@ describe("services", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("uses the stack artifact catalog when the stack backend is selected", () =>
+  it.effect("uses the stack artifact catalog when the stack backend is selected", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithDbMajorVersion(15);
       const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
@@ -344,7 +344,7 @@ describe("services", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("applies the stack PostgreSQL environment override", () =>
+  it.effect("applies the stack PostgreSQL environment override", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithDbMajorVersion(17);
       const fs = yield* FileSystem.FileSystem;
@@ -364,7 +364,7 @@ describe("services", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "falls back to stack catalog defaults for unsupported database config and ignores legacy pins",
     () =>
       Effect.gen(function* () {
@@ -387,7 +387,7 @@ describe("services", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports malformed config causes before falling back to the stack catalog", () =>
+  it.effect("reports malformed config causes before falling back to the stack catalog", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfig("[db]\nmajor_version = ");
       const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
@@ -403,7 +403,7 @@ describe("services", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("ignores config.json and reads legacy config.toml for local image selection", () =>
+  it.effect("ignores config.json and reads legacy config.toml for local image selection", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfigFiles({
         toml: "[db]\nmajor_version = 15\n",
@@ -423,7 +423,7 @@ describe("services", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("applies linked-project remote config overrides when choosing the local image", () =>
+  it.effect("applies linked-project remote config overrides when choosing the local image", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfig(`
 [db]
@@ -450,7 +450,7 @@ major_version = 15
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("warns and skips the remote lookup for a malformed linked project ref", () =>
+  it.effect("warns and skips the remote lookup for a malformed linked project ref", () =>
     Effect.gen(function* () {
       const workdir = yield* makeWorkdir();
       yield* writeTempFile(workdir, "project-ref", "not-a-valid-ref");
@@ -466,7 +466,7 @@ major_version = 15
   // A token present doesn't bypass the format guard (the warning is
   // unconditional on login too) — same code path as the previous test, so this
   // isn't new branch coverage, just pinning that login state can't skip it.
-  it.live("still warns on a malformed ref even when logged in", () =>
+  it.effect("still warns on a malformed ref even when logged in", () =>
     Effect.gen(function* () {
       const workdir = yield* makeWorkdir();
       yield* writeTempFile(workdir, "project-ref", "not-a-valid-ref");
@@ -589,7 +589,7 @@ major_version = 15
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports pinned legacy temp service versions", () =>
+  it.effect("reports pinned legacy temp service versions", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithDbMajorVersion(15);
       yield* writeTempFile(workdir, "postgres-version", "15.1.0.117\n");
@@ -610,7 +610,7 @@ major_version = 15
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports the Deno 1 edge-runtime image instead of the temp pin", () =>
+  it.effect("reports the Deno 1 edge-runtime image instead of the temp pin", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfig("[edge_runtime]\ndeno_version = 1\n");
       yield* writeTempFile(workdir, "edge-runtime-version", "v9.9.9\n");
@@ -628,7 +628,7 @@ major_version = 15
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("prints config load errors and falls back to the default matrix", () =>
+  it.effect("prints config load errors and falls back to the default matrix", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfig("[db]\nmajor_version = ");
       yield* writeTempFile(workdir, "storage-version", "v9.9.9\n");
@@ -642,7 +642,7 @@ major_version = 15
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits structured JSON for --output pretty combined with --output-format json", () => {
+  it.effect("emits structured JSON for --output pretty combined with --output-format json", () => {
     // --output pretty defers to --output-format json instead of forcing the
     // human-readable table.
     const { layer, out } = setup({ format: "json", goOutput: Option.some("pretty") });
@@ -662,7 +662,7 @@ major_version = 15
     });
   });
 
-  it.live("emits structured JSON for --output-format stream-json", () => {
+  it.effect("emits structured JSON for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
 
     return Effect.gen(function* () {
@@ -680,7 +680,7 @@ major_version = 15
     });
   });
 
-  it.live("emits a TOML services array for --output toml", () => {
+  it.effect("emits a TOML services array for --output toml", () => {
     const { layer, out } = setup({ goOutput: Option.some("toml") });
 
     return Effect.gen(function* () {
@@ -693,7 +693,7 @@ major_version = 15
     });
   });
 
-  it.live("emits a YAML services array for --output yaml", () => {
+  it.effect("emits a YAML services array for --output yaml", () => {
     const { layer, out } = setup({ goOutput: Option.some("yaml") });
 
     return Effect.gen(function* () {
@@ -704,7 +704,7 @@ major_version = 15
     });
   });
 
-  it.live("rejects --output env", () => {
+  it.effect("rejects --output env", () => {
     const { layer } = setup({ goOutput: Option.some("env") });
 
     return Effect.gen(function* () {
@@ -713,7 +713,7 @@ major_version = 15
     });
   });
 
-  it.live("warns to stderr when the project-ref file exists but cannot be read", () =>
+  it.effect("warns to stderr when the project-ref file exists but cannot be read", () =>
     // A directory at the ref path makes `exists()` true but `readFileString()`
     // fail (EISDIR), exercising the read-error branch distinct from "file absent".
     Effect.gen(function* () {
@@ -732,7 +732,7 @@ major_version = 15
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("flushes telemetry state after the command finishes", () => {
+  it.effect("flushes telemetry state after the command finishes", () => {
     const { layer, telemetry } = setup();
 
     return Effect.gen(function* () {

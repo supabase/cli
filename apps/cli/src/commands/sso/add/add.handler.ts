@@ -1,4 +1,4 @@
-import { Effect, Option, Redacted, Result, Stdio } from "effect";
+import { Effect, Option, Predicate, Redacted, Result, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -330,9 +330,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
       if (output.format === "json" || output.format === "stream-json") {
         yield* output.success(
           "",
-          parsedJson !== null && typeof parsedJson === "object"
-            ? (parsedJson as Record<string, unknown>)
-            : { value: parsedJson },
+          Predicate.isObjectOrArray(parsedJson) ? { ...parsedJson } : { value: parsedJson },
         );
         return;
       }

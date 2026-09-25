@@ -173,7 +173,7 @@ const migrationsDirExists = Effect.fnUntraced(function* (workdir: string) {
 const tmp = useTempWorkdir();
 
 describe("migration fetch", () => {
-  it.live("writes migration files joined with the Go separator when the dir is empty", () => {
+  it.effect("writes migration files joined with the Go separator when the dir is empty", () => {
     const { layer, out } = setup(tmp.current, {
       rows: [
         {
@@ -194,7 +194,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes a lone separator for a row with no statements (Go parity)", () => {
+  it.effect("writes a lone separator for a row with no statements (Go parity)", () => {
     // A schema_migrations row can have a NULL/empty statements array; joining still
     // yields exactly ";\n", not an empty file. This locks that byte behavior.
     const { layer } = setup(tmp.current, {
@@ -206,7 +206,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prompts before overwriting a non-empty directory and proceeds on yes", () => {
+  it.effect("prompts before overwriting a non-empty directory and proceeds on yes", () => {
     const { layer } = setup(tmp.current, {
       confirm: true,
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
@@ -218,7 +218,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("cancels with context canceled when the overwrite prompt is declined", () => {
+  it.effect("cancels with context canceled when the overwrite prompt is declined", () => {
     const { layer } = setup(tmp.current, {
       confirm: false,
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
@@ -235,7 +235,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors a piped 'n' answer without a TTY (cancels the overwrite)", () => {
+  it.effect("honors a piped 'n' answer without a TTY (cancels the overwrite)", () => {
     // The overwrite prompt defaults to YES; piped stdin still overrides it without a TTY.
     const { layer } = setup(tmp.current, {
       isTTY: false,
@@ -254,7 +254,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("bypasses the overwrite prompt with --yes (echoes the auto-answer)", () => {
+  it.effect("bypasses the overwrite prompt with --yes (echoes the auto-answer)", () => {
     const { layer, out } = setup(tmp.current, {
       yes: true,
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
@@ -267,7 +267,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "auto-confirms the overwrite prompt from SUPABASE_YES in the project .env (Go loadNestedEnv)",
     () => {
       // SUPABASE_YES lives only in supabase/.env; the project env loads before the
@@ -285,7 +285,7 @@ describe("migration fetch", () => {
     },
   );
 
-  it.live("still prompts on stderr in json mode and proceeds on a piped yes", () => {
+  it.effect("still prompts on stderr in json mode and proceeds on a piped yes", () => {
     // The overwrite prompt still writes to stderr and reads stdin in json mode; it must
     // not silently auto-accept.
     const { layer, out } = setup(tmp.current, {
@@ -307,7 +307,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors a piped no in json mode (cancels the overwrite, no auto-accept)", () => {
+  it.effect("honors a piped no in json mode (cancels the overwrite, no auto-accept)", () => {
     const { layer } = setup(tmp.current, {
       format: "json",
       pipedInput: "n\n",
@@ -325,7 +325,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a hostile version/name from the history table (path traversal guard)", () => {
+  it.effect("rejects a hostile version/name from the history table (path traversal guard)", () => {
     // A tampered remote `schema_migrations` row could use `..`/separators to
     // escape the migrations dir (CWE-22). The guard rejects it before writing.
     const { layer } = setup(tmp.current, {
@@ -342,7 +342,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes a Go-valid signed version verbatim (no all-digits requirement)", () => {
+  it.effect("writes a Go-valid signed version verbatim (no all-digits requirement)", () => {
     // The raw version column writes verbatim into <version>_<name>.sql with no digit
     // check, so a value like "-1" still fetches instead of aborting the run.
     const { layer } = setup(tmp.current, {
@@ -354,7 +354,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a hostile version from the history table (traversal guard on version)", () => {
+  it.effect("rejects a hostile version from the history table (traversal guard on version)", () => {
     // Traversal hardening covers the version field too, not just name.
     const { layer } = setup(tmp.current, {
       rows: [{ version: "../../etc", name: "x", statements: [] }],
@@ -370,7 +370,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a write failure", () => {
+  it.effect("reports a write failure", () => {
     // A file at .../migrations makes makeDirectory fail; supabase itself must stay a
     // real directory, since the handler's project-env load reads supabase/.env* before
     // this mkdir and would hit ENOTDIR first otherwise.
@@ -386,7 +386,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves DB config before creating the migrations dir or prompting", () => {
+  it.effect("resolves DB config before creating the migrations dir or prompting", () => {
     const { layer, out } = setup(tmp.current, { resolveFails: true });
     return Effect.gen(function* () {
       const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
@@ -400,7 +400,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "rejects --db-url combined with --linked before reading the project .env (CLI-1878)",
     () => {
       // A flag conflict must surface even when supabase/.env is malformed, which would
@@ -422,7 +422,7 @@ describe("migration fetch", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fetches from the project given via --project-ref, overriding the default linked ref",
     () => {
       // VALID_REF is the fake resolver's fallback; the flag must win over it and drive
@@ -438,7 +438,7 @@ describe("migration fetch", () => {
     },
   );
 
-  it.live("rejects --project-ref combined with an explicit --local target", () => {
+  it.effect("rejects --project-ref combined with an explicit --local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, out, cache } = setup(tmp.current, { cliArgs: ["--local"] });
     return Effect.gen(function* () {

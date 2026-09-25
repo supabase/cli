@@ -73,7 +73,7 @@ function setupDohTransport(respond: () => Response) {
 }
 
 describe("feedbackFetch with --dns-resolver https", () => {
-  it.live("preserves supabase-js auth headers through the DoH rewrite on submit", () => {
+  it.effect("preserves supabase-js auth headers through the DoH rewrite on submit", () => {
     const { layer, requests } = setupDohTransport(
       () =>
         new Response(JSON.stringify(TOKEN), {
@@ -99,7 +99,7 @@ describe("feedbackFetch with --dns-resolver https", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "preserves the x-feedback-token capability header through the DoH rewrite on delete",
     () => {
       const { layer, httpLines, requests } = setupDohTransport(

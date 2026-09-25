@@ -65,7 +65,7 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 describe("network-bans get integration", () => {
-  it.live("writes the stderr heading and JSON array bytes in text mode", () => {
+  it.effect("writes the stderr heading and JSON array bytes in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
@@ -80,7 +80,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML bytes for --output toml", () => {
+  it.effect("emits TOML bytes for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
@@ -89,7 +89,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML bytes for --output yaml", () => {
+  it.effect("emits YAML bytes for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
@@ -99,7 +99,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible JSON bytes for --output json", () => {
+  it.effect("emits Go-compatible JSON bytes for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
@@ -114,7 +114,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as a JSON alias matching Go's get.go switch", () => {
+  it.effect("treats --output pretty as a JSON alias matching Go's get.go switch", () => {
     const { layer, out } = setup({ goOutput: "pretty" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
@@ -129,7 +129,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with the env-not-supported error for --output env", () => {
+  it.effect("fails with the env-not-supported error for --output env", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkBansGet({ projectRef: Option.none() }));
@@ -143,7 +143,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured JSON success payload via --output-format=json", () => {
+  it.effect("emits a structured JSON success payload via --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
@@ -157,7 +157,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event via --output-format=stream-json", () => {
+  it.effect("emits a result event via --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
@@ -169,7 +169,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over TS --output-format when both are set", () => {
+  it.effect("Go --output wins over TS --output-format when both are set", () => {
     const { layer, out } = setup({ format: "json", goOutput: "toml" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
@@ -178,7 +178,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("posts to the /network-bans/retrieve endpoint with the resolved ref", () => {
+  it.effect("posts to the /network-bans/retrieve endpoint with the resolved ref", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
@@ -188,7 +188,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over CommandSettings.projectId", () => {
+  it.effect("uses --project-ref flag value over CommandSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup();
     return Effect.gen(function* () {
@@ -197,7 +197,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with NetworkBansGetUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with NetworkBansGetUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkBansGet({ projectRef: Option.none() }));
@@ -210,7 +210,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a network error when the API transport fails", () => {
+  it.effect("reports a network error when the API transport fails", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkBansGet({ projectRef: Option.none() }));
@@ -223,7 +223,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
+  it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
@@ -231,7 +231,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry and writes linked-project cache on success", () => {
+  it.effect("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
@@ -240,7 +240,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry even on API failure", () => {
+  it.effect("flushes telemetry even on API failure", () => {
     const { layer, telemetry, cache } = setupTracked({ status: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(

@@ -38,7 +38,7 @@ function project() {
 }
 
 describe("notebooks push", () => {
-  it.live("updates the notebook of that name and creates the ones with no match", () => {
+  it.effect("updates the notebook of that name and creates the ones with no match", () => {
     const repo = project();
     const { layer, http, out } = setupNotebooks({
       command: "push",
@@ -85,7 +85,7 @@ describe("notebooks push", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("pushes a single notebook by name without touching the rest", () => {
+  it.effect("pushes a single notebook by name without touching the rest", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({
       command: "push",
@@ -114,7 +114,7 @@ describe("notebooks push", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the named notebook is not in the notebooks directory", () => {
+  it.effect("fails when the named notebook is not in the notebooks directory", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({ command: "push", workdir: repo.dir });
 
@@ -131,7 +131,7 @@ describe("notebooks push", () => {
 
   // One unreadable file stops the whole push: the alternative is a project left
   // half-written, with no way to tell how far it got.
-  it.live("sends nothing when one of the files is not a notebook", () => {
+  it.effect("sends nothing when one of the files is not a notebook", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({ command: "push", workdir: repo.dir });
 
@@ -145,7 +145,7 @@ describe("notebooks push", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("deletes the project notebooks the directory does not have when asked to", () => {
+  it.effect("deletes the project notebooks the directory does not have when asked to", () => {
     const repo = project();
     const { layer, http, out } = setupNotebooks({
       command: "push",
@@ -179,7 +179,7 @@ describe("notebooks push", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes them into the notebooks directory instead when asked to", () => {
+  it.effect("writes them into the notebooks directory instead when asked to", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({
       command: "push",
@@ -205,7 +205,7 @@ describe("notebooks push", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("leaves both sides alone when there is nobody to ask", () => {
+  it.effect("leaves both sides alone when there is nobody to ask", () => {
     const repo = project();
     const { layer, http, out } = setupNotebooks({
       command: "push",
@@ -233,7 +233,7 @@ describe("notebooks push", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails instead of treating an unreadable notebooks path as empty", () => {
+  it.effect("fails instead of treating an unreadable notebooks path as empty", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({ command: "push", workdir: repo.dir });
 
@@ -249,7 +249,7 @@ describe("notebooks push", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("refuses an unsafe remote name before it can escape the notebooks directory", () => {
+  it.effect("refuses an unsafe remote name before it can escape the notebooks directory", () => {
     const repo = project();
     const { layer, http, out } = setupNotebooks({
       command: "push",
@@ -277,7 +277,7 @@ describe("notebooks push", () => {
 
   // A directory of files cannot say which of two notebooks of one name it means,
   // and guessing would write one user's notebook over another's.
-  it.live("refuses a project holding two notebooks of the same name", () => {
+  it.effect("refuses a project holding two notebooks of the same name", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({
       command: "push",
@@ -304,7 +304,7 @@ describe("notebooks push", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the machine payload without text output", () => {
+  it.effect("emits the machine payload without text output", () => {
     const repo = project();
     const { layer, out } = setupNotebooks({
       command: "push",

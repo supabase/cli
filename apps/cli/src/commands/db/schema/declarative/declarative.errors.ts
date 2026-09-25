@@ -135,6 +135,6 @@ export class DeclarativeApplyError extends Data.TaggedError("DeclarativeApplyErr
  */
 export function readErrorSuggestion(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("suggestion" in error)) return undefined;
-  const { suggestion } = error as { suggestion: unknown };
+  const { suggestion } = error;
   return typeof suggestion === "string" ? suggestion : undefined;
 }

@@ -6,7 +6,7 @@ import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts
 import { functionsServeCommand } from "./serve.command.ts";
 
 describe("functions serve command", () => {
-  it.live("accepts all legacy function name positional arguments", () => {
+  it.effect("accepts all legacy function name positional arguments", () => {
     let handlerRan = false;
     let parsedFunctionNames: ReadonlyArray<string> = [];
     const command = functionsServeCommand.pipe(

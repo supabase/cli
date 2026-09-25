@@ -116,7 +116,7 @@ function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
 }
 
 describe("init", () => {
-  it.live("creates config.toml natively without the Go proxy", () => {
+  it.effect("creates config.toml natively without the Go proxy", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -139,34 +139,37 @@ describe("init", () => {
     });
   });
 
-  it.live("requires --experimental when --use-orioledb is set, with cobra's exact wording", () => {
-    const tempDir = tempRoot.current;
+  it.effect(
+    "requires --experimental when --use-orioledb is set, with cobra's exact wording",
+    () => {
+      const tempDir = tempRoot.current;
 
-    return Effect.gen(function* () {
-      const { layer } = setup(tempDir, { experimental: false });
+      return Effect.gen(function* () {
+        const { layer } = setup(tempDir, { experimental: false });
 
-      const exit = yield* init({
-        interactive: false,
-        useOrioledb: true,
-        force: false,
-        withVscodeWorkspace: false,
-        withVscodeSettings: false,
-        withIntellijSettings: false,
-      }).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* init({
+          interactive: false,
+          useOrioledb: true,
+          force: false,
+          withVscodeWorkspace: false,
+          withVscodeSettings: false,
+          withIntellijSettings: false,
+        }).pipe(Effect.provide(layer), Effect.exit);
 
-      const error = findFailure(exit);
-      expect(error["_tag"]).toBe("InitExperimentalRequiredError");
-      expect(error["message"]).toBe(`required flag(s) "experimental" not set`);
-      expect(error["suggestion"]).toBeUndefined();
+        const error = findFailure(exit);
+        expect(error["_tag"]).toBe("InitExperimentalRequiredError");
+        expect(error["message"]).toBe(`required flag(s) "experimental" not set`);
+        expect(error["suggestion"]).toBeUndefined();
 
-      expect(yield* renderFailureToStderr(exit)).toEqual([
-        `required flag(s) "experimental" not set\n`,
-        "Try rerunning the command with --debug to troubleshoot the error.\n",
-      ]);
-    });
-  });
+        expect(yield* renderFailureToStderr(exit)).toEqual([
+          `required flag(s) "experimental" not set\n`,
+          "Try rerunning the command with --debug to troubleshoot the error.\n",
+        ]);
+      });
+    },
+  );
 
-  it.live("fails with Go's exact error when config.toml already exists", () => {
+  it.effect("fails with Go's exact error when config.toml already exists", () => {
     const tempDir = tempRoot.current;
 
     const initFlags = {
@@ -200,7 +203,7 @@ describe("init", () => {
     });
   });
 
-  it.live("renders the Windows form of the already-exists error on win32", () => {
+  it.effect("renders the Windows form of the already-exists error on win32", () => {
     const tempDir = tempRoot.current;
 
     const initFlags = {
@@ -234,7 +237,7 @@ describe("init", () => {
     });
   });
 
-  it.live("supports the hidden IDE flags natively", () => {
+  it.effect("supports the hidden IDE flags natively", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -263,7 +266,7 @@ describe("init", () => {
     });
   });
 
-  it.live("respects the legacy --workdir global flag", () => {
+  it.effect("respects the legacy --workdir global flag", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -291,7 +294,7 @@ describe("init", () => {
     withIntellijSettings: false,
   } as const;
 
-  it.live("init -i --yes writes VS Code settings with the Go echo instead of prompting", () => {
+  it.effect("init -i --yes writes VS Code settings with the Go echo instead of prompting", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -308,7 +311,7 @@ describe("init", () => {
     });
   });
 
-  it.live("init -i with SUPABASE_YES=1 auto-accepts the VS Code prompt like --yes", () => {
+  it.effect("init -i with SUPABASE_YES=1 auto-accepts the VS Code prompt like --yes", () => {
     const tempDir = tempRoot.current;
 
     return withEnvVar(
@@ -328,7 +331,7 @@ describe("init", () => {
     );
   });
 
-  it.live("init -i --yes writes VS Code settings even when stdout is piped (Go parity)", () => {
+  it.effect("init -i --yes writes VS Code settings even when stdout is piped (Go parity)", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -343,7 +346,7 @@ describe("init", () => {
     });
   });
 
-  it.live("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1", () => {
+  it.effect("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -360,7 +363,7 @@ describe("init", () => {
     });
   });
 
-  it.live("keeps the established template when SUPABASE_EXPERIMENTAL_STACK=0", () => {
+  it.effect("keeps the established template when SUPABASE_EXPERIMENTAL_STACK=0", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -374,7 +377,7 @@ describe("init", () => {
     });
   });
 
-  it.live("fails closed when SUPABASE_EXPERIMENTAL_STACK is not 0 or 1", () => {
+  it.effect("fails closed when SUPABASE_EXPERIMENTAL_STACK is not 0 or 1", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {

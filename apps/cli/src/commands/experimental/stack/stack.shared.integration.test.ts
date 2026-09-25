@@ -62,7 +62,7 @@ const resolveTarget = (layer: Layer.Layer<StackTargetResolver>, input: TargetInp
   }).pipe(Effect.provide(layer));
 
 describe("stack target resolver", () => {
-  it.live("resolves an explicit id without reading the current project identity", () =>
+  it.effect("resolves an explicit id without reading the current project identity", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -86,7 +86,7 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects an explicit id when its saved runtime differs", () =>
+  it.effect("rejects an explicit id when its saved runtime differs", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -118,7 +118,7 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("selects a saved stack by the package identity tuple", () =>
+  it.effect("selects a saved stack by the package identity tuple", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -142,7 +142,7 @@ describe("stack target resolver", () => {
 });
 
 describe("stack API layer", () => {
-  it.live("creates, discovers, and opens state without starting an owner", () =>
+  it.effect("creates, discovers, and opens state without starting an owner", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

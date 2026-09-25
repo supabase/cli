@@ -1,4 +1,4 @@
-import { DateTime, Option } from "effect";
+import { DateTime, Option, Predicate } from "effect";
 
 import { goFormatFloat } from "../../../command-internal/go-float.ts";
 import { stringWidth } from "../../../command-internal/rune-width.ts";
@@ -31,8 +31,8 @@ function goFormatValue(value: unknown): string {
   // `Buffer` (`Uint8Array`), which would otherwise fall into the object branch below.
   if (value instanceof Uint8Array) return `[${Array.from(value).join(" ")}]`;
   if (Array.isArray(value)) return `[${value.map(goFormatValue).join(" ")}]`;
-  if (typeof value === "object") {
-    const obj = value as Record<string, unknown>;
+  if (Predicate.isObject(value)) {
+    const obj = value;
     const keys = Object.keys(obj).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     return `map[${keys.map((k) => `${k}:${goFormatValue(obj[k])}`).join(" ")}]`;
   }
@@ -498,11 +498,11 @@ export function orderedKeys(body: string): ReadonlyArray<string> {
   let i = open + 1;
   let depth = 1;
   while (i < body.length && depth > 0) {
-    const ch = body[i]!;
+    const ch = body.charAt(i);
     if (ch === '"') {
       const { value, end } = readJsonStringToken(body, i);
       i = end;
-      while (i < body.length && /\s/.test(body[i]!)) i++;
+      while (i < body.length && /\s/.test(body.charAt(i))) i++;
       // A string immediately followed by `:` at the first object's top level is a key.
       if (depth === 1 && body[i] === ":") keys.push(value);
       continue;

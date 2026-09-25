@@ -11,6 +11,7 @@ import {
   Layer,
   Option,
   Path,
+  Predicate,
 } from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -458,7 +459,11 @@ const stderr = (out: ReturnType<typeof mockOutput>) => stripAnsi(out.stderrText)
 const failureTag = (exit: Exit.Exit<unknown, unknown>): string | undefined => {
   if (!Exit.isFailure(exit)) return undefined;
   const failure = Cause.findErrorOption(exit.cause);
-  return Option.isSome(failure) ? (failure.value as { readonly _tag?: string })._tag : undefined;
+  return Option.isSome(failure) &&
+    Predicate.hasProperty(failure.value, "_tag") &&
+    Predicate.isString(failure.value._tag)
+    ? failure.value._tag
+    : undefined;
 };
 
 const tmp = useTempWorkdir();

@@ -1,4 +1,4 @@
-import { Effect, type FileSystem, Match, Option, type Path } from "effect";
+import { Effect, type FileSystem, Match, Option, type Path, Predicate } from "effect";
 import * as SmolToml from "smol-toml";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import {
@@ -11,10 +11,10 @@ import type { InspectRule } from "./report.rules.ts";
 
 type RawDoc = { readonly [key: string]: unknown };
 
+const NO_RULES: ReadonlyArray<InspectRule> = [];
+
 function asRecord(value: unknown): RawDoc | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as RawDoc)
-    : undefined;
+  return Predicate.isObject(value) ? value : undefined;
 }
 
 /**
@@ -60,7 +60,7 @@ export const readInspectRules = Effect.fnUntraced(function* (
     ),
   );
 
-  if (content === undefined) return [] as ReadonlyArray<InspectRule>;
+  if (content === undefined) return NO_RULES;
 
   const doc = yield* Effect.try({
     try: () => asRecord(SmolToml.parse(content)),
@@ -77,17 +77,17 @@ export const readInspectRules = Effect.fnUntraced(function* (
   // wraps into an entry, which fails the table check below.
   let entries: ReadonlyArray<unknown>;
   if (rawRules === undefined) {
-    return [] as ReadonlyArray<InspectRule>;
+    return NO_RULES;
   } else if (Array.isArray(rawRules)) {
     entries = rawRules;
   } else {
     const asMap = asRecord(rawRules);
     if (asMap !== undefined && Object.keys(asMap).length === 0) {
-      return [] as ReadonlyArray<InspectRule>;
+      return NO_RULES;
     }
     entries = [rawRules];
   }
-  if (entries.length === 0) return [] as ReadonlyArray<InspectRule>;
+  if (entries.length === 0) return NO_RULES;
 
   const RULE_FIELDS = ["query", "name", "pass", "fail"] as const;
 
@@ -113,29 +113,28 @@ export const readInspectRules = Effect.fnUntraced(function* (
     }
     // An unknown or misspelled key aborts the whole load instead of being ignored.
     const unknownKeys = Object.keys(record).filter(
-      (key) => !(RULE_FIELDS as ReadonlyArray<string>).includes(key),
+      (key) => !RULE_FIELDS.some((field) => field === key),
     );
     if (unknownKeys.length > 0) {
       return yield* new DbConfigLoadError({
         message: `failed to load config: experimental.inspect.rules[${index}] has invalid keys: ${unknownKeys.join(", ")}`,
       });
     }
-    const fields: Record<string, string> = {};
-    for (const field of RULE_FIELDS) {
+    const readField = Effect.fnUntraced(function* (field: (typeof RULE_FIELDS)[number]) {
       const coerced = coerceRuleField(record[field]);
       if (coerced === undefined) {
         return yield* new DbConfigLoadError({
           message: `failed to load config: experimental.inspect.rules[${index}].${field} expected a string`,
         });
       }
-      fields[field] = yield* expandEnv(coerced);
-    }
+      return yield* expandEnv(coerced);
+    });
     rules.push({
-      query: fields["query"]!,
-      name: fields["name"]!,
-      pass: fields["pass"]!,
-      fail: fields["fail"]!,
+      query: yield* readField("query"),
+      name: yield* readField("name"),
+      pass: yield* readField("pass"),
+      fail: yield* readField("fail"),
     });
   }
-  return rules as ReadonlyArray<InspectRule>;
+  return rules;
 });

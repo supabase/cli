@@ -135,7 +135,7 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 describe("projects list integration", () => {
-  it.live("renders a Glamour table with all six columns in text mode", () => {
+  it.effect("renders a Glamour table with all six columns in text mode", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT, OTHER_PROJECT] });
     return Effect.gen(function* () {
       yield* projectsList({});
@@ -151,7 +151,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("marks the linked project with a bullet", () => {
+  it.effect("marks the linked project with a bullet", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
       yield* projectsList({});
@@ -159,7 +159,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders no bullet when nothing is linked", () => {
+  it.effect("renders no bullet when nothing is linked", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: false });
     return Effect.gen(function* () {
       yield* projectsList({});
@@ -167,7 +167,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("warns on stderr when no project is linked (Go parity)", () => {
+  it.effect("warns on stderr when no project is linked (Go parity)", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: false });
     return Effect.gen(function* () {
       yield* projectsList({});
@@ -175,7 +175,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not warn on stderr when a project is linked", () => {
+  it.effect("does not warn on stderr when a project is linked", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
       yield* projectsList({});
@@ -184,7 +184,7 @@ describe("projects list integration", () => {
   });
 
   describe("parent-fallback marker after linking a branch (CLI-2167 follow-up)", () => {
-    it.live(
+    it.effect(
       "marks the parent's row (via linked-project.json) when the linked ref is a branch not in the list, asserting both the bullet and json linked:true",
       () => {
         const { layer, out, workdir } = setup({
@@ -201,27 +201,30 @@ describe("projects list integration", () => {
       },
     );
 
-    it.live("marks the parent row with linked:true in the json payload (structured output)", () => {
-      const { layer, out, workdir } = setup({
-        format: "json",
-        projectId: Option.none(),
-        response: [SAMPLE_PROJECT, PARENT_PROJECT],
-      });
-      return Effect.gen(function* () {
-        yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
-        yield* writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
-        yield* projectsList({});
-        const success = out.messages.find((m) => m.type === "success");
-        const projects = success?.data?.projects as ReadonlyArray<{
-          id: string;
-          linked: boolean;
-        }>;
-        expect(projects.find((p) => p.id === PARENT_PROJECT.id)?.linked).toBe(true);
-        expect(projects.find((p) => p.id === SAMPLE_PROJECT.id)?.linked).toBe(false);
-      }).pipe(Effect.provide(layer));
-    });
+    it.effect(
+      "marks the parent row with linked:true in the json payload (structured output)",
+      () => {
+        const { layer, out, workdir } = setup({
+          format: "json",
+          projectId: Option.none(),
+          response: [SAMPLE_PROJECT, PARENT_PROJECT],
+        });
+        return Effect.gen(function* () {
+          yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
+          yield* writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
+          yield* projectsList({});
+          const success = out.messages.find((m) => m.type === "success");
+          const projects = success?.data?.projects as ReadonlyArray<{
+            id: string;
+            linked: boolean;
+          }>;
+          expect(projects.find((p) => p.id === PARENT_PROJECT.id)?.linked).toBe(true);
+          expect(projects.find((p) => p.id === SAMPLE_PROJECT.id)?.linked).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+    );
 
-    it.live(
+    it.effect(
       "an exact match wins outright — a cache pointing at a different project must not steal the marker",
       () => {
         const { layer, out, workdir } = setup({
@@ -238,7 +241,7 @@ describe("projects list integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "no marker when the linked ref matches no row and the parent chain yields nothing usable",
       () => {
         const { layer, out } = setup({
@@ -256,7 +259,7 @@ describe("projects list integration", () => {
     );
   });
 
-  it.live("emits a success event with { projects } for --output-format json", () => {
+  it.effect("emits a success event with { projects } for --output-format json", () => {
     const { layer, out } = setup({ format: "json", response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
       yield* projectsList({});
@@ -266,7 +269,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event for --output-format stream-json", () => {
+  it.effect("emits a success event for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
       yield* projectsList({});
@@ -274,7 +277,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON including `linked` for --output json", () => {
+  it.effect("emits Go-byte-exact indented JSON including `linked` for --output json", () => {
     const { layer, out } = setup({ goOutput: "json", response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
       yield* projectsList({});
@@ -284,7 +287,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a YAML array for --output yaml", () => {
+  it.effect("emits a YAML array for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
       yield* projectsList({});
@@ -293,7 +296,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("wraps the result as { projects = [...] } for --output toml", () => {
+  it.effect("wraps the result as { projects = [...] } for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
       yield* projectsList({});
@@ -304,7 +307,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectsEnvNotSupportedError for --output env", () => {
+  it.effect("fails with ProjectsEnvNotSupportedError for --output env", () => {
     const { layer } = setup({ goOutput: "env", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsList({}));
@@ -317,7 +320,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectsListNetworkError on transport failure", () => {
+  it.effect("fails with ProjectsListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsList({}));
@@ -330,7 +333,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectsListUnexpectedStatusError on HTTP 500", () => {
+  it.effect("fails with ProjectsListUnexpectedStatusError on HTTP 500", () => {
     const { layer } = setup({ status: 500, response: [] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsList({}));
@@ -341,7 +344,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with an unexpected-status error when the body is not an array", () => {
+  it.effect("fails with an unexpected-status error when the body is not an array", () => {
     const { layer } = setup({ response: {} as unknown as Projects });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsList({}));
@@ -352,7 +355,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("tolerates placeholder/short refs in the response (lenient parse)", () => {
+  it.effect("tolerates placeholder/short refs in the response (lenient parse)", () => {
     // The typed client rejects refs under 20 chars; the raw-HTTP path renders them verbatim
     // so placeholder fixtures still work.
     const placeholder = { ...SAMPLE_PROJECT, id: "__PROJECT_REF__", ref: "__PROJECT_REF__" };
@@ -363,7 +366,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on success", () => {
+  it.effect("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked({ linked: true });
     return Effect.gen(function* () {
       yield* projectsList({});
@@ -372,7 +375,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry but skips the cache write when nothing is linked", () => {
+  it.effect("flushes telemetry but skips the cache write when nothing is linked", () => {
     const { layer, telemetry, cache } = setupTracked({ linked: false });
     return Effect.gen(function* () {
       yield* projectsList({});

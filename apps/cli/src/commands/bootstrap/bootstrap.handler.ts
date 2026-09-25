@@ -208,7 +208,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
 
     // A fresh notifier per retry block keeps this step's "Retry (n/8)" counter independent of
     // the health-poll and push retries below.
-    const apiKeysNotify = bootstrapRetryNotify();
+    const apiKeysNotify = yield* bootstrapRetryNotify;
     const keys = yield* Effect.gen(function* () {
       if (isText) yield* output.raw("Linking project...\n", "stderr");
       return yield* getProjectApiKeys(projectRef);
@@ -234,12 +234,20 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     yield* fs.makeDirectory(path.dirname(paths.projectRef), { recursive: true });
     yield* fs.writeFileString(paths.projectRef, projectRef);
 
-    const healthNotify = bootstrapRetryNotify();
+    const healthNotify = yield* bootstrapRetryNotify;
     yield* Effect.gen(function* () {
       if (isText) yield* output.raw("Checking project health...\n", "stderr");
-      const services = yield* api.v1
-        .getServicesHealth({ ref: projectRef, services: ["db"] })
-        .pipe(Effect.catch(mapHealthError));
+      const services = yield* api.v1.getServicesHealth({ ref: projectRef, services: ["db"] }).pipe(
+        Effect.catchTags({
+          HttpClientError: mapHealthHttpError,
+          SchemaError: (cause) =>
+            Effect.fail(
+              new BootstrapHealthError({ message: `Error status 0: ${cause}`, decode: true }),
+            ),
+          HttpBodyError: healthTransportError,
+          SupabaseApiInputError: healthTransportError,
+        }),
+      );
       for (const service of services) {
         if (!service.healthy) {
           return yield* new BootstrapHealthError({
@@ -275,10 +283,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       Effect.catch((cause) =>
         Effect.gen(function* () {
           envFileWritten = false;
-          yield* output.raw(
-            `Failed to create .env file: ${cause instanceof Error ? cause.message : String(cause)}\n`,
-            "stderr",
-          );
+          yield* output.raw(`Failed to create .env file: ${cause.message}\n`, "stderr");
         }),
       ),
     );
@@ -307,7 +312,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     // Passes workdir/projectRef/toml through directly rather than calling the full `dbPush`
     // command, since its CommandSettings-based resolvers would be stale after this handler's
     // own chdir above.
-    const pushNotify = bootstrapRetryNotify();
+    const pushNotify = yield* bootstrapRetryNotify;
     yield* dbPushCore({
       workdir,
       projectRef,
@@ -359,31 +364,20 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
   );
 });
 
-// True when `cause` is the generated client's undecodable `SchemaError`, not a transport failure.
-function isDecodeFailureCause(cause: unknown): boolean {
-  if (typeof cause !== "object" || cause === null || !("_tag" in cause)) {
-    return false;
-  }
-  return cause._tag === "SchemaError";
-}
+const healthTransportError = (cause: unknown) =>
+  Effect.fail(new BootstrapHealthError({ message: `Error status 0: ${cause}`, transport: true }));
 
 // Non-200 branch: `Error status <status>: <body>`.
-const mapHealthError = (cause: unknown): Effect.Effect<never, BootstrapHealthError> => {
-  if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
-    const status = cause.response.status;
-    return cause.response.text.pipe(
-      Effect.orElseSucceed(() => ""),
-      Effect.map(sanitizeErrorBody),
-      Effect.flatMap((body) =>
-        Effect.fail(
-          new BootstrapHealthError({ message: `Error status ${status}: ${body}`, status }),
-        ),
-      ),
-    );
-  }
-  return Effect.fail(
-    isDecodeFailureCause(cause)
-      ? new BootstrapHealthError({ message: `Error status 0: ${cause}`, decode: true })
-      : new BootstrapHealthError({ message: `Error status 0: ${cause}`, transport: true }),
+const mapHealthHttpError = (
+  cause: HttpClientError.HttpClientError,
+): Effect.Effect<never, BootstrapHealthError> => {
+  if (cause.response === undefined) return healthTransportError(cause);
+  const status = cause.response.status;
+  return cause.response.text.pipe(
+    Effect.orElseSucceed(() => ""),
+    Effect.map(sanitizeErrorBody),
+    Effect.flatMap((body) =>
+      Effect.fail(new BootstrapHealthError({ message: `Error status ${status}: ${body}`, status })),
+    ),
   );
 };

@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option, Stream } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { StorageGatewayError } from "../../command-internal/storage-gateway.errors.ts";
@@ -11,6 +11,39 @@ import { goPathSplit, splitBucketPrefix } from "../../command-internal/storage-u
  * trailing `/`. The `Loading page:` notice is text-mode only.
  */
 
+const storagePaths = (
+  gateway: StorageGateway,
+  output: typeof Output.Service,
+  remotePath: string,
+): Stream.Stream<string, StorageGatewayError> => {
+  const [bucket, prefix] = splitBucketPrefix(remotePath);
+  if (bucket.length === 0 || (prefix.length === 0 && !remotePath.endsWith("/"))) {
+    return Stream.unwrap(
+      gateway
+        .listBuckets()
+        .pipe(
+          Effect.map((buckets) =>
+            Stream.fromArray(
+              buckets.filter((b) => b.name.startsWith(bucket)).map((b) => `${b.name}/`),
+            ),
+          ),
+        ),
+    );
+  }
+  return Stream.paginate(0, (page) =>
+    (page > 0 && output.format === "text"
+      ? output.raw(`Loading page: ${page}\n`, "stderr")
+      : Effect.void
+    ).pipe(
+      Effect.andThen(gateway.listObjects(bucket, prefix, page)),
+      Effect.map((objects): readonly [ReadonlyArray<string>, Option.Option<number>] => [
+        objects.map((object) => (object.isDir ? `${object.name}/` : object.name)),
+        objects.length === PAGE_LIMIT ? Option.some(page + 1) : Option.none(),
+      ]),
+    ),
+  );
+};
+
 /**
  * Lists buckets filtered by prefix when `remotePath` resolves to the bucket root;
  * otherwise pages through objects under the prefix.
@@ -21,31 +54,7 @@ export const iterateStoragePaths = <E>(
   remotePath: string,
   callback: (objectName: string) => Effect.Effect<void, E>,
 ): Effect.Effect<void, StorageGatewayError | E> =>
-  Effect.gen(function* () {
-    const [bucket, prefix] = splitBucketPrefix(remotePath);
-    if (bucket.length === 0 || (prefix.length === 0 && !remotePath.endsWith("/"))) {
-      const buckets = yield* gateway.listBuckets();
-      for (const b of buckets) {
-        if (b.name.startsWith(bucket)) {
-          yield* callback(`${b.name}/`);
-        }
-      }
-      return;
-    }
-    let pages = 1;
-    for (let page = 0; page < pages; page++) {
-      const objects = yield* gateway.listObjects(bucket, prefix, page);
-      for (const object of objects) {
-        yield* callback(object.isDir ? `${object.name}/` : object.name);
-      }
-      if (objects.length === PAGE_LIMIT) {
-        if (output.format === "text") {
-          yield* output.raw(`Loading page: ${pages}\n`, "stderr");
-        }
-        pages++;
-      }
-    }
-  });
+  storagePaths(gateway, output, remotePath).pipe(Stream.runForEach(callback));
 
 /** Collects every entry name under `remotePath` into an array. */
 export const listStoragePaths = (
@@ -53,15 +62,7 @@ export const listStoragePaths = (
   output: typeof Output.Service,
   remotePath: string,
 ): Effect.Effect<ReadonlyArray<string>, StorageGatewayError> =>
-  Effect.gen(function* () {
-    const result: Array<string> = [];
-    yield* iterateStoragePaths(gateway, output, remotePath, (objectName) =>
-      Effect.sync(() => {
-        result.push(objectName);
-      }),
-    );
-    return result;
-  });
+  Stream.runCollect(storagePaths(gateway, output, remotePath));
 
 /**
  * Walks the directory tree with a stack, invoking `callback` with each object's

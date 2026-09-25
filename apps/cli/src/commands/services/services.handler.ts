@@ -75,17 +75,12 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
     // Warns on a ref-file read error, but treats a NotFound race between the
     // exists() check and this read as simply unlinked (silent, no warning).
     // Only the "failed to load project ref: " prefix is compatibility-bearing.
-    const content = yield* fs
-      .readFileString(projectRefPath)
-      .pipe(
-        Effect.catch((cause) =>
-          cause._tag === "PlatformError" && cause.reason._tag === "NotFound"
-            ? Effect.succeed("")
-            : output
-                .raw(`failed to load project ref: ${String(cause)}\n`, "stderr")
-                .pipe(Effect.as("")),
-        ),
-      );
+    const content = yield* fs.readFileString(projectRefPath).pipe(
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("")),
+      Effect.catch((cause) =>
+        output.raw(`failed to load project ref: ${String(cause)}\n`, "stderr").pipe(Effect.as("")),
+      ),
+    );
     const trimmed = content.trim();
     return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
   });

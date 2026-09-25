@@ -159,7 +159,7 @@ const writeProjectFile = Effect.fnUntraced(function* (workdir: string, name: str
 const tmp = useTempWorkdir();
 
 describe("migration repair", () => {
-  it.live("marks a version as applied by upserting from its local file", () => {
+  it.effect("marks a version as applied by upserting from its local file", () => {
     const { layer, execs, queries, out } = setup(tmp.current);
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
@@ -173,7 +173,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves the DB target before parsing positional versions", () => {
+  it.effect("resolves the DB target before parsing positional versions", () => {
     const { layer } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
       const exit = yield* migrationRepair(
@@ -187,7 +187,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("caches the linked project even when the repair-all prompt is declined", () => {
+  it.effect("caches the linked project even when the repair-all prompt is declined", () => {
     const { layer, cache } = setup(tmp.current, { confirm: false });
     return Effect.gen(function* () {
       const exit = yield* migrationRepair(input({ versions: [], status: "applied" })).pipe(
@@ -203,7 +203,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("marks versions as reverted by deleting them", () => {
+  it.effect("marks versions as reverted by deleting them", () => {
     const { layer, queries } = setup(tmp.current);
     return Effect.gen(function* () {
       yield* migrationRepair(
@@ -214,7 +214,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a non-numeric version", () => {
+  it.effect("rejects a non-numeric version", () => {
     const { layer } = setup(tmp.current);
     return Effect.gen(function* () {
       const exit = yield* migrationRepair(
@@ -232,7 +232,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a version outside Go's int range before any DB mutation", () => {
+  it.effect("rejects a version outside Go's int range before any DB mutation", () => {
     const { layer, execs, queries } = setup(tmp.current);
     return Effect.gen(function* () {
       const exit = yield* migrationRepair(
@@ -248,7 +248,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("repair-all truncates and reapplies local files on confirm", () => {
+  it.effect("repair-all truncates and reapplies local files on confirm", () => {
     const { layer, execs, queries } = setup(tmp.current, { confirm: true });
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
@@ -258,7 +258,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "repair-all with --status reverted wipes the whole history (no upserts, no deletes)",
     () => {
       // repair-all + reverted only queues TRUNCATE; DELETE is the non-repair-all path
@@ -274,7 +274,7 @@ describe("migration repair", () => {
     },
   );
 
-  it.live("repair-all cancels on a declined prompt", () => {
+  it.effect("repair-all cancels on a declined prompt", () => {
     const { layer, execs } = setup(tmp.current, { confirm: false });
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
@@ -290,7 +290,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("repair-all without a TTY and no piped answer falls back to NO (cancel)", () => {
+  it.effect("repair-all without a TTY and no piped answer falls back to NO (cancel)", () => {
     // isTTY only changes the read timeout; stdin is still read either way.
     const { layer, out } = setup(tmp.current, { isTTY: false });
     return Effect.gen(function* () {
@@ -306,7 +306,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("repair-all honors a piped 'y' answer without a TTY (proceeds)", () => {
+  it.effect("repair-all honors a piped 'y' answer without a TTY (proceeds)", () => {
     // Piped stdin is read even without a TTY, overriding the default no.
     const { layer, execs, queries } = setup(tmp.current, { isTTY: false, pipedInput: "y\n" });
     return Effect.gen(function* () {
@@ -317,7 +317,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("auto-confirms repair-all via SUPABASE_YES (no --yes flag)", () => {
+  it.effect("auto-confirms repair-all via SUPABASE_YES (no --yes flag)", () => {
     const { layer, execs, queries } = setup(tmp.current);
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
@@ -327,7 +327,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
   });
 
-  it.live(
+  it.effect(
     "auto-confirms repair-all via SUPABASE_YES in the project .env (Go loadNestedEnv)",
     () => {
       // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
@@ -342,7 +342,7 @@ describe("migration repair", () => {
     },
   );
 
-  it.live("surfaces a DB-config error before prompting (repair-all, unlinked)", () => {
+  it.effect("surfaces a DB-config error before prompting (repair-all, unlinked)", () => {
     const { layer, out } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
       const exit = yield* migrationRepair(input({ versions: [], status: "applied" })).pipe(
@@ -357,7 +357,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints the repaired, finished, and suggestion lines on success", () => {
+  it.effect("prints the repaired, finished, and suggestion lines on success", () => {
     const { layer, out } = setup(tmp.current);
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
@@ -372,7 +372,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints multiple repaired versions using Go's %v slice format", () => {
+  it.effect("prints multiple repaired versions using Go's %v slice format", () => {
     // The established format is space-separated and bracketed, with no commas; a
     // `.join(", ")` cleanup would silently change established output.
     const { layer, out } = setup(tmp.current);
@@ -388,7 +388,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a missing local file in applied mode", () => {
+  it.effect("reports a missing local file in applied mode", () => {
     const { layer } = setup(tmp.current); // no seeded file
     return Effect.gen(function* () {
       const exit = yield* migrationRepair(
@@ -402,7 +402,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rolls back and reports an update failure", () => {
+  it.effect("rolls back and reports an update failure", () => {
     const { layer, execs } = setup(tmp.current, { failSql: "WHERE version = ANY" });
     return Effect.gen(function* () {
       const exit = yield* migrationRepair(
@@ -417,7 +417,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --db-url combined with --linked", () => {
+  it.effect("rejects --db-url combined with --linked", () => {
     const { layer } = setup(tmp.current, { args: ["--db-url", "postgresql://x", "--linked"] });
     return Effect.gen(function* () {
       const exit = yield* migrationRepair(
@@ -435,27 +435,30 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("repairs the project given via --project-ref, overriding the default linked ref", () => {
-    // VALID_REF is the fake resolver's fallback; the flag must win over it and drive
-    // the cached ref.
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, cache } = setup(tmp.current);
-    return Effect.gen(function* () {
-      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
-      yield* migrationRepair(
-        input({
-          versions: ["20240101000000"],
-          status: "applied",
-          projectRef: Option.some(FLAG_REF),
-        }),
-      );
-      expect(cache.cached).toBe(true);
-      expect(cache.cachedRef).toBe(FLAG_REF);
-      expect(cache.cachedRef).not.toBe(VALID_REF);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "repairs the project given via --project-ref, overriding the default linked ref",
+    () => {
+      // VALID_REF is the fake resolver's fallback; the flag must win over it and drive
+      // the cached ref.
+      const FLAG_REF = "flagflagflagflagflag";
+      const { layer, cache } = setup(tmp.current);
+      return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+        yield* migrationRepair(
+          input({
+            versions: ["20240101000000"],
+            status: "applied",
+            projectRef: Option.some(FLAG_REF),
+          }),
+        );
+        expect(cache.cached).toBe(true);
+        expect(cache.cachedRef).toBe(FLAG_REF);
+        expect(cache.cachedRef).not.toBe(VALID_REF);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("rejects --project-ref combined with an explicit --local target", () => {
+  it.effect("rejects --project-ref combined with an explicit --local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, execs, queries, cache } = setup(tmp.current, { args: ["--local"] });
     return Effect.gen(function* () {
@@ -482,7 +485,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured result in json mode", () => {
+  it.effect("emits a structured result in json mode", () => {
     const { layer, out } = setup(tmp.current, { format: "json" });
     return Effect.gen(function* () {
       yield* migrationRepair(input({ versions: ["20240101000000"], status: "reverted" }));

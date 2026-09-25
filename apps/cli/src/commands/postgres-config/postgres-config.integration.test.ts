@@ -39,7 +39,7 @@ function runtimeWith(opts: {
 }
 
 describe("postgres-config get", () => {
-  it.live("prints the Glamour table with stderr headings in text mode", () => {
+  it.effect("prints the Glamour table with stderr headings in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { max_connections: 100 } },
@@ -60,23 +60,26 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders a large integral config value with Go's float64 %g in the pretty table", () => {
-    // The established table output renders every JSON number as a float64 with shortest `%g`
-    // formatting, so 1000000 renders as `1e+06`, never `1000000`.
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({
-      response: { status: 200, body: { max_connections: 1000000 } },
-    });
-    const layer = runtimeWith({ out, api });
+  it.effect(
+    "renders a large integral config value with Go's float64 %g in the pretty table",
+    () => {
+      // The established table output renders every JSON number as a float64 with shortest `%g`
+      // formatting, so 1000000 renders as `1e+06`, never `1000000`.
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        response: { status: 200, body: { max_connections: 1000000 } },
+      });
+      const layer = runtimeWith({ out, api });
 
-    return Effect.gen(function* () {
-      yield* postgresConfigGet({ projectRef: Option.none() });
-      expect(out.stdoutText).toContain("1e+06");
-      expect(out.stdoutText).not.toContain("1000000");
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        yield* postgresConfigGet({ projectRef: Option.none() });
+        expect(out.stdoutText).toContain("1e+06");
+        expect(out.stdoutText).not.toContain("1000000");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("emits TOML bytes for --output toml", () => {
+  it.effect("emits TOML bytes for --output toml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { max_connections: 100 } },
@@ -90,7 +93,7 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("keeps multi-key pretty and TOML output deterministic", () => {
+  it.effect("keeps multi-key pretty and TOML output deterministic", () => {
     const responseBody = {
       wal_keep_size: "1GB",
       max_connections: 100,
@@ -127,7 +130,7 @@ describe("postgres-config get", () => {
     });
   });
 
-  it.live("emits env output for --output env", () => {
+  it.effect("emits env output for --output env", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { track_commit_timestamp: true } },
@@ -140,7 +143,7 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits JSON and YAML bytes", () =>
+  it.effect("emits JSON and YAML bytes", () =>
     Effect.gen(function* () {
       for (const [goOutput, expected] of [
         ["json", '"max_connections": 100'],
@@ -158,7 +161,7 @@ describe("postgres-config get", () => {
     }),
   );
 
-  it.live("emits a JSON success payload for --output-format json", () => {
+  it.effect("emits a JSON success payload for --output-format json", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { max_connections: 100 } },
@@ -172,7 +175,7 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lets the Go --output flag win over --output-format json", () => {
+  it.effect("lets the Go --output flag win over --output-format json", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { max_connections: 100 } },
@@ -186,7 +189,7 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as the human-readable table", () => {
+  it.effect("treats --output pretty as the human-readable table", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { max_connections: 100 } },
@@ -203,7 +206,7 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps HTTP 503 to the get unexpected-status error", () => {
+  it.effect("maps HTTP 503 to the get unexpected-status error", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 503, body: {} } });
     const layer = runtimeWith({ out, api });
@@ -219,7 +222,7 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps transport failures to the get network error", () => {
+  it.effect("maps transport failures to the get network error", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ network: "fail" });
     const layer = runtimeWith({ out, api });
@@ -237,7 +240,7 @@ describe("postgres-config get", () => {
 });
 
 describe("postgres-config update", () => {
-  it.live(
+  it.effect(
     "merges current overrides, coerces values, and PUTs arbitrary keys through raw HTTP",
     () => {
       const out = mockOutput({ format: "text" });
@@ -289,7 +292,7 @@ describe("postgres-config update", () => {
     },
   );
 
-  it.live("skips the initial GET in replace mode", () => {
+  it.effect("skips the initial GET in replace mode", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({
       byMethod: {
@@ -313,7 +316,7 @@ describe("postgres-config update", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy output modes in replace mode", () =>
+  it.effect("emits legacy output modes in replace mode", () =>
     Effect.gen(function* () {
       const cases = [
         {
@@ -354,7 +357,7 @@ describe("postgres-config update", () => {
     }),
   );
 
-  it.live("fails before ref resolution on malformed config input", () => {
+  it.effect("fails before ref resolution on malformed config input", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const telemetry = mockTelemetryStateTracked();
@@ -387,7 +390,7 @@ describe("postgres-config update", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps PUT failures to the update unexpected-status error", () => {
+  it.effect("maps PUT failures to the update unexpected-status error", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       byMethod: {
@@ -415,7 +418,7 @@ describe("postgres-config update", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps initial GET transport failures to the shared get network error", () => {
+  it.effect("maps initial GET transport failures to the shared get network error", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ network: "fail" });
     const layer = runtimeWith({ out, api });
@@ -438,7 +441,7 @@ describe("postgres-config update", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps PUT transport failures to the update network error", () => {
+  it.effect("maps PUT transport failures to the update network error", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({
       byMethod: {
@@ -471,7 +474,7 @@ describe("postgres-config update", () => {
 });
 
 describe("postgres-config delete", () => {
-  it.live("uses GET plus PUT and trims keys before deleting", () => {
+  it.effect("uses GET plus PUT and trims keys before deleting", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       byMethod: {
@@ -502,7 +505,7 @@ describe("postgres-config delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a stream-json success payload", () => {
+  it.effect("emits a stream-json success payload", () => {
     const out = mockOutput({ format: "stream-json" });
     const api = mockCommandPlatformApi({
       byMethod: {
@@ -523,7 +526,7 @@ describe("postgres-config delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy output modes after the GET plus PUT flow", () =>
+  it.effect("emits legacy output modes after the GET plus PUT flow", () =>
     Effect.gen(function* () {
       const cases = [
         {
@@ -564,7 +567,7 @@ describe("postgres-config delete", () => {
     }),
   );
 
-  it.live("flushes telemetry and caches the ref when delete fails after resolution", () => {
+  it.effect("flushes telemetry and caches the ref when delete fails after resolution", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       byMethod: {
@@ -599,7 +602,7 @@ describe("postgres-config delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces the shared get error when the initial fetch fails", () => {
+  it.effect("surfaces the shared get error when the initial fetch fails", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({
       handler: (request) => Effect.sync(() => jsonResponse(request, 503, {})),
@@ -624,7 +627,7 @@ describe("postgres-config delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps PUT transport failures to the delete network error", () => {
+  it.effect("maps PUT transport failures to the delete network error", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({
       handler: (request) =>

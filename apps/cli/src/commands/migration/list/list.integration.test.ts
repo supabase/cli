@@ -129,7 +129,7 @@ const seedMigrations = Effect.fnUntraced(function* (workdir: string, names: Read
 const tmp = useTempWorkdir();
 
 describe("migration list", () => {
-  it.live("lists merged local + remote migrations for the linked project by default", () => {
+  it.effect("lists merged local + remote migrations for the linked project by default", () => {
     const ctx = setup(tmp.current, {
       remote: ["20240101000000", "20240102000000"],
     });
@@ -148,7 +148,7 @@ describe("migration list", () => {
     }).pipe(Effect.provide(ctx.layer));
   });
 
-  it.live("shows an empty Remote column when the history table is absent (42P01)", () => {
+  it.effect("shows an empty Remote column when the history table is absent (42P01)", () => {
     const { layer, out } = setup(tmp.current, {
       remoteError: new DbExecError({
         message: 'relation "supabase_migrations.schema_migrations" does not exist',
@@ -164,7 +164,7 @@ describe("migration list", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("skips init-schema and non-migration files when loading local versions", () => {
+  it.effect("skips init-schema and non-migration files when loading local versions", () => {
     const { layer, out } = setup(tmp.current, { remote: [] });
     return Effect.gen(function* () {
       yield* seedMigrations(tmp.current, [
@@ -179,7 +179,7 @@ describe("migration list", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lists the project given via --project-ref, overriding the default linked ref", () => {
+  it.effect("lists the project given via --project-ref, overriding the default linked ref", () => {
     // VALID_REF is the fake resolver's fallback; the flag must win over it and drive
     // the cached ref.
     const FLAG_REF = "flagflagflagflagflag";
@@ -192,7 +192,7 @@ describe("migration list", () => {
     }).pipe(Effect.provide(ctx.layer));
   });
 
-  it.live("rejects --project-ref combined with an explicit --local target", () => {
+  it.effect("rejects --project-ref combined with an explicit --local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const ctx = setup(tmp.current, { args: ["--local"], isLocal: true, remote: [] });
     return Effect.gen(function* () {
@@ -213,7 +213,7 @@ describe("migration list", () => {
     }).pipe(Effect.provide(ctx.layer));
   });
 
-  it.live("targets the local database with --local and skips the linked cache", () => {
+  it.effect("targets the local database with --local and skips the linked cache", () => {
     const ctx = setup(tmp.current, {
       args: ["--local"],
       isLocal: true,
@@ -227,7 +227,7 @@ describe("migration list", () => {
     }).pipe(Effect.provide(ctx.layer));
   });
 
-  it.live("rejects --db-url combined with --linked", () => {
+  it.effect("rejects --db-url combined with --linked", () => {
     const { layer } = setup(tmp.current, { args: ["--db-url", "postgresql://x", "--linked"] });
     return Effect.gen(function* () {
       const exit = yield* migrationList(
@@ -241,7 +241,7 @@ describe("migration list", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --db-url combined with --password", () => {
+  it.effect("rejects --db-url combined with --password", () => {
     const { layer } = setup(tmp.current, { args: ["--db-url", "postgresql://x"] });
     return Effect.gen(function* () {
       const exit = yield* migrationList(
@@ -255,7 +255,7 @@ describe("migration list", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits structured migrations in json", () => {
+  it.effect("emits structured migrations in json", () => {
     const { layer, out } = setup(tmp.current, { format: "json", remote: ["20240102000000"] });
     return Effect.gen(function* () {
       yield* seedMigrations(tmp.current, ["20240103000000_c.sql"]);
@@ -276,7 +276,7 @@ describe("migration list", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("propagates a non-undefined-table remote read failure", () => {
+  it.effect("propagates a non-undefined-table remote read failure", () => {
     const { layer } = setup(tmp.current, {
       remoteError: new DbExecError({
         message: "permission denied for schema",

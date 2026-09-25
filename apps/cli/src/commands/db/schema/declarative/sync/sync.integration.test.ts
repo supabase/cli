@@ -58,6 +58,7 @@ import {
   DbConnection,
   type PgConnInput,
 } from "../../../../../command-internal/db-connection.service.ts";
+import { DbExecError } from "../../../../../command-internal/db-connection.errors.ts";
 import {
   PgDeltaEngine,
   PgDeltaEngineError,
@@ -233,7 +234,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       return Effect.succeed({
         exec: (sql: string) =>
           opts.applyFails === true && sql.startsWith("ALTER")
-            ? Effect.fail({ _tag: "DbExecError", message: "boom" } as never)
+            ? Effect.fail(new DbExecError({ message: "boom" }))
             : Effect.sync(() => {
                 if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
               }),
@@ -244,11 +245,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               ? sql.findIndex((statement) => statement.startsWith("ALTER"))
               : -1;
           return failureIndex >= 0
-            ? Effect.fail({
-                _tag: "DbExecError",
-                message: "boom",
-                statementIndex: failureIndex,
-              } as never)
+            ? Effect.fail(new DbExecError({ message: "boom", statementIndex: failureIndex }))
             : Effect.sync(() => {
                 if (cfg.port !== SHADOW_PORT) {
                   dbBatches.push(sql);

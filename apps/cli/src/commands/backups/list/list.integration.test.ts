@@ -71,7 +71,7 @@ function setup(opts: SetupOpts = {}) {
 }
 
 describe("backups list integration", () => {
-  it.live("renders a PITR-only table when no physical backups exist", () => {
+  it.effect("renders a PITR-only table when no physical backups exist", () => {
     const { layer, out } = setup({ response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
@@ -85,7 +85,7 @@ describe("backups list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders a logical backups table with PHYSICAL classification", () => {
+  it.effect("renders a logical backups table with PHYSICAL classification", () => {
     const { layer, out } = setup({ response: LOGICAL_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
@@ -96,7 +96,7 @@ describe("backups list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("translates ap-southeast-1 to Southeast Asia (Singapore)", () => {
+  it.effect("translates ap-southeast-1 to Southeast Asia (Singapore)", () => {
     const { layer, out } = setup({ response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
@@ -104,7 +104,7 @@ describe("backups list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON success event when --output-format=json", () => {
+  it.effect("emits a JSON success event when --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
@@ -114,7 +114,7 @@ describe("backups list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event for --output-format=stream-json", () => {
+  it.effect("emits a result event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
@@ -124,7 +124,7 @@ describe("backups list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented JSON to stdout for --output json (Go-compat)", () => {
+  it.effect("emits indented JSON to stdout for --output json (Go-compat)", () => {
     const { layer, out } = setup({ goOutput: "json", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
@@ -141,7 +141,7 @@ describe("backups list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML to stdout for --output yaml", () => {
+  it.effect("emits YAML to stdout for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
@@ -150,7 +150,7 @@ describe("backups list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML to stdout for --output toml", () => {
+  it.effect("emits TOML to stdout for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
@@ -159,7 +159,7 @@ describe("backups list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits [[Backups]] array-of-tables for --output toml with logical backups", () => {
+  it.effect("emits [[Backups]] array-of-tables for --output toml with logical backups", () => {
     const { layer, out } = setup({ goOutput: "toml", response: LOGICAL_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
@@ -178,7 +178,7 @@ WalgEnabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits KEY=VALUE lines for --output env", () => {
+  it.effect("emits KEY=VALUE lines for --output env", () => {
     const { layer, out } = setup({ goOutput: "env", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
@@ -187,7 +187,7 @@ WalgEnabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as identical to text mode (Glamour table)", () => {
+  it.effect("treats --output pretty as identical to text mode (Glamour table)", () => {
     const { layer, out } = setup({ goOutput: "pretty", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
@@ -195,7 +195,7 @@ WalgEnabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output flag value wins over --output-format when both provided", () => {
+  it.effect("--output flag value wins over --output-format when both provided", () => {
     const { layer, out } = setup({
       format: "json",
       goOutput: "yaml",
@@ -208,7 +208,7 @@ WalgEnabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes the resolved project ref into the listAllBackups URL", () => {
+  it.effect("passes the resolved project ref into the listAllBackups URL", () => {
     const { layer, api } = setup({ response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
@@ -217,7 +217,7 @@ WalgEnabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over CommandSettings.projectId env", () => {
+  it.effect("uses --project-ref flag value over CommandSettings.projectId env", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ response: PITR_RESPONSE });
     return Effect.gen(function* () {
@@ -226,7 +226,7 @@ WalgEnabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reads supabase/.temp/project-ref when env and flag are unset", () => {
+  it.effect("reads supabase/.temp/project-ref when env and flag are unset", () => {
     const fileRef = "filerefabcdefghijklm";
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: PITR_RESPONSE } });
@@ -248,7 +248,7 @@ WalgEnabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectRefNotLinkedError when no ref source matches off-TTY", () => {
+  it.effect("fails with ProjectRefNotLinkedError when no ref source matches off-TTY", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: PITR_RESPONSE } });
     const cliSettings = mockCommandSettings({
@@ -268,7 +268,7 @@ WalgEnabled = true
     });
   });
 
-  it.live("fails with InvalidProjectRefError when the resolved ref is malformed", () => {
+  it.effect("fails with InvalidProjectRefError when the resolved ref is malformed", () => {
     const { layer } = setup({ response: PITR_RESPONSE });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(backupsList({ projectRef: Option.some("BADREF") }));
@@ -279,7 +279,7 @@ WalgEnabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BackupListUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with BackupListUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: PITR_RESPONSE });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(backupsList({ projectRef: Option.none() }));
@@ -292,7 +292,7 @@ WalgEnabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BackupListNetworkError on transport failure", () => {
+  it.effect("fails with BackupListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(backupsList({ projectRef: Option.none() }));
@@ -305,7 +305,7 @@ WalgEnabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
+  it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503, response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
@@ -313,7 +313,7 @@ WalgEnabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "sends User-Agent SupabaseCLI/<version> and no X-Supabase-Command headers (Go parity)",
     () => {
       const { layer, api } = setup({

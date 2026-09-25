@@ -156,7 +156,7 @@ suppressed; a single structured result is emitted for the whole command:
   channel — it always reuses the create-resolved password (`created.dbPassword`). There is no
   flag-vs-env distinction to preserve once the call is in-process (unlike the former subprocess
   delegation, CLI-1617, which had to route the resolved password across process boundaries).
-- **Retry**: the native push step is wrapped in the same `bootstrapRetryNotify()` +
+- **Retry**: the native push step is wrapped in the same `yield* bootstrapRetryNotify` +
   `Effect.retry(retry)` policy as the api-keys and health-poll steps. A retried attempt re-runs
   the whole push (connect, list pending migrations/seeds/roles, prompt, apply).
 - The api-keys, health, and push retries use the same backoff policy:

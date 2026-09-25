@@ -96,7 +96,7 @@ export const collectMigrationsList = Effect.fnUntraced(function* (
   // unreadable `supabase/migrations` must only omit migration copies, never replace the
   // actionable original error. The main generate/sync path still fails on an unreadable dir.
   const migrations = yield* listLocalMigrations(fs, path, migrationsDir).pipe(
-    Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
   );
   return migrations.map((p) => path.basename(p));
 });

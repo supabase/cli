@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Predicate, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -28,22 +28,11 @@ import {
   SnippetsListUnexpectedStatusError,
   SnippetsTomlEncodeError,
 } from "../snippets.errors.ts";
-import { renderSnippetsTable, type SnippetRow } from "../snippets.format.ts";
+import { renderSnippetsTable, SnippetRow } from "../snippets.format.ts";
 import type { SnippetsListFlags } from "./list.command.ts";
 
-// Tolerant accessors for the API response body. The real `/v1/snippets`
-// payload omits optional fields the generated schema declares required, so
-// routing through the typed client fails with `SchemaError: Missing key …`.
-function readString(obj: unknown, key: string): string {
-  if (typeof obj === "object" && obj !== null && key in obj) {
-    const value = (obj as Record<string, unknown>)[key];
-    return typeof value === "string" ? value : "";
-  }
-  return "";
-}
-
 function asRecord(obj: unknown): Record<string, unknown> {
-  return typeof obj === "object" && obj !== null ? (obj as Record<string, unknown>) : {};
+  return Predicate.isObjectOrArray(obj) ? { ...obj } : {};
 }
 
 /**
@@ -91,28 +80,7 @@ const GO_SNIPPET_LIST = goStruct([
   ],
 ]);
 
-interface SnippetsResponseBody {
-  readonly data: ReadonlyArray<unknown>;
-}
-
-function parseSnippetsResponse(body: unknown): SnippetsResponseBody {
-  const root = asRecord(body);
-  const data = Array.isArray(root["data"]) ? root["data"] : [];
-  return { data };
-}
-
-function toSnippetRow(raw: unknown): SnippetRow {
-  const item = asRecord(raw);
-  const owner = asRecord(item["owner"]);
-  return {
-    id: readString(item, "id"),
-    name: readString(item, "name"),
-    visibility: readString(item, "visibility"),
-    owner: { username: readString(owner, "username") },
-    inserted_at: readString(item, "inserted_at"),
-    updated_at: readString(item, "updated_at"),
-  };
-}
+const SnippetsListBody = Schema.Struct({ data: Schema.Array(SnippetRow) });
 
 export const snippetsList = Effect.fn("snippets.list")(function* (flags: SnippetsListFlags) {
   const output = yield* Output;
@@ -154,7 +122,7 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
         output.format === "text" ? yield* output.task("Fetching snippets...") : undefined;
       const response = yield* httpClient.execute(request).pipe(
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.catch(
+        Effect.mapError(
           (cause) =>
             new SnippetsListNetworkError({
               message: `failed to list snippets: ${cause.reason.description ?? cause.reason._tag}`,
@@ -174,7 +142,7 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
       }
 
       const rawBody = yield* response.json.pipe(
-        Effect.catch(
+        Effect.mapError(
           (cause) =>
             new SnippetsListNetworkError({
               message: `failed to list snippets: ${String(cause)}`,
@@ -186,7 +154,6 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
       );
       yield* fetching?.clear() ?? Effect.void;
 
-      const parsed = parseSnippetsResponse(rawBody);
       const goFmt = Option.getOrUndefined(goOutputFlag);
 
       if (goFmt === "json") {
@@ -220,7 +187,11 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
         return;
       }
 
-      yield* output.raw(renderSnippetsTable(parsed.data.map(toSnippetRow)));
+      const rows = yield* Schema.decodeUnknownEffect(SnippetsListBody)(rawBody).pipe(
+        Effect.map(({ data }) => data),
+        Effect.catchTag("SchemaError", () => Effect.succeed([])),
+      );
+      yield* output.raw(renderSnippetsTable(rows));
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

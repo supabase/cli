@@ -4,6 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Deferred,
   Effect,
   Exit,
   Fiber,
@@ -12,11 +13,12 @@ import {
   Option,
   Path,
   PlatformError,
+  Predicate,
   Schema,
   Sink,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { vi } from "vitest";
@@ -126,8 +128,7 @@ function concatByteChunks(chunks: ReadonlyArray<unknown>): Uint8Array | undefine
 }
 
 /**
- * Resolves each spawned invocation immediately (no fake async delay) — unlike
- * `stop.integration.test.ts`'s `mockRoutedContainerCliSpawner`, `start`'s own
+ * Resolves each spawned invocation immediately (no fake async delay) — `start`'s own
  * bring-up creates 10+ containers per scenario and never needs to exercise a
  * Docker-CLI-level race, so a synchronous mock keeps these tests fast.
  *
@@ -151,10 +152,11 @@ function mockStartContainerCliSpawner(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
-        const cmd = command._tag === "StandardCommand" ? command.command : "";
-        const args = command._tag === "StandardCommand" ? command.args : [];
-        const env = command._tag === "StandardCommand" ? (command.options?.env ?? {}) : {};
-        const stdin = command._tag === "StandardCommand" ? command.options.stdin : undefined;
+        const standard = ChildProcess.isStandardCommand(command);
+        const cmd = standard ? command.command : "";
+        const args = standard ? command.args : [];
+        const env = standard ? (command.options?.env ?? {}) : {};
+        const stdin = standard ? command.options.stdin : undefined;
         const onSecretCopy = opts.onSecretCopy;
         spawned.push({ command: cmd, args, env });
 
@@ -350,7 +352,9 @@ function mockStorageVectorHttpClient(existingVectorBuckets: ReadonlyArray<string
         request.url.includes("/storage/v1/vector/DeleteVectorBucket")
       ) {
         deletedVectorBuckets.push(
-          request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
+          Predicate.isTagged(request.body, "Uint8Array")
+            ? new TextDecoder().decode(request.body.body)
+            : "",
         );
         return json({});
       }
@@ -393,7 +397,7 @@ function mockStorageBucketHttpClient(existingBuckets: ReadonlyArray<string> = []
       }
       if (request.method === "POST" && request.url.includes("/storage/v1/bucket")) {
         createdBucketRequests.push(request.url);
-        if (request.body._tag === "Uint8Array") {
+        if (Predicate.isTagged(request.body, "Uint8Array")) {
           try {
             createdBucketBodies.push(JSON.parse(new TextDecoder().decode(request.body.body)));
           } catch {
@@ -598,7 +602,7 @@ describe("start integration", () => {
   });
 
   describe("--exclude validation", () => {
-    it.live("warns on stderr for an invalid --exclude value, even when already running", () =>
+    it.effect("warns on stderr for an invalid --exclude value, even when already running", () =>
       Effect.gen(function* () {
         const { layer, out } = yield* setup({
           route: (args) => {
@@ -617,7 +621,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "rejects --exclude db and --exclude postgres as invalid, since Postgres has no exclude key",
       () =>
         Effect.gen(function* () {
@@ -635,7 +639,7 @@ describe("start integration", () => {
   });
 
   describe("already running", () => {
-    it.live(
+    it.effect(
       "prints the already-running banner and renders status without creating any containers",
       () =>
         Effect.gen(function* () {
@@ -656,7 +660,7 @@ describe("start integration", () => {
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("reports the stack is already running with a machine payload in json mode", () =>
+    it.effect("reports the stack is already running with a machine payload in json mode", () =>
       Effect.gen(function* () {
         const { layer, out } = yield* setup({
           format: "json",
@@ -676,27 +680,29 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("reports the stack is already running with a machine payload in stream-json mode", () =>
-      Effect.gen(function* () {
-        const { layer, out } = yield* setup({
-          format: "stream-json",
-          route: (args) => {
-            if (args[0] === "container" && args[1] === "inspect") {
-              return { stdout: [HEALTHY_STATE] };
-            }
-            if (args[0] === "ps") return { stdout: [] };
-            return { exitCode: 0 };
-          },
-        });
+    it.effect(
+      "reports the stack is already running with a machine payload in stream-json mode",
+      () =>
+        Effect.gen(function* () {
+          const { layer, out } = yield* setup({
+            format: "stream-json",
+            route: (args) => {
+              if (args[0] === "container" && args[1] === "inspect") {
+                return { stdout: [HEALTHY_STATE] };
+              }
+              if (args[0] === "ps") return { stdout: [] };
+              return { exitCode: 0 };
+            },
+          });
 
-        yield* start(flags()).pipe(Effect.provide(layer));
-        const success = out.messages.find((m) => m.type === "success");
-        expect(success?.data).toMatchObject({ DB_URL: expect.any(String) });
-        expect(out.stderrText).not.toContain("is already running");
-      }).pipe(Effect.provide(BunServices.layer)),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const success = out.messages.find((m) => m.type === "success");
+          expect(success?.data).toMatchObject({ DB_URL: expect.any(String) });
+          expect(out.stderrText).not.toContain("is already running");
+        }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails when the already-running DB container stops running before the health re-check",
       () =>
         Effect.gen(function* () {
@@ -721,29 +727,31 @@ describe("start integration", () => {
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("fails when the already-running DB container is unhealthy on the health re-check", () =>
-      Effect.gen(function* () {
-        let inspectCalls = 0;
-        const { layer } = yield* setup({
-          route: (args) => {
-            if (args[0] === "container" && args[1] === "inspect") {
-              inspectCalls += 1;
-              if (inspectCalls === 1) return { stdout: [HEALTHY_STATE] };
-              return { stdout: [STARTING_STATE] };
-            }
-            return { exitCode: 0 };
-          },
-        });
+    it.effect(
+      "fails when the already-running DB container is unhealthy on the health re-check",
+      () =>
+        Effect.gen(function* () {
+          let inspectCalls = 0;
+          const { layer } = yield* setup({
+            route: (args) => {
+              if (args[0] === "container" && args[1] === "inspect") {
+                inspectCalls += 1;
+                if (inspectCalls === 1) return { stdout: [HEALTHY_STATE] };
+                return { stdout: [STARTING_STATE] };
+              }
+              return { exitCode: 0 };
+            },
+          });
 
-        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain("StatusDbNotReadyError");
-        }
-      }).pipe(Effect.provide(BunServices.layer)),
+          const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain("StatusDbNotReadyError");
+          }
+        }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails when the already-running DB container's health re-check inspect itself errors",
       () =>
         Effect.gen(function* () {
@@ -769,7 +777,7 @@ describe("start integration", () => {
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("fails when listing running containers errors while already running", () =>
+    it.effect("fails when listing running containers errors while already running", () =>
       Effect.gen(function* () {
         const { layer } = yield* setup({
           route: (args) => {
@@ -789,7 +797,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("already running, --ignore-health-check skips the health re-check entirely", () =>
+    it.effect("already running, --ignore-health-check skips the health re-check entirely", () =>
       Effect.gen(function* () {
         let inspectCalls = 0;
         const { layer, child } = yield* setup({
@@ -810,7 +818,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("already running with every service still up omits the 'Stopped services' line", () =>
+    it.effect("already running with every service still up omits the 'Stopped services' line", () =>
       Effect.gen(function* () {
         const { layer, out } = yield* setup({
           route: (args) => {
@@ -827,7 +835,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on a bucket's invalid file_size_limit even when already running, matching Go's Config.Load",
       () =>
         Effect.gen(function* () {
@@ -860,7 +868,7 @@ describe("start integration", () => {
   });
 
   describe("stopped project recovery", () => {
-    it.live("recreates stopped project containers without pruning the database volume", () =>
+    it.effect("recreates stopped project containers without pruning the database volume", () =>
       Effect.gen(function* () {
         const workdir = tempRoot.current;
         const route = defaultRoute();
@@ -928,7 +936,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("does not remove containers when the project id sanitizes to empty", () =>
+    it.effect("does not remove containers when the project id sanitizes to empty", () =>
       Effect.gen(function* () {
         const { layer, child } = yield* setup({
           configContents: 'project_id = "!!!"\n',
@@ -954,7 +962,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("preserves a stopped Bitbucket database container", () =>
+    it.effect("preserves a stopped Bitbucket database container", () =>
       withEnvVar(
         "BITBUCKET_CLONE_DIR",
         "/opt/atlassian/pipelines/agent/build",
@@ -986,7 +994,7 @@ describe("start integration", () => {
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("does not remove containers when re-inspect returns an unknown state", () =>
+    it.effect("does not remove containers when re-inspect returns an unknown state", () =>
       Effect.gen(function* () {
         let dbInspects = 0;
         const { layer, child } = yield* setup({
@@ -1010,7 +1018,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("does not recover a created database container with unknown volume state", () =>
+    it.effect("does not recover a created database container with unknown volume state", () =>
       Effect.gen(function* () {
         const { layer, child } = yield* setup({
           route: (args) => {
@@ -1040,7 +1048,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("validates custom TLS files before removing a stopped stack", () =>
+    it.effect("validates custom TLS files before removing a stopped stack", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fs = yield* FileSystem.FileSystem;
@@ -1082,7 +1090,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("validates function bind mounts before removing a stopped stack", () =>
+    it.effect("validates function bind mounts before removing a stopped stack", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fs = yield* FileSystem.FileSystem;
@@ -1119,7 +1127,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("removes remaining project containers when the stopped database disappears", () =>
+    it.effect("removes remaining project containers when the stopped database disappears", () =>
       Effect.gen(function* () {
         const workdir = tempRoot.current;
         const route = defaultRoute();
@@ -1175,7 +1183,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("cleans only current-workdir secrets when recovery fails", () =>
+    it.effect("cleans only current-workdir secrets when recovery fails", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fs = yield* FileSystem.FileSystem;
@@ -1232,7 +1240,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("keeps a stopped stack intact when a later config field fails to parse", () =>
+    it.effect("keeps a stopped stack intact when a later config field fails to parse", () =>
       Effect.gen(function* () {
         const { layer, child } = yield* setup({
           configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "not-a-duration"\n',
@@ -1259,43 +1267,46 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("reports status instead of tearing down when the stack recovers before teardown", () =>
-      Effect.gen(function* () {
-        let dbInspects = 0;
-        const { layer, out, child } = yield* setup({
-          route: (args) => {
-            if (
-              args[0] === "container" &&
-              args[1] === "inspect" &&
-              args[2] === "supabase_db_demo"
-            ) {
-              dbInspects += 1;
-              return { stdout: [dbInspects === 1 ? STOPPED_STATE : HEALTHY_STATE] };
-            }
-            if (args[0] === "ps") {
-              return { stdout: ["supabase_db_demo"] };
-            }
-            return { exitCode: 0 };
-          },
-        });
+    it.effect(
+      "reports status instead of tearing down when the stack recovers before teardown",
+      () =>
+        Effect.gen(function* () {
+          let dbInspects = 0;
+          const { layer, out, child } = yield* setup({
+            route: (args) => {
+              if (
+                args[0] === "container" &&
+                args[1] === "inspect" &&
+                args[2] === "supabase_db_demo"
+              ) {
+                dbInspects += 1;
+                return { stdout: [dbInspects === 1 ? STOPPED_STATE : HEALTHY_STATE] };
+              }
+              if (args[0] === "ps") {
+                return { stdout: ["supabase_db_demo"] };
+              }
+              return { exitCode: 0 };
+            },
+          });
 
-        yield* start(flags()).pipe(Effect.provide(layer));
+          yield* start(flags()).pipe(Effect.provide(layer));
 
-        expect(out.stderrText).toContain("is already running");
-        expect(
-          child.spawned.some(
-            (spawn) =>
-              (spawn.args[0] === "ps" && spawn.args.includes("--all")) || spawn.args[1] === "prune",
-          ),
-        ).toBe(false);
-        expect(child.spawned.some((spawn) => spawn.args[0] === "stop")).toBe(false);
-        expect(createdContainerNames(child.spawned)).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+          expect(out.stderrText).toContain("is already running");
+          expect(
+            child.spawned.some(
+              (spawn) =>
+                (spawn.args[0] === "ps" && spawn.args.includes("--all")) ||
+                spawn.args[1] === "prune",
+            ),
+          ).toBe(false);
+          expect(child.spawned.some((spawn) => spawn.args[0] === "stop")).toBe(false);
+          expect(createdContainerNames(child.spawned)).toEqual([]);
+        }).pipe(Effect.provide(BunServices.layer)),
     );
   });
 
   describe("config load / validation failures", () => {
-    it.live("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () =>
+    it.effect("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const missingWorkdir = path.join(tempRoot.current, "does-not-exist");
@@ -1314,7 +1325,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("fails when the DB container inspect fails for a reason other than not-found", () =>
+    it.effect("fails when the DB container inspect fails for a reason other than not-found", () =>
       Effect.gen(function* () {
         const { layer, child } = yield* setup({
           route: (args) => {
@@ -1336,7 +1347,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails with a docker-unavailable error when neither docker nor podman can be spawned",
       () =>
         Effect.gen(function* () {
@@ -1357,7 +1368,7 @@ describe("start integration", () => {
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("fails on a malformed config.toml", () =>
+    it.effect("fails on a malformed config.toml", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1378,7 +1389,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("fails when auth.jwt_secret is configured but shorter than 16 characters", () =>
+    it.effect("fails when auth.jwt_secret is configured but shorter than 16 characters", () =>
       Effect.gen(function* () {
         const { layer, child } = yield* setup({
           configContents: 'project_id = "demo"\n[auth]\njwt_secret = "too-short"\n',
@@ -1397,7 +1408,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "rejects an out-of-root auth.email.template content_path before any Docker work, even with auth disabled",
       () =>
         Effect.gen(function* () {
@@ -1424,7 +1435,7 @@ describe("start integration", () => {
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on a missing (but in-root) auth.email.template content_path before any Docker work, even with auth disabled",
       () =>
         Effect.gen(function* () {
@@ -1458,7 +1469,7 @@ describe("start integration", () => {
   });
 
   describe("happy path", () => {
-    it.live(
+    it.effect(
       "brings up the full default stack (clean host, every container immediately healthy)",
       () =>
         Effect.gen(function* () {
@@ -1494,7 +1505,7 @@ describe("start integration", () => {
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("emits a machine status payload in json mode instead of the pretty table", () =>
+    it.effect("emits a machine status payload in json mode instead of the pretty table", () =>
       Effect.gen(function* () {
         const { layer, out } = yield* setup({ format: "json" });
 
@@ -1505,18 +1516,20 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("emits a machine status payload in stream-json mode instead of the pretty table", () =>
-      Effect.gen(function* () {
-        const { layer, out } = yield* setup({ format: "stream-json" });
+    it.effect(
+      "emits a machine status payload in stream-json mode instead of the pretty table",
+      () =>
+        Effect.gen(function* () {
+          const { layer, out } = yield* setup({ format: "stream-json" });
 
-        yield* start(flags()).pipe(Effect.provide(layer));
-        const success = out.messages.find((m) => m.type === "success");
-        expect(success?.data).toMatchObject({ DB_URL: expect.any(String) });
-        expect(out.stderrText).not.toContain("Started");
-      }).pipe(Effect.provide(BunServices.layer)),
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const success = out.messages.find((m) => m.type === "success");
+          expect(success?.data).toMatchObject({ DB_URL: expect.any(String) });
+          expect(out.stderrText).not.toContain("Started");
+        }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("fires cli_stack_started exactly once on a successful start", () =>
+    it.effect("fires cli_stack_started exactly once on a successful start", () =>
       Effect.gen(function* () {
         const { layer, analytics } = yield* setup();
 
@@ -1528,7 +1541,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("brings the stack up when podman rejects re-creating preserved volumes (#6020)", () =>
+    it.effect("brings the stack up when podman rejects re-creating preserved volumes (#6020)", () =>
       Effect.gen(function* () {
         const route = defaultRoute();
         const { layer, analytics } = yield* setup({
@@ -1549,7 +1562,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "reuses the bring-up-resolved local config values for the final status print instead of re-deriving them",
       () =>
         Effect.gen(function* () {
@@ -1598,7 +1611,7 @@ describe("start integration", () => {
   });
 
   describe("config-driven container-spec branches", () => {
-    it.live("fails when a configured third-party auth issuer returns an HTTP error", () =>
+    it.effect("fails when a configured third-party auth issuer returns an HTTP error", () =>
       Effect.gen(function* () {
         const { layer, child } = yield* setup({
           httpClientLayer: Layer.succeed(
@@ -1622,7 +1635,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("reads and mounts a configured API TLS cert/key pair for Kong", () =>
+    it.effect("reads and mounts a configured API TLS cert/key pair for Kong", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1647,7 +1660,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("fails when a configured API TLS cert file cannot be read", () =>
+    it.effect("fails when a configured API TLS cert file cannot be read", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1672,7 +1685,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("fails when a configured API TLS key file cannot be read", () =>
+    it.effect("fails when a configured API TLS key file cannot be read", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1697,7 +1710,7 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "brings up the stack with every optional config.toml section populated (bigquery analytics, session pool mode, passkey/webauthn, external provider, SMTP, email templates)",
       () =>
         Effect.gen(function* () {
@@ -1780,7 +1793,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       // "0s" performs exactly one immediate health probe with no retries, not a 30s fallback.
       // The mock heals on the first check either way, so this only proves "0s" doesn't hang,
       // not the retry count.
@@ -1794,7 +1807,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails config loading on an unparseable db.health_timeout before any Docker work, matching Go's Config.Load",
       () =>
         Effect.gen(function* () {
@@ -1815,7 +1828,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid storage.file_size_limit even when storage is excluded, matching Go's Config.Load",
       () =>
         Effect.gen(function* () {
@@ -1836,7 +1849,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid SUPABASE_STORAGE_S3_PROTOCOL_ENABLED even when storage is excluded, matching Go's Config.Load",
       () =>
         withEnvVar(
@@ -1859,7 +1872,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_ENABLED even when storage is excluded, matching Go's Config.Load",
       () =>
         withEnvVar(
@@ -1882,7 +1895,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES even when storage is excluded, matching Go's Config.Load",
       () =>
         withEnvVar(
@@ -1905,7 +1918,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_TABLES even when storage is excluded, matching Go's Config.Load",
       () =>
         withEnvVar(
@@ -1928,7 +1941,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS even when storage is excluded, matching Go's Config.Load",
       () =>
         withEnvVar(
@@ -1951,7 +1964,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_BUCKETS even when storage is excluded, matching Go's Config.Load",
       () =>
         withEnvVar(
@@ -1974,7 +1987,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_INDEXES even when storage is excluded, matching Go's Config.Load",
       () =>
         withEnvVar(
@@ -1997,7 +2010,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid auth.sms.max_frequency even when auth is disabled, matching Go's Config.Load",
       () =>
         Effect.gen(function* () {
@@ -2017,7 +2030,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS even when auth is disabled, matching Go's Config.Load",
       () =>
         withEnvVar(
@@ -2040,7 +2053,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid SUPABASE_AUTH_WEB3_SOLANA_ENABLED even when auth is disabled, matching Go's Config.Load",
       () =>
         withEnvVar(
@@ -2063,7 +2076,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid SUPABASE_AUTH_OAUTH_SERVER_ENABLED even when auth is disabled, matching Go's Config.Load",
       () =>
         withEnvVar(
@@ -2086,7 +2099,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED even when auth is disabled, matching Go's Config.Load",
       () =>
         withEnvVar(
@@ -2109,7 +2122,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
       () =>
         Effect.gen(function* () {
@@ -2132,7 +2145,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid auth.external.<custom>.enabled even when auth is disabled, matching Go's Config.Load",
       () =>
         Effect.gen(function* () {
@@ -2158,7 +2171,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on a per-function env field, matching Go's Config.Load rejecting an unknown functions[slug] key",
       () =>
         Effect.gen(function* () {
@@ -2183,7 +2196,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid SUPABASE_EDGE_RUNTIME_POLICY even when edge-runtime is excluded, matching Go's Config.Load",
       () =>
         withEnvVar(
@@ -2206,7 +2219,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an invalid SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT even when edge-runtime is excluded, matching Go's Config.Load",
       () =>
         withEnvVar(
@@ -2229,7 +2242,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "warns about a Windows npipe Docker daemon before starting Vector, in text mode, and excludes it from the health watch list",
       () =>
         // `resolveDockerDaemonHost` checks `DOCKER_HOST` before shelling out to `docker context
@@ -2252,7 +2265,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("service gating", () => {
-    it.live(
+    it.effect(
       "skips analytics services (logflare + vector) together when analytics.enabled = false",
       () =>
         Effect.gen(function* () {
@@ -2271,7 +2284,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "skips storage and imgproxy together when storage.enabled = false, even with image_transformation on",
       () =>
         Effect.gen(function* () {
@@ -2290,7 +2303,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "ignores SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED when [storage.image_transformation] is absent from config.toml",
       () =>
         // `storage.image_transformation` is a nil-unless-declared field: with no
@@ -2309,7 +2322,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "starts Kong and Realtime even when api.enabled is false, since only Postgrest depends on it",
       () =>
         Effect.gen(function* () {
@@ -2329,7 +2342,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "excluding a single --exclude key skips exactly that container and starts every other excludable service",
       () =>
         Effect.gen(function* () {
@@ -2366,7 +2379,7 @@ content_path = "./supabase/templates/custom_notice.html"
       return spawned.filter((s) => s.args[0] === "run" && s.args[1] === "--rm");
     }
 
-    it.live(
+    it.effect(
       "triggers the SetupLocalDatabase-equivalent pipeline (PG15+ one-shot migrate jobs) on a fresh volume",
       () =>
         Effect.gen(function* () {
@@ -2381,7 +2394,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "resolves an excluded service's migrate-job image through a project-dotenv-only registry override",
       () =>
         Effect.gen(function* () {
@@ -2408,7 +2421,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "does not attempt to resolve an excluded service's migrate-job image on a non-fresh-volume restart",
       () =>
         Effect.gen(function* () {
@@ -2436,7 +2449,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("skips the SetupLocalDatabase-equivalent pipeline on a non-fresh volume", () =>
+    it.effect("skips the SetupLocalDatabase-equivalent pipeline on a non-fresh volume", () =>
       Effect.gen(function* () {
         const { layer, out, child } = yield* setup();
 
@@ -2446,7 +2459,7 @@ content_path = "./supabase/templates/custom_notice.html"
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on an undecryptable [db.vault] secret even on a non-fresh volume, matching Go's Config.Load",
       () =>
         // `checkDbToml`'s internal call inside `startSetupLocalDatabase` only runs on a fresh
@@ -2473,7 +2486,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on a bucket's invalid file_size_limit even on a non-fresh volume, matching Go's Config.Load",
       () =>
         Effect.gen(function* () {
@@ -2495,7 +2508,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live('prints "Starting database..." on a fresh volume, before Postgres is created', () =>
+    it.effect('prints "Starting database..." on a fresh volume, before Postgres is created', () =>
       Effect.gen(function* () {
         const { layer, out } = yield* setup({ route: freshVolumeRoute(defaultRoute()) });
 
@@ -2508,7 +2521,7 @@ content_path = "./supabase/templates/custom_notice.html"
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       'prints "Starting database from backup..." on a restart (an already-existing volume)',
       () =>
         Effect.gen(function* () {
@@ -2520,7 +2533,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "still writes supabase/.branches/_current_branch on a restart, even though the fresh-volume DB setup is skipped",
       () =>
         Effect.gen(function* () {
@@ -2536,7 +2549,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("seeds a configured bucket on a fresh volume with storage enabled", () =>
+    it.effect("seeds a configured bucket on a fresh volume with storage enabled", () =>
       Effect.gen(function* () {
         const http = mockStorageBucketHttpClient();
         const { layer } = yield* setup({
@@ -2553,29 +2566,31 @@ content_path = "./supabase/templates/custom_notice.html"
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("keeps a vector bucket missing from config.toml (prune declines without consent)", () =>
-      Effect.gen(function* () {
-        const http = mockStorageVectorHttpClient(["embeddings", "stale-vec"]);
-        const { layer } = yield* setup({
-          configContents:
-            'project_id = "demo"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
-          route: freshVolumeRoute(defaultRoute()),
-          httpClientLayer: http.layer,
-        });
-        // A truthy ambient `SUPABASE_YES` would auto-confirm the prune.
-        return yield* withEnvVar(
-          "SUPABASE_YES",
-          undefined,
-          Effect.gen(function* () {
-            yield* start(flags({ exclude: ["edge-runtime"] }));
-            expect(http.vectorListCalls).toBe(1);
-            expect(http.deletedVectorBuckets).toHaveLength(0);
-          }).pipe(Effect.provide(layer)),
-        );
-      }).pipe(Effect.provide(BunServices.layer)),
+    it.effect(
+      "keeps a vector bucket missing from config.toml (prune declines without consent)",
+      () =>
+        Effect.gen(function* () {
+          const http = mockStorageVectorHttpClient(["embeddings", "stale-vec"]);
+          const { layer } = yield* setup({
+            configContents:
+              'project_id = "demo"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+            route: freshVolumeRoute(defaultRoute()),
+            httpClientLayer: http.layer,
+          });
+          // A truthy ambient `SUPABASE_YES` would auto-confirm the prune.
+          return yield* withEnvVar(
+            "SUPABASE_YES",
+            undefined,
+            Effect.gen(function* () {
+              yield* start(flags({ exclude: ["edge-runtime"] }));
+              expect(http.vectorListCalls).toBe(1);
+              expect(http.deletedVectorBuckets).toHaveLength(0);
+            }).pipe(Effect.provide(layer)),
+          );
+        }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "never asks before overwriting an existing bucket, so piped stdin stays untouched",
       () =>
         Effect.gen(function* () {
@@ -2599,7 +2614,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "never reads piped stdin for the seeding confirmations, so a piped y cannot consent",
       () =>
         Effect.gen(function* () {
@@ -2626,28 +2641,30 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("prunes a stale vector bucket on a fresh-volume start when SUPABASE_YES consents", () =>
-      Effect.gen(function* () {
-        const http = mockStorageVectorHttpClient(["embeddings", "stale-vec"]);
-        const { layer } = yield* setup({
-          configContents:
-            'project_id = "demo"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
-          route: freshVolumeRoute(defaultRoute()),
-          httpClientLayer: http.layer,
-        });
-        return yield* withEnvVar(
-          "SUPABASE_YES",
-          "1",
-          Effect.gen(function* () {
-            yield* start(flags({ exclude: ["edge-runtime"] }));
-            expect(http.deletedVectorBuckets).toHaveLength(1);
-            expect(http.deletedVectorBuckets[0]).toContain("stale-vec");
-          }).pipe(Effect.provide(layer)),
-        );
-      }).pipe(Effect.provide(BunServices.layer)),
+    it.effect(
+      "prunes a stale vector bucket on a fresh-volume start when SUPABASE_YES consents",
+      () =>
+        Effect.gen(function* () {
+          const http = mockStorageVectorHttpClient(["embeddings", "stale-vec"]);
+          const { layer } = yield* setup({
+            configContents:
+              'project_id = "demo"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+            route: freshVolumeRoute(defaultRoute()),
+            httpClientLayer: http.layer,
+          });
+          return yield* withEnvVar(
+            "SUPABASE_YES",
+            "1",
+            Effect.gen(function* () {
+              yield* start(flags({ exclude: ["edge-runtime"] }));
+              expect(http.deletedVectorBuckets).toHaveLength(1);
+              expect(http.deletedVectorBuckets[0]).toContain("stale-vec");
+            }).pipe(Effect.provide(layer)),
+          );
+        }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "does not seed a configured bucket on a non-fresh volume, even with storage enabled",
       () =>
         Effect.gen(function* () {
@@ -2662,28 +2679,30 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("seeds against the env-overridden SUPABASE_API_PORT, not config.toml's raw port", () =>
-      // `seedBucketsRun` must reuse `start`'s own already env-overridden config, so a
-      // `SUPABASE_API_PORT` override reaches the bucket-seeding gateway's base URL too.
-      withEnvVar(
-        "SUPABASE_API_PORT",
-        "65432",
-        Effect.gen(function* () {
-          const http = mockStorageBucketHttpClient();
-          const { layer } = yield* setup({
-            configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
-            route: freshVolumeRoute(defaultRoute()),
-            httpClientLayer: http.layer,
-          });
+    it.effect(
+      "seeds against the env-overridden SUPABASE_API_PORT, not config.toml's raw port",
+      () =>
+        // `seedBucketsRun` must reuse `start`'s own already env-overridden config, so a
+        // `SUPABASE_API_PORT` override reaches the bucket-seeding gateway's base URL too.
+        withEnvVar(
+          "SUPABASE_API_PORT",
+          "65432",
+          Effect.gen(function* () {
+            const http = mockStorageBucketHttpClient();
+            const { layer } = yield* setup({
+              configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
+              route: freshVolumeRoute(defaultRoute()),
+              httpClientLayer: http.layer,
+            });
 
-          yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
-          expect(http.createdBucketRequests).toHaveLength(1);
-          expect(http.createdBucketRequests[0]).toContain(":65432/");
-        }).pipe(Effect.provide(BunServices.layer)),
-      ).pipe(Effect.provide(BunServices.layer)),
+            yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
+            expect(http.createdBucketRequests).toHaveLength(1);
+            expect(http.createdBucketRequests[0]).toContain(":65432/");
+          }).pipe(Effect.provide(BunServices.layer)),
+        ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "seeds against the env-overridden SUPABASE_API_EXTERNAL_URL, not config.toml's raw value",
       () =>
         // `effectiveLocalStorageConfig` must use the overridden `api.external_url`, not the raw
@@ -2706,7 +2725,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "seeds a bucket's default file_size_limit from the env-overridden SUPABASE_STORAGE_FILE_SIZE_LIMIT",
       () =>
         // `effectiveLocalStorageConfig` previously left `storage.file_size_limit` as the
@@ -2740,7 +2759,7 @@ content_path = "./supabase/templates/custom_notice.html"
       return spawned.filter((s) => isEdgeRuntimeCreate(s.args));
     }
 
-    it.live("creates and starts a real container when enabled and not excluded", () =>
+    it.effect("creates and starts a real container when enabled and not excluded", () =>
       Effect.gen(function* () {
         const { layer, child } = yield* setup();
 
@@ -2764,7 +2783,7 @@ content_path = "./supabase/templates/custom_notice.html"
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("--exclude edge-runtime skips its container entirely", () =>
+    it.effect("--exclude edge-runtime skips its container entirely", () =>
       Effect.gen(function* () {
         const { layer, child } = yield* setup();
 
@@ -2773,7 +2792,7 @@ content_path = "./supabase/templates/custom_notice.html"
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "keeps the host-side staged env artifacts after a successful bring-up (no eager cleanup)",
       () =>
         Effect.gen(function* () {
@@ -2801,7 +2820,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "logs 'Skipped serving Function' for a disabled function via Studio's bind mounts, even with Edge Runtime excluded",
       () =>
         Effect.gen(function* () {
@@ -2839,7 +2858,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "does not pick up an unrelated ancestor project's functions for a config-less --workdir subdirectory",
       () =>
         Effect.gen(function* () {
@@ -2969,7 +2988,7 @@ content_path = "./supabase/templates/custom_notice.html"
       45_000,
     );
 
-    it.live(
+    it.effect(
       "still fails when the daemon dies mid-pre-pull under --ignore-health-check — Go's exit-0 swallow is an unintended quirk this port deliberately does not reproduce (CLI-1987)",
       () =>
         Effect.gen(function* () {
@@ -3015,7 +3034,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("rollback on bring-up failure", () => {
-    it.live(
+    it.effect(
       "rolls back on a SIGINT-style interruption mid-bring-up, matching Go's context.Canceled rollback",
       () =>
         Effect.gen(function* () {
@@ -3029,11 +3048,12 @@ content_path = "./supabase/templates/custom_notice.html"
           //
           // Marking `db` never-healthy keeps `bringUp`'s Postgres health-check wait genuinely
           // retrying on its real backoff, rather than the whole synchronous mock bring-up
-          // completing before this test's polling loop is even scheduled — which would make
+          // completing before this test's probe wait is even scheduled — which would make
           // `Fiber.interrupt` a no-op on an already-succeeded fiber.
           const neverHealthy = new Set<string>();
           const route = defaultRoute({ neverHealthy });
           let dbContainerId: string | undefined;
+          const dbProbed = yield* Deferred.make<void>();
           const { layer, child } = yield* setup({
             route: (args) => {
               if (args[0] === "create") {
@@ -3042,6 +3062,14 @@ content_path = "./supabase/templates/custom_notice.html"
                   neverHealthy.add(name);
                   dbContainerId = name;
                 }
+              }
+              if (
+                dbContainerId !== undefined &&
+                args[0] === "container" &&
+                args[1] === "inspect" &&
+                args[2] === dbContainerId
+              ) {
+                return Deferred.succeed(dbProbed, undefined).pipe(Effect.as(route(args)));
               }
               return route(args);
             },
@@ -3052,15 +3080,7 @@ content_path = "./supabase/templates/custom_notice.html"
           );
           // Wait until the health check has actually probed the never-healthy `db` container,
           // proving the fiber is suspended inside the retry loop, not merely past `create`.
-          while (
-            dbContainerId === undefined ||
-            !child.spawned.some(
-              (s) =>
-                s.args[0] === "container" && s.args[1] === "inspect" && s.args[2] === dbContainerId,
-            )
-          ) {
-            yield* Effect.sleep("5 millis");
-          }
+          yield* Deferred.await(dbProbed);
           // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
           // including the `Effect.onError` rollback) has fully completed.
           yield* Fiber.interrupt(fiber);
@@ -3068,7 +3088,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "rolls back on a SIGINT-style interruption during the post-bring-up bulk health-check wait",
       () =>
         Effect.gen(function* () {
@@ -3081,6 +3101,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const neverHealthy = new Set<string>();
           const route = defaultRoute({ neverHealthy });
           let authContainerId: string | undefined;
+          const authProbed = yield* Deferred.make<void>();
           const { layer, child } = yield* setup({
             route: (args) => {
               if (args[0] === "create") {
@@ -3089,6 +3110,14 @@ content_path = "./supabase/templates/custom_notice.html"
                   neverHealthy.add(name);
                   authContainerId = name;
                 }
+              }
+              if (
+                authContainerId !== undefined &&
+                args[0] === "container" &&
+                args[1] === "inspect" &&
+                args[2] === authContainerId
+              ) {
+                return Deferred.succeed(authProbed, undefined).pipe(Effect.as(route(args)));
               }
               return route(args);
             },
@@ -3103,17 +3132,7 @@ content_path = "./supabase/templates/custom_notice.html"
           // Wait until the bulk health check has probed the never-healthy `auth` container,
           // proving the fiber is suspended inside the retry loop, not merely past the "Waiting
           // for health checks..." message.
-          while (
-            authContainerId === undefined ||
-            !child.spawned.some(
-              (s) =>
-                s.args[0] === "container" &&
-                s.args[1] === "inspect" &&
-                s.args[2] === authContainerId,
-            )
-          ) {
-            yield* Effect.sleep("5 millis");
-          }
+          yield* Deferred.await(authProbed);
           // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
           // including the `Effect.onError` rollback) has fully completed.
           yield* Fiber.interrupt(fiber);
@@ -3121,7 +3140,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("fails and rolls back on a network create failure", () =>
+    it.effect("fails and rolls back on a network create failure", () =>
       Effect.gen(function* () {
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
@@ -3150,7 +3169,7 @@ content_path = "./supabase/templates/custom_notice.html"
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("fails and rolls back on a container create failure", () =>
+    it.effect("fails and rolls back on a container create failure", () =>
       Effect.gen(function* () {
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
@@ -3172,7 +3191,7 @@ content_path = "./supabase/templates/custom_notice.html"
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails and rolls back on a container start failure, surfacing the port-conflict suggestion",
       () =>
         Effect.gen(function* () {
@@ -3202,7 +3221,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails on a malformed auth.email.max_frequency before any Docker work, matching Go's Config.Load",
       () =>
         Effect.gen(function* () {
@@ -3223,7 +3242,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails with a typed config error on a malformed auth.email override even when auth itself is disabled",
       () =>
         // With auth disabled, `resolveAuthEmail`'s unconditional call in `start.handler.ts`
@@ -3249,7 +3268,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails with a typed config error on a malformed auth.sms override even when auth itself is disabled",
       () =>
         // Same shape as the auth.email override test above: with auth disabled,
@@ -3615,7 +3634,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("--network-id", () => {
-    it.live("overrides the generated network name and every container's --network flag", () =>
+    it.effect("overrides the generated network name and every container's --network flag", () =>
       Effect.gen(function* () {
         const { layer, child } = yield* setup({ networkId: Option.some("custom-net") });
 
@@ -3632,7 +3651,7 @@ content_path = "./supabase/templates/custom_notice.html"
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("never spawns a create for a pre-created --network-id network", () =>
+    it.effect("never spawns a create for a pre-created --network-id network", () =>
       Effect.gen(function* () {
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
@@ -3656,7 +3675,7 @@ content_path = "./supabase/templates/custom_notice.html"
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("falls back to SUPABASE_NETWORK_ID when the flag itself is omitted", () =>
+    it.effect("falls back to SUPABASE_NETWORK_ID when the flag itself is omitted", () =>
       // See `start.handler.ts`'s doc comment on this resolution for the full precedence.
       withEnvVar(
         "SUPABASE_NETWORK_ID",
@@ -3675,7 +3694,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_API_PORT override", () => {
-    it.live("publishes Kong on the env-overridden API port, not config.api.port", () =>
+    it.effect("publishes Kong on the env-overridden API port, not config.api.port", () =>
       withEnvVar(
         "SUPABASE_API_PORT",
         "61234",
@@ -3746,7 +3765,7 @@ content_path = "./supabase/templates/custom_notice.html"
         expected: empty,
       },
     ]) {
-      it.live(scenario.name, () =>
+      it.effect(scenario.name, () =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
@@ -3788,7 +3807,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("storage migration pin", () => {
-    it.live(
+    it.effect(
       "threads a linked project's supabase/.temp/storage-migration pin into DB_MIGRATIONS_FREEZE_AT",
       () =>
         Effect.gen(function* () {
@@ -3810,7 +3829,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live('resolves to "" when no pin file exists', () =>
+    it.effect('resolves to "" when no pin file exists', () =>
       Effect.gen(function* () {
         const { layer, child } = yield* setup();
 
@@ -3825,7 +3844,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("linked service version pins", () => {
-    it.live(
+    it.effect(
       "resolves a supabase/.temp/storage-version pin into the pulled/created storage image tag",
       () =>
         Effect.gen(function* () {
@@ -3851,7 +3870,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("db.root_key", () => {
-    it.live(
+    it.effect(
       "delivers a configured db.root_key into the Postgres container's pgsodium root key via `docker cp`, never leaving it on host disk",
       () =>
         Effect.gen(function* () {
@@ -3879,7 +3898,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("container-not-found stderr shapes", () => {
-    it.live(
+    it.effect(
       "brings up the stack when the DB container's inspect reports 'No such object' instead of 'No such container'",
       () =>
         Effect.gen(function* () {
@@ -3918,7 +3937,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("Linux host-gateway mapping", () => {
-    it.live("adds --add-host host.docker.internal:host-gateway on Linux", () =>
+    it.effect("adds --add-host host.docker.internal:host-gateway on Linux", () =>
       Effect.gen(function* () {
         const { layer, child } = yield* setup();
 
@@ -3933,7 +3952,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("auth.email.smtp table-present default", () => {
-    it.live(
+    it.effect(
       "uses the configured SMTP server (not Mailpit) when [auth.email.smtp] omits enabled",
       () =>
         Effect.gen(function* () {
@@ -3953,7 +3972,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("custom auth.external providers", () => {
-    it.live("emits GOTRUE_EXTERNAL_* env vars for a provider outside the fixed schema set", () =>
+    it.effect("emits GOTRUE_EXTERNAL_* env vars for a provider outside the fixed schema set", () =>
       Effect.gen(function* () {
         const { layer, child } = yield* setup({
           configContents:
@@ -3971,7 +3990,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_LOCAL_SMTP_ADMIN_EMAIL / SUPABASE_LOCAL_SMTP_SENDER_NAME overrides", () => {
-    it.live("honors env overrides for the Mailpit fallback's admin email and sender name", () =>
+    it.effect("honors env overrides for the Mailpit fallback's admin email and sender name", () =>
       withEnvVar(
         "SUPABASE_LOCAL_SMTP_ADMIN_EMAIL",
         "override-admin@example.com",
@@ -3995,7 +4014,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_LOCAL_SMTP_SMTP_PORT override", () => {
-    it.live(
+    it.effect(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_LOCAL_SMTP_SMTP_PORT",
       () =>
         withEnvVar(
@@ -4016,51 +4035,53 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_AUTH_SMS_<PROVIDER>_* overrides", () => {
-    it.live("honors env overrides enabling Twilio SMS even when config.toml has it disabled", () =>
-      withEnvVar(
-        "SUPABASE_AUTH_SMS_TWILIO_ENABLED",
-        "true",
+    it.effect(
+      "honors env overrides enabling Twilio SMS even when config.toml has it disabled",
+      () =>
         withEnvVar(
-          "SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID",
-          "override-account-sid",
+          "SUPABASE_AUTH_SMS_TWILIO_ENABLED",
+          "true",
           withEnvVar(
-            "SUPABASE_AUTH_SMS_TWILIO_MESSAGE_SERVICE_SID",
-            "override-message-service-sid",
+            "SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID",
+            "override-account-sid",
             withEnvVar(
-              "SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN",
-              "override-auth-token",
-              Effect.gen(function* () {
-                // A complete, enabled provider is required, or SMS validation downgrades
-                // enable_signup to false regardless of the override — see the "disables phone login"
-                // test below for that behavior itself.
-                const { layer, child } = yield* setup({
-                  configContents: 'project_id = "demo"\n[auth.sms.twilio]\nenabled = false\n',
-                });
+              "SUPABASE_AUTH_SMS_TWILIO_MESSAGE_SERVICE_SID",
+              "override-message-service-sid",
+              withEnvVar(
+                "SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN",
+                "override-auth-token",
+                Effect.gen(function* () {
+                  // A complete, enabled provider is required, or SMS validation downgrades
+                  // enable_signup to false regardless of the override — see the "disables phone login"
+                  // test below for that behavior itself.
+                  const { layer, child } = yield* setup({
+                    configContents: 'project_id = "demo"\n[auth.sms.twilio]\nenabled = false\n',
+                  });
 
-                yield* start(flags()).pipe(Effect.provide(layer));
-                const gotrueCreate = child.spawned.find(
-                  (s) =>
-                    s.args[0] === "create" &&
-                    containerNameFromCreateArgs(s.args).includes("_auth_"),
-                );
-                expect(gotrueCreate?.env["GOTRUE_SMS_PROVIDER"]).toBe("twilio");
-                expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_ACCOUNT_SID"]).toBe(
-                  "override-account-sid",
-                );
-                expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID"]).toBe(
-                  "override-message-service-sid",
-                );
-                expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_AUTH_TOKEN"]).toBe(
-                  "override-auth-token",
-                );
-              }).pipe(Effect.provide(BunServices.layer)),
+                  yield* start(flags()).pipe(Effect.provide(layer));
+                  const gotrueCreate = child.spawned.find(
+                    (s) =>
+                      s.args[0] === "create" &&
+                      containerNameFromCreateArgs(s.args).includes("_auth_"),
+                  );
+                  expect(gotrueCreate?.env["GOTRUE_SMS_PROVIDER"]).toBe("twilio");
+                  expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_ACCOUNT_SID"]).toBe(
+                    "override-account-sid",
+                  );
+                  expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID"]).toBe(
+                    "override-message-service-sid",
+                  );
+                  expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_AUTH_TOKEN"]).toBe(
+                    "override-auth-token",
+                  );
+                }).pipe(Effect.provide(BunServices.layer)),
+              ),
             ),
           ),
         ),
-      ),
     );
 
-    it.live(
+    it.effect(
       "honors SUPABASE_AUTH_SMS_ENABLE_SIGNUP and SUPABASE_AUTH_SMS_MAX_FREQUENCY in GoTrue's env",
       () =>
         withEnvVar(
@@ -4087,7 +4108,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "disables phone login and warns when enable_signup is true with no SMS provider enabled",
       () =>
         // SMS validation downgrades `enable_signup` to `false` (plus a stderr warning) —
@@ -4114,7 +4135,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_AUTH_EMAIL_* overrides", () => {
-    it.live(
+    it.effect(
       "honors SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP and SUPABASE_AUTH_EMAIL_OTP_LENGTH in GoTrue's env",
       () =>
         withEnvVar(
@@ -4138,7 +4159,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "honors SUPABASE_AUTH_EMAIL_TEMPLATE_<NAME>_SUBJECT in GoTrue's mailer subject env",
       () =>
         withEnvVar(
@@ -4169,7 +4190,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails fast on SUPABASE_AUTH_EMAIL_TEMPLATE_<NAME>_CONTENT with no content_path configured, matching Go's Config.Validate",
       () =>
         // The env override folds into the email template's content field before
@@ -4199,7 +4220,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_DB_PORT override", () => {
-    it.live("publishes Postgres on the env-overridden DB port, not config.db.port", () =>
+    it.effect("publishes Postgres on the env-overridden DB port, not config.db.port", () =>
       withEnvVar(
         "SUPABASE_DB_PORT",
         "54329",
@@ -4218,7 +4239,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_DB_SETTINGS_* env overrides", () => {
-    it.live("honors SUPABASE_DB_SETTINGS_SHARED_BUFFERS in the rendered postgresql.conf", () =>
+    it.effect("honors SUPABASE_DB_SETTINGS_SHARED_BUFFERS in the rendered postgresql.conf", () =>
       withEnvVar(
         "SUPABASE_DB_SETTINGS_SHARED_BUFFERS",
         "256MB",
@@ -4236,30 +4257,33 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("storage feature env overrides", () => {
-    it.live("honors SUPABASE_STORAGE_S3_PROTOCOL_ENABLED and SUPABASE_STORAGE_VECTOR_ENABLED", () =>
-      withEnvVar(
-        "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
-        "false",
+    it.effect(
+      "honors SUPABASE_STORAGE_S3_PROTOCOL_ENABLED and SUPABASE_STORAGE_VECTOR_ENABLED",
+      () =>
         withEnvVar(
-          "SUPABASE_STORAGE_VECTOR_ENABLED",
+          "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
           "false",
-          Effect.gen(function* () {
-            const { layer, child } = yield* setup();
+          withEnvVar(
+            "SUPABASE_STORAGE_VECTOR_ENABLED",
+            "false",
+            Effect.gen(function* () {
+              const { layer, child } = yield* setup();
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            const storageCreate = child.spawned.find(
-              (s) =>
-                s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
-            );
-            expect(storageCreate?.env["S3_PROTOCOL_ENABLED"]).toBe("false");
-          }).pipe(Effect.provide(BunServices.layer)),
-        ),
-      ).pipe(Effect.provide(BunServices.layer)),
+              yield* start(flags()).pipe(Effect.provide(layer));
+              const storageCreate = child.spawned.find(
+                (s) =>
+                  s.args[0] === "create" &&
+                  containerNameFromCreateArgs(s.args).includes("_storage_"),
+              );
+              expect(storageCreate?.env["S3_PROTOCOL_ENABLED"]).toBe("false");
+            }).pipe(Effect.provide(BunServices.layer)),
+          ),
+        ).pipe(Effect.provide(BunServices.layer)),
     );
   });
 
   describe("SUPABASE_ANALYTICS_* env overrides", () => {
-    it.live("honors SUPABASE_ANALYTICS_BACKEND/_GCP_* for both Logflare and Studio", () =>
+    it.effect("honors SUPABASE_ANALYTICS_BACKEND/_GCP_* for both Logflare and Studio", () =>
       withEnvVar(
         "SUPABASE_ANALYTICS_BACKEND",
         "bigquery",
@@ -4298,7 +4322,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("auth.* env overrides reach GoTrue's container", () => {
-    it.live("honors SUPABASE_AUTH_ENABLE_SIGNUP for GOTRUE_DISABLE_SIGNUP", () =>
+    it.effect("honors SUPABASE_AUTH_ENABLE_SIGNUP for GOTRUE_DISABLE_SIGNUP", () =>
       withEnvVar(
         "SUPABASE_AUTH_ENABLE_SIGNUP",
         "false",
@@ -4316,7 +4340,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_EDGE_RUNTIME_DENO_VERSION override", () => {
-    it.live("resolves the Deno 1 edge-runtime image tag, not the Deno 2 default", () =>
+    it.effect("resolves the Deno 1 edge-runtime image tag, not the Deno 2 default", () =>
       withEnvVar(
         "SUPABASE_EDGE_RUNTIME_DENO_VERSION",
         "1",
@@ -4339,7 +4363,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_REALTIME_* env overrides", () => {
-    it.live(
+    it.effect(
       "honors SUPABASE_REALTIME_IP_VERSION/_MAX_HEADER_LENGTH for both the long-running container and the PG15+ setup job",
       () =>
         withEnvVar(
@@ -4375,7 +4399,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_REALTIME_IP_VERSION",
       () =>
         withEnvVar(
@@ -4396,7 +4420,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("Studio API URL normalization", () => {
-    it.live(
+    it.effect(
       "rewrites the default studio.api_url to the Kong URL rather than passing it through raw",
       () =>
         Effect.gen(function* () {
@@ -4414,7 +4438,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_STORAGE_FILE_SIZE_LIMIT override", () => {
-    it.live(
+    it.effect(
       "honors the override for both Storage's container and the fresh-volume migrate job",
       () =>
         withEnvVar(
@@ -4441,7 +4465,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION override", () => {
-    it.live(
+    it.effect(
       "selects the OrioleDB Postgres image and enables the container's S3 env when set only via env",
       () =>
         withEnvVar(
@@ -4467,7 +4491,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("honors SUPABASE_EXPERIMENTAL_S3_HOST/_REGION/_ACCESS_KEY/_SECRET_KEY", () =>
+    it.effect("honors SUPABASE_EXPERIMENTAL_S3_HOST/_REGION/_ACCESS_KEY/_SECRET_KEY", () =>
       withEnvVar(
         "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
         "16.0.0.1",
@@ -4506,7 +4530,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("Kong's embedded default TLS cert/key", () => {
-    it.live(
+    it.effect(
       "writes the embedded default cert/key when TLS is unconfigured, never empty files",
       () =>
         Effect.gen(function* () {
@@ -4526,7 +4550,7 @@ content_path = "./supabase/templates/custom_notice.html"
 
     // An empty but present `cert_path`/`key_path` is treated the same as absent — it must not
     // attempt a disk read.
-    it.live(
+    it.effect(
       "falls back to the embedded default cert/key when cert_path/key_path are present but empty",
       () =>
         Effect.gen(function* () {
@@ -4548,46 +4572,48 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_API_TLS_CERT_PATH/_KEY_PATH overrides", () => {
-    it.live("reads the env-overridden cert/key paths for Kong, not the (absent) TOML fields", () =>
-      withEnvVar(
-        "SUPABASE_API_TLS_CERT_PATH",
-        "certs/env-server.crt",
+    it.effect(
+      "reads the env-overridden cert/key paths for Kong, not the (absent) TOML fields",
+      () =>
         withEnvVar(
-          "SUPABASE_API_TLS_KEY_PATH",
-          "certs/env-server.key",
-          Effect.gen(function* () {
-            const fs = yield* FileSystem.FileSystem;
-            const path = yield* Path.Path;
-            const copied = new Map<string, string>();
-            const { layer, workdir, child } = yield* setup({
-              configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
-              onSecretCopy: (containerPath, content) => {
-                copied.set(containerPath, content);
-              },
-            });
-            yield* fs.makeDirectory(path.join(workdir, "supabase", "certs"), {
-              recursive: true,
-            });
-            yield* fs.writeFileString(
-              path.join(workdir, "supabase", "certs", "env-server.crt"),
-              "-----BEGIN CERTIFICATE-----env-cert",
-            );
-            yield* fs.writeFileString(
-              path.join(workdir, "supabase", "certs", "env-server.key"),
-              "-----BEGIN PRIVATE KEY-----env-key",
-            );
+          "SUPABASE_API_TLS_CERT_PATH",
+          "certs/env-server.crt",
+          withEnvVar(
+            "SUPABASE_API_TLS_KEY_PATH",
+            "certs/env-server.key",
+            Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              const copied = new Map<string, string>();
+              const { layer, workdir, child } = yield* setup({
+                configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
+                onSecretCopy: (containerPath, content) => {
+                  copied.set(containerPath, content);
+                },
+              });
+              yield* fs.makeDirectory(path.join(workdir, "supabase", "certs"), {
+                recursive: true,
+              });
+              yield* fs.writeFileString(
+                path.join(workdir, "supabase", "certs", "env-server.crt"),
+                "-----BEGIN CERTIFICATE-----env-cert",
+              );
+              yield* fs.writeFileString(
+                path.join(workdir, "supabase", "certs", "env-server.key"),
+                "-----BEGIN PRIVATE KEY-----env-key",
+              );
 
-            yield* start(flags()).pipe(Effect.provide(layer));
-            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
-            expect(copied.get("/home/kong/localhost.crt")).toBe(
-              "-----BEGIN CERTIFICATE-----env-cert",
-            );
-            expect(copied.get("/home/kong/localhost.key")).toBe(
-              "-----BEGIN PRIVATE KEY-----env-key",
-            );
-          }).pipe(Effect.provide(BunServices.layer)),
-        ),
-      ).pipe(Effect.provide(BunServices.layer)),
+              yield* start(flags()).pipe(Effect.provide(layer));
+              expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+              expect(copied.get("/home/kong/localhost.crt")).toBe(
+                "-----BEGIN CERTIFICATE-----env-cert",
+              );
+              expect(copied.get("/home/kong/localhost.key")).toBe(
+                "-----BEGIN PRIVATE KEY-----env-key",
+              );
+            }).pipe(Effect.provide(BunServices.layer)),
+          ),
+        ).pipe(Effect.provide(BunServices.layer)),
     );
   });
 
@@ -4595,7 +4621,7 @@ content_path = "./supabase/templates/custom_notice.html"
     // The entire TLS cert/key disk read is nested inside the API-enabled check, so when API is
     // disabled, Kong keeps its embedded default cert/key regardless of
     // `api.tls.enabled`/cert_path/key_path.
-    it.live(
+    it.effect(
       "skips the configured cert/key read for Kong when API is disabled only via env override",
       () =>
         withEnvVar(
@@ -4631,7 +4657,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_API_ENABLED",
       () =>
         withEnvVar(
@@ -4652,7 +4678,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_AUTH_JWT_EXPIRY reaches Postgres init", () => {
-    it.live("honors the override for Postgres's JWT_EXP, not just GoTrue's GOTRUE_JWT_EXP", () =>
+    it.effect("honors the override for Postgres's JWT_EXP, not just GoTrue's GOTRUE_JWT_EXP", () =>
       withEnvVar(
         "SUPABASE_AUTH_JWT_EXPIRY",
         "7200",
@@ -4674,7 +4700,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("encrypted secrets reach GoTrue's container", () => {
-    it.live("decrypts an encrypted external OAuth provider secret (known provider)", () =>
+    it.effect("decrypts an encrypted external OAuth provider secret (known provider)", () =>
       withEnvVar(
         "DOTENV_PRIVATE_KEY",
         VAULT_PRIVATE_KEY,
@@ -4692,7 +4718,7 @@ content_path = "./supabase/templates/custom_notice.html"
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "decrypts an encrypted external OAuth provider secret (custom/unmodeled provider)",
       () =>
         withEnvVar(
@@ -4713,7 +4739,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("decrypts an encrypted Twilio SMS auth_token", () =>
+    it.effect("decrypts an encrypted Twilio SMS auth_token", () =>
       withEnvVar(
         "DOTENV_PRIVATE_KEY",
         VAULT_PRIVATE_KEY,
@@ -4733,31 +4759,33 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("Edge Runtime secrets", () => {
-    it.live("resolves configured [edge_runtime.secrets] into the runtime's env, not dropped", () =>
-      Effect.gen(function* () {
-        const { layer, child } = yield* setup({
-          configContents:
-            'project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "shh-do-not-tell"\nmy_lower_secret = "keep-me"\nEMPTY_SECRET = ""\n',
-        });
+    it.effect(
+      "resolves configured [edge_runtime.secrets] into the runtime's env, not dropped",
+      () =>
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup({
+            configContents:
+              'project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "shh-do-not-tell"\nmy_lower_secret = "keep-me"\nEMPTY_SECRET = ""\n',
+          });
 
-        const fs = yield* FileSystem.FileSystem;
-        yield* start(flags()).pipe(Effect.provide(layer));
-        const edgeRuntimeRunCall = child.spawned.find((s) => isEdgeRuntimeCreate(s.args));
-        const args = edgeRuntimeRunCall?.args ?? [];
-        const envFileIndex = args.indexOf("--env-file");
-        const envFilePath = envFileIndex !== -1 ? args[envFileIndex + 1] : undefined;
-        expect(envFilePath).toBeDefined();
-        const envFileContent = yield* fs.readFileString(envFilePath ?? "");
-        expect(envFileContent).toContain("MY_SECRET=shh-do-not-tell");
-        // Names reach the container uppercased, and empty values are skipped — shared with
-        // `functions serve` via `toPlainEdgeRuntimeConfig`.
-        expect(envFileContent).toContain("MY_LOWER_SECRET=keep-me");
-        expect(envFileContent).not.toContain("my_lower_secret=");
-        expect(envFileContent).not.toContain("EMPTY_SECRET=");
-      }).pipe(Effect.provide(BunServices.layer)),
+          const fs = yield* FileSystem.FileSystem;
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const edgeRuntimeRunCall = child.spawned.find((s) => isEdgeRuntimeCreate(s.args));
+          const args = edgeRuntimeRunCall?.args ?? [];
+          const envFileIndex = args.indexOf("--env-file");
+          const envFilePath = envFileIndex !== -1 ? args[envFileIndex + 1] : undefined;
+          expect(envFilePath).toBeDefined();
+          const envFileContent = yield* fs.readFileString(envFilePath ?? "");
+          expect(envFileContent).toContain("MY_SECRET=shh-do-not-tell");
+          // Names reach the container uppercased, and empty values are skipped — shared with
+          // `functions serve` via `toPlainEdgeRuntimeConfig`.
+          expect(envFileContent).toContain("MY_LOWER_SECRET=keep-me");
+          expect(envFileContent).not.toContain("my_lower_secret=");
+          expect(envFileContent).not.toContain("EMPTY_SECRET=");
+        }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "decrypts an encrypted [edge_runtime.secrets] entry into plaintext, not the raw ciphertext",
       () =>
         // Mirrors "encrypted secrets reach GoTrue's container" above, for `edge_runtime.secrets`.
@@ -4783,7 +4811,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails with a typed config error, before any container is created, on an undecryptable [edge_runtime.secrets] entry",
       () =>
         // Caught eagerly by `checkDbToml`'s `assertDecryptableSecrets` pre-check, before the
@@ -4810,7 +4838,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_API_* env overrides reach PostgREST and Studio", () => {
-    it.live("honors SUPABASE_API_SCHEMAS/_EXTRA_SEARCH_PATH/_MAX_ROWS in both containers", () =>
+    it.effect("honors SUPABASE_API_SCHEMAS/_EXTRA_SEARCH_PATH/_MAX_ROWS in both containers", () =>
       withEnvVar(
         "SUPABASE_API_SCHEMAS",
         "public,custom",
@@ -4845,7 +4873,7 @@ content_path = "./supabase/templates/custom_notice.html"
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_API_MAX_ROWS",
       () =>
         withEnvVar(
@@ -4866,7 +4894,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_DB_POOLER_* env overrides reach Supavisor", () => {
-    it.live("SUPABASE_DB_POOLER_POOL_MODE=session flips the published host port to 5432", () =>
+    it.effect("SUPABASE_DB_POOLER_POOL_MODE=session flips the published host port to 5432", () =>
       withEnvVar(
         "SUPABASE_DB_POOLER_POOL_MODE",
         "session",
@@ -4888,7 +4916,7 @@ content_path = "./supabase/templates/custom_notice.html"
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_DB_POOLER_POOL_MODE",
       () =>
         withEnvVar(
@@ -4909,7 +4937,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_REALTIME_ENABLED",
       () =>
         withEnvVar(
@@ -4928,7 +4956,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("SUPABASE_DB_POOLER_PORT overrides the published host port", () =>
+    it.effect("SUPABASE_DB_POOLER_PORT overrides the published host port", () =>
       withEnvVar(
         "SUPABASE_DB_POOLER_PORT",
         "60001",
@@ -4952,7 +4980,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_ANALYTICS_PORT override", () => {
-    it.live("overrides the published Logflare host port", () =>
+    it.effect("overrides the published Logflare host port", () =>
       withEnvVar(
         "SUPABASE_ANALYTICS_PORT",
         "60002",
@@ -4970,7 +4998,7 @@ content_path = "./supabase/templates/custom_notice.html"
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_ANALYTICS_VECTOR_PORT",
       () =>
         // `analytics.vector_port` decodes in the same Config.Load pass as `analytics.port`
@@ -5029,7 +5057,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("auth.hook.* env overrides reach GoTrue's container", () => {
-    it.live("honors SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED/_URI", () =>
+    it.effect("honors SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED/_URI", () =>
       withEnvVar(
         "SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED",
         "true",
@@ -5061,7 +5089,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("auth.captcha.* env overrides reach GoTrue's container", () => {
-    it.live("honors SUPABASE_AUTH_CAPTCHA_ENABLED/_PROVIDER", () =>
+    it.effect("honors SUPABASE_AUTH_CAPTCHA_ENABLED/_PROVIDER", () =>
       withEnvVar(
         "SUPABASE_AUTH_CAPTCHA_ENABLED",
         "true",
@@ -5088,7 +5116,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("nested auth security env overrides reach GoTrue's container", () => {
-    it.live("honors SUPABASE_AUTH_SESSIONS_TIMEBOX", () =>
+    it.effect("honors SUPABASE_AUTH_SESSIONS_TIMEBOX", () =>
       withEnvVar(
         "SUPABASE_AUTH_SESSIONS_TIMEBOX",
         "24h",
@@ -5104,7 +5132,7 @@ content_path = "./supabase/templates/custom_notice.html"
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("honors SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED/_VERIFY_ENABLED", () =>
+    it.effect("honors SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED/_VERIFY_ENABLED", () =>
       withEnvVar(
         "SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED",
         "true",
@@ -5128,7 +5156,7 @@ content_path = "./supabase/templates/custom_notice.html"
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("honors SUPABASE_AUTH_RATE_LIMIT_SMS_SENT", () =>
+    it.effect("honors SUPABASE_AUTH_RATE_LIMIT_SMS_SENT", () =>
       withEnvVar(
         "SUPABASE_AUTH_RATE_LIMIT_SMS_SENT",
         "99",
@@ -5144,7 +5172,7 @@ content_path = "./supabase/templates/custom_notice.html"
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("honors SUPABASE_AUTH_WEB3_SOLANA_ENABLED", () =>
+    it.effect("honors SUPABASE_AUTH_WEB3_SOLANA_ENABLED", () =>
       withEnvVar(
         "SUPABASE_AUTH_WEB3_SOLANA_ENABLED",
         "true",
@@ -5160,7 +5188,7 @@ content_path = "./supabase/templates/custom_notice.html"
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("honors SUPABASE_AUTH_OAUTH_SERVER_ENABLED", () =>
+    it.effect("honors SUPABASE_AUTH_OAUTH_SERVER_ENABLED", () =>
       withEnvVar(
         "SUPABASE_AUTH_OAUTH_SERVER_ENABLED",
         "true",
@@ -5178,7 +5206,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("auth.passkey/auth.webauthn env overrides reach GoTrue's container", () => {
-    it.live("honors SUPABASE_AUTH_PASSKEY_ENABLED", () =>
+    it.effect("honors SUPABASE_AUTH_PASSKEY_ENABLED", () =>
       withEnvVar(
         "SUPABASE_AUTH_PASSKEY_ENABLED",
         "true",
@@ -5197,7 +5225,7 @@ content_path = "./supabase/templates/custom_notice.html"
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("honors SUPABASE_AUTH_WEBAUTHN_RP_ID/_RP_DISPLAY_NAME/_RP_ORIGINS", () =>
+    it.effect("honors SUPABASE_AUTH_WEBAUTHN_RP_ID/_RP_DISPLAY_NAME/_RP_ORIGINS", () =>
       withEnvVar(
         "SUPABASE_AUTH_WEBAUTHN_RP_ID",
         "env-rp-id",
@@ -5229,7 +5257,7 @@ content_path = "./supabase/templates/custom_notice.html"
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "coerces an env(...)-resolved passkey enabled string instead of reading it as disabled",
       () =>
         // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema, so the pre-decode
@@ -5255,7 +5283,7 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live(
+    it.effect(
       "splits an env(...)-resolved comma-separated rp_origins string instead of dropping it to []",
       () =>
         withEnvVar(
@@ -5281,7 +5309,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_EDGE_RUNTIME_POLICY override", () => {
-    it.live("honors the env-overridden Edge Runtime request policy", () =>
+    it.effect("honors the env-overridden Edge Runtime request policy", () =>
       withEnvVar(
         "SUPABASE_EDGE_RUNTIME_POLICY",
         "per_worker",

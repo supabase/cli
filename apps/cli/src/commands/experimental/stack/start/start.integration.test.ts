@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Redacted, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Redacted, Schema, Stream } from "effect";
 import {
   DEFAULT_LOCAL_DATABASE_PASSWORD,
   DEFAULT_LOCAL_JWT_SECRET,
@@ -45,6 +45,8 @@ const flags = (exclude: ReadonlyArray<string> = []) => ({
   preparation: "background" as const,
   eager: false,
 });
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const signingKey = () => ({
   ...generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ format: "jwk" }),
@@ -361,7 +363,7 @@ const layers = (
 };
 
 describe("experimental stack start", () => {
-  it.live("rejects incompatible Functions env before changing composition", () =>
+  it.effect("rejects incompatible Functions env before changing composition", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-functions-env-" });
@@ -384,7 +386,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects malformed configuration before creating a stack", () =>
+  it.effect("rejects malformed configuration before creating a stack", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-invalid-" });
@@ -412,7 +414,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("applies capability selection across repeated starts", () =>
+  it.effect("applies capability selection across repeated starts", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-db-" });
@@ -482,7 +484,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("names the services that failed when the composition start fails", () =>
+  it.effect("names the services that failed when the composition start fails", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-outcomes-" });
@@ -514,7 +516,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("loads Functions env only when Functions are selected", () =>
+  it.effect("loads Functions env only when Functions are selected", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-functions-env-" });
@@ -585,7 +587,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects Studio without REST before changing the composition", () =>
+  it.effect("rejects Studio without REST before changing the composition", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-studio-" });
@@ -603,7 +605,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("applies signing-key file changes only after the stack is stopped", () =>
+  it.effect("applies signing-key file changes only after the stack is stopped", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-key-rotation-" });
@@ -614,16 +616,14 @@ describe("experimental stack start", () => {
         `${root}/supabase/config.toml`,
         'project_id = "key-rotation"\n[auth]\nsigning_keys_path = "keys.json"\n',
       );
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- The stack parser consumes JWK files as JSON.
-      yield* fs.writeFileString(`${root}/supabase/keys.json`, JSON.stringify([firstKey]));
+      yield* fs.writeFileString(`${root}/supabase/keys.json`, yield* encodeJson([firstKey]));
       const fixture = fakeStack();
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(1);
       const savedKeys = fixture.savedCredentials.gotrueJwtKeys;
       const savedAnonKey = fixture.savedCredentials.anonKey;
 
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- The stack parser consumes JWK files as JSON.
-      yield* fs.writeFileString(`${root}/supabase/keys.json`, JSON.stringify([secondKey]));
+      yield* fs.writeFileString(`${root}/supabase/keys.json`, yield* encodeJson([secondKey]));
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.stopped).toBe(0);
       expect(fixture.composed).toBe(1);
@@ -639,29 +639,34 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("recomposes a stopped stack with its existing IDs without rerunning catalog setup", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-stopped-restart-" });
-      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "stopped-restart"\n');
-      const fixture = fakeStack();
+  it.effect(
+    "recomposes a stopped stack with its existing IDs without rerunning catalog setup",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-stopped-restart-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "stopped-restart"\n',
+        );
+        const fixture = fakeStack();
 
-      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-      const firstIds = fixture.members.map(({ id }) => id);
-      expect(fixture.composed).toBe(1);
-      expect(fixture.catalogApplied).toBe(1);
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        const firstIds = fixture.members.map(({ id }) => id);
+        expect(fixture.composed).toBe(1);
+        expect(fixture.catalogApplied).toBe(1);
 
-      yield* fixture.stack.composition.stop;
-      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        yield* fixture.stack.composition.stop;
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
 
-      expect(fixture.composed).toBe(2);
-      expect(fixture.members.map(({ id }) => id)).toEqual(firstIds);
-      expect(fixture.catalogApplied).toBe(1);
-    }).pipe(Effect.provide(BunServices.layer)),
+        expect(fixture.composed).toBe(2);
+        expect(fixture.members.map(({ id }) => id)).toEqual(firstIds);
+        expect(fixture.catalogApplied).toBe(1);
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("skips invalid config while running and reports it after stop", () =>
+  it.effect("skips invalid config while running and reports it after stop", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({
@@ -694,7 +699,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects a partially active stack before reading changed config", () =>
+  it.effect("rejects a partially active stack before reading changed config", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-partial-state-" });
@@ -726,37 +731,39 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects changed Postgres root keys and database versions after stopping the stack", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      for (const [name, changed] of [
-        ["root-key", '[db]\nroot_key = "a-different-postgres-root-key"\n'],
-        ["version", "[db]\nmajor_version = 15\n"],
-      ] as const) {
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-start-${name}-` });
-        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-        yield* fs.writeFileString(`${root}/supabase/config.toml`, `project_id = "${name}"\n`);
-        const fixture = fakeStack();
-        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-        expect(fixture.composed).toBe(1);
+  it.effect(
+    "rejects changed Postgres root keys and database versions after stopping the stack",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        for (const [name, changed] of [
+          ["root-key", '[db]\nroot_key = "a-different-postgres-root-key"\n'],
+          ["version", "[db]\nmajor_version = 15\n"],
+        ] as const) {
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-start-${name}-` });
+          yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+          yield* fs.writeFileString(`${root}/supabase/config.toml`, `project_id = "${name}"\n`);
+          const fixture = fakeStack();
+          yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+          expect(fixture.composed).toBe(1);
 
-        yield* fs.writeFileString(
-          `${root}/supabase/config.toml`,
-          `project_id = "${name}"\n${changed}`,
-        );
-        yield* fixture.stack.composition.stop;
-        const error = yield* stackStart(flags(["studio"])).pipe(
-          Effect.provide(layers(root, fixture)),
-          Effect.flip,
-        );
-        expect(error).toMatchObject({ reason: "invalid-config" });
-        expect(fixture.stopped).toBe(1);
-        expect(fixture.composed).toBe(1);
-      }
-    }).pipe(Effect.provide(BunServices.layer)),
+          yield* fs.writeFileString(
+            `${root}/supabase/config.toml`,
+            `project_id = "${name}"\n${changed}`,
+          );
+          yield* fixture.stack.composition.stop;
+          const error = yield* stackStart(flags(["studio"])).pipe(
+            Effect.provide(layers(root, fixture)),
+            Effect.flip,
+          );
+          expect(error).toMatchObject({ reason: "invalid-config" });
+          expect(fixture.stopped).toBe(1);
+          expect(fixture.composed).toBe(1);
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("matches a Postgres major alias to the saved pinned database version", () =>
+  it.effect("matches a Postgres major alias to the saved pinned database version", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-postgres-alias-" });

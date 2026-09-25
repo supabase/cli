@@ -35,77 +35,72 @@ const METADATA_URL_MAX_BYTES = 5 * 1024 * 1024;
  * error[.]` suffix — the trailing punctuation differs between `create`
  * (no period) and `update` (period).
  */
-export const validateMetadataUrl = (
+export const validateMetadataUrl = Effect.fn("sso.validateMetadataUrl")(function* (
   metadataUrl: string,
-): Effect.Effect<
-  void,
-  SsoMetadataUrlInvalidError | SsoMetadataUrlNetworkError | SsoMetadataUrlNonUtf8Error,
-  HttpClient.HttpClient
-> =>
-  Effect.gen(function* () {
-    const parsed = yield* Effect.try({
-      try: () => new URL(metadataUrl),
-      catch: (cause) =>
-        new SsoMetadataUrlInvalidError({
-          message: `failed to parse metadata uri ${quoteSsoString(metadataUrl)}: ${String(cause)}`,
-        }),
-    });
-
-    // URL.protocol is already lowercased, so a direct compare against
-    // "https:" is safe.
-    if (parsed.protocol !== "https:") {
-      return yield* new SsoMetadataUrlInvalidError({
-        message: "only HTTPS Metadata URLs are supported",
-      });
-    }
-
-    const httpClient = yield* HttpClient.HttpClient;
-    const request = HttpClientRequest.get(metadataUrl).pipe(
-      HttpClientRequest.setHeader("Accept", "application/xml"),
-    );
-
-    const response = yield* httpClient.execute(request).pipe(
-      // Refuse redirects so the HTTPS-only guard above can't be sidestepped via 3xx → http://internal/.
-      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
-      Effect.timeout(METADATA_URL_TIMEOUT),
-      Effect.catchTags({
-        TimeoutError: () =>
-          Effect.fail(
-            new SsoMetadataUrlNetworkError({ message: "failed to fetch metadata url: timeout" }),
-          ),
-        HttpClientError: (cause) =>
-          Effect.fail(
-            new SsoMetadataUrlNetworkError({
-              message: `failed to fetch metadata url: ${String(cause)}`,
-            }),
-          ),
+) {
+  const parsed = yield* Effect.try({
+    try: () => new URL(metadataUrl),
+    catch: (cause) =>
+      new SsoMetadataUrlInvalidError({
+        message: `failed to parse metadata uri ${quoteSsoString(metadataUrl)}: ${String(cause)}`,
       }),
-    );
-
-    if (response.status !== 200) {
-      return yield* new SsoMetadataUrlNetworkError({
-        message: `unexpected metadata url status: ${response.status}`,
-      });
-    }
-
-    const arrayBuffer = yield* response.arrayBuffer.pipe(
-      Effect.mapError(
-        (cause) =>
-          new SsoMetadataUrlNetworkError({
-            message: `failed to read http response: ${String(cause)}`,
-          }),
-      ),
-    );
-
-    if (arrayBuffer.byteLength > METADATA_URL_MAX_BYTES) {
-      return yield* new SsoMetadataUrlNetworkError({
-        message: `metadata url response exceeds maximum allowed size (${METADATA_URL_MAX_BYTES} bytes)`,
-      });
-    }
-
-    yield* validateMetadataXmlBytes(
-      new Uint8Array(arrayBuffer),
-      metadataUrl,
-      (args) => new SsoMetadataUrlNonUtf8Error({ message: args.message }),
-    );
   });
+
+  // URL.protocol is already lowercased, so a direct compare against
+  // "https:" is safe.
+  if (parsed.protocol !== "https:") {
+    return yield* new SsoMetadataUrlInvalidError({
+      message: "only HTTPS Metadata URLs are supported",
+    });
+  }
+
+  const httpClient = yield* HttpClient.HttpClient;
+  const request = HttpClientRequest.get(metadataUrl).pipe(
+    HttpClientRequest.setHeader("Accept", "application/xml"),
+  );
+
+  const response = yield* httpClient.execute(request).pipe(
+    // Refuse redirects so the HTTPS-only guard above can't be sidestepped via 3xx → http://internal/.
+    Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+    Effect.timeout(METADATA_URL_TIMEOUT),
+    Effect.catchTags({
+      TimeoutError: () =>
+        Effect.fail(
+          new SsoMetadataUrlNetworkError({ message: "failed to fetch metadata url: timeout" }),
+        ),
+      HttpClientError: (cause) =>
+        Effect.fail(
+          new SsoMetadataUrlNetworkError({
+            message: `failed to fetch metadata url: ${String(cause)}`,
+          }),
+        ),
+    }),
+  );
+
+  if (response.status !== 200) {
+    return yield* new SsoMetadataUrlNetworkError({
+      message: `unexpected metadata url status: ${response.status}`,
+    });
+  }
+
+  const arrayBuffer = yield* response.arrayBuffer.pipe(
+    Effect.mapError(
+      (cause) =>
+        new SsoMetadataUrlNetworkError({
+          message: `failed to read http response: ${String(cause)}`,
+        }),
+    ),
+  );
+
+  if (arrayBuffer.byteLength > METADATA_URL_MAX_BYTES) {
+    return yield* new SsoMetadataUrlNetworkError({
+      message: `metadata url response exceeds maximum allowed size (${METADATA_URL_MAX_BYTES} bytes)`,
+    });
+  }
+
+  yield* validateMetadataXmlBytes(
+    new Uint8Array(arrayBuffer),
+    metadataUrl,
+    (args) => new SsoMetadataUrlNonUtf8Error({ message: args.message }),
+  );
+});

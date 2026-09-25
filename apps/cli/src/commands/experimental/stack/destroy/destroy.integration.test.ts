@@ -47,7 +47,7 @@ const fixture = Effect.fn("StackDestroyTest.fixture")(function* (yes: boolean) {
 });
 
 describe("stack destroy", () => {
-  it.live("requires confirmation before starting an owner or changing saved state", () =>
+  it.effect("requires confirmation before starting an owner or changing saved state", () =>
     Effect.gen(function* () {
       const f = yield* fixture(false);
       const error = yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer), Effect.flip);

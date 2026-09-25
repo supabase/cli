@@ -26,17 +26,19 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
   if (Result.isFailure(context)) configError = context.failure;
   else {
     const resolvedMajor = yield* Effect.try({
-      try: () => {
-        const value = envOverrideMajorVersion(
+      try: () =>
+        envOverrideMajorVersion(
           context.success.config.db.major_version,
           context.success.projectEnvValues,
-        );
-        if (value !== 15 && value !== 17)
-          throw new Error(`unsupported PostgreSQL major version: ${value}`);
-        return value;
-      },
+        ),
       catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
-    }).pipe(Effect.result);
+    }).pipe(
+      Effect.filterOrFail(
+        (value) => value === 15 || value === 17,
+        (value) => `unsupported PostgreSQL major version: ${value}`,
+      ),
+      Effect.result,
+    );
     if (Result.isFailure(resolvedMajor)) configError = resolvedMajor.failure;
     else major = resolvedMajor.success;
   }

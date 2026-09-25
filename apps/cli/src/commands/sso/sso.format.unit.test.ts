@@ -24,7 +24,7 @@ describe("formatSsoTimestamp", () => {
     expect(formatSsoTimestamp("2023-03-28T13:50:14.464Z")).toBe("2023-03-28 13:50:14");
   });
 
-  it.live("interprets timezone-free timestamps in local time before rendering UTC", () =>
+  it.effect("interprets timezone-free timestamps in local time before rendering UTC", () =>
     withEnvVar(
       "TZ",
       "Asia/Kolkata",

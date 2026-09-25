@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { DateTime } from "effect";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { ComputeLogEntry } from "../../../shared/compute/compute-logs-api.ts";
 import { renderComputeLogLine, computeLogLevel } from "./compute-logs.format.ts";
@@ -27,8 +28,7 @@ afterEach(() => {
 const AT = 1_788_187_532_576;
 
 function nativeDate(timestampMs: number): Date {
-  // oxlint-disable-next-line effecttsgo/global-date -- native Date accessors form an independent local-time oracle.
-  return new Date(timestampMs);
+  return DateTime.toDateUtc(DateTime.makeUnsafe(timestampMs));
 }
 
 /** Native Date accessors provide a local-time oracle independent of DateTime.formatLocal. */

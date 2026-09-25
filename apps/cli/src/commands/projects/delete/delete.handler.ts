@@ -86,19 +86,16 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
       output.format === "text" ? yield* output.task("Deleting project...") : undefined;
     const deleted: DeletedProject = yield* api.v1.deleteAProject({ ref }).pipe(
       Effect.tapError(() => deleting?.fail() ?? Effect.void),
-      Effect.catch((cause) =>
-        Effect.gen(function* () {
-          if (
-            HttpClientError.isHttpClientError(cause) &&
-            cause.response !== undefined &&
-            cause.response.status === 404
-          ) {
-            return yield* new ProjectsDeleteNotFoundError({
-              message: `Project does not exist:${ref}`,
-            });
-          }
-          return yield* mapDeleteError(cause);
-        }),
+      Effect.catchIf(
+        (cause) =>
+          HttpClientError.isHttpClientError(cause) &&
+          cause.response !== undefined &&
+          cause.response.status === 404,
+        () =>
+          Effect.fail(
+            new ProjectsDeleteNotFoundError({ message: `Project does not exist:${ref}` }),
+          ),
+        mapDeleteError,
       ),
     );
     yield* deleting?.clear() ?? Effect.void;

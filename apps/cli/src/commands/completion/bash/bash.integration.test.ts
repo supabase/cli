@@ -17,7 +17,7 @@ function testRoot() {
 }
 
 describe("completion bash", () => {
-  it.live("prints the native bash completion script", () => {
+  it.effect("prints the native bash completion script", () => {
     const out = setupCompletionBash();
     return Effect.gen(function* () {
       yield* completionBash({ noDescriptions: false });
@@ -27,7 +27,7 @@ describe("completion bash", () => {
     }).pipe(Effect.provide(out.layer));
   });
 
-  it.live(
+  it.effect(
     "prints the native bash completion script without descriptions when --no-descriptions is set",
     () => {
       const out = setupCompletionBash();
@@ -38,7 +38,7 @@ describe("completion bash", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "accepts --no-descriptions from real argv via the command parser and still prints the no-desc script",
     () => {
       const out = setupCompletionBash();
@@ -61,7 +61,7 @@ describe("completion bash", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fires the cli_command_executed telemetry event, matching Go's PersistentPostRun (CLI-1965 review finding)",
     () => {
       const out = setupCompletionBash();

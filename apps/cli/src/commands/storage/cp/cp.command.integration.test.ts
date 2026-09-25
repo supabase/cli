@@ -65,7 +65,7 @@ function setup(args: ReadonlyArray<string>) {
 }
 
 describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
-  it.live(
+  it.effect(
     "rejects --jobs=-1 with pflag's exact ParseUint message, ahead of the experimental gate and the --linked/--local mutex conflict",
     () => {
       const args = [
@@ -98,7 +98,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
 
   // `-0` normalizes to negative zero in a numeric check but must still be rejected with its
   // original spelling (`-01`, not `-1`); non-numeric tokens get the same exact pflag message.
-  it.live.each([
+  it.effect.each([
     {
       token: "-0",
       message:
@@ -160,7 +160,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
   );
 
   // `0x10`→16, `010`→octal 8, `1_0`→10: valid base-0 forms that must clear parsing.
-  it.live.each([{ token: "0x10" }, { token: "010" }, { token: "1_0" }])(
+  it.effect.each([{ token: "0x10" }, { token: "010" }, { token: "1_0" }])(
     "accepts --jobs=$token (Go base-0 form) through flag parsing, reaching the experimental gate",
     ({ token }) => {
       const args = ["storage", "cp", "ss:///bucket/a", "ss:///bucket/b", `--jobs=${token}`];
@@ -179,7 +179,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
 
   // Flags are declared ahead of the positionals in cp.command.ts's config record, so a
   // malformed `--jobs` wins even when `src`/`dst` are missing.
-  it.live.each([
+  it.effect.each([
     { label: "zero positionals", args: ["storage", "cp", "--jobs=-1"] },
     { label: "one positional", args: ["storage", "cp", "onearg", "--jobs=-1"] },
   ])("rejects --jobs=-1 ahead of missing operands ($label)", ({ args }) => {
@@ -196,7 +196,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("still reports the missing operand when --jobs is valid", () => {
+  it.effect("still reports the missing operand when --jobs is valid", () => {
     const args = ["storage", "cp", "--jobs=2"];
     const { layer } = setup(args);
     return Effect.gen(function* () {

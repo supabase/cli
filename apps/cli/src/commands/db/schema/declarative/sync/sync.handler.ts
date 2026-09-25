@@ -1,4 +1,4 @@
-import { Cause, Clock, DateTime, Effect, Exit, FileSystem, Option, Path, Result } from "effect";
+import { Clock, DateTime, Effect, FileSystem, Option, Path, Result } from "effect";
 
 import {
   DnsResolverFlag,
@@ -200,7 +200,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       // keeps the hard list behavior.
       const hasMigrations =
         (yield* listLocalMigrations(fs, path, migrationsDir).pipe(
-          Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+          Effect.orElseSucceed((): ReadonlyArray<string> => []),
         )).length > 0;
       // Only when migrations exist, resolve the ref (config `project_id` → `.temp/project-ref`)
       // and record it for the finalizer, so a linked-workdir bootstrap caches regardless of the
@@ -348,14 +348,9 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
 
     const planWithLoadRecovery = Effect.fnUntraced(function* () {
       while (true) {
-        const attempt = yield* planDeclarativeSync().pipe(
-          Effect.match({
-            onFailure: (error) => ({ error }),
-            onSuccess: (result) => ({ result }),
-          }),
-        );
-        if ("result" in attempt) return Option.some(attempt.result);
-        const error = attempt.error;
+        const attempt = yield* planDeclarativeSync().pipe(Effect.result);
+        if (Result.isSuccess(attempt)) return Option.some(attempt.success);
+        const error = attempt.failure;
         if (!(error instanceof DeclarativeCompatibilityError) || error.loadFindings === undefined) {
           return yield* error;
         }
@@ -580,7 +575,9 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
             port: toml.port,
             password: toml.password,
           };
-    const applyExit = yield* applyMigrationToLocal(
+    // A Ctrl-C or defect during the apply is not a migration-apply failure — propagate it
+    // unchanged instead of synthesizing a fake `DeclarativeApplyError`.
+    const applyResult = yield* applyMigrationToLocal(
       {
         host: applyTarget.host,
         port: applyTarget.port,
@@ -588,22 +585,15 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         dnsResolver,
       },
       migrationPaths,
-    ).pipe(Effect.exit);
+    ).pipe(Effect.result);
 
-    if (Exit.isSuccess(applyExit)) {
+    if (Result.isSuccess(applyResult)) {
       yield* output.raw("Migration applied successfully.\n", "stderr");
       return;
     }
 
-    // A Ctrl-C or defect during the apply is not a migration-apply failure — propagate it
-    // unchanged instead of synthesizing a fake `DeclarativeApplyError`.
-    const applyFailure = Cause.findFail(applyExit.cause);
-    if (Result.isFailure(applyFailure)) {
-      return yield* Effect.failCause(applyFailure.failure);
-    }
-
     // Apply failed: print, save a debug bundle, and (in a TTY) offer reset+reapply.
-    const applyError = applyFailure.success.error;
+    const applyError = applyResult.failure;
     yield* output.raw(`${red(`Migration failed to apply: ${applyError.message}`)}\n`, "stderr");
     const ts = formatDebugId(yield* Clock.currentTimeMillis);
     const migrations = yield* collectMigrationsList(fs, path, migrationsDir);
@@ -624,18 +614,14 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       if (shouldReset) {
         // `resetLocalDatabase` runs in-process, sharing this command's own context: it resolves
         // `NetworkIdFlag` itself, so no argv-forwarding is needed to stay on a custom network.
-        const resetExit = yield* resetLocalDatabase().pipe(Effect.exit);
-        if (Exit.isFailure(resetExit)) {
-          // A Ctrl-C or defect during the recovery reset must cancel the command, not get
-          // rewritten into a synthetic "unknown error" apply failure.
-          const resetFailure = Cause.findFail(resetExit.cause);
-          if (Result.isFailure(resetFailure)) {
-            return yield* Effect.failCause(resetFailure.failure);
-          }
+        // A Ctrl-C or defect during the recovery reset must cancel the command, not get
+        // rewritten into a synthetic "unknown error" apply failure.
+        const resetResult = yield* resetLocalDatabase().pipe(Effect.result);
+        if (Result.isFailure(resetResult)) {
           // Surfaces the failure that actually blocked recovery, not the original apply error,
           // printed exactly once (no extra "database reset failed:" wrapper) — build it from the
           // real typed failure and reuse that one value for message, suggestion, and bundle.
-          const rawResetFailure = resetFailure.success.error;
+          const rawResetFailure = resetResult.failure;
           const resetError = new DeclarativeApplyError({
             message: rawResetFailure.message,
             suggestion: readErrorSuggestion(rawResetFailure),
@@ -690,7 +676,9 @@ const declarativeDirHasFiles = Effect.fnUntraced(function* (
 ) {
   const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false));
   if (!exists) return false;
-  const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]));
+  const entries = yield* fs
+    .readDirectory(dir)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   return entries.length > 0;
 });
 

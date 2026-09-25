@@ -1,6 +1,6 @@
 import type { ApiClient } from "@supabase/api/effect";
 import { V2GetNotebookInput, V2UpdateNotebookInput } from "@supabase/api/effect";
-import { Effect, Exit, FileSystem, Path, Predicate, Schema } from "effect";
+import { Effect, Exit, FileSystem, Option, Path, Schema, Stream } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
 import { notebooksMachineOutputRequested } from "./notebooks.output.ts";
 import { sanitizeInlineName, mapHttpError } from "../../command-internal/http-errors.ts";
@@ -168,15 +168,17 @@ const readNotebookDirectory = Effect.fnUntraced(function* (workdir: string) {
   const fs = yield* FileSystem.FileSystem;
   const dir = yield* ensureNotebookPathContained(workdir, yield* notebooksDir(workdir));
   const entries = yield* fs.readDirectory(dir).pipe(
-    Effect.catchTag("PlatformError", (cause) =>
-      Predicate.isTagged(cause.reason, "NotFound")
-        ? Effect.succeed<ReadonlyArray<string>>([])
-        : Effect.fail(
-            new NotebookFileError({
-              detail: `Cannot read ${dir}: ${cause.message}`,
-              suggestion: "Check the notebooks path is a readable directory.",
-            }),
-          ),
+    Effect.catchReason(
+      "PlatformError",
+      "NotFound",
+      () => Effect.succeed<ReadonlyArray<string>>([]),
+      (_reason, cause) =>
+        Effect.fail(
+          new NotebookFileError({
+            detail: `Cannot read ${dir}: ${cause.message}`,
+            suggestion: "Check the notebooks path is a readable directory.",
+          }),
+        ),
     ),
   );
 
@@ -231,7 +233,7 @@ export const readNotebookFile = Effect.fnUntraced(function* (workdir: string, na
   const path = yield* ensureNotebookPathContained(workdir, yield* notebookFilePath(workdir, name));
 
   const contents = yield* fs.readFileString(path).pipe(
-    Effect.catch(
+    Effect.mapError(
       (cause) =>
         new NotebookFileError({
           detail: `Cannot read ${path}: ${cause.message}`,
@@ -251,7 +253,7 @@ export const readNotebookFile = Effect.fnUntraced(function* (workdir: string, na
   });
 
   return yield* Schema.decodeUnknownEffect(NotebookFileSchema)(parsed).pipe(
-    Effect.catch(
+    Effect.mapError(
       (cause) =>
         new NotebookFileError({
           detail: `${path} is not a notebook: ${cause.message}`,
@@ -345,6 +347,61 @@ const withNotebookTask =
       );
     });
 
+interface NotebookListCursor {
+  readonly after: string | undefined;
+  readonly visited: ReadonlySet<string>;
+}
+
+type NotebookListPage = readonly [ReadonlyArray<RemoteNotebook>, Option.Option<NotebookListCursor>];
+
+const listRemoteNotebookPage = Effect.fnUntraced(function* (
+  api: ApiClient,
+  ref: string,
+  cursor: NotebookListCursor,
+) {
+  const page = yield* api.v2
+    .listNotebooks({
+      ref,
+      page: {
+        size: NOTEBOOK_PAGE_SIZE,
+        ...(cursor.after === undefined ? {} : { after: cursor.after }),
+      },
+      sort: "name",
+    })
+    .pipe(
+      Effect.catch(mapNotebookHttpError("list notebooks")),
+      withNotebookTask("Listing notebooks"),
+    );
+
+  const notebooks = page.data.map((resource): RemoteNotebook => ({
+    id: resource.id,
+    name: resource.attributes.name,
+  }));
+
+  const next = page.links.next;
+  if (next === null) {
+    const last: NotebookListPage = [notebooks, Option.none()];
+    return last;
+  }
+  // The cursor is opaque, so it is read back out of the link the server built
+  // rather than derived from the rows. `links.next` is a path, so its query is
+  // taken from the string directly rather than through a URL and a made-up base.
+  const after = new URLSearchParams(next.split("?")[1] ?? "").get("page[after]");
+  // A link with no cursor, or one repeating the cursor already walked, would
+  // loop forever. Neither is a page this command can make progress on.
+  if (after === null || after.length === 0 || cursor.visited.has(after)) {
+    return yield* new NotebooksPaginationError({
+      message:
+        "The notebook list returned a missing or repeated pagination cursor. No reconciliation was performed.",
+    });
+  }
+  const more: NotebookListPage = [
+    notebooks,
+    Option.some({ after, visited: new Set([...cursor.visited, after]) }),
+  ];
+  return more;
+});
+
 /**
  * Every notebook in the project. The list route is cursor-paginated and its
  * `links.next` carries the cursor for the following page, so the walk follows
@@ -352,45 +409,10 @@ const withNotebookTask =
  * last one, which a length comparison cannot tell on an exact multiple.
  */
 export const listRemoteNotebooks = Effect.fnUntraced(function* (api: ApiClient, ref: string) {
-  const notebooks: Array<RemoteNotebook> = [];
-  let after: string | undefined;
-  const visited = new Set<string>();
-
-  for (;;) {
-    const page = yield* api.v2
-      .listNotebooks({
-        ref,
-        page: { size: NOTEBOOK_PAGE_SIZE, ...(after === undefined ? {} : { after }) },
-        sort: "name",
-      })
-      .pipe(
-        Effect.catch(mapNotebookHttpError("list notebooks")),
-        withNotebookTask("Listing notebooks"),
-      );
-
-    for (const resource of page.data) {
-      notebooks.push({ id: resource.id, name: resource.attributes.name });
-    }
-
-    const next = page.links.next;
-    if (next === null) {
-      return notebooks;
-    }
-    // The cursor is opaque, so it is read back out of the link the server built
-    // rather than derived from the rows. `links.next` is a path, so its query is
-    // taken from the string directly rather than through a URL and a made-up base.
-    const cursor = new URLSearchParams(next.split("?")[1] ?? "").get("page[after]");
-    // A link with no cursor, or one repeating the cursor already walked, would
-    // loop forever. Neither is a page this command can make progress on.
-    if (cursor === null || cursor.length === 0 || visited.has(cursor)) {
-      return yield* new NotebooksPaginationError({
-        message:
-          "The notebook list returned a missing or repeated pagination cursor. No reconciliation was performed.",
-      });
-    }
-    visited.add(cursor);
-    after = cursor;
-  }
+  return yield* Stream.paginate(
+    { after: undefined, visited: new Set<string>() },
+    (cursor: NotebookListCursor) => listRemoteNotebookPage(api, ref, cursor),
+  ).pipe(Stream.runCollect);
 });
 
 export const ensureRemoteNotebookNamesUnique = Effect.fnUntraced(function* (

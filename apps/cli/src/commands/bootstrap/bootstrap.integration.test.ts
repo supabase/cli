@@ -282,7 +282,7 @@ function flags(overrides: Partial<BootstrapFlags> = {}): BootstrapFlags {
 }
 
 describe("bootstrap integration", () => {
-  it.live("bootstraps the scratch template into the workdir (blank init, logged in)", () =>
+  it.effect("bootstraps the scratch template into the workdir (blank init, logged in)", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -304,7 +304,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "scratch scaffolding writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1",
     () =>
       Effect.gen(function* () {
@@ -320,7 +320,7 @@ describe("bootstrap integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "scratch scaffolding fails closed on an invalid SUPABASE_EXPERIMENTAL_STACK before writing config",
     () =>
       Effect.gen(function* () {
@@ -344,7 +344,7 @@ describe("bootstrap integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("downloads a named template matched by argument", () =>
+  it.effect("downloads a named template matched by argument", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -359,7 +359,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("ignores SUPABASE_EXPERIMENTAL_STACK on a downloaded template", () =>
+  it.effect("ignores SUPABASE_EXPERIMENTAL_STACK on a downloaded template", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const s = setup(path, {
@@ -373,7 +373,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects an unknown template argument", () =>
+  it.effect("rejects an unknown template argument", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const s = setup(path, { samples: [NEXTJS_TEMPLATE] });
@@ -391,7 +391,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("prompts for a template when none is given", () =>
+  it.effect("prompts for a template when none is given", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const s = setup(path, { samples: [NEXTJS_TEMPLATE] });
@@ -404,7 +404,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("prompts for a workdir when none is configured", () =>
+  it.effect("prompts for a workdir when none is configured", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -420,7 +420,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("uses the SUPABASE_WORKDIR env value without prompting", () =>
+  it.effect("uses the SUPABASE_WORKDIR env value without prompting", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -435,7 +435,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("aborts when the user declines to overwrite a non-empty workdir", () =>
+  it.effect("aborts when the user declines to overwrite a non-empty workdir", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -453,7 +453,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("proceeds past a non-empty workdir with --yes", () =>
+  it.effect("proceeds past a non-empty workdir with --yes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -468,7 +468,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("runs the browser login flow when no token is present (one cli_login_completed)", () =>
+  it.effect("runs the browser login flow when no token is present (one cli_login_completed)", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const s = setup(path, { loggedIn: false });
@@ -482,17 +482,19 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("skips login when already authenticated (no login event, no project-linked event)", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const s = setup(path, { loggedIn: true });
-      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
-        Effect.provide(s.layer),
-      );
-      const events = s.analytics.captured.map((c) => c.event);
-      expect(events).not.toContain("cli_login_completed");
-      expect(events).not.toContain("cli_project_linked");
-    }).pipe(Effect.provide(BunServices.layer)),
+  it.effect(
+    "skips login when already authenticated (no login event, no project-linked event)",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const s = setup(path, { loggedIn: true });
+        yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+          Effect.provide(s.layer),
+        );
+        const events = s.analytics.captured.map((c) => c.event);
+        expect(events).not.toContain("cli_login_completed");
+        expect(events).not.toContain("cli_project_linked");
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("retries fetching api keys until they are available", () =>
@@ -557,7 +559,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("merges .env.example derived keys", () =>
+  it.effect("merges .env.example derived keys", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -576,7 +578,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("continues (non-fatal) when the .env.example is malformed", () =>
+  it.effect("continues (non-fatal) when the .env.example is malformed", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -592,7 +594,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "pushes natively — falls back to the IPv4 pooler when the direct host is unreachable, no Go subprocess",
     () =>
       // The test's direct db host is never reachable, so `resolveLinkedConn` falls back to the
@@ -631,7 +633,7 @@ describe("bootstrap integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("pushes with the flag-sourced password (used as the create password too)", () =>
+  it.effect("pushes with the flag-sourced password (used as the create password too)", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const s = setup(path);
@@ -643,7 +645,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("pushes with the prompted password when --password is empty", () =>
+  it.effect("pushes with the prompted password when --password is empty", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       // An explicit `--password ""` (e.g. unset `$SUPABASE_DB_PASSWORD` expanded by the shell)
@@ -662,7 +664,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("pushes with the settings-captured SUPABASE_DB_PASSWORD password", () =>
+  it.effect("pushes with the settings-captured SUPABASE_DB_PASSWORD password", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       // The create seed reads the captured password from settings, and the push reuses the
@@ -676,7 +678,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("seeds the project create request with the settings-captured password", () =>
+  it.effect("seeds the project create request with the settings-captured password", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const s = setup(path, { dbPassword: "settings-pw" });
@@ -689,7 +691,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("flushes telemetry and caches the linked project via ensuring", () =>
+  it.effect("flushes telemetry and caches the linked project via ensuring", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const s = setup(path);
@@ -701,7 +703,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits a single structured result in json mode", () =>
+  it.effect("emits a single structured result in json mode", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const s = setup(path, { format: "json" });
@@ -720,7 +722,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports env_file: null in the json result when the .env write fails", () =>
+  it.effect("reports env_file: null in the json result when the .env write fails", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

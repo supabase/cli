@@ -138,7 +138,7 @@ function issueSetup(
 }
 
 describe("issue", () => {
-  it.live("opens bug form with runtime fields and user-provided context", () => {
+  it.effect("opens bug form with runtime fields and user-provided context", () => {
     const { layer, out, browser } = issueSetup();
 
     return Effect.gen(function* () {
@@ -172,7 +172,7 @@ describe("issue", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints the bug URL without opening a browser when requested", () => {
+  it.effect("prints the bug URL without opening a browser when requested", () => {
     const { layer, out, browser } = issueSetup({
       env: { SUPABASE_INSTALL_METHOD: "asdf" },
     });
@@ -199,7 +199,7 @@ describe("issue", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("opens feature form with matching issue form field IDs", () => {
+  it.effect("opens feature form with matching issue form field IDs", () => {
     const { layer, browser } = issueSetup();
 
     return Effect.gen(function* () {
@@ -223,7 +223,7 @@ describe("issue", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("opens docs form with matching issue form field IDs", () => {
+  it.effect("opens docs form with matching issue form field IDs", () => {
     const { layer, browser } = issueSetup();
 
     return Effect.gen(function* () {

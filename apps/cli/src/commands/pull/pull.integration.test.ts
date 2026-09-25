@@ -14,7 +14,7 @@ import {
   Stdio,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { v2ProjectConfigResponse } from "../../../tests/helpers/config-fixtures.ts";
@@ -220,7 +220,7 @@ function composeSpawner(
     Effect.gen(function* () {
       const inner = yield* ChildProcessSpawner.ChildProcessSpawner;
       return ChildProcessSpawner.make((command) => {
-        if (command._tag !== "StandardCommand") {
+        if (!ChildProcess.isStandardCommand(command)) {
           return inner.spawn(command);
         }
         if (command.command === "git") {
@@ -715,7 +715,7 @@ function setup(opts: SetupOpts = {}) {
 }
 
 describe("pull integration", () => {
-  it.live(
+  it.effect(
     "bootstraps a fresh checkout: migration history auto-runs, config/functions/db all report changed",
     () => {
       const { layer, out, telemetry, analytics } = setup({
@@ -752,7 +752,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "bootstraps a fresh checkout with --output-format json: exactly one JSON object with all four step keys",
     () => {
       const { layer, capturingStdio, dbConfig, linkedProjectCache } = setup({
@@ -792,7 +792,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "renders the config diff body (not 'No config differences found.') when the only diff is skipped as an env() reference",
     () => {
       // Every other managed field sits at its schema default, so `auth.site_url` is the only
@@ -811,7 +811,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a branch-name --project-ref resolves exactly once: one branch lookup, one config GET, no picker prompt",
     () => {
       const { layer, out, api } = setup({
@@ -833,7 +833,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "on an interactive TTY with real diffs, the confirmation prompt appears exactly once",
     () => {
       const { layer, out } = setup({
@@ -853,7 +853,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "the single confirmation suppresses BOTH sub-step prompts, and both underlying writes still complete: db updates remote history, migration fetch overwrites the pre-existing file",
     () => {
       const { layer, out, dbConfig } = setup({
@@ -899,7 +899,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live("--dry-run writes nothing and reports every step planned/skipped", () => {
+  it.effect("--dry-run writes nothing and reports every step planned/skipped", () => {
     const before =
       'project_id = "test"\n\n[experimental.pgdelta]\nenabled = true\n[api]\nmax_rows = 500\n';
     const { layer, out, api } = setup({ yes: true });
@@ -919,7 +919,7 @@ describe("pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "a --dry-run --output-format json payload surfaces dirty_paths, even though the dry-run itself never runs the abort logic that would otherwise trip on them",
     () => {
       const { layer, capturingStdio } = setup({ format: "json", yes: true, gitDirty: true });
@@ -934,7 +934,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a clean-tree run reports an empty dirty_paths array in the JSON payload, present on every disposition",
     () => {
       const { layer, capturingStdio } = setup({
@@ -953,7 +953,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "declining the confirmation writes nothing; migration history reports declined, db/functions report planned",
     () => {
       const { layer, out } = setup({ stdinIsTty: true, confirm: [false] });
@@ -975,7 +975,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a functions-step failure still reports every other step, exits non-zero, with exactly one JSON envelope",
     () => {
       const { layer, capturingStdio, processControl, telemetry, linkedProjectCache } = setup({
@@ -1008,7 +1008,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a steady-state pull (no config drift, no schema drift, no functions) exits 0 with every step non-failed",
     () => {
       const { layer, out } = setup({
@@ -1031,7 +1031,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "--remote-label creates the named [remotes.*] block even on an otherwise zero-drift config",
     () => {
       const { layer } = setup({
@@ -1048,7 +1048,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "an empty-string --remote-label is treated as not provided: no forced [remotes.*] block on an otherwise zero-drift config",
     () => {
       const { layer, out } = setup({
@@ -1067,7 +1067,7 @@ describe("pull integration", () => {
   );
 
   describe("dirty supabase/config.toml", () => {
-    it.live("interactive TTY: the prompt defaults to decline", () => {
+    it.effect("interactive TTY: the prompt defaults to decline", () => {
       const { layer, out } = setup({ stdinIsTty: true, confirm: [false], gitDirty: true });
       return Effect.gen(function* () {
         yield* writeConfig("[api]\nmax_rows = 500\n");
@@ -1078,7 +1078,7 @@ describe("pull integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "--yes on a dirty tree aborts with the uncommitted-changes error, no prompt shown",
       () => {
         const { layer, out } = setup({ yes: true, gitDirty: true });
@@ -1096,7 +1096,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live("--output-format json on a dirty tree aborts without --yes and without a TTY", () => {
+    it.effect("--output-format json on a dirty tree aborts without --yes and without a TTY", () => {
       const { layer, capturingStdio, processControl } = setup({
         format: "json",
         gitDirty: true,
@@ -1111,7 +1111,7 @@ describe("pull integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "a non-interactive text terminal (piped stdin) on a dirty tree aborts without prompting",
       () => {
         const { layer, out } = setup({ stdinIsTty: false, gitDirty: true });
@@ -1127,7 +1127,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "--force proceeds and writes despite all three locations being dirty, never even checking git",
       () => {
         const { layer, spawner } = setup({
@@ -1145,7 +1145,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live("a git spawn failure degrades to 'not dirty' rather than blocking the pull", () => {
+    it.effect("a git spawn failure degrades to 'not dirty' rather than blocking the pull", () => {
       const { layer } = setup({ yes: true, gitSpawnFails: true });
       return Effect.gen(function* () {
         yield* writeConfig("[api]\nmax_rows = 500\n");
@@ -1159,7 +1159,7 @@ describe("pull integration", () => {
   // Checked unconditionally (skipped only by --force): the db step always runs with no preview
   // machinery, so this fires regardless of whether migration-history itself runs.
   describe("dirty supabase/migrations", () => {
-    it.live(
+    it.effect(
       "already-populated, no --with-migration-history pending: still aborts without --force (the db step might still write there)",
       () => {
         const { layer } = setup({
@@ -1182,7 +1182,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a fresh checkout with migration-history bootstrap pending: also aborts without --force",
       () => {
         const { layer } = setup({
@@ -1204,7 +1204,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "interactive TTY: the prompt defaults to decline and the confirmation body names supabase/migrations",
       () => {
         const { layer, out } = setup({
@@ -1232,7 +1232,7 @@ describe("pull integration", () => {
   // Checked unconditionally (skipped only by --force), same as migrations, since the functions
   // step always runs with no "does it have work" signal without calling the API first.
   describe("dirty supabase/functions", () => {
-    it.live("aborts without --force, even with zero config/db drift", () => {
+    it.effect("aborts without --force, even with zero config/db drift", () => {
       const { layer } = setup({
         yes: true,
         gitDirtyFunctions: true,
@@ -1250,7 +1250,7 @@ describe("pull integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "interactive TTY: the prompt defaults to decline and the confirmation body names supabase/functions",
       () => {
         const { layer, out } = setup({
@@ -1276,7 +1276,7 @@ describe("pull integration", () => {
   });
 
   describe("multiple dirty locations at once", () => {
-    it.live(
+    it.effect(
       "config AND functions dirty together: the confirmation body names both, config before functions",
       () => {
         const { layer, out } = setup({
@@ -1300,7 +1300,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "all three dirty at once: the abort error names all three, in config, migrations, functions order",
       () => {
         const { layer } = setup({
@@ -1328,7 +1328,7 @@ describe("pull integration", () => {
     );
   });
 
-  it.live(
+  it.effect(
     "the db step's shadow setup observes the config step's own db.major_version write, not the stale pre-pull value",
     () => {
       const { layer, spawner } = setup({
@@ -1362,7 +1362,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "the db step stays in migration mode with the ambient --experimental gate on, never taking the declarative export path",
     () => {
       const { layer, out } = setup({
@@ -1391,7 +1391,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "the migration-history step's remote read happens before the db step's own remote read",
     () => {
       const { layer, callOrder } = setup({
@@ -1415,7 +1415,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "supabase pull -o json fails with a message pointing at --output-format, not a machine payload",
     () => {
       const { layer, api } = setup({ goOutput: Option.some("json") });
@@ -1433,7 +1433,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a --workdir naming a directory that does not exist fails before any target resolution",
     () =>
       Effect.gen(function* () {
@@ -1451,7 +1451,7 @@ describe("pull integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "a network failure resolving a branch-name --project-ref fails with a network error, not a status error",
     () => {
       const { layer } = setup({ api: { branchNetworkFails: true } });
@@ -1466,7 +1466,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a supabase/migrations read failure that is NOT 'missing' (a plain file colliding with the directory) fails with a read error, instead of silently treating it as empty",
     () => {
       const { layer } = setup({ yes: true });
@@ -1487,7 +1487,7 @@ describe("pull integration", () => {
   );
 
   describe("migration-history auto-run vs --with-migration-history", () => {
-    it.live(
+    it.effect(
       "supabase/migrations already has files and the flag is not set: skipped as not_needed",
       () => {
         const { layer, out } = setup({
@@ -1506,7 +1506,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "supabase/migrations already has files but --with-migration-history is set: the step actually runs",
       () => {
         const { layer, out } = setup({
@@ -1531,7 +1531,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "supabase/migrations is missing entirely: the step auto-runs (bootstrap reason)",
       () => {
         const { layer, out } = setup({
@@ -1554,7 +1554,7 @@ describe("pull integration", () => {
   });
 
   describe("per-step failure isolation", () => {
-    it.live(
+    it.effect(
       "a config-step failure (a concurrent edit during the confirmation prompt) still runs migration_history/db/functions, in text mode",
       () => {
         const { layer, out } = setup({
@@ -1592,7 +1592,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a config-step failure carries --remote-label through to its own retry hint when one was passed",
       () => {
         const { layer, out } = setup({
@@ -1623,7 +1623,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a branch-derived implicit remote-block target: the config step's retry hint names that SAME derived label, even though --remote-label was never passed",
       () => {
         const { layer, out } = setup({
@@ -1658,7 +1658,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a migration-history-step failure (a hostile remote history row) still runs config/functions, and re-fails with its OWN (first) cause even though db also fails downstream",
       () => {
         const { layer, out } = setup({
@@ -1702,7 +1702,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a migration-history-step failure AFTER an earlier row already wrote reports that file as written, not written: [] (a real partial-write case)",
       () => {
         const { layer, capturingStdio } = setup({
@@ -1739,7 +1739,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a db-step failure (a pg-delta engine error) still runs config/migration_history/functions",
       () => {
         const { layer, out } = setup({
@@ -1771,7 +1771,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a db-step migration-conflict failure carries BOTH the --with-migration-history hint AND the generic retry hint, in that order",
       () => {
         const { layer, capturingStdio } = setup({
@@ -1810,7 +1810,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a db-step migration-conflict failure's --with-migration-history remedy also carries a shell-quoted --remote-label when one was passed",
       () => {
         const { layer, capturingStdio } = setup({
@@ -1837,7 +1837,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a db-step failure AFTER the migration file already wrote, but the remote-history update failed, reports that file as written (a real partial-write case)",
       () => {
         const { layer, capturingStdio } = setup({
@@ -1873,7 +1873,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a functions-step failure AFTER an earlier slug already downloaded reports that slug's directory as written (a real partial-download case)",
       () => {
         const { layer, capturingStdio } = setup({
@@ -1900,7 +1900,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a functions-step failure reported in TEXT mode inlines the failure message in the summary block",
       () => {
         const { layer, out } = setup({
@@ -1929,7 +1929,7 @@ describe("pull integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a defect inside a step (not a typed failure) propagates as a defect instead of a captured step failure",
       () => {
         const { layer } = setup({
@@ -1955,7 +1955,7 @@ describe("pull integration", () => {
 
   // Exercises the "not_needed" reason branch (migrations already populated), distinct from the
   // bootstrap ("declined"/"planned" via an empty directory) cases above.
-  it.live(
+  it.effect(
     "--dry-run over an already-populated supabase/migrations reports migration_history as not_needed",
     () => {
       const { layer, out } = setup({ yes: true });
@@ -1969,7 +1969,7 @@ describe("pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "declining over an already-populated supabase/migrations reports migration_history as not_needed",
     () => {
       const { layer, out } = setup({ stdinIsTty: true, confirm: [false] });
@@ -1994,7 +1994,7 @@ describe("pull telemetry wiring", () => {
       Stdio.layerTest({ args: Effect.succeed(["pull", "--project-ref", projectRef]) }),
     );
 
-  it.live("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
+  it.effect("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
     const { layer, analytics } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -2004,7 +2004,7 @@ describe("pull telemetry wiring", () => {
     }).pipe(Effect.provide(withProjectRefArgs(layer, VALID_REF)));
   });
 
-  it.live("redacts a branch-name-shaped --project-ref in cli_command_executed", () => {
+  it.effect("redacts a branch-name-shaped --project-ref in cli_command_executed", () => {
     // `--project-ref` accepts branch names too; a user-created branch name must never reach
     // PostHog verbatim.
     const { layer, analytics } = setup({ yes: true });
@@ -2021,7 +2021,7 @@ describe("pull telemetry wiring", () => {
 // implementation spreads `MachineErrorContext`'s payload at the top level alongside
 // `type`/`error`/`timestamp` — an asymmetry within the same layer.
 describe("pull stream-json output", () => {
-  it.live(
+  it.effect(
     "a successful run emits exactly one NDJSON result event with the payload nested under data",
     () => {
       const { layer, capturingStdio } = setup({
@@ -2052,7 +2052,7 @@ describe("pull stream-json output", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a partial step failure emits exactly one NDJSON error event with the payload spread at the top level, NOT nested under data",
     () => {
       const { layer, capturingStdio } = setup({

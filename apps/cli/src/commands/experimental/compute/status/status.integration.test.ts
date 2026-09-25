@@ -31,7 +31,7 @@ function project(files: Readonly<Record<string, string>> = {}) {
 const getRoute = `GET ${computeRoute("/api")}`;
 
 describe("compute status", () => {
-  it.live("reports the deployment facts and the live instance tally", () =>
+  it.effect("reports the deployment facts and the live instance tally", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const repo = yield* project();
@@ -71,7 +71,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports the deployed runtime, not a stale config.toml entry", () =>
+  it.effect("reports the deployed runtime, not a stale config.toml entry", () =>
     Effect.gen(function* () {
       // config.toml says node; the deployment carries no spec.runtime, which the
       // API only omits for a context-only (Dockerfile) build.
@@ -98,7 +98,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("falls back to the declared count when no tally came back", () =>
+  it.effect("falls back to the declared count when no tally came back", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -119,7 +119,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("warns rather than lying when the instance read-through failed", () =>
+  it.effect("warns rather than lying when the instance read-through failed", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -149,7 +149,7 @@ describe("compute status", () => {
   // Mid-scale the snapshot and the desired spec disagree; reading the numerator
   // from one and the denominator from the other rendered fractions like
   // `3/1 ready`.
-  it.live("reads the whole tally from one snapshot while scaling", () =>
+  it.effect("reads the whole tally from one snapshot while scaling", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -180,7 +180,7 @@ describe("compute status", () => {
 
   // Deletion is asynchronous, so pushing here races the tombstone or resurrects
   // the compute the user is removing.
-  it.live("withholds the build retry while the compute is being deleted", () =>
+  it.effect("withholds the build retry while the compute is being deleted", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -210,7 +210,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("points a failed build at the retry, with the reason", () =>
+  it.effect("points a failed build at the retry, with the reason", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -241,7 +241,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("shows a compute being torn down as deleting", () =>
+  it.effect("shows a compute being torn down as deleting", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -262,7 +262,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails with `not deployed` and points at push", () =>
+  it.effect("fails with `not deployed` and points at push", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -290,7 +290,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("names the alpha, not an undeployed compute, when the project is not enrolled", () =>
+  it.effect("names the alpha, not an undeployed compute, when the project is not enrolled", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -321,7 +321,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("points at the project ref when no such project exists", () =>
+  it.effect("points at the project ref when no such project exists", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -347,7 +347,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("names the unserved route instead of an undeployed compute", () =>
+  it.effect("names the unserved route instead of an undeployed compute", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -377,7 +377,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses a name that could never have been written", () =>
+  it.effect("refuses a name that could never have been written", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({ workdir: repo.dir });
@@ -394,7 +394,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports the compute's source directory even when it lives outside supabase/", () =>
+  it.effect("reports the compute's source directory even when it lives outside supabase/", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const repo = yield* project({
@@ -422,7 +422,7 @@ describe("compute status", () => {
   // A `source` that escapes the project cannot be resolved, so the describe
   // falls back to the default directory. Printing that named a path the entry
   // does not, presenting a guess as established local state.
-  it.live("omits the source when the configured one cannot be resolved", () =>
+  it.effect("omits the source when the configured one cannot be resolved", () =>
     Effect.gen(function* () {
       const repo = yield* project({
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsource = "../../elsewhere"\n`,
@@ -446,7 +446,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits the same facts as structured data in json mode", () =>
+  it.effect("emits the same facts as structured data in json mode", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -493,7 +493,7 @@ describe("compute status", () => {
   // The JSON layer appends each success to stdout, so emitting the payload twice
   // made `JSON.parse(stdout)` fail outright and gave `stream-json` two terminal
   // result events.
-  it.live("emits exactly one structured result in json mode", () =>
+  it.effect("emits exactly one structured result in json mode", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -518,7 +518,7 @@ describe("compute status", () => {
   // A compute deployed from another checkout has no entry and no directory here,
   // so `supabase/compute/<name>` is pure inference — reporting it as the
   // compute's source named a path that was not there.
-  it.live("omits the source for a compute with nothing local to point at", () =>
+  it.effect("omits the source for a compute with nothing local to point at", () =>
     Effect.gen(function* () {
       const repo = yield* project({ "supabase/config.toml": 'project_id = "demo"\n' });
       const { layer, out } = setupCompute({
@@ -543,7 +543,7 @@ describe("compute status", () => {
   // `root` is an ordinary compute name: a valid DNS label, and `[compute]` has no
   // reserved keys — `readComputeSection` reads every table under it as a compute.
   // Here as a guard against the name picking up a special case it never had.
-  it.live("inspects a deployed compute named root", () =>
+  it.effect("inspects a deployed compute named root", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out, http } = setupCompute({
@@ -568,7 +568,7 @@ describe("compute status", () => {
   // `state_reason`, `image_version`, `deleting` and `instances_error` are all
   // optional, so a healthy compute's payload is mostly holes. Pins that they are
   // omitted rather than rendered.
-  it.live("encodes TOML for a compute whose optional fields are absent", () =>
+  it.effect("encodes TOML for a compute whose optional fields are absent", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -594,7 +594,7 @@ describe("compute status", () => {
   // The project is consulted only for the optional Source row, so an unrelated
   // local parse error should not stand between the user and a remote compute
   // they named explicitly.
-  it.live("inspects a remote compute despite an unparseable local config", () =>
+  it.effect("inspects a remote compute despite an unparseable local config", () =>
     Effect.gen(function* () {
       const repo = yield* project({ "supabase/config.toml": "project_id = [unclosed\n" });
       const otherRef = "qrstuvwxyzabcdefghij";
@@ -620,7 +620,7 @@ describe("compute status", () => {
   // The URL is derived from the exposure the platform reports, not assumed: a
   // compute it did not expose has no address to print, and the row is dropped
   // rather than rendered empty.
-  it.live("omits the URL for a compute that is not publicly exposed", () =>
+  it.effect("omits the URL for a compute that is not publicly exposed", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -645,7 +645,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses -o env before making any request at all", () =>
+  it.effect("refuses -o env before making any request at all", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -665,7 +665,7 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("flushes telemetry when the compute name is invalid", () =>
+  it.effect("flushes telemetry when the compute name is invalid", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, telemetry } = setupCompute({ workdir: repo.dir });

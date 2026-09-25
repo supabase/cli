@@ -13,7 +13,6 @@ import {
   DELETE_OBJECTS_LIMIT,
   type StorageGateway,
 } from "../../../command-internal/storage-gateway.ts";
-import { StorageGatewayStatusError } from "../../../command-internal/storage-gateway.errors.ts";
 import { splitBucketPrefix, storageIsDir } from "../../../command-internal/storage-url.ts";
 import {
   assertStorageWorkdir,
@@ -223,8 +222,7 @@ const removeStoragePathAll = (
             summary.buckets_deleted.push(bucket);
           }),
         ),
-        Effect.catch((error) =>
-          error instanceof StorageGatewayStatusError &&
+        Effect.catchTag("StorageGatewayStatusError", (error) =>
           error.body.includes('"error":"Bucket not found"')
             ? output.raw(`Bucket not found: ${bucket}\n`, "stderr")
             : Effect.fail(error),

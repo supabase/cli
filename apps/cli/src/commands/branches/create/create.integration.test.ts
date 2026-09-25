@@ -1,6 +1,6 @@
 import type { V1CreateABranchOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Predicate } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import {
@@ -171,7 +171,7 @@ const baseFlags: BranchesCreateFlags = {
 };
 
 describe("branches create integration", () => {
-  it.live("creates a branch with explicit name and prints text-mode header + table", () => {
+  it.effect("creates a branch with explicit name and prints text-mode header + table", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* branchesCreate({ ...baseFlags, name: Option.some("feat-x") });
@@ -186,7 +186,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("includes optional flags in the request body only when set", () => {
+  it.effect("includes optional flags in the request body only when set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesCreate({
@@ -208,7 +208,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("forwards an explicit --git-branch in the request body", () => {
+  it.effect("forwards an explicit --git-branch in the request body", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesCreate({
@@ -223,7 +223,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a missing name before contacting the API outside a git repository", () => {
+  it.effect("reports a missing name before contacting the API outside a git repository", () => {
     const { layer, api } = setup();
     return withEnvVar(
       "GITHUB_HEAD_REF",
@@ -248,7 +248,7 @@ describe("branches create integration", () => {
   const withGitBranch = <A, E, R>(effect: Effect.Effect<A, E, R>, branch = "feat-y") =>
     withEnvVar("GITHUB_HEAD_REF", branch, effect);
 
-  it.live("--yes auto-confirms the git-branch name with the [Y/n] y echo", () => {
+  it.effect("--yes auto-confirms the git-branch name with the [Y/n] y echo", () => {
     const { layer, out, api } = setup({ yes: true, stdinIsTty: true });
     return withGitBranch(
       Effect.gen(function* () {
@@ -263,7 +263,7 @@ describe("branches create integration", () => {
     );
   });
 
-  it.live("SUPABASE_YES=1 auto-confirms the git-branch name like --yes", () => {
+  it.effect("SUPABASE_YES=1 auto-confirms the git-branch name like --yes", () => {
     const { layer, out, api } = setup({ stdinIsTty: true });
     return withGitBranch(
       withEnvVar(
@@ -278,7 +278,7 @@ describe("branches create integration", () => {
     );
   });
 
-  it.live("non-TTY with piped `n` declines the git-branch name like Go", () => {
+  it.effect("non-TTY with piped `n` declines the git-branch name like Go", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "n\n" });
     return withGitBranch(
       Effect.gen(function* () {
@@ -293,7 +293,7 @@ describe("branches create integration", () => {
     );
   });
 
-  it.live("non-TTY with empty stdin takes the Yes default and creates the branch", () => {
+  it.effect("non-TTY with empty stdin takes the Yes default and creates the branch", () => {
     const { layer, out, api } = setup({ stdinIsTty: false });
     return withGitBranch(
       Effect.gen(function* () {
@@ -304,7 +304,7 @@ describe("branches create integration", () => {
     );
   });
 
-  it.live("TTY decline of the git-branch name cancels without creating", () => {
+  it.effect("TTY decline of the git-branch name cancels without creating", () => {
     const { layer, api } = setup({ stdinIsTty: true, promptConfirmResponses: [false] });
     return withGitBranch(
       Effect.gen(function* () {
@@ -318,7 +318,7 @@ describe("branches create integration", () => {
     );
   });
 
-  it.live("emits a success event for --output-format=json", () => {
+  it.effect("emits a success event for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* branchesCreate({ ...baseFlags, name: Option.some("feat-x") });
@@ -328,7 +328,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
+  it.effect("emits Go-byte-exact indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* branchesCreate({ ...baseFlags, name: Option.some("feat-x") });
@@ -337,7 +337,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesCreateNetworkError on transport failure", () => {
+  it.effect("fails with BranchesCreateNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -352,7 +352,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesCreateUnexpectedStatusError on non-201", () => {
+  it.effect("fails with BranchesCreateUnexpectedStatusError on non-201", () => {
     const { layer } = setup({ status: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -367,7 +367,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fires cli_upgrade_suggested with feature_key=branching_limit on 402 gated", () => {
+  it.effect("fires cli_upgrade_suggested with feature_key=branching_limit on 402 gated", () => {
     const { layer, analytics } = setup({ status: 402, gated: true });
     return Effect.gen(function* () {
       yield* Effect.exit(branchesCreate({ ...baseFlags, name: Option.some("feat-x") }));
@@ -380,7 +380,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("envelope on 402 suggests upgrade with no extra API calls", () => {
+  it.effect("envelope on 402 suggests upgrade with no extra API calls", () => {
     const { layer, out, analytics, api } = setup({
       status: 402,
       response: {
@@ -409,7 +409,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does NOT fire upgrade suggested on 500 (Go skips 5xx)", () => {
+  it.effect("does NOT fire upgrade suggested on 500 (Go skips 5xx)", () => {
     const { layer, analytics } = setup({ status: 500 });
     return Effect.gen(function* () {
       yield* Effect.exit(branchesCreate({ ...baseFlags, name: Option.some("feat-x") }));
@@ -417,7 +417,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache and telemetry state on success", () => {
+  it.effect("writes linked-project cache and telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
       yield* branchesCreate({ ...baseFlags, name: Option.some("feat-x") });
@@ -426,7 +426,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry on the upgrade-suggest failure path", () => {
+  it.effect("writes linked-project cache + telemetry on the upgrade-suggest failure path", () => {
     const { layer, telemetry, cache } = setupTracked({ status: 402, gated: true });
     return Effect.gen(function* () {
       yield* Effect.exit(branchesCreate({ ...baseFlags, name: Option.some("feat-x") }));
@@ -435,7 +435,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
+  it.effect("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([branchesCreateCommand]),
       Command.withGlobalFlags(GLOBAL_FLAGS),
@@ -468,10 +468,7 @@ function rejectsInvalidSizeChoice(error: unknown): boolean {
   if (!Array.isArray(errors)) return false;
   return errors.some(
     (candidate: unknown) =>
-      typeof candidate === "object" &&
-      candidate !== null &&
-      "_tag" in candidate &&
-      candidate._tag === "InvalidValue" &&
+      Predicate.isTagged(candidate, "InvalidValue") &&
       "option" in candidate &&
       candidate.option === "size",
   );

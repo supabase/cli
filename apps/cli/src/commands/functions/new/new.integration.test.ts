@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import {
   mockCommandSettings,
@@ -11,6 +11,12 @@ import {
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
+import {
+  FunctionsNewFileExistsError,
+  FunctionsNewInvalidSlugError,
+  FunctionsNewWorkdirError,
+  FunctionsNewWriteError,
+} from "./new.errors.ts";
 import { functionsNew } from "./new.handler.ts";
 import { FUNCTIONS_NEW_DENO_JSON, FUNCTIONS_NEW_NPMRC } from "./new.templates.ts";
 
@@ -57,22 +63,14 @@ function setup(options: SetupOptions = {}) {
   return { layer, out, telemetry, workdir };
 }
 
-function exitTag(exit: Exit.Exit<unknown, unknown>): string | undefined {
-  if (!Exit.isFailure(exit)) {
-    return undefined;
-  }
-  const failure = Cause.findErrorOption(exit.cause);
-  if (failure._tag !== "Some") {
-    return undefined;
-  }
-  if (typeof failure.value !== "object" || failure.value === null || !("_tag" in failure.value)) {
-    return undefined;
-  }
-  return String(failure.value._tag);
+function exitError(exit: Exit.Exit<unknown, unknown>): unknown {
+  return Exit.isFailure(exit)
+    ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+    : undefined;
 }
 
 describe("functions new integration", () => {
-  it.live("creates the default apikey scaffold, config snippet, and optional files", () => {
+  it.effect("creates the default apikey scaffold, config snippet, and optional files", () => {
     const { layer, out, telemetry, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -101,7 +99,7 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses the none-auth scaffold and keeps verify_jwt disabled", () => {
+  it.effect("uses the none-auth scaffold and keeps verify_jwt disabled", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -117,7 +115,7 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses the user-auth scaffold and enables verify_jwt", () => {
+  it.effect("uses the user-auth scaffold and enables verify_jwt", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -133,7 +131,7 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses api.port and auth.publishable_key from config.toml when present", () => {
+  it.effect("uses api.port and auth.publishable_key from config.toml when present", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -162,7 +160,7 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("appends config even when the existing config.toml is malformed", () => {
+  it.effect("appends config even when the existing config.toml is malformed", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -177,7 +175,7 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("warns and skips the config append when the function is already declared", () => {
+  it.effect("warns and skips the config append when the function is already declared", () => {
     const { layer, out, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -195,7 +193,7 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not auto-generate IDE files when another function already exists", () => {
+  it.effect("does not auto-generate IDE files when another function already exists", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -210,7 +208,7 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("supports --yes by echoing the VS Code prompt and generating settings", () => {
+  it.effect("supports --yes by echoing the VS Code prompt and generating settings", () => {
     const { layer, out, workdir } = setup({ yes: true });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -221,18 +219,21 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("SUPABASE_YES=1 in the environment echoes the VS Code prompt and writes settings", () => {
-    const { layer, out, workdir } = setup({ yes: false });
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* functionsNew({ functionName: "with-env-yes", auth: "apikey" });
-      expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y");
-      expect(yield* fs.exists(path.join(workdir, ".vscode", "settings.json"))).toBe(true);
-    }).pipe(Effect.provide(layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
-  });
+  it.effect(
+    "SUPABASE_YES=1 in the environment echoes the VS Code prompt and writes settings",
+    () => {
+      const { layer, out, workdir } = setup({ yes: false });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* functionsNew({ functionName: "with-env-yes", auth: "apikey" });
+        expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y");
+        expect(yield* fs.exists(path.join(workdir, ".vscode", "settings.json"))).toBe(true);
+      }).pipe(Effect.provide(layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
+    },
+  );
 
-  it.live("piped `n` then `y` declines VS Code and writes IntelliJ settings (Go parity)", () => {
+  it.effect("piped `n` then `y` declines VS Code and writes IntelliJ settings (Go parity)", () => {
     // Scans one piped line per question, so "n\ny\n" answers VS Code=no,
     // IntelliJ=yes.
     const { layer, out, workdir } = setup({ stdinIsTty: false, stdinInput: "n\ny\n" });
@@ -247,7 +248,7 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes IntelliJ settings when VS Code is declined and IntelliJ is accepted", () => {
+  it.effect("writes IntelliJ settings when VS Code is declined and IntelliJ is accepted", () => {
     const { layer, out, workdir } = setup({
       stdinIsTty: true,
       stdoutIsTty: true,
@@ -263,7 +264,7 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("stays payload-only in json mode without writing IDE files", () => {
+  it.effect("stays payload-only in json mode without writing IDE files", () => {
     const { layer, out, workdir } = setup({ format: "json" });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -282,7 +283,7 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits structured success in stream-json mode", () => {
+  it.effect("emits structured success in stream-json mode", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -295,16 +296,16 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails on invalid function slugs", () => {
+  it.effect("fails on invalid function slugs", () => {
     const { layer, telemetry } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(functionsNew({ functionName: "@", auth: "none" }));
-      expect(exitTag(exit)).toBe("FunctionsNewInvalidSlugError");
+      expect(exitError(exit)).toBeInstanceOf(FunctionsNewInvalidSlugError);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the entrypoint already exists", () => {
+  it.effect("fails when the entrypoint already exists", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -313,11 +314,11 @@ describe("functions new integration", () => {
       yield* fs.makeDirectory(dupeDir, { recursive: true });
       yield* fs.writeFileString(path.join(dupeDir, "index.ts"), "// existing\n");
       const exit = yield* Effect.exit(functionsNew({ functionName: "dupe", auth: "apikey" }));
-      expect(exitTag(exit)).toBe("FunctionsNewFileExistsError");
+      expect(exitError(exit)).toBeInstanceOf(FunctionsNewFileExistsError);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with a write error when config.toml cannot be appended", () => {
+  it.effect("fails with a write error when config.toml cannot be appended", () => {
     const { layer, telemetry, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -325,12 +326,12 @@ describe("functions new integration", () => {
       // A directory at the config.toml path makes the append write fail (EISDIR).
       yield* fs.makeDirectory(path.join(workdir, "supabase", "config.toml"), { recursive: true });
       const exit = yield* Effect.exit(functionsNew({ functionName: "write-fail", auth: "apikey" }));
-      expect(exitTag(exit)).toBe("FunctionsNewWriteError");
+      expect(exitError(exit)).toBeInstanceOf(FunctionsNewWriteError);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "fails without scaffolding anything when --workdir names a directory that does not exist at all",
     () =>
       Effect.gen(function* () {
@@ -341,7 +342,7 @@ describe("functions new integration", () => {
         const exit = yield* Effect.exit(
           functionsNew({ functionName: "hello-world", auth: "apikey" }),
         ).pipe(Effect.provide(layer));
-        expect(exitTag(exit)).toBe("FunctionsNewWorkdirError");
+        expect(exitError(exit)).toBeInstanceOf(FunctionsNewWorkdirError);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("failed to change workdir: chdir");
         }

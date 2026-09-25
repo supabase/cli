@@ -1,4 +1,5 @@
 import type { CliConfig } from "@supabase/config";
+import { Predicate } from "effect";
 
 import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
 import type {
@@ -45,9 +46,7 @@ export interface StartGateInputs {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  return Predicate.isObject(value) ? value : undefined;
 }
 
 /**

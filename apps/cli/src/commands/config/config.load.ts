@@ -21,27 +21,26 @@ export function loadLocalConfig<E>(
   projectRef: string | undefined,
   makeError: (message: string) => E,
 ) {
-  return loadCliConfig(cliSettings.workdir, {
-    projectRef,
-    goViperCompat: true,
-    search: shouldSearchAncestors(cliSettings),
-  }).pipe(
-    Effect.catchTags({
-      CliConfigParseError: (cause) =>
-        Effect.fail(
-          makeError(
-            `failed to parse ${relativeConfigPath(cliSettings.workdir, cause.path)}: ${String(cause.cause)}`,
+  return Effect.gen(function* () {
+    const loaded = yield* loadCliConfig(cliSettings.workdir, {
+      projectRef,
+      goViperCompat: true,
+      search: shouldSearchAncestors(cliSettings),
+    }).pipe(
+      Effect.catchTags({
+        CliConfigParseError: (cause) =>
+          Effect.fail(
+            makeError(
+              `failed to parse ${relativeConfigPath(cliSettings.workdir, cause.path)}: ${String(cause.cause)}`,
+            ),
           ),
-        ),
-      DuplicateRemoteProjectIdError: (cause) => Effect.fail(makeError(cause.message)),
-    }),
-    Effect.flatMap((loaded) =>
-      loaded === null
-        ? Effect.gen(function* () {
-            const message = yield* missingProjectConfigMessageEffect(cliSettings);
-            return yield* Effect.fail(makeError(message));
-          })
-        : Effect.succeed(loaded),
-    ),
-  );
+        DuplicateRemoteProjectIdError: (cause) => Effect.fail(makeError(cause.message)),
+      }),
+    );
+    if (loaded === null) {
+      const message = yield* missingProjectConfigMessageEffect(cliSettings);
+      return yield* Effect.fail(makeError(message));
+    }
+    return loaded;
+  });
 }

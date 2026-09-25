@@ -18,7 +18,7 @@ import {
   Stdio,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
 import { vi } from "vitest";
@@ -220,8 +220,9 @@ function mockRoutedContainerCliSpawner(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
-        const cmd = command._tag === "StandardCommand" ? command.command : "";
-        const args = command._tag === "StandardCommand" ? command.args : [];
+        const standard = ChildProcess.isStandardCommand(command);
+        const cmd = standard ? command.command : "";
+        const args = standard ? command.args : [];
         spawned.push({ command: cmd, args });
 
         if (opts.dockerMissing === true && cmd === "docker") {
@@ -245,15 +246,7 @@ function mockRoutedContainerCliSpawner(
         const encoder = new TextEncoder();
         const result = route(args);
         const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-        yield* Effect.forkDetach(
-          Effect.gen(function* () {
-            yield* Effect.sleep("5 millis");
-            yield* Deferred.succeed(
-              exitDeferred,
-              ChildProcessSpawner.ExitCode(result.exitCode ?? 0),
-            );
-          }),
-        );
+        yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result.exitCode ?? 0));
         const stdoutBytes = (result.stdout ?? []).map((line) => encoder.encode(`${line}\n`));
         const stderrBytes = (result.stderr ?? []).map((line) => encoder.encode(`${line}\n`));
 
@@ -459,7 +452,7 @@ function setupFailureEnvelope(opts: FailureEnvelopeOpts) {
 }
 
 describe("status integration", () => {
-  it.live("shows the running stack as a pretty table", () => {
+  it.effect("shows the running stack as a pretty table", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -475,7 +468,7 @@ describe("status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "sanitizes a dirty config.toml project_id before filtering, matching start's label",
     () => {
       const { layer, child } = setup();
@@ -492,7 +485,7 @@ describe("status integration", () => {
     },
   );
 
-  it.live("skips the db health check with --ignore-health-check", () => {
+  it.effect("skips the db health check with --ignore-health-check", () => {
     const { layer, child } = setup({
       route: (args) => {
         // db inspect would fail if called; ps still needs to succeed.
@@ -510,7 +503,7 @@ describe("status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "succeeds against an unhealthy db when --ignore-health-check is set (status.go:104-108)",
     () => {
       // Pairs with "fails when the db container is unhealthy" below to cover both sides of
@@ -534,7 +527,7 @@ describe("status integration", () => {
     },
   );
 
-  it.live("reports stopped services on stderr", () => {
+  it.effect("reports stopped services on stderr", () => {
     const { layer, out } = setup({
       route: defaultRoute({ runningNames: ALL_RUNNING_NAMES.slice(1) }),
     });
@@ -546,7 +539,7 @@ describe("status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when config.toml is malformed", () => {
+  it.effect("fails when config.toml is malformed", () => {
     const { layer, child } = setup();
     return Effect.gen(function* () {
       yield* writeConfig("not valid toml =====");
@@ -559,7 +552,7 @@ describe("status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when [remotes.*] has a duplicate project_id, even with no projectRef", () => {
+  it.effect("fails when [remotes.*] has a duplicate project_id, even with no projectRef", () => {
     const { layer, child } = setup();
     return Effect.gen(function* () {
       yield* writeConfig(
@@ -581,7 +574,7 @@ project_id = "previewrefaaaaaaaaaa"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when a [remotes.*] project_id is not a valid 20-letter ref", () => {
+  it.effect("fails when a [remotes.*] project_id is not a valid 20-letter ref", () => {
     // Config validation checks every [remotes.*].project_id
     // against the ref pattern unconditionally on every config load — not only a
     // remote that ends up selected — so this must fail closed before status
@@ -604,7 +597,7 @@ project_id = "short"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "decodes a comma-separated string into an array field ([]string) for status to proceed",
     () => {
       const { layer } = setup();
@@ -617,7 +610,7 @@ project_id = "short"
     },
   );
 
-  it.live("warns on stderr for a deprecated auth.external provider", () => {
+  it.effect("warns on stderr for a deprecated auth.external provider", () => {
     // `normalizeDeprecatedExternalProviders` (packages/config/src/io.ts) emits this warning via
     // `Console.error` only when `goViperCompat` is set.
     const { layer } = setup();
@@ -631,7 +624,7 @@ project_id = "short"
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
   });
 
-  it.live("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () =>
+  it.effect("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () =>
     Effect.gen(function* () {
       // Must fail before falling through to the workdir-basename default.
       const path = yield* Path.Path;
@@ -650,7 +643,7 @@ project_id = "short"
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when --workdir/SUPABASE_WORKDIR points at a file, not a directory", () =>
+  it.effect("fails when --workdir/SUPABASE_WORKDIR points at a file, not a directory", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const filePath = path.join(tempRoot.current, "not-a-directory");
@@ -667,7 +660,7 @@ project_id = "short"
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when auth.jwt_secret is configured but shorter than 16 characters", () => {
+  it.effect("fails when auth.jwt_secret is configured but shorter than 16 characters", () => {
     const { layer, child } = setup();
     return withEnvVar(
       "SUPABASE_AUTH_JWT_SECRET",
@@ -688,7 +681,7 @@ project_id = "short"
     );
   });
 
-  it.live("resolves auth email content_path keys from the same project-root base", () => {
+  it.effect("resolves auth email content_path keys from the same project-root base", () => {
     const { layer, child, workdir } = setup();
     return Effect.gen(function* () {
       yield* writeConfig(`project_id = "demo"
@@ -712,7 +705,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors SUPABASE_AUTH_JWT_SECRET over a config.toml value with -o env", () => {
+  it.effect("honors SUPABASE_AUTH_JWT_SECRET over a config.toml value with -o env", () => {
     const { layer, out } = setup({ goOutput: Option.some("env") });
     return withEnvVar(
       "SUPABASE_AUTH_JWT_SECRET",
@@ -726,7 +719,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     );
   });
 
-  it.live("signs anon/service_role keys asymmetrically when signing_keys_path is set", () => {
+  it.effect("signs anon/service_role keys asymmetrically when signing_keys_path is set", () => {
     // Uses the first key in `auth.signing_keys_path` (RS256/ES256) instead of HMAC.
     const { layer, out, workdir } = setup({ goOutput: Option.some("json") });
     return Effect.gen(function* () {
@@ -742,7 +735,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports status using schema defaults when config.toml is missing entirely", () =>
+  it.effect("reports status using schema defaults when config.toml is missing entirely", () =>
     Effect.gen(function* () {
       // Without config.toml, the resolved project id falls back to the workdir basename, not the
       // module-level `ALL_RUNNING_NAMES` (fixed to "demo") — route `ps` off that basename instead.
@@ -758,7 +751,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("resolves SUPABASE_PROJECT_ID from supabase/.env over config.toml", () => {
+  it.effect("resolves SUPABASE_PROJECT_ID from supabase/.env over config.toml", () => {
     const { layer, child } = setup({
       route: defaultRoute({ runningNames: serviceContainerIds("env-file-project") }),
     });
@@ -781,7 +774,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     );
   });
 
-  it.live("prefers ambient SUPABASE_PROJECT_ID over supabase/.env", () => {
+  it.effect("prefers ambient SUPABASE_PROJECT_ID over supabase/.env", () => {
     const { layer, child } = setup({
       route: defaultRoute({ runningNames: serviceContainerIds("ambient-project") }),
     });
@@ -804,7 +797,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     );
   });
 
-  it.live("resolves SUPABASE_PROJECT_ID from a project-root .env file", () => {
+  it.effect("resolves SUPABASE_PROJECT_ID from a project-root .env file", () => {
     const { layer, child } = setup({
       route: defaultRoute({ runningNames: serviceContainerIds("root-env-project") }),
     });
@@ -823,7 +816,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     );
   });
 
-  it.live(
+  it.effect(
     "does not climb to an ancestor project's config.toml when workdir has none of its own",
     () =>
       Effect.gen(function* () {
@@ -846,48 +839,54 @@ content_path = "./supabase/templates/password_changed_notification.html"
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("resolves SUPABASE_PROJECT_ID from supabase/.env even when config.toml is absent", () => {
-    const { layer, child } = setup({
-      route: defaultRoute({ runningNames: serviceContainerIds("no-config-project") }),
-    });
-    return withEnvVar(
-      "SUPABASE_PROJECT_ID",
-      undefined,
-      Effect.gen(function* () {
-        yield* writeSupabaseFile(
-          tempRoot.current,
-          ".env",
-          "SUPABASE_PROJECT_ID=no-config-project\n",
-        );
-        yield* status(flags());
-        const inspectCall = child.spawned.find(
-          (s) => s.args[0] === "container" && s.args[1] === "inspect",
-        );
-        expect(inspectCall?.args).toContain(localDbContainerId("no-config-project"));
-      }).pipe(Effect.provide(layer)),
-    );
-  });
+  it.effect(
+    "resolves SUPABASE_PROJECT_ID from supabase/.env even when config.toml is absent",
+    () => {
+      const { layer, child } = setup({
+        route: defaultRoute({ runningNames: serviceContainerIds("no-config-project") }),
+      });
+      return withEnvVar(
+        "SUPABASE_PROJECT_ID",
+        undefined,
+        Effect.gen(function* () {
+          yield* writeSupabaseFile(
+            tempRoot.current,
+            ".env",
+            "SUPABASE_PROJECT_ID=no-config-project\n",
+          );
+          yield* status(flags());
+          const inspectCall = child.spawned.find(
+            (s) => s.args[0] === "container" && s.args[1] === "inspect",
+          );
+          expect(inspectCall?.args).toContain(localDbContainerId("no-config-project"));
+        }).pipe(Effect.provide(layer)),
+      );
+    },
+  );
 
-  it.live("honors SUPABASE_AUTH_JWT_SECRET from supabase/.env, not just the ambient shell", () => {
-    const { layer, out } = setup({ goOutput: Option.some("env") });
-    return withEnvVar(
-      "SUPABASE_AUTH_JWT_SECRET",
-      undefined,
-      Effect.gen(function* () {
-        yield* writeConfig(`project_id = "demo"\n[auth]\njwt_secret = "${"a".repeat(32)}"\n`);
-        yield* writeSupabaseFile(
-          tempRoot.current,
-          ".env",
-          `SUPABASE_AUTH_JWT_SECRET=${"c".repeat(32)}\n`,
-        );
-        yield* status(flags());
-        expect(out.stdoutText).toContain(`JWT_SECRET="${"c".repeat(32)}"`);
-        expect(out.stdoutText).not.toContain("a".repeat(32));
-      }).pipe(Effect.provide(layer)),
-    );
-  });
+  it.effect(
+    "honors SUPABASE_AUTH_JWT_SECRET from supabase/.env, not just the ambient shell",
+    () => {
+      const { layer, out } = setup({ goOutput: Option.some("env") });
+      return withEnvVar(
+        "SUPABASE_AUTH_JWT_SECRET",
+        undefined,
+        Effect.gen(function* () {
+          yield* writeConfig(`project_id = "demo"\n[auth]\njwt_secret = "${"a".repeat(32)}"\n`);
+          yield* writeSupabaseFile(
+            tempRoot.current,
+            ".env",
+            `SUPABASE_AUTH_JWT_SECRET=${"c".repeat(32)}\n`,
+          );
+          yield* status(flags());
+          expect(out.stdoutText).toContain(`JWT_SECRET="${"c".repeat(32)}"`);
+          expect(out.stdoutText).not.toContain("a".repeat(32));
+        }).pipe(Effect.provide(layer)),
+      );
+    },
+  );
 
-  it.live("fails when both docker and podman are missing", () => {
+  it.effect("fails when both docker and podman are missing", () => {
     const { layer } = setup({ failSpawnFor: () => true });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -899,7 +898,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("falls back to podman when docker is absent", () => {
+  it.effect("falls back to podman when docker is absent", () => {
     const { layer, child } = setup({ dockerMissing: true });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -912,7 +911,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when listing running containers errors", () => {
+  it.effect("fails when listing running containers errors", () => {
     const { layer } = setup({
       route: (args) => {
         if (args[0] === "container" && args[1] === "inspect") {
@@ -932,7 +931,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the db container is not running", () => {
+  it.effect("fails when the db container is not running", () => {
     const { layer } = setup({
       route: defaultRoute({
         dbInspectStdout: '{"Status":"exited","Running":false}',
@@ -950,7 +949,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "succeeds against a paused-but-healthy db, matching Go's boolean-based running gate",
     () => {
       // Gates on the boolean `Running`, not the status string — `Running: true` can coexist
@@ -967,7 +966,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     },
   );
 
-  it.live("fails when the db container is absent, preserving the real Docker stderr text", () => {
+  it.effect("fails when the db container is absent, preserving the real Docker stderr text", () => {
     const { layer } = setup({
       route: defaultRoute({
         dbInspectExitCode: 1,
@@ -988,7 +987,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the db container is unhealthy", () => {
+  it.effect("fails when the db container is unhealthy", () => {
     const { layer } = setup({
       route: defaultRoute({
         dbInspectStdout: '{"Status":"running","Running":true,"Health":{"Status":"starting"}}',
@@ -1004,7 +1003,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when db inspect errors for a reason other than not-found", () => {
+  it.effect("fails when db inspect errors for a reason other than not-found", () => {
     const { layer } = setup({
       route: defaultRoute({ dbInspectExitCode: 1, dbInspectStderr: ["permission denied"] }),
     });
@@ -1018,7 +1017,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("outputs env vars with -o env", () => {
+  it.effect("outputs env vars with -o env", () => {
     const { layer, out } = setup({ goOutput: Option.some("env") });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -1028,7 +1027,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("outputs a json object with -o json", () => {
+  it.effect("outputs a json object with -o json", () => {
     const { layer, out } = setup({ goOutput: Option.some("json") });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -1039,7 +1038,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits excluded services from -o json", () => {
+  it.effect("omits excluded services from -o json", () => {
     const { layer, out } = setup({ goOutput: Option.some("json") });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -1051,7 +1050,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits every service named across multiple --exclude entries", () => {
+  it.effect("omits every service named across multiple --exclude entries", () => {
     const { layer, out } = setup({ goOutput: Option.some("json") });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -1065,24 +1064,27 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("merges an auto-detected stopped service with a --exclude entry (status.go:116)", () => {
-    const { layer, out } = setup({
-      goOutput: Option.some("json"),
-      // kong (index 0) is absent from the running set, so it's auto-detected as stopped.
-      route: defaultRoute({ runningNames: ALL_RUNNING_NAMES.slice(1) }),
-    });
-    return Effect.gen(function* () {
-      yield* writeConfig();
-      const authId = serviceContainerIds("demo")[1]!;
-      yield* status(flags({ exclude: [authId] }));
-      const parsed = yield* goOutputFields(out.stdoutText);
-      expect(parsed.API_URL).toBeUndefined(); // excluded via the auto-detected stopped kong
-      expect(parsed.PUBLISHABLE_KEY).toBeUndefined(); // excluded via --exclude
-      expect(parsed.DB_URL).toBeDefined(); // db.url is set unconditionally, before any gating
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "merges an auto-detected stopped service with a --exclude entry (status.go:116)",
+    () => {
+      const { layer, out } = setup({
+        goOutput: Option.some("json"),
+        // kong (index 0) is absent from the running set, so it's auto-detected as stopped.
+        route: defaultRoute({ runningNames: ALL_RUNNING_NAMES.slice(1) }),
+      });
+      return Effect.gen(function* () {
+        yield* writeConfig();
+        const authId = serviceContainerIds("demo")[1]!;
+        yield* status(flags({ exclude: [authId] }));
+        const parsed = yield* goOutputFields(out.stdoutText);
+        expect(parsed.API_URL).toBeUndefined(); // excluded via the auto-detected stopped kong
+        expect(parsed.PUBLISHABLE_KEY).toBeUndefined(); // excluded via --exclude
+        expect(parsed.DB_URL).toBeDefined(); // db.url is set unconditionally, before any gating
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("outputs yaml with -o yaml", () => {
+  it.effect("outputs yaml with -o yaml", () => {
     const { layer, out } = setup({ goOutput: Option.some("yaml") });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -1091,7 +1093,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("outputs toml with -o toml", () => {
+  it.effect("outputs toml with -o toml", () => {
     const { layer, out } = setup({ goOutput: Option.some("toml") });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -1100,7 +1102,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("remaps an output key with --override-name api.url=NEXT_PUBLIC_SUPABASE_URL", () => {
+  it.effect("remaps an output key with --override-name api.url=NEXT_PUBLIC_SUPABASE_URL", () => {
     const { layer, out } = setup({ goOutput: Option.some("json") });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -1111,7 +1113,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails on a malformed --override-name entry", () => {
+  it.effect("fails on a malformed --override-name entry", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -1123,7 +1125,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("silently ignores an --override-name entry with an unknown field key", () => {
+  it.effect("silently ignores an --override-name entry with an unknown field key", () => {
     const { layer, out } = setup({ goOutput: Option.some("json") });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -1134,7 +1136,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("applies a valid --override-name entry alongside an unknown one", () => {
+  it.effect("applies a valid --override-name entry alongside an unknown one", () => {
     const { layer, out } = setup({ goOutput: Option.some("json") });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -1147,7 +1149,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a machine result with --output-format json when -o is unset", () => {
+  it.effect("emits a machine result with --output-format json when -o is unset", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -1158,7 +1160,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("-o takes priority over --output-format when both are passed", () => {
+  it.effect("-o takes priority over --output-format when both are passed", () => {
     const { layer, out } = setup({ format: "json", goOutput: Option.some("env") });
     return Effect.gen(function* () {
       yield* writeConfig();
@@ -1169,7 +1171,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lets --output pretty win over --output-format json", () => {
+  it.effect("lets --output pretty win over --output-format json", () => {
     // `-o pretty` is a complete format choice and must render the table, not defer to
     // --output-format.
     const { layer, out } = setup({ format: "json", goOutput: Option.some("pretty") });
@@ -1182,7 +1184,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry via ensuring even on failure", () => {
+  it.effect("flushes telemetry via ensuring even on failure", () => {
     const { layer, telemetry } = setup({
       route: (args) =>
         args[0] === "container" && args[1] === "inspect" ? { exitCode: 1 } : { exitCode: 0 },
@@ -1195,7 +1197,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
   });
 
   describe("linked-state display (CLI-2167 follow-up)", () => {
-    it.live(
+    it.effect(
       "not linked: prints Not linked. as the first stdout line, then normal status output",
       () => {
         const { layer, out } = setup();
@@ -1208,7 +1210,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "linked to a real project: prints the Linked Project block (Org + Project) with zero Management API calls",
       () => {
         // A mock is wired here (unlike the "no layer at all" test below), so the empty
@@ -1229,7 +1231,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "branch-linked with an api mock: prints the full block (Org + parent Project + resolved Branch) with a Checking linked branch... spinner",
       () => {
         const { layer, out, workdir } = setup({ branches: { ok: [LINKED_BRANCH] } });
@@ -1256,7 +1258,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "branch-linked with the production factory-fallback path (CommandPlatformApiFactory, not CommandPlatformApi directly): resolves the branch",
       () => {
         const { layer, out, workdir, apiFactoryMock } = setup({
@@ -1284,7 +1286,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "factory present but make() itself fails (e.g. no/invalid token): degrades the same as no API at all",
       () => {
         const { layer, out, workdir, apiFactoryMock } = setup({
@@ -1312,7 +1314,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "branch-linked with no Management API layer/factory at all: RICH degraded block (Org + parent Project + bare Branch ref), still succeeds",
       () => {
         const { layer, out, workdir } = setup();
@@ -1338,7 +1340,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "resolves the linked ref from SUPABASE_PROJECT_ID (env) when no project-ref file exists",
       () => {
         const { layer, out, workdir } = setup({ projectId: Option.some(LINKED_PLAIN_REF) });
@@ -1355,7 +1357,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "branch-linked with no cache file at all and no API confirmation: no-false-claim rule renders the bare project line only",
       () => {
         const { layer, out, workdir } = setup();
@@ -1374,7 +1376,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "no-false-claim rule: no cache, an API IS available but finds no matching branch — still the bare project line, no Branch/parent claim",
       () => {
         // Distinct from the "no API at all" test above: here a lookup runs and returns
@@ -1397,7 +1399,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "no-false-claim rule, -o env: no matching branch found emits only LINKED_PROJECT_REF, no LINKED_BRANCH or LINKED_PARENT_PROJECT_REF",
       () => {
         const { layer, out, workdir } = setup({
@@ -1416,7 +1418,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "linked ref is non-ref-shaped: treated as not linked, the file content never reaches output (PR #6168 review)",
       () => {
         const { layer, out, workdir } = setup();
@@ -1430,7 +1432,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "-o json: a symlink/garbage project-ref file's content never reaches machine output (PR #6168 review, token-exfiltration vector)",
       () => {
         // A malicious worktree can symlink `supabase/.temp/project-ref` at a real token file;
@@ -1448,7 +1450,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "linked to a real project with no cached name: bare Project value, Org line still shown",
       () => {
         const { layer, out, workdir } = setup();
@@ -1467,7 +1469,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "--output-format json, linked to a real (non-branch) project with no name: linked_project has project_ref + org fields but no project_name",
       () => {
         const { layer, out, workdir } = setup({ format: "json" });
@@ -1488,7 +1490,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "branch-linked with no cache at all: plain project block, ZERO API calls (cache alone is never proof of a link, PR #6168 review)",
       () => {
         // A mock is wired here (self-referential branch) so the zero-requests assertion is a
@@ -1513,7 +1515,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "branch-linked with the branch lookup failing (status error): RICH degraded block, still succeeds",
       () => {
         const { layer, out, workdir } = setup({
@@ -1538,7 +1540,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "branch-linked with the branch lookup failing (transport error): RICH degraded block, still succeeds",
       () => {
         const { layer, out, workdir } = setup({
@@ -1563,7 +1565,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "-o env, branch-linked with the branch lookup failing: degraded machine payload still carries parent/name/org, only LINKED_BRANCH absent",
       () => {
         const { layer, out, workdir } = setup({
@@ -1587,7 +1589,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "-o json, branch-linked with the branch lookup failing: degraded machine payload still carries parent/name/org, only linked_branch absent",
       () => {
         const { layer, out, workdir } = setup({
@@ -1612,7 +1614,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "--output-format json, branch-linked with the branch lookup failing: structured linked_project still carries parent/name/org, no branch key",
       () => {
         const { layer, out, workdir } = setup({
@@ -1640,7 +1642,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "failure preservation: a daemon connection failure still fails with its existing error, with the linked block already on stdout",
       () => {
         const { layer, out, workdir } = setup({
@@ -1666,7 +1668,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       // SUPABASE_PROJECT_ID (env) always wins before the project-ref file is ever read, so none
       // of these write a project-ref file — the cache below belongs to the workdir (project A),
       // not necessarily to whatever the env override points at (B).
-      it.live(
+      it.effect(
         "SUPABASE_PROJECT_ID overriding an unrelated workdir's cache: no positive lookup match degrades to the plain project line, no parent claim on cache presence alone",
         () => {
           const { layer, out, workdir } = setup({
@@ -1688,7 +1690,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         },
       );
 
-      it.live(
+      it.effect(
         "--output-format json, SUPABASE_PROJECT_ID override with no positive match: linked_project has only project_ref, no parent/org fields leaking from the unrelated cache",
         () => {
           const { layer, out, workdir } = setup({
@@ -1710,7 +1712,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         },
       );
 
-      it.live(
+      it.effect(
         "SUPABASE_PROJECT_ID pointing at a real branch of the cached parent: the lookup's POSITIVE confirmation still renders the full branch block (env-override CI workflow)",
         () => {
           const { layer, out, workdir } = setup({
@@ -1763,7 +1765,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       10_000,
     );
 
-    it.live(
+    it.effect(
       "a control-char/ANSI-laden project-ref file is treated as not linked; nothing of it reaches stdout (PR #6168 review)",
       () => {
         // The pattern gate in `resolveSoftLinkedRef` rejects any non-ref-shaped content
@@ -1782,7 +1784,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "-o json, --override-name collides with the linked_project_ref field name: the overridden base value wins, the linked field never clobbers it (PR #6168 review)",
       () => {
         const { layer, out, workdir } = setup({
@@ -1806,7 +1808,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     );
 
     describe("org line variants", () => {
-      it.live(
+      it.effect(
         "slug and id differ: renders `<slug> (<id>)` (Colum's default real-world state)",
         () => {
           const { layer, out, workdir } = setup();
@@ -1824,7 +1826,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         },
       );
 
-      it.live(
+      it.effect(
         "slug === id: renders the bare value once (Colum's real staging state), machine formats still carry both keys",
         () => {
           const { layer, out, workdir } = setup({
@@ -1845,7 +1847,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         },
       );
 
-      it.live("slug === id, text mode: renders the bare value once, not duplicated", () => {
+      it.effect("slug === id, text mode: renders the bare value once, not duplicated", () => {
         const { layer, out, workdir } = setup();
         return Effect.gen(function* () {
           yield* writeConfig();
@@ -1861,7 +1863,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         }).pipe(Effect.provide(layer));
       });
 
-      it.live(
+      it.effect(
         "neither slug nor id known: the Org line is omitted entirely, and no org machine keys appear",
         () => {
           const { layer, out, workdir } = setup({ goOutput: Option.some("env") });
@@ -1881,7 +1883,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         },
       );
 
-      it.live("neither slug nor id known, text mode: the Org line is omitted entirely", () => {
+      it.effect("neither slug nor id known, text mode: the Org line is omitted entirely", () => {
         const { layer, out, workdir } = setup();
         return Effect.gen(function* () {
           yield* writeConfig();
@@ -1901,7 +1903,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         }).pipe(Effect.provide(layer));
       });
 
-      it.live("only the org slug is known (no id): renders the bare slug value", () => {
+      it.effect("only the org slug is known (no id): renders the bare slug value", () => {
         const { layer, out, workdir } = setup();
         return Effect.gen(function* () {
           yield* writeConfig();
@@ -1916,7 +1918,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         }).pipe(Effect.provide(layer));
       });
 
-      it.live("only the org id is known (no slug): renders the bare id value", () => {
+      it.effect("only the org id is known (no slug): renders the bare id value", () => {
         const { layer, out, workdir } = setup();
         return Effect.gen(function* () {
           yield* writeConfig();
@@ -1931,7 +1933,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         }).pipe(Effect.provide(layer));
       });
 
-      it.live(
+      it.effect(
         "--output-format json, neither org field known: linked_project omits org_slug and org_id",
         () => {
           const { layer, out, workdir } = setup({ format: "json" });
@@ -1956,27 +1958,32 @@ content_path = "./supabase/templates/password_changed_notification.html"
       );
     });
 
-    it.live("-o env, branch-linked: emits the six LINKED_ keys alongside the existing keys", () => {
-      const { layer, out, workdir } = setup({
-        goOutput: Option.some("env"),
-        branches: { ok: [LINKED_BRANCH] },
-      });
-      return Effect.gen(function* () {
-        yield* writeConfig();
-        yield* writeProjectRefFile(workdir, LINKED_BRANCH_REF);
-        yield* writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
-        yield* status(flags());
-        expect(out.stdoutText).toContain(`LINKED_PROJECT_REF="${LINKED_BRANCH_REF}"`);
-        expect(out.stdoutText).toContain('LINKED_BRANCH="feature-x"');
-        expect(out.stdoutText).toContain(`LINKED_PARENT_PROJECT_REF="${LINKED_PARENT_REF}"`);
-        expect(out.stdoutText).toContain('LINKED_PROJECT_NAME="Parent Project"');
-        expect(out.stdoutText).toContain('LINKED_ORG_SLUG="acme"');
-        expect(out.stdoutText).toContain('LINKED_ORG_ID="org_1"');
-        expect(out.stdoutText).toContain('API_URL="http://127.0.0.1:54321"');
-      }).pipe(Effect.provide(layer));
-    });
+    it.effect(
+      "-o env, branch-linked: emits the six LINKED_ keys alongside the existing keys",
+      () => {
+        const { layer, out, workdir } = setup({
+          goOutput: Option.some("env"),
+          branches: { ok: [LINKED_BRANCH] },
+        });
+        return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+          yield* writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, {
+            name: "Parent Project",
+          });
+          yield* status(flags());
+          expect(out.stdoutText).toContain(`LINKED_PROJECT_REF="${LINKED_BRANCH_REF}"`);
+          expect(out.stdoutText).toContain('LINKED_BRANCH="feature-x"');
+          expect(out.stdoutText).toContain(`LINKED_PARENT_PROJECT_REF="${LINKED_PARENT_REF}"`);
+          expect(out.stdoutText).toContain('LINKED_PROJECT_NAME="Parent Project"');
+          expect(out.stdoutText).toContain('LINKED_ORG_SLUG="acme"');
+          expect(out.stdoutText).toContain('LINKED_ORG_ID="org_1"');
+          expect(out.stdoutText).toContain('API_URL="http://127.0.0.1:54321"');
+        }).pipe(Effect.provide(layer));
+      },
+    );
 
-    it.live("-o env, not linked: emits no LINKED_ key at all", () => {
+    it.effect("-o env, not linked: emits no LINKED_ key at all", () => {
       const { layer, out } = setup({ goOutput: Option.some("env") });
       return Effect.gen(function* () {
         yield* writeConfig();
@@ -1986,7 +1993,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "-o json, branch-linked: includes the six linked_ keys alongside the existing keys",
       () => {
         const { layer, out, workdir } = setup({
@@ -2012,7 +2019,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live("-o json, not linked: omits every linked_ key", () => {
+    it.effect("-o json, not linked: omits every linked_ key", () => {
       const { layer, out } = setup({ goOutput: Option.some("json") });
       return Effect.gen(function* () {
         yield* writeConfig();
@@ -2023,7 +2030,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "-o yaml, branch-linked: includes linked_project_ref and linked_org_slug (smoke)",
       () => {
         const { layer, out, workdir } = setup({
@@ -2043,7 +2050,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "-o toml, branch-linked: includes linked_project_ref and linked_org_slug (smoke)",
       () => {
         const { layer, out, workdir } = setup({
@@ -2063,7 +2070,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live(
+    it.effect(
       "--output-format json, branch-linked: nests linked_project (with org) with zero progress events",
       () => {
         const { layer, out, workdir } = setup({
@@ -2093,7 +2100,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.live("--output-format json, not linked: linked_project is null", () => {
+    it.effect("--output-format json, not linked: linked_project is null", () => {
       const { layer, out } = setup({ format: "json" });
       return Effect.gen(function* () {
         yield* writeConfig();
@@ -2103,7 +2110,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("--output-format stream-json, branch-linked: nests linked_project (smoke)", () => {
+    it.effect("--output-format stream-json, branch-linked: nests linked_project (smoke)", () => {
       const { layer, out, workdir } = setup({
         format: "stream-json",
         branches: { ok: [LINKED_BRANCH] },
@@ -2121,7 +2128,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     });
 
     describe("json/stream-json FAILURE envelope carries linked_project (CLI-2167 follow-up)", () => {
-      it.live(
+      it.effect(
         "--output-format json, branch-linked, daemon connection failure: envelope carries the full linked_project at the top level, error untouched",
         () => {
           const { layer, workdir, stdio, processControl } = setupFailureEnvelope({
@@ -2153,7 +2160,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         },
       );
 
-      it.live(
+      it.effect(
         "--output-format json, degraded branch-linked (no Management API layer at all), daemon connection failure: linked_project present without a branch key",
         () => {
           const { layer, workdir, stdio } = setupFailureEnvelope({ format: "json" });
@@ -2178,7 +2185,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         },
       );
 
-      it.live(
+      it.effect(
         "--output-format json, not linked, daemon connection failure: linked_project is explicitly null, not absent",
         () => {
           const { layer, stdio } = setupFailureEnvelope({ format: "json" });
@@ -2193,7 +2200,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         },
       );
 
-      it.live(
+      it.effect(
         "--output-format stream-json, branch-linked, daemon connection failure: the terminal error event carries linked_project",
         () => {
           const { layer, workdir, stdio } = setupFailureEnvelope({
@@ -2229,7 +2236,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         },
       );
 
-      it.live(
+      it.effect(
         "inertness guard: without machineErrorContextLayer in scope, the envelope has no linked_project key at all, and the command still fails identically",
         () => {
           // Omitting the cell from the layer graph must silently skip both the handler's

@@ -1,5 +1,5 @@
 import { findCliProjectPaths, loadCliConfig } from "@supabase/config/effect";
-import { Effect, FileSystem, Option, Path, Predicate } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
 import {
@@ -236,10 +236,8 @@ export const discoverComputeNames = Effect.fnUntraced(function* (project: Comput
   const entries = yield* fs
     .readDirectory(project.computeDir)
     .pipe(
-      Effect.catchTag("PlatformError", (error) =>
-        Predicate.isTagged(error.reason, "NotFound")
-          ? Effect.succeed<ReadonlyArray<string>>([])
-          : Effect.fail(error),
+      Effect.catchReason("PlatformError", "NotFound", () =>
+        Effect.succeed<ReadonlyArray<string>>([]),
       ),
     );
 
@@ -248,9 +246,7 @@ export const discoverComputeNames = Effect.fnUntraced(function* (project: Comput
     // Only a name that vanished between the listing and this stat is skipped.
     const info = yield* fs.stat(path.join(project.computeDir, entry)).pipe(
       Effect.map(Option.some),
-      Effect.catchTag("PlatformError", (error) =>
-        Predicate.isTagged(error.reason, "NotFound") ? Effect.succeedNone : Effect.fail(error),
-      ),
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
     );
     if (Option.isSome(info) && info.value.type === "Directory") {
       scaffolded.push(entry);

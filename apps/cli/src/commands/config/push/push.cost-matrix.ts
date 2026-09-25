@@ -98,18 +98,22 @@ interface ParsedAddon {
  *  uses a plain string, not the enum the generated client declares. */
 function readAddons(parsed: unknown): ReadonlyArray<ParsedAddon> {
   if (typeof parsed !== "object" || parsed === null) return [];
-  const available = (parsed as { available_addons?: unknown }).available_addons;
+  const available = "available_addons" in parsed ? parsed.available_addons : undefined;
   if (!Array.isArray(available)) return [];
+  const entries: ReadonlyArray<unknown> = available;
   const addons: Array<ParsedAddon> = [];
-  for (const entry of available) {
+  for (const entry of entries) {
     if (typeof entry !== "object" || entry === null) continue;
-    const type = (entry as { type?: unknown }).type;
-    const variantsRaw = (entry as { variants?: unknown }).variants;
+    const type = "type" in entry ? entry.type : undefined;
+    const variantsRaw = "variants" in entry ? entry.variants : undefined;
     if (typeof type !== "string" || !Array.isArray(variantsRaw)) continue;
     const variants = variantsRaw.map((v) => {
       const name = (v as { name?: unknown }).name;
       const price = (v as { price?: unknown }).price;
-      const description = (price as { description?: unknown } | undefined)?.description;
+      const description =
+        typeof price === "object" && price !== null && "description" in price
+          ? price.description
+          : undefined;
       return {
         name: typeof name === "string" ? name : "",
         price: { description: typeof description === "string" ? description : "" },

@@ -389,9 +389,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
             onStdout: trackNonAscii
               ? (chunk) =>
                   Effect.suspend(() => {
-                    for (let i = 0; !sawNonAscii && i < chunk.length; i += 1) {
-                      if (chunk[i]! > 0x7f) sawNonAscii = true;
-                    }
+                    sawNonAscii ||= chunk.some((byte) => byte > 0x7f);
                     return output.rawBytes(chunk);
                   })
               : (chunk) => output.rawBytes(chunk),

@@ -29,30 +29,30 @@ const mapStatusOrNetwork = mapHttpError({
 });
 
 const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiError) =>
-  Effect.gen(function* () {
-    const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
-    if (mapped._tag === "SsoRemoveUnexpectedStatusError") {
-      const upgradeSuggested = yield* suggestUpgrade({
-        projectRef: ref,
-        featureKey: "auth.saml_2",
-        statusCode: mapped.status,
-        response: gateResponse(cause),
-      });
-      if (mapped.status === 404) {
-        return yield* new SsoRemoveNotFoundError({
-          message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
+  mapStatusOrNetwork(cause).pipe(
+    Effect.catchTag("SsoRemoveUnexpectedStatusError", (mapped) =>
+      Effect.gen(function* () {
+        const upgradeSuggested = yield* suggestUpgrade({
+          projectRef: ref,
+          featureKey: "auth.saml_2",
+          statusCode: mapped.status,
+          response: gateResponse(cause),
+        });
+        if (mapped.status === 404) {
+          return yield* new SsoRemoveNotFoundError({
+            message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
+            upgradeSuggested,
+          });
+        }
+        return yield* new SsoRemoveUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
           upgradeSuggested,
         });
-      }
-      return yield* new SsoRemoveUnexpectedStatusError({
-        status: mapped.status,
-        body: mapped.body,
-        message: mapped.message,
-        upgradeSuggested,
-      });
-    }
-    return yield* Effect.fail(mapped);
-  });
+      }),
+    ),
+  );
 
 export const ssoRemove = Effect.fn("sso.remove")(function* (flags: SsoRemoveFlags) {
   const output = yield* Output;

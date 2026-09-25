@@ -4,7 +4,7 @@ import type {
   V1GetVanitySubdomainConfigOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option, Predicate } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
@@ -97,7 +97,7 @@ function gatedApi(matchWrite: (url: string) => boolean) {
 }
 
 describe("vanity-subdomains get", () => {
-  it.live("prints status and subdomain in text mode", () => {
+  it.effect("prints status and subdomain in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api });
@@ -110,7 +110,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("suggests upgrade from entitlement_required envelope on 400", () => {
+  it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
     const out = mockOutput({ format: "text" });
     const analytics = mockAnalytics();
     const api = mockCommandPlatformApi({
@@ -143,7 +143,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("plain 404 without envelope produces no upgrade hint", () => {
+  it.effect("plain 404 without envelope produces no upgrade hint", () => {
     const out = mockOutput({ format: "text" });
     const analytics = mockAnalytics();
     const api = mockCommandPlatformApi({
@@ -160,7 +160,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits the subdomain line in text mode when none is configured", () => {
+  it.effect("omits the subdomain line in text mode when none is configured", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET_NO_DOMAIN } });
     const layer = runtimeWith({ out, api });
@@ -171,7 +171,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits JSON bytes for --output json", () => {
+  it.effect("emits JSON bytes for --output json", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api, goOutput: "json" });
@@ -183,7 +183,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML for --output yaml", () => {
+  it.effect("emits YAML for --output yaml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api, goOutput: "yaml" });
@@ -196,7 +196,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML bytes for --output toml", () => {
+  it.effect("emits TOML bytes for --output toml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api, goOutput: "toml" });
@@ -208,7 +208,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits CustomDomain in TOML when none is configured", () => {
+  it.effect("omits CustomDomain in TOML when none is configured", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET_NO_DOMAIN } });
     const layer = runtimeWith({ out, api, goOutput: "toml" });
@@ -219,7 +219,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits env for --output env", () => {
+  it.effect("emits env for --output env", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api, goOutput: "env" });
@@ -231,7 +231,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON success event for --output-format json", () => {
+  it.effect("emits a JSON success event for --output-format json", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api });
@@ -243,7 +243,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event for --output-format stream-json", () => {
+  it.effect("emits a result event for --output-format stream-json", () => {
     const out = mockOutput({ format: "stream-json" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api });
@@ -255,7 +255,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with an unexpected-status error on HTTP 503", () => {
+  it.effect("fails with an unexpected-status error on HTTP 503", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 503, body: {} } });
     const layer = runtimeWith({ out, api });
@@ -272,7 +272,7 @@ describe("vanity-subdomains get", () => {
   });
 
   // json mode so the spinner is suppressed — exercises the no-task error path.
-  it.live("fails with a network error on transport failure", () => {
+  it.effect("fails with a network error on transport failure", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ network: "fail" });
     const layer = runtimeWith({ out, api });
@@ -290,7 +290,7 @@ describe("vanity-subdomains get", () => {
 });
 
 describe("vanity-subdomains check-availability", () => {
-  it.live("prints availability in text mode", () => {
+  it.effect("prints availability in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api });
@@ -309,7 +309,7 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits JSON bytes for --output json", () => {
+  it.effect("emits JSON bytes for --output json", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api, goOutput: "json" });
@@ -323,7 +323,7 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML for --output yaml", () => {
+  it.effect("emits YAML for --output yaml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api, goOutput: "yaml" });
@@ -337,7 +337,7 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML bytes for --output toml", () => {
+  it.effect("emits TOML bytes for --output toml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api, goOutput: "toml" });
@@ -351,7 +351,7 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits env for --output env", () => {
+  it.effect("emits env for --output env", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api, goOutput: "env" });
@@ -365,7 +365,7 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON success event for --output-format json", () => {
+  it.effect("emits a JSON success event for --output-format json", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api });
@@ -380,7 +380,7 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("suggests upgrade for gated checks without firing analytics", () => {
+  it.effect("suggests upgrade for gated checks without firing analytics", () => {
     const out = mockOutput({ format: "text" });
     const api = gatedApi((url) => url.includes("/check-availability"));
     const analytics = mockAnalytics();
@@ -400,7 +400,7 @@ describe("vanity-subdomains check-availability", () => {
   });
 
   // json mode so the spinner is suppressed — exercises the no-task error path.
-  it.live("fails with a network error on transport failure", () => {
+  it.effect("fails with a network error on transport failure", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ network: "fail" });
     const layer = runtimeWith({ out, api });
@@ -421,7 +421,7 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with cobra's required-flag error when --desired-subdomain is omitted", () => {
+  it.effect("fails with cobra's required-flag error when --desired-subdomain is omitted", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api });
@@ -433,13 +433,13 @@ describe("vanity-subdomains check-availability", () => {
           desiredSubdomain: Option.none(),
         }),
       );
-      expect(error._tag).toBe("DesiredSubdomainRequiredError");
+      expect(Predicate.isTagged(error, "DesiredSubdomainRequiredError")).toBe(true);
       expect(error.message).toBe('required flag(s) "desired-subdomain" not set');
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes an explicit empty --desired-subdomain through to the API", () => {
+  it.effect("passes an explicit empty --desired-subdomain through to the API", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api });
@@ -456,7 +456,7 @@ describe("vanity-subdomains check-availability", () => {
 });
 
 describe("vanity-subdomains activate", () => {
-  it.live("activates the vanity subdomain in text mode", () => {
+  it.effect("activates the vanity subdomain in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api });
@@ -473,7 +473,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits JSON bytes for --output json", () => {
+  it.effect("emits JSON bytes for --output json", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api, goOutput: "json" });
@@ -487,7 +487,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML for --output yaml", () => {
+  it.effect("emits YAML for --output yaml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api, goOutput: "yaml" });
@@ -502,7 +502,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML bytes for --output toml", () => {
+  it.effect("emits TOML bytes for --output toml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api, goOutput: "toml" });
@@ -516,7 +516,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits env for --output env", () => {
+  it.effect("emits env for --output env", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api, goOutput: "env" });
@@ -530,7 +530,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON success event for --output-format json", () => {
+  it.effect("emits a JSON success event for --output-format json", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api });
@@ -545,7 +545,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("suggests upgrade and fires analytics for gated activation", () => {
+  it.effect("suggests upgrade and fires analytics for gated activation", () => {
     const out = mockOutput({ format: "text" });
     const api = gatedApi((url) => url.endsWith("/vanity-subdomain/activate"));
     const analytics = mockAnalytics();
@@ -570,7 +570,7 @@ describe("vanity-subdomains activate", () => {
   });
 
   // json mode so the spinner is suppressed — exercises the no-task error path.
-  it.live("fails with a network error on transport failure", () => {
+  it.effect("fails with a network error on transport failure", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ network: "fail" });
     const analytics = mockAnalytics();
@@ -593,7 +593,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with cobra's required-flag error when --desired-subdomain is omitted", () => {
+  it.effect("fails with cobra's required-flag error when --desired-subdomain is omitted", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api });
@@ -605,13 +605,13 @@ describe("vanity-subdomains activate", () => {
           desiredSubdomain: Option.none(),
         }),
       );
-      expect(error._tag).toBe("DesiredSubdomainRequiredError");
+      expect(Predicate.isTagged(error, "DesiredSubdomainRequiredError")).toBe(true);
       expect(error.message).toBe('required flag(s) "desired-subdomain" not set');
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes an explicit empty --desired-subdomain through to the API", () => {
+  it.effect("passes an explicit empty --desired-subdomain through to the API", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api });
@@ -627,7 +627,7 @@ describe("vanity-subdomains activate", () => {
 });
 
 describe("vanity-subdomains delete", () => {
-  it.live("deletes the vanity subdomain in text mode", () => {
+  it.effect("deletes the vanity subdomain in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
     const layer = runtimeWith({ out, api });
@@ -640,7 +640,7 @@ describe("vanity-subdomains delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON success event for --output-format json", () => {
+  it.effect("emits a JSON success event for --output-format json", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
     const layer = runtimeWith({ out, api });
@@ -652,7 +652,7 @@ describe("vanity-subdomains delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores --output values and prints to stderr", () => {
+  it.effect("ignores --output values and prints to stderr", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
     const layer = runtimeWith({ out, api, goOutput: "json" });
@@ -664,7 +664,7 @@ describe("vanity-subdomains delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with an unexpected-status error on HTTP 503", () => {
+  it.effect("fails with an unexpected-status error on HTTP 503", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 503, body: {} } });
     const layer = runtimeWith({ out, api });
@@ -681,7 +681,7 @@ describe("vanity-subdomains delete", () => {
   });
 
   // json mode so the spinner is suppressed — exercises the no-task error path.
-  it.live("fails with a network error on transport failure", () => {
+  it.effect("fails with a network error on transport failure", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ network: "fail" });
     const layer = runtimeWith({ out, api });
@@ -699,7 +699,7 @@ describe("vanity-subdomains delete", () => {
 });
 
 describe("vanity-subdomains PersistentPostRun parity", () => {
-  it.live("flushes telemetry and writes linked-project cache on success", () => {
+  it.effect("flushes telemetry and writes linked-project cache on success", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const telemetry = mockTelemetryStateTracked();
@@ -718,7 +718,7 @@ describe("vanity-subdomains PersistentPostRun parity", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry and writes linked-project cache on failure", () => {
+  it.effect("flushes telemetry and writes linked-project cache on failure", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 503, body: {} } });
     const telemetry = mockTelemetryStateTracked();
@@ -740,7 +740,7 @@ describe("vanity-subdomains PersistentPostRun parity", () => {
 
   // The desired-subdomain check runs inside both `Effect.ensuring` wrappers, so telemetry
   // still flushes and the cache still writes even though it fails before any API call.
-  it.live(
+  it.effect(
     "flushes telemetry and writes linked-project cache on a missing --desired-subdomain",
     () => {
       const out = mockOutput({ format: "text" });
@@ -761,7 +761,7 @@ describe("vanity-subdomains PersistentPostRun parity", () => {
             desiredSubdomain: Option.none(),
           }),
         );
-        expect(error._tag).toBe("DesiredSubdomainRequiredError");
+        expect(Predicate.isTagged(error, "DesiredSubdomainRequiredError")).toBe(true);
         expect(telemetry.flushed).toBe(true);
         expect(cache.cached).toBe(true);
       }).pipe(Effect.provide(layer));

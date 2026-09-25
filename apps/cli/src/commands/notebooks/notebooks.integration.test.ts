@@ -88,7 +88,7 @@ function downloaded(name: string, id = ID) {
 }
 
 describe("notebook file preservation", () => {
-  it.live("round-trips notebook metadata, cell identities, charts, and log ranges", () => {
+  it.effect("round-trips notebook metadata, cell identities, charts, and log ranges", () => {
     const cells = [
       { id: "markdown-cell", type: "markdown", text: "# Report" },
       {
@@ -153,7 +153,7 @@ describe("notebook file preservation", () => {
     });
   });
 
-  it.live.each([
+  it.effect.each([
     { local: "Sales", name: "sales" },
     { local: "café", name: "cafe\u0301" },
     // A case-insensitive filesystem stores final and medial sigma as one name.
@@ -171,7 +171,7 @@ describe("notebook file preservation", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live.each(commands)(
+  it.effect.each(commands)(
     "%s refuses a notebooks directory symlinked outside the project root",
     (command) => {
       const { layer, http } = setup(command, {
@@ -196,7 +196,7 @@ describe("notebook file preservation", () => {
     },
   );
 
-  it.live("refuses colliding remote filenames before writing any notebook", () => {
+  it.effect("refuses colliding remote filenames before writing any notebook", () => {
     const { layer, http } = setup("pull", {
       routes: { [`GET ${notebooksRoute()}`]: list([remote("Sales"), remote("sales", OTHER_ID)]) },
     });
@@ -206,7 +206,7 @@ describe("notebook file preservation", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live.each(["a".repeat(210), "b".repeat(250), "é".repeat(125)])(
+  it.effect.each(["a".repeat(210), "b".repeat(250), "é".repeat(125)])(
     "pulls long filenames and removes temporary artifacts (%s)",
     (name) => {
       const { layer } = setup("pull", {
@@ -227,7 +227,7 @@ describe("notebook file preservation", () => {
     },
   );
 
-  it.live("skips unsupported portable filenames without attempting downloads", () => {
+  it.effect("skips unsupported portable filenames without attempting downloads", () => {
     const names = [
       "CON",
       "nul.backup",
@@ -258,7 +258,7 @@ describe("notebook file preservation", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves a file created after the pull inventory was read", () => {
+  it.effect("preserves a file created after the pull inventory was read", () => {
     const { layer, cache, telemetry } = setup("pull", {
       routes: {
         [`GET ${notebooksRoute()}`]: list([remote("sales")]),
@@ -288,7 +288,7 @@ describe("notebook file preservation", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("cleans temporary files when a pull is interrupted before publication", () => {
+  it.effect("cleans temporary files when a pull is interrupted before publication", () => {
     const { layer, cache, telemetry } = setup("pull", {
       routes: {
         [`GET ${notebooksRoute()}`]: list([remote("sales")]),
@@ -316,7 +316,7 @@ describe("notebook file preservation", () => {
 });
 
 describe("notebook reconciliation preflight", () => {
-  it.live("reports a local read failure without uploading notebooks", () => {
+  it.effect("reports a local read failure without uploading notebooks", () => {
     const { layer, http } = setup("push");
     return Effect.gen(function* () {
       yield* write("sales");
@@ -334,7 +334,7 @@ describe("notebook reconciliation preflight", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a failed local deletion without losing the notebook", () => {
+  it.effect("reports a failed local deletion without losing the notebook", () => {
     const { layer, cache, telemetry } = setup("pull", { promptSelectResponses: ["delete"] });
     return Effect.gen(function* () {
       yield* write("sales");
@@ -354,7 +354,7 @@ describe("notebook reconciliation preflight", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live.each(["keep", "delete"])(
+  it.effect.each(["keep", "delete"])(
     "can %s remote notebooks with unsupported filenames",
     (choice) => {
       const { layer, http } = setup("push", {
@@ -376,7 +376,7 @@ describe("notebook reconciliation preflight", () => {
     },
   );
 
-  it.live.each(["reports/weekly", "Sales"])(
+  it.effect.each(["reports/weekly", "Sales"])(
     "validates copying %s before uploading local edits",
     (name) => {
       const { layer, http } = setup("push", {
@@ -392,7 +392,7 @@ describe("notebook reconciliation preflight", () => {
     },
   );
 
-  it.live("pushes a selected notebook despite unrelated duplicate names", () => {
+  it.effect("pushes a selected notebook despite unrelated duplicate names", () => {
     const { layer, http } = setup("push", {
       routes: {
         [`GET ${notebooksRoute()}`]: list([
@@ -413,7 +413,7 @@ describe("notebook reconciliation preflight", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("validates all local files before creating any during pull reconciliation", () => {
+  it.effect("validates all local files before creating any during pull reconciliation", () => {
     const { layer, http } = setup("pull", { promptSelectResponses: ["copy"] });
     return Effect.gen(function* () {
       yield* write("a-good");
@@ -423,7 +423,7 @@ describe("notebook reconciliation preflight", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live.each(commands)("leaves divergence alone when the %s prompt is cancelled", (command) => {
+  it.effect.each(commands)("leaves divergence alone when the %s prompt is cancelled", (command) => {
     const { layer, http, cache, telemetry } = setup(command, {
       routes: { [`GET ${notebooksRoute()}`]: list(command === "push" ? [remote("remote")] : []) },
     });
@@ -445,7 +445,7 @@ describe("notebook reconciliation preflight", () => {
 });
 
 describe.each(commands)("notebooks %s command wiring", (command) => {
-  it.live.each([
+  it.effect.each([
     { status: 200, transportError: "ECONNRESET" },
     { status: 200, body: { invalid: "response" } },
   ])("reports transport and response failures and stops progress", (response) => {
@@ -482,7 +482,7 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live.each([{ interactive: false }, { goOutput: "json" as const }])(
+  it.effect.each([{ interactive: false }, { goOutput: "json" as const }])(
     "keeps divergence without prompting in unattended text output (%j)",
     (options) => {
       const { layer, out, http } = setup(command, {
@@ -501,7 +501,7 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
     },
   );
 
-  it.live("flushes telemetry when project resolution fails", () => {
+  it.effect("flushes telemetry when project resolution fails", () => {
     const { layer, cache, telemetry, http } = setup(command, { linked: false });
     return Effect.gen(function* () {
       const exit = yield* run(command, undefined, Option.none()).pipe(Effect.exit);
@@ -512,7 +512,7 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live.each(["json", "stream-json"] as const)(
+  it.effect.each(["json", "stream-json"] as const)(
     "emits %s failures with a nonzero exit code and telemetry",
     (format) => {
       const { layer, out, process, analytics, cache, telemetry } = setup(command, {
@@ -540,7 +540,7 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
     },
   );
 
-  it.live.each(["json", "stream-json"] as const)(
+  it.effect.each(["json", "stream-json"] as const)(
     "emits %s success without prompts or progress",
     (format) => {
       const { layer, out, analytics } = setup(command, { format });
@@ -562,7 +562,7 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
     },
   );
 
-  it.live.each(["json", "yaml", "toml"] as const)(
+  it.effect.each(["json", "yaml", "toml"] as const)(
     "honors -o %s before --output-format and keeps stdout clean",
     (goOutput) => {
       const { layer, out } = setup(command, { goOutput, format: "stream-json" });
@@ -575,7 +575,7 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
     },
   );
 
-  it.live.each(["table", "csv", "env"] as const)(
+  it.effect.each(["table", "csv", "env"] as const)(
     "rejects -o %s without reading or changing notebooks",
     (goOutput) => {
       const { layer, http, cache } = setup(command, { goOutput });
@@ -587,7 +587,7 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
     },
   );
 
-  it.live.each([undefined, "", "cursor-a", "cycle"])(
+  it.effect.each([undefined, "", "cursor-a", "cycle"])(
     "fails closed for a missing or cyclic pagination cursor (%s)",
     (cursor) => {
       const next = (value: string | undefined) =>

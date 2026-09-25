@@ -102,7 +102,7 @@ const projectPath = Effect.fnUntraced(function* (workdir: string) {
 });
 
 describe("migration new", () => {
-  it.live("creates a timestamped migration file and prints its relative path", () => {
+  it.effect("creates a timestamped migration file and prints its relative path", () => {
     const { layer, out, telemetry } = setup(tmp.current);
     return Effect.gen(function* () {
       yield* migrationNew({ migrationName: "create_widgets" });
@@ -117,7 +117,7 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes piped stdin into the new migration verbatim", () => {
+  it.effect("writes piped stdin into the new migration verbatim", () => {
     const script = "create table pet;\ndrop table pet;\n";
     const { layer, out } = setup(tmp.current, { isTTY: false, piped: script });
     return Effect.gen(function* () {
@@ -129,7 +129,7 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("creates an empty migration when stdin is piped but empty", () => {
+  it.effect("creates an empty migration when stdin is piped but empty", () => {
     const { layer } = setup(tmp.current, { isTTY: false });
     return Effect.gen(function* () {
       yield* migrationNew({ migrationName: "empty_pipe" });
@@ -138,7 +138,7 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("materializes the migration without relying on an open handle", () => {
+  it.effect("materializes the migration without relying on an open handle", () => {
     const { layer } = setup(tmp.current, { openDoesNotMaterialize: true });
     return Effect.gen(function* () {
       yield* migrationNew({ migrationName: "windows_open" });
@@ -147,7 +147,7 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not report success when the migration is not materialized", () => {
+  it.effect("does not report success when the migration is not materialized", () => {
     const { layer, out, telemetry } = setup(tmp.current, {
       openDoesNotMaterialize: true,
       writeDoesNotMaterialize: true,
@@ -171,7 +171,7 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured result with the absolute path in json", () => {
+  it.effect("emits a structured result with the absolute path in json", () => {
     const { layer, out } = setup(tmp.current, { format: "json" });
     return Effect.gen(function* () {
       yield* migrationNew({ migrationName: "as_json" });
@@ -188,7 +188,7 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured result in stream-json", () => {
+  it.effect("emits a structured result in stream-json", () => {
     const { layer, out } = setup(tmp.current, { format: "stream-json" });
     return Effect.gen(function* () {
       yield* migrationNew({ migrationName: "as_stream" });
@@ -198,7 +198,7 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a write failure and still flushes telemetry", () => {
+  it.effect("reports a write failure and still flushes telemetry", () => {
     const { layer, telemetry } = setup(tmp.current);
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -218,7 +218,7 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a name that escapes the migrations directory and writes nothing", () => {
+  it.effect("rejects a name that escapes the migrations directory and writes nothing", () => {
     const { layer, telemetry } = setup(tmp.current, { isTTY: false, piped: "DROP DATABASE;\n" });
     return Effect.gen(function* () {
       const exit = yield* migrationNew({
@@ -237,7 +237,7 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "fails the command when piped stdin errors mid-copy (Go: failed to copy from stdin)",
     () => {
       // The Created line is already scheduled by the time the copy fails, so it still

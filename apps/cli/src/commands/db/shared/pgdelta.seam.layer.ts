@@ -137,7 +137,7 @@ export const declarativeSeamLayer = Layer.effect(
               }),
           ),
         );
-      }),
+      }).pipe(Effect.withSpan("DeclarativeSeam.ensureLocalDatabaseStarted")),
       ensureLocalPostgresImageCurrent: Effect.gen(function* () {
         const backend = yield* currentStackBackend;
         if (backend.kind === "stack") return;
@@ -270,7 +270,7 @@ export const declarativeSeamLayer = Layer.effect(
             });
           }),
         );
-      }),
+      }).pipe(Effect.withSpan("DeclarativeSeam.ensureLocalPostgresImageCurrent")),
     });
   }),
 ).pipe(Layer.provide(stackApiLayer));

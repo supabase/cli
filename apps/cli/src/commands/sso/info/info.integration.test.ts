@@ -46,7 +46,7 @@ const expectedEntityId = `https://${VALID_REF}.supabase.co/auth/v1/sso/saml/meta
 const expectedRelayState = `https://${VALID_REF}.supabase.co`;
 
 describe("sso info integration", () => {
-  it.live("renders a 3-row markdown table in text mode", () => {
+  it.effect("renders a 3-row markdown table in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
@@ -59,7 +59,7 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits exactly one space between the ACS URL label and the column separator", () => {
+  it.effect("emits exactly one space between the ACS URL label and the column separator", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
@@ -68,7 +68,7 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("TS --output-format=json emits a structured payload", () => {
+  it.effect("TS --output-format=json emits a structured payload", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
@@ -82,7 +82,7 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=env emits ACS_URL / ENTITY_ID / RELAY_STATE alphabetized", () => {
+  it.effect("Go --output=env emits ACS_URL / ENTITY_ID / RELAY_STATE alphabetized", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
@@ -92,7 +92,7 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json sorts keys alphabetically and includes all three", () => {
+  it.effect("Go --output=json sorts keys alphabetically and includes all three", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
@@ -105,7 +105,7 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=yaml emits the three keys", () => {
+  it.effect("Go --output=yaml emits the three keys", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
@@ -115,7 +115,7 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml emits the three keys", () => {
+  it.effect("Go --output=toml emits the three keys", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
@@ -125,7 +125,7 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("URLs derive from --project-ref flag value when set", () => {
+  it.effect("URLs derive from --project-ref flag value when set", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, out } = setup();
     return Effect.gen(function* () {
@@ -134,7 +134,7 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry + linked-project cache on success", () => {
+  it.effect("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
@@ -143,7 +143,7 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does NOT make any API call", () => {
+  it.effect("does NOT make any API call", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });

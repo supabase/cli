@@ -4,7 +4,7 @@ import { expect, layer } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { edgeRuntimeNofileUlimit } from "../../../shared/stack-constants.ts";
 import { ConfigProvider, Deferred, Effect, Exit, Sink, Stream } from "effect";
-import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
@@ -33,10 +33,11 @@ function mockDockerSpawner(
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const standard = ChildProcess.isStandardCommand(command);
+      const args = standard ? command.args : [];
       calls.push({
         args,
-        stdin: command._tag === "StandardCommand" ? command.options.stdin : undefined,
+        stdin: standard ? command.options.stdin : undefined,
       });
       const result = handler?.(args) ?? { exitCode: 0 };
 

@@ -30,8 +30,6 @@ import {
  * (`--local`'s value decides local vs linked) and building the gateway client.
  */
 
-const decodeDefaultCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
-
 interface LoadedStorageConfig {
   readonly config: CliConfig;
   readonly document: Record<string, unknown> | undefined;
@@ -69,8 +67,9 @@ export const loadStorageConfig = Effect.fnUntraced(function* (
         message: yield* missingProjectConfigMessageEffect(cliSettings),
       });
     }
+    const config = yield* Schema.decodeEffect(CliConfigSchema)({}).pipe(Effect.orDie);
     return {
-      config: decodeDefaultCliConfig({}),
+      config,
       document: undefined,
       appliedRemote: undefined,
     } satisfies LoadedStorageConfig;

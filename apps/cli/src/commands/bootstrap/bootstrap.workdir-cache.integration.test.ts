@@ -61,7 +61,7 @@ const HEALTHY = [{ name: "db", healthy: true, status: "ACTIVE_HEALTHY" }];
 // env): `cliSettings.workdir` (the cwd-walk result) then diverges from the bootstrap workdir, so
 // the cache must follow the bootstrap workdir for `linked-project.json` to land beside `project-ref`.
 describe("bootstrap linked-project cache location", () => {
-  it.live(
+  it.effect(
     "writes linked-project.json into the prompted bootstrap workdir, not cliSettings.workdir",
     () =>
       Effect.gen(function* () {

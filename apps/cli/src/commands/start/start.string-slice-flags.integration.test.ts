@@ -77,7 +77,7 @@ describe("start --exclude flag (pflag CSV parity)", () => {
   ];
 
   for (const { name, flag } of spellings) {
-    it.live(
+    it.effect(
       `${name}: malformed CSV fails at parse time with pflag's shorthand-framed diagnostic`,
       () => {
         const { layer } = setup();

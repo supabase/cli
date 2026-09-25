@@ -211,7 +211,7 @@ function cliArgsFor(flags: typeof defaultFlags): ReadonlyArray<string> {
 }
 
 describe("sso add integration", () => {
-  it.live("POSTs to /v1/projects/{ref}/config/auth/sso/providers with type=saml", () => {
+  it.effect("POSTs to /v1/projects/{ref}/config/auth/sso/providers with type=saml", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
@@ -222,7 +222,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "mutex check: --metadata-file + --metadata-url fails with cobra's exact error text",
     () => {
       const { layer } = setup({
@@ -257,7 +257,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "mutex check: an explicit but empty --metadata-file= still conflicts with --metadata-url (changed, not truthy)",
     () => {
       const { layer } = setup({
@@ -291,7 +291,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "mutex check: a bare --metadata-file followed by --metadata-url is not a violation, and the consumed token is the file",
     () => {
       const { layer, api } = setup({
@@ -310,7 +310,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "reconciles project-ref consuming --metadata-file: fails ref validation like Go, never reads metadata",
     () => {
       const { layer, api } = setup({
@@ -345,7 +345,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "required emulation: a bare --domains consuming --type fails the required-flag check, no POST",
     () => {
       const { layer, api } = setup({
@@ -364,7 +364,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live("required emulation: the required-flag error wins over a mutex violation", () => {
+  it.effect("required emulation: the required-flag error wins over a mutex violation", () => {
     const { layer, api } = setup({
       cliArgs: [
         "sso",
@@ -400,7 +400,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "workdir emulation: --workdir consuming --metadata-file fails at Go's chdir, never POSTs",
     () => {
       const { layer, api } = setup({
@@ -437,7 +437,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "workdir emulation: the chdir failure wins over required-type and mutex violations",
     () => {
       const { layer, api } = setup({
@@ -483,7 +483,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live("workdir emulation: an existing --workdir directory proceeds to the POST", () => {
+  it.effect("workdir emulation: an existing --workdir directory proceeds to the POST", () => {
     const { layer, api } = setup({
       cliArgs: ["sso", "add", "--type", "saml", "--workdir", tempRoot.current],
     });
@@ -494,7 +494,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("required emulation: a -t shorthand invocation POSTs normally", () => {
+  it.effect("required emulation: a -t shorthand invocation POSTs normally", () => {
     const { layer, api } = setup({
       cliArgs: ["sso", "add", "-t", "saml"],
     });
@@ -505,7 +505,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "required emulation: -t saml plus a consumed --type still POSTs, like pflag (type IS changed)",
     () => {
       const { layer, api } = setup({
@@ -522,7 +522,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "required emulation: a bare --domains consuming -t fails the required-flag check, no POST",
     () => {
       const { layer, api } = setup({
@@ -541,7 +541,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "invalid-value emulation: a later invalid --type occurrence fails with pflag's shorthand-labelled error, no POST",
     () => {
       const { layer, api } = setup({
@@ -562,7 +562,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "invalid-value emulation: a later inline-empty --skip-url-validation= fails like pflag, no POST",
     () => {
       const { layer, api } = setup({
@@ -598,7 +598,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "value reconciliation: repeated --skip-url-validation resolves last-wins like pflag and skips validation",
     () => {
       const { layer, api } = setup({
@@ -627,7 +627,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "value reconciliation: repeated --name-id-format resolves last-wins like pflag in the POST body",
     () => {
       const transient = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient" as const;
@@ -653,7 +653,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live("missing-value emulation: a trailing bare --domains fails pflag parse, no POST", () => {
+  it.effect("missing-value emulation: a trailing bare --domains fails pflag parse, no POST", () => {
     const { layer, api } = setup({
       cliArgs: ["sso", "add", "--type", "saml", "--domains"],
     });
@@ -669,7 +669,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "reconciles a bare --domains consuming --metadata-file: POSTs the domain pflag saw, no metadata",
     () => {
       const { layer, api } = setup({
@@ -686,7 +686,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "reconciles a bare --metadata-url consuming --name-id-format: validates the consumed token as the URL",
     () => {
       const { layer, api } = setup({
@@ -718,7 +718,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live("falls back to the parsed domains when the scan's raw values are malformed CSV", () => {
+  it.effect("falls back to the parsed domains when the scan's raw values are malformed CSV", () => {
     // Unreachable via the real CLI; only tests that reconciliation doesn't crash on malformed input.
     const { layer, api } = setup({
       cliArgs: ["sso", "add", "--type", "saml", "--domains", '--x"y'],
@@ -730,7 +730,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reads metadata file and sends as metadata_xml", () =>
+  it.effect("reads metadata file and sends as metadata_xml", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
@@ -747,7 +747,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects non-UTF8 metadata file", () =>
+  it.effect("rejects non-UTF8 metadata file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
@@ -765,7 +765,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("sends metadata_url verbatim when --skip-url-validation", () => {
+  it.effect("sends metadata_url verbatim when --skip-url-validation", () => {
     const { layer, api } = setup({
       cliArgs: [
         "sso",
@@ -790,7 +790,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("validates HTTPS metadata URL when not skipped — success path", () => {
+  it.effect("validates HTTPS metadata URL when not skipped — success path", () => {
     const flags = {
       ...defaultFlags,
       metadataUrl: Option.some("https://idp.example.com/m"),
@@ -809,7 +809,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects non-HTTPS metadata URL with Go-format message", () => {
+  it.effect("rejects non-HTTPS metadata URL with Go-format message", () => {
     const flags = {
       ...defaultFlags,
       metadataUrl: Option.some("http://idp.example.com/m"),
@@ -832,7 +832,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reads attribute mapping JSON and preserves user-defined `default` field", () =>
+  it.effect("reads attribute mapping JSON and preserves user-defined `default` field", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
@@ -850,7 +850,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("sends domains array verbatim", () => {
+  it.effect("sends domains array verbatim", () => {
     const flags = { ...defaultFlags, domains: ["a.com", "b.com"] };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
@@ -860,7 +860,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders single-provider markdown in text mode", () => {
+  it.effect("renders single-provider markdown in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
@@ -869,7 +869,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=env returns no output", () => {
+  it.effect("Go --output=env returns no output", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
@@ -877,7 +877,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json encodes response verbatim", () => {
+  it.effect("Go --output=json encodes response verbatim", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
@@ -885,7 +885,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("TS --output-format=json emits success", () => {
+  it.effect("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
@@ -893,7 +893,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports SAML-disabled error on 404", () => {
+  it.effect("reports SAML-disabled error on 404", () => {
     const { layer } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(ssoAdd(defaultFlags));
@@ -904,7 +904,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
+  it.effect("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
     const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "gated" });
     return Effect.gen(function* () {
       yield* Effect.exit(ssoAdd(defaultFlags));
@@ -912,7 +912,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports unexpected-status error on 500", () => {
+  it.effect("reports unexpected-status error on 500", () => {
     const { layer } = setup({ status: 500, body: { error: "boom" } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(ssoAdd(defaultFlags));
@@ -925,7 +925,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry + linked-project cache on success and failure", () => {
+  it.effect("flushes telemetry + linked-project cache on success and failure", () => {
     const { layer, telemetry, cache } = setup({ status: 500, body: {} });
     return Effect.gen(function* () {
       yield* Effect.exit(ssoAdd(defaultFlags));
@@ -934,7 +934,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=yaml encodes response verbatim", () => {
+  it.effect("Go --output=yaml encodes response verbatim", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
@@ -942,7 +942,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml encodes response verbatim", () => {
+  it.effect("Go --output=toml encodes response verbatim", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
@@ -950,7 +950,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves attribute_mapping `default` field in POST body", () =>
+  it.effect("preserves attribute_mapping `default` field in POST body", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
@@ -968,7 +968,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("metadata URL fetch failure surfaces as add metadata file error", () => {
+  it.effect("metadata URL fetch failure surfaces as add metadata file error", () => {
     const flags = {
       ...defaultFlags,
       metadataUrl: Option.some("https://idp.example.com/m"),
@@ -993,7 +993,7 @@ describe("sso add integration", () => {
   // `Response` constructor always emits valid UTF-8, so that case can't be
   // expressed here.
 
-  it.live("malformed metadata URL surfaces invalid URI error", () => {
+  it.effect("malformed metadata URL surfaces invalid URI error", () => {
     const flags = {
       ...defaultFlags,
       metadataUrl: Option.some("::::not a url::::"),
@@ -1009,7 +1009,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("nameIdFormat is forwarded in the request body when provided", () => {
+  it.effect("nameIdFormat is forwarded in the request body when provided", () => {
     const flags = {
       ...defaultFlags,
       nameIdFormat: Option.some("urn:oasis:names:tc:SAML:2.0:nameid-format:persistent" as const),
@@ -1024,7 +1024,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("attribute mapping parse failure surfaces a tagged error", () =>
+  it.effect("attribute mapping parse failure surfaces a tagged error", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
@@ -1061,7 +1061,7 @@ describe("sso add integration", () => {
   const withProfileEnv = <A, E, R>(value: string | undefined, body: Effect.Effect<A, E, R>) =>
     withEnvVar("SUPABASE_PROFILE", value, body);
 
-  it.live(
+  it.effect(
     "profile emulation: --domains consuming --profile POSTs to the env profile's host, not the parsed file's",
     () =>
       Effect.gen(function* () {
@@ -1086,7 +1086,7 @@ describe("sso add integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "profile emulation: --profile consuming a flag-shaped token fails LoadProfile, never POSTs",
     () => {
       const { layer, api } = setup({
@@ -1118,7 +1118,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live("profile emulation: repeated --profile resolves last-wins, matching pflag", () =>
+  it.effect("profile emulation: repeated --profile resolves last-wins, matching pflag", () =>
     Effect.gen(function* () {
       const first = yield* writeProfileYaml("first.yml", "http://first.example");
       const second = yield* writeProfileYaml("second.yml", "http://second.example");
@@ -1137,7 +1137,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "profile emulation: the LoadProfile failure wins over the workdir, required-type, and mutex checks",
     () => {
       const { layer, api } = setup({
@@ -1186,7 +1186,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "profile emulation: an agreeing --profile keeps the config layer's resolution (no override)",
     () =>
       Effect.gen(function* () {

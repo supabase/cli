@@ -62,7 +62,7 @@ const loggingApi = (
   );
 
 describe("stack logs", () => {
-  it.live("rejects finite JSON before starting an owner", () =>
+  it.effect("rejects finite JSON before starting an owner", () =>
     Effect.gen(function* () {
       const f = yield* fixture("json");
       const error = yield* stackLogs(f.flags).pipe(Effect.provide(f.layer), Effect.flip);
@@ -206,7 +206,7 @@ describe("stack logs", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("reports unavailable logs without starting an offline owner", () =>
+  it.effect("reports unavailable logs without starting an offline owner", () =>
     Effect.gen(function* () {
       const f = yield* fixture();
       const error = yield* stackLogs(f.flags).pipe(Effect.provide(f.layer), Effect.flip);

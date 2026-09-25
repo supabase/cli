@@ -159,7 +159,7 @@ const noFlags = {
 };
 
 describe("config diff integration", () => {
-  it.live("reports drift against the linked project without touching the config file", () => {
+  it.effect("reports drift against the linked project without touching the config file", () => {
     const { layer, out, processControl, telemetry, linkedProjectCache } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
     });
@@ -193,7 +193,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a clean config produces the success message and exit 0 even with --exit-code", () => {
+  it.effect("a clean config produces the success message and exit 0 even with --exit-code", () => {
     const { layer, out, processControl } = setup({ toml: 'project_id = "test"\n' });
     return Effect.gen(function* () {
       yield* configDiff({ ...noFlags, exitCode: true });
@@ -202,7 +202,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--exit-code sets exit 2 when differences are found", () => {
+  it.effect("--exit-code sets exit 2 when differences are found", () => {
     const { layer, processControl } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
     });
@@ -212,7 +212,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--exit-code in text mode prints a stderr reason line before exiting 2", () => {
+  it.effect("--exit-code in text mode prints a stderr reason line before exiting 2", () => {
     const { layer, out, processControl } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
     });
@@ -223,7 +223,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--exit-code in json mode exits 2 without the stderr reason line", () => {
+  it.effect("--exit-code in json mode exits 2 without the stderr reason line", () => {
     const { layer, out, processControl } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
       format: "json",
@@ -235,7 +235,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("declared properties the response does not carry are local_only", () => {
+  it.effect("declared properties the response does not carry are local_only", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n[auth]\nsite_url = "https://local.example.com"\n',
       v2: {
@@ -257,7 +257,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("env()-resolved values compare resolved and name the variable on drift", () => {
+  it.effect("env()-resolved values compare resolved and name the variable on drift", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = "env(PGRST_MAX_ROWS)"\n',
       dotenv: "PGRST_MAX_ROWS=500\n",
@@ -269,7 +269,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("declared secrets are masked, not compared, and never count for --exit-code", () => {
+  it.effect("declared secrets are masked, not compared, and never count for --exit-code", () => {
     const { layer, out, processControl } = setup({
       toml: [
         'project_id = "test"',
@@ -308,7 +308,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("secret strings never reach the machine payload either", () => {
+  it.effect("secret strings never reach the machine payload either", () => {
     const { layer, out } = setup({
       toml: [
         'project_id = "test"',
@@ -344,7 +344,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a matching [remotes.*] block becomes the local operand", () => {
+  it.effect("a matching [remotes.*] block becomes the local operand", () => {
     const { layer, out } = setup({
       toml: [
         'project_id = "test"',
@@ -366,7 +366,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "an env()-resolving [remotes.*] project_id does not match the target and does not double-warn (CLI-2287)",
     () => {
       const { layer, out } = setup({
@@ -395,7 +395,7 @@ describe("config diff integration", () => {
     },
   );
 
-  it.live("a branch-named --project-ref resolves via the parent project", () => {
+  it.effect("a branch-named --project-ref resolves via the parent project", () => {
     const { layer, out, api } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
@@ -413,34 +413,37 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("branch-name resolution uses the linked PARENT, not a branch ref in project-ref", () => {
-    // project-ref holds the branch's own ref; linked-project.json recovers the parent, which the
-    // parent-scoped branches endpoint requires.
-    const { layer, api } = setup({
-      toml: 'project_id = "test"\n',
-      linked: false,
-      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-    });
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const temp = path.join(tempRoot.current, "supabase", ".temp");
-      yield* fs.makeDirectory(temp, { recursive: true });
-      yield* fs.writeFileString(path.join(temp, "project-ref"), BRANCH_REF);
-      yield* fs.writeFileString(
-        path.join(temp, "linked-project.json"),
-        yield* jsonText({ ref: VALID_REF }),
-      );
-      yield* configDiff({ ...noFlags, projectRef: Option.some("staging") });
-      const urls = api.requests.map((request) => request.url);
-      expect(urls.some((url) => url.includes(`/v1/projects/${VALID_REF}/branches/staging`))).toBe(
-        true,
-      );
-      expect(urls.some((url) => url.includes(`/v1/projects/${BRANCH_REF}/`))).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "branch-name resolution uses the linked PARENT, not a branch ref in project-ref",
+    () => {
+      // project-ref holds the branch's own ref; linked-project.json recovers the parent, which the
+      // parent-scoped branches endpoint requires.
+      const { layer, api } = setup({
+        toml: 'project_id = "test"\n',
+        linked: false,
+        v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temp = path.join(tempRoot.current, "supabase", ".temp");
+        yield* fs.makeDirectory(temp, { recursive: true });
+        yield* fs.writeFileString(path.join(temp, "project-ref"), BRANCH_REF);
+        yield* fs.writeFileString(
+          path.join(temp, "linked-project.json"),
+          yield* jsonText({ ref: VALID_REF }),
+        );
+        yield* configDiff({ ...noFlags, projectRef: Option.some("staging") });
+        const urls = api.requests.map((request) => request.url);
+        expect(urls.some((url) => url.includes(`/v1/projects/${VALID_REF}/branches/staging`))).toBe(
+          true,
+        );
+        expect(urls.some((url) => url.includes(`/v1/projects/${BRANCH_REF}/`))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("a UUID --project-ref resolves directly, even in an unlinked directory", () => {
+  it.effect("a UUID --project-ref resolves directly, even in an unlinked directory", () => {
     const { layer, api, out } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
@@ -458,7 +461,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a ref-shaped --project-ref never touches the branches API", () => {
+  it.effect("a ref-shaped --project-ref never touches the branches API", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
@@ -471,7 +474,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an unknown branch fails with a branches-list suggestion", () => {
+  it.effect("an unknown branch fails with a branches-list suggestion", () => {
     const { layer, telemetry, linkedProjectCache } = setup({
       toml: 'project_id = "test"\n',
       branchByName: { status: 404, body: { message: "not found" } },
@@ -494,7 +497,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a non-404 branch lookup failure keeps its status error", () => {
+  it.effect("a non-404 branch lookup failure keeps its status error", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       branchByName: { status: 500, body: { message: "boom" } },
@@ -510,7 +513,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a missing config file points at supabase init before any resolution", () => {
+  it.effect("a missing config file points at supabase init before any resolution", () => {
     const { layer, telemetry, api } = setup();
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
@@ -527,7 +530,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "does not climb to an ancestor project's config when --workdir names a subdirectory with no config of its own",
     () =>
       Effect.gen(function* () {
@@ -562,7 +565,7 @@ describe("config diff integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "does not hint at an ancestor when explicit --workdir has no project anywhere above it",
     () => {
       const { layer, api } = setup({ explicitWorkdir: true });
@@ -579,7 +582,7 @@ describe("config diff integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "an explicit --workdir naming a directory that does not exist at all fails before any config load",
     () =>
       Effect.gen(function* () {
@@ -597,7 +600,7 @@ describe("config diff integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "a defaulted workdir still resolves a config.json project root above a config-less subdirectory",
     () =>
       Effect.gen(function* () {
@@ -613,7 +616,7 @@ describe("config diff integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("a malformed config aborts before any network call, even with a branch target", () => {
+  it.effect("a malformed config aborts before any network call, even with a branch target", () => {
     const { layer, api, telemetry } = setup({ toml: "not [valid toml\n" });
     return Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -633,7 +636,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a malformed config file fails as a parse error", () => {
+  it.effect("a malformed config file fails as a parse error", () => {
     const { layer } = setup({ toml: "not [valid toml\n" });
     return Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -647,7 +650,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("duplicate [remotes.*] project_ids abort the load", () => {
+  it.effect("duplicate [remotes.*] project_ids abort the load", () => {
     const { layer } = setup({
       toml: [
         'project_id = "test"',
@@ -667,7 +670,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a remote config transport failure maps to the read network error", () => {
+  it.effect("a remote config transport failure maps to the read network error", () => {
     const { layer, telemetry } = setup({ toml: 'project_id = "test"\n', v2: "fail" });
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
@@ -680,7 +683,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an out-of-domain mapped value in the response keeps its typed parse error", () => {
+  it.effect("an out-of-domain mapped value in the response keeps its typed parse error", () => {
     // See ADR 0021: this stays a typed ProjectConfigParseError, not a network failure.
     const { layer } = setup({
       toml: 'project_id = "test"\n',
@@ -711,7 +714,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an unknown enum value in the response degrades instead of failing", () => {
+  it.effect("an unknown enum value in the response degrades instead of failing", () => {
     // ADR 0019: executeRaw bypasses the generated client's closed enums, so a new platform enum
     // value degrades instead of failing.
     const { layer, out } = setup({
@@ -735,7 +738,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a remote config error status maps to the read status error", () => {
+  it.effect("a remote config error status maps to the read status error", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 403, body: { message: "forbidden" } },
@@ -753,7 +756,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a 401 on the config read points at re-authenticating", () => {
+  it.effect("a 401 on the config read points at re-authenticating", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 401, body: { message: "unauthorized" } },
@@ -769,7 +772,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "a 404 on the config read names the sanitized ref, suggests projects list, and hedges the api host",
     () => {
       const { layer } = setup({
@@ -790,7 +793,7 @@ describe("config diff integration", () => {
     },
   );
 
-  it.live("other config-read statuses keep the generic unexpected-status message", () => {
+  it.effect("other config-read statuses keep the generic unexpected-status message", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 500, body: { message: "boom" } },
@@ -804,7 +807,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output-format json emits the structured change set", () => {
+  it.effect("--output-format json emits the structured change set", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
       format: "json",
@@ -837,7 +840,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output-format stream-json reports zero differences as a success result", () => {
+  it.effect("--output-format stream-json reports zero differences as a success result", () => {
     const { layer, out } = setup({ toml: 'project_id = "test"\n', format: "stream-json" });
     return Effect.gen(function* () {
       yield* configDiff(noFlags);
@@ -846,7 +849,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("every -o/--output value is rejected outright before any work happens", () => {
+  it.effect("every -o/--output value is rejected outright before any work happens", () => {
     // Iterates every value the global `-o`/`--output` flag can carry, so a value added there
     // automatically extends this coverage.
     const values = GLOBAL_OUTPUT_FORMATS;
@@ -875,7 +878,7 @@ describe("config diff integration", () => {
     });
   });
 
-  it.live("a fetch failure in json mode still maps cleanly without a spinner", () => {
+  it.effect("a fetch failure in json mode still maps cleanly without a spinner", () => {
     const { layer } = setup({ toml: 'project_id = "test"\n', v2: "fail", format: "json" });
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
@@ -886,7 +889,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("json payload carries the remotes scope and env variable annotations", () => {
+  it.effect("json payload carries the remotes scope and env variable annotations", () => {
     const { layer, out } = setup({
       toml: [
         'project_id = "test"',
@@ -917,7 +920,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("remote-only drift renders (unset) locals distinguishably from empty ones", () => {
+  it.effect("remote-only drift renders (unset) locals distinguishably from empty ones", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -941,7 +944,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("remote-only drift on a defaulted path shows the local schema default", () => {
+  it.effect("remote-only drift on a defaulted path shows the local schema default", () => {
     // The file never declares api.max_rows, so a config push would overwrite the remote's 250
     // with the schema default 1000; the output must say so, not imply the key exists only
     // remotely.
@@ -967,7 +970,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("the config file is read relative to --workdir, not the invoking directory", () =>
+  it.effect("the config file is read relative to --workdir, not the invoking directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -984,7 +987,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("hostile names cannot inject ANSI or forge output lines in text mode", () => {
+  it.effect("hostile names cannot inject ANSI or forge output lines in text mode", () => {
     // [remotes.*] names are unconstrained TOML keys an attacker could control, so escape bytes
     // must not reach the terminal raw.
     const { layer, out } = setup({
@@ -1005,7 +1008,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an empty block record is reported not-returned, not silently compared", () => {
+  it.effect("an empty block record is reported not-returned, not silently compared", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -1021,7 +1024,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a missing block's not-compared caveat travels with the machine `.message`", () => {
+  it.effect("a missing block's not-compared caveat travels with the machine `.message`", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       format: "json",
@@ -1039,7 +1042,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("the same missing-block caveat renders as a Note in text mode", () => {
+  it.effect("the same missing-block caveat renders as a Note in text mode", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -1056,7 +1059,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a declared path push cannot communicate surfaces in the unmanaged note", () => {
+  it.effect("a declared path push cannot communicate surfaces in the unmanaged note", () => {
     // DISABLED_SENTINEL_PRUNES drops authorization_url_path from the local projection while the
     // container is declared disabled, so a disagreeing remote value can't be a change entry but
     // must not vanish silently either.
@@ -1085,7 +1088,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "a branch-NAME --project-ref in an unlinked dir fails immediately, naming the value",
     () => {
       const { layer, api, telemetry, linkedProjectCache } = setup({
@@ -1110,7 +1113,7 @@ describe("config diff integration", () => {
     },
   );
 
-  it.live("a branch-NAME --project-ref with a corrupt linked ref reports it as invalid", () => {
+  it.effect("a branch-NAME --project-ref with a corrupt linked ref reports it as invalid", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       projectId: Option.some("not-a-valid-ref"),
@@ -1131,7 +1134,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a resolved branch with no project ref yet fails with a not-ready error", () => {
+  it.effect("a resolved branch with no project ref yet fails with a not-ready error", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       branchByName: { status: 200, body: { ...BRANCH_BY_NAME, project_ref: "" } },
@@ -1164,7 +1167,7 @@ describe("config diff telemetry wiring", () => {
       }),
     );
 
-  it.live("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
+  it.effect("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
     const analytics = mockContextualAnalytics();
     return Effect.gen(function* () {
       yield* Effect.exit(
@@ -1175,7 +1178,7 @@ describe("config diff telemetry wiring", () => {
     }).pipe(Effect.provide(wiringLayer(analytics, VALID_REF)));
   });
 
-  it.live("redacts a branch-name-shaped --project-ref", () => {
+  it.effect("redacts a branch-name-shaped --project-ref", () => {
     // --project-ref also accepts branch names; a user-created name must never reach PostHog
     // verbatim.
     const analytics = mockContextualAnalytics();
@@ -1193,7 +1196,7 @@ describe("config diff -o/--output wrapper wiring", () => {
   // diff.command.ts's `outputFormats` override widens the flag's enum to the full choice list;
   // without it, `-o table` would hit the wrapper's own generic rejection before reaching this
   // command's specific one. Uses the real configDiffHandler wiring so this exercises that override.
-  it.live("-o table reaches this command's own message, not the wrapper's generic one", () => {
+  it.effect("-o table reaches this command's own message, not the wrapper's generic one", () => {
     const { layer, api } = setup({ toml: 'project_id = "test"\n', goOutput: "table" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(configDiffHandler(noFlags));

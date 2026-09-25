@@ -40,7 +40,7 @@ function setup(opts: SetupOpts = {}) {
 }
 
 describe("backups restore integration", () => {
-  it.live("sends recovery_time_target_unix=0 when --timestamp is omitted", () => {
+  it.effect("sends recovery_time_target_unix=0 when --timestamp is omitted", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* backupsRestore({
@@ -52,7 +52,7 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends the supplied timestamp when --timestamp is provided", () => {
+  it.effect("sends the supplied timestamp when --timestamp is provided", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* backupsRestore({
@@ -63,7 +63,7 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes 'Started PITR restore: <ref>\\n' to stderr in text mode (Go parity)", () => {
+  it.effect("writes 'Started PITR restore: <ref>\\n' to stderr in text mode (Go parity)", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* backupsRestore({
@@ -75,7 +75,7 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON success event for --output-format=json", () => {
+  it.effect("emits a JSON success event for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* backupsRestore({
@@ -88,7 +88,7 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event for --output-format=stream-json", () => {
+  it.effect("emits a result event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* backupsRestore({
@@ -100,7 +100,7 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented JSON to stdout for --output json (Go-compat)", () => {
+  it.effect("emits indented JSON to stdout for --output json (Go-compat)", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* backupsRestore({
@@ -113,7 +113,7 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "renders the stderr text line for --output {pretty,yaml,toml,env} (Go ignores --output)",
     () => {
       const { layer, out } = setup({ goOutput: "yaml" });
@@ -128,7 +128,7 @@ describe("backups restore integration", () => {
     },
   );
 
-  it.live("uses --project-ref flag over CommandSettings.projectId", () => {
+  it.effect("uses --project-ref flag over CommandSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup();
     return Effect.gen(function* () {
@@ -140,7 +140,7 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BackupRestoreUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with BackupRestoreUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -155,7 +155,7 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BackupRestoreNetworkError on transport failure", () => {
+  it.effect("fails with BackupRestoreNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -170,7 +170,7 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectRefNotLinkedError non-interactively when no ref source", () => {
+  it.effect("fails with ProjectRefNotLinkedError non-interactively when no ref source", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({});
     const cliSettings = mockCommandSettings({
@@ -192,7 +192,7 @@ describe("backups restore integration", () => {
     });
   });
 
-  it.live("prompts via TTY when no ref source matches and stdin is a TTY", () => {
+  it.effect("prompts via TTY when no ref source matches and stdin is a TTY", () => {
     const out = mockOutput({
       format: "text",
       promptSelectResponses: [VALID_REF],
@@ -251,7 +251,7 @@ describe("backups restore integration", () => {
     });
   });
 
-  it.live("accepts --timestamp short alias -t in the same way (no separate parse path)", () => {
+  it.effect("accepts --timestamp short alias -t in the same way (no separate parse path)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* backupsRestore({

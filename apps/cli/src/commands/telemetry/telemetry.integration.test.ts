@@ -101,7 +101,7 @@ function runTelemetry(args: Array<string>) {
 }
 
 describe("telemetry integration", () => {
-  it.live("status creates legacy telemetry.json and prints Go-style enabled output", () => {
+  it.effect("status creates legacy telemetry.json and prints Go-style enabled output", () => {
     const dir = tempRoot.current;
     const { out, layer } = setup(dir);
 
@@ -115,7 +115,7 @@ describe("telemetry integration", () => {
     });
   });
 
-  it.live("enable preserves prior identity fields and prints Go-style enabled output", () => {
+  it.effect("enable preserves prior identity fields and prints Go-style enabled output", () => {
     const dir = tempRoot.current;
     const { out, layer } = setup(dir);
     const seed = JSON.stringify({
@@ -139,7 +139,7 @@ describe("telemetry integration", () => {
     });
   });
 
-  it.live("disable preserves prior identity fields and prints Go-style disabled output", () => {
+  it.effect("disable preserves prior identity fields and prints Go-style disabled output", () => {
     const dir = tempRoot.current;
     const { out, layer } = setup(dir);
     const seed = JSON.stringify({
@@ -163,7 +163,7 @@ describe("telemetry integration", () => {
     });
   });
 
-  it.live("status recovers a malformed legacy telemetry.json instead of failing", () => {
+  it.effect("status recovers a malformed legacy telemetry.json instead of failing", () => {
     const dir = tempRoot.current;
     const { out, layer } = setup(dir);
 
@@ -180,7 +180,7 @@ describe("telemetry integration", () => {
   // mockAnalytics() unconditionally records every capture, bypassing consent, so these
   // assert only that disable/enable stopped force-suppressing analytics via
   // `analytics: false`. See runtime.layer.unit.test.ts for the snapshot-timing proof.
-  it.live("disable no longer force-suppresses cli_command_executed", () => {
+  it.effect("disable no longer force-suppresses cli_command_executed", () => {
     const dir = tempRoot.current;
     const { analytics, layer } = setup(dir);
 
@@ -190,7 +190,7 @@ describe("telemetry integration", () => {
     });
   });
 
-  it.live("enable no longer force-suppresses cli_command_executed", () => {
+  it.effect("enable no longer force-suppresses cli_command_executed", () => {
     const dir = tempRoot.current;
     const { analytics, layer } = setup(dir);
 
@@ -200,7 +200,7 @@ describe("telemetry integration", () => {
     });
   });
 
-  it.live("disable runs cleanly through the real consent-gated analytics layer", () => {
+  it.effect("disable runs cleanly through the real consent-gated analytics layer", () => {
     const dir = tempRoot.current;
     const { out, layer } = setupWithRealAnalytics(dir);
     const seed = JSON.stringify({
@@ -219,7 +219,7 @@ describe("telemetry integration", () => {
     });
   });
 
-  it.live("enable runs cleanly through the real consent-gated analytics layer", () => {
+  it.effect("enable runs cleanly through the real consent-gated analytics layer", () => {
     const dir = tempRoot.current;
     const { out, layer } = setupWithRealAnalytics(dir);
     const seed = JSON.stringify({
@@ -238,7 +238,7 @@ describe("telemetry integration", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "status treats malformed typed fields as a corrupted file and regenerates identity",
     () => {
       const dir = tempRoot.current;

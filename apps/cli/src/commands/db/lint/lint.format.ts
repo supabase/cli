@@ -7,6 +7,8 @@
  * `level` / `message` have no `omitempty` and are always present.
  */
 
+import { Predicate } from "effect";
+
 import { encodeGoJsonIndented } from "../../../command-internal/go-json.ts";
 import { makeLevelEnum } from "../../../command-internal/fail-on.ts";
 
@@ -63,10 +65,10 @@ function requireLintString(value: unknown, field: string): string {
 function normalizeStatement(value: unknown): LintStatement | undefined {
   // absent/null → omitted; present non-object (string/number/array) → throw.
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) {
+  if (!Predicate.isObject(value)) {
     throw new TypeError("cannot unmarshal lint statement into lint.Statement");
   }
-  const record = value as Record<string, unknown>;
+  const record = value;
   return {
     lineNumber: requireLintString(record["lineNumber"], "statement.lineNumber"),
     text: requireLintString(record["text"], "statement.text"),
@@ -75,10 +77,10 @@ function normalizeStatement(value: unknown): LintStatement | undefined {
 
 function normalizeQuery(value: unknown): LintQuery | undefined {
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) {
+  if (!Predicate.isObject(value)) {
     throw new TypeError("cannot unmarshal lint query into lint.Query");
   }
-  const record = value as Record<string, unknown>;
+  const record = value;
   return {
     position: requireLintString(record["position"], "query.position"),
     text: requireLintString(record["text"], "query.text"),
@@ -87,10 +89,7 @@ function normalizeQuery(value: unknown): LintQuery | undefined {
 
 /** Builds an `Issue` in the established output-contract order, dropping empty `omitempty` fields. */
 function normalizeIssue(value: unknown): LintIssue {
-  const record = (typeof value === "object" && value !== null ? value : {}) as Record<
-    string,
-    unknown
-  >;
+  const record: { readonly [key: string]: unknown } = Predicate.isObject(value) ? value : {};
   const issue: {
     level: string;
     message: string;
@@ -134,10 +133,10 @@ export function parseLintResult(jsonText: string, functionName: string): LintRes
   if (parsed === null) {
     return { function: functionName, issues: [] };
   }
-  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!Predicate.isObject(parsed)) {
     throw new TypeError("cannot unmarshal payload into lint.Result");
   }
-  const record = parsed as Record<string, unknown>;
+  const record = parsed;
   const issuesField = record["issues"];
   let issuesRaw: ReadonlyArray<unknown>;
   if (issuesField === undefined || issuesField === null) {

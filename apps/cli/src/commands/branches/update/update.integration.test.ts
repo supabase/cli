@@ -144,7 +144,7 @@ const baseFlags: BranchesUpdateFlags = {
 };
 
 describe("branches update integration", () => {
-  it.live("updates a branch with --name and emits 'Updated preview branch:' to stderr", () => {
+  it.effect("updates a branch with --name and emits 'Updated preview branch:' to stderr", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* branchesUpdate({
@@ -157,7 +157,7 @@ describe("branches update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("includes optional flags in body only when set", () => {
+  it.effect("includes optional flags in body only when set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesUpdate({
@@ -178,7 +178,7 @@ describe("branches update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends `persistent: false` when --persistent is explicitly false (demote)", () => {
+  it.effect("sends `persistent: false` when --persistent is explicitly false (demote)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesUpdate({
@@ -191,7 +191,7 @@ describe("branches update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits `persistent` from body when the flag is absent (default)", () => {
+  it.effect("omits `persistent` from body when the flag is absent (default)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesUpdate({
@@ -204,7 +204,7 @@ describe("branches update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits success event for --output-format=json", () => {
+  it.effect("emits success event for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* branchesUpdate({
@@ -218,7 +218,7 @@ describe("branches update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesUpdateUnexpectedStatusError on non-200", () => {
+  it.effect("fails with BranchesUpdateUnexpectedStatusError on non-200", () => {
     const { layer } = setup({ patchStatus: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -233,7 +233,7 @@ describe("branches update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on success", () => {
+  it.effect("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
       yield* branchesUpdate({
@@ -246,7 +246,7 @@ describe("branches update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on failure", () => {
+  it.effect("writes linked-project cache + telemetry state on failure", () => {
     const { layer, telemetry, cache } = setupTracked({ patchStatus: 500 });
     return Effect.gen(function* () {
       yield* Effect.exit(branchesUpdate({ ...baseFlags, branchId: Option.some(BRANCH_UUID) }));
@@ -257,7 +257,7 @@ describe("branches update integration", () => {
 
   // Exercises the production-shape branchRef end-to-end; the upgrade-suggest helper must
   // receive the resolved branch's project ref, not the parent ref.
-  it.live(
+  it.effect(
     "fires cli_upgrade_suggested with the branch ref + branching_persistent on 4xx gated",
     () => {
       const out = mockOutput({ format: "text" });

@@ -32,7 +32,7 @@ const service = (services: ReadonlyArray<ServiceCreationInput>, name: string) =>
   services.find((entry) => entry.service === name);
 
 describe("loadStackConfig environment overrides", () => {
-  it.live("keeps malformed Functions env out of database and config preparation", () =>
+  it.effect("keeps malformed Functions env out of database and config preparation", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "functions-env-malformed"\n');
       const fs = yield* FileSystem.FileSystem;
@@ -44,7 +44,7 @@ describe("loadStackConfig environment overrides", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("uses shell > supabase dotenv > project-root dotenv precedence", () =>
+  it.effect("uses shell > supabase dotenv > project-root dotenv precedence", () =>
     Effect.gen(function* () {
       const root = yield* project(
         `project_id = "stack-config-env-precedence"
@@ -71,7 +71,7 @@ site_url = "from-config"
     }),
   );
 
-  it.live("applies env-only listener ports and leaves omitted ports automatic", () =>
+  it.effect("applies env-only listener ports and leaves omitted ports automatic", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "stack-config-env-only-ports"\n');
       const config = yield* withEnvironment(
@@ -98,7 +98,7 @@ site_url = "from-config"
     }),
   );
 
-  it.live("disables and re-enables Auth through the effective environment layer", () =>
+  it.effect("disables and re-enables Auth through the effective environment layer", () =>
     Effect.gen(function* () {
       const disabledRoot = yield* project('project_id = "stack-config-env-disable"\n', {
         supabaseEnv: "SUPABASE_AUTH_ENABLED=false\n",
@@ -123,7 +123,7 @@ enabled = false
     }),
   );
 
-  it.live("reports malformed environment ports as configuration errors", () =>
+  it.effect("reports malformed environment ports as configuration errors", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "stack-config-env-invalid-port"\n');
       const exit = yield* withEnvVar("SUPABASE_API_PORT", "not-a-port", load(root)).pipe(
@@ -134,7 +134,7 @@ enabled = false
     }),
   );
 
-  it.live("rejects the existing OrioleDB environment override", () =>
+  it.effect("rejects the existing OrioleDB environment override", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "stack-config-env-orioledb"\n');
       const exit = yield* withEnvVar(

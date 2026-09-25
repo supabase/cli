@@ -68,15 +68,18 @@ function setup(opts: SetupOpts = {}) {
 }
 
 describe("ssl-enforcement get integration", () => {
-  it.live('prints "SSL is being enforced." when database=true and appliedSuccessfully=true', () => {
-    const { layer, out } = setup({ response: SSL_ENFORCED });
-    return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() });
-      expect(out.stdoutText).toBe("SSL is being enforced.\n");
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    'prints "SSL is being enforced." when database=true and appliedSuccessfully=true',
+    () => {
+      const { layer, out } = setup({ response: SSL_ENFORCED });
+      return Effect.gen(function* () {
+        yield* sslEnforcementGet({ projectRef: Option.none() });
+        expect(out.stdoutText).toBe("SSL is being enforced.\n");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live('prints "SSL is *NOT* being enforced." when database=false', () => {
+  it.effect('prints "SSL is *NOT* being enforced." when database=false', () => {
     const { layer, out } = setup({ response: SSL_NOT_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
@@ -84,7 +87,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     'prints "SSL is *NOT* being enforced." when database=true but appliedSuccessfully=false',
     () => {
       const { layer, out } = setup({ response: SSL_DESIRED_BUT_NOT_APPLIED });
@@ -95,7 +98,7 @@ describe("ssl-enforcement get integration", () => {
     },
   );
 
-  it.live("emits Go-compatible env output for --output env (exact bytes)", () => {
+  it.effect("emits Go-compatible env output for --output env (exact bytes)", () => {
     const { layer, out } = setup({ goOutput: "env", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
@@ -103,7 +106,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible indented JSON for --output json (exact bytes)", () => {
+  it.effect("emits Go-compatible indented JSON for --output json (exact bytes)", () => {
     const { layer, out } = setup({ goOutput: "json", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
@@ -119,7 +122,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML for --output yaml", () => {
+  it.effect("emits YAML for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
@@ -128,7 +131,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML for --output toml", () => {
+  it.effect("emits TOML for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
@@ -137,7 +140,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as identical to text mode", () => {
+  it.effect("treats --output pretty as identical to text mode", () => {
     const { layer, out } = setup({ goOutput: "pretty", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
@@ -145,7 +148,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON success event when --output-format=json", () => {
+  it.effect("emits a JSON success event when --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
@@ -158,7 +161,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event for --output-format=stream-json", () => {
+  it.effect("emits a result event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
@@ -168,7 +171,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output (Go) wins over --output-format (TS) when both provided", () => {
+  it.effect("--output (Go) wins over --output-format (TS) when both provided", () => {
     const { layer, out } = setup({ format: "json", goOutput: "yaml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
@@ -177,7 +180,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes the resolved project ref into the getSslEnforcementConfig URL", () => {
+  it.effect("passes the resolved project ref into the getSslEnforcementConfig URL", () => {
     const { layer, api } = setup({ response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
@@ -186,7 +189,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over CommandSettings.projectId", () => {
+  it.effect("uses --project-ref flag value over CommandSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ response: SSL_ENFORCED });
     return Effect.gen(function* () {
@@ -195,7 +198,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reads supabase/.temp/project-ref when env and flag are unset", () =>
+  it.effect("reads supabase/.temp/project-ref when env and flag are unset", () =>
     // This test owns its own workdir because it writes a project-ref file
     // before the layer is constructed (the resolver reads from
     // <workdir>/supabase/.temp/project-ref on layer-effect resolution).
@@ -225,7 +228,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails with ProjectRefNotLinkedError when no ref source matches off-TTY", () =>
+  it.effect("fails with ProjectRefNotLinkedError when no ref source matches off-TTY", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const localTempRoot = yield* fs.makeTempDirectoryScoped({
@@ -249,7 +252,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails with InvalidProjectRefError when the resolved ref is malformed", () => {
+  it.effect("fails with InvalidProjectRefError when the resolved ref is malformed", () => {
     const { layer } = setup({ response: SSL_ENFORCED });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(sslEnforcementGet({ projectRef: Option.some("BADREF") }));
@@ -260,7 +263,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SslEnforcementGetUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with SslEnforcementGetUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: SSL_ENFORCED });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(sslEnforcementGet({ projectRef: Option.none() }));
@@ -273,7 +276,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SslEnforcementGetNetworkError on transport failure", () => {
+  it.effect("fails with SslEnforcementGetNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(sslEnforcementGet({ projectRef: Option.none() }));
@@ -286,7 +289,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
+  it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503, response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
@@ -294,7 +297,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry and writes linked-project cache on success", () => {
+  it.effect("flushes telemetry and writes linked-project cache on success", () => {
     const telemetry = mockTelemetryStateTracked();
     const cache = mockLinkedProjectCacheTracked();
     const out = mockOutput({ format: "text" });
@@ -314,7 +317,7 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry even when ref resolution fails (no cache write)", () =>
+  it.effect("flushes telemetry even when ref resolution fails (no cache write)", () =>
     // Telemetry must flush whether or not the resolver succeeds; the
     // linked-project cache only writes after a ref is resolved.
     Effect.gen(function* () {

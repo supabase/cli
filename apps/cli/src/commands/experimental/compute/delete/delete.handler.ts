@@ -16,7 +16,6 @@ import {
   ComputeDeleteConfirmationRequiredError,
   ComputeDeleteNotConfirmedError,
   ComputeNotDeployedError,
-  ComputeApiUnexpectedStatusError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { resolveYes } from "../../../../command-internal/global-flags.ts";
 import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
@@ -77,9 +76,10 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
     // such project — still aborts here, before any DELETE is sent.
     const lookup = yield* getCompute(api, projectRef, name).pipe(
       Effect.map((found) => ({ readable: true, compute: Option.getOrUndefined(found) })),
-      Effect.catchIf(
-        (error) => error instanceof ComputeApiUnexpectedStatusError && error.status === 403,
-        () => Effect.succeed({ readable: false, compute: undefined }),
+      Effect.catchTag("ComputeApiUnexpectedStatusError", (error) =>
+        error.status === 403
+          ? Effect.succeed({ readable: false, compute: undefined })
+          : Effect.fail(error),
       ),
       Effect.tapError(() => fetching.fail()),
     );

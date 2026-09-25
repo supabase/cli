@@ -1,4 +1,4 @@
-import { Duration, Effect, Random, Schedule } from "effect";
+import { Duration, Effect, Random, Ref, Schedule } from "effect";
 
 import { DebugFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -31,15 +31,15 @@ export const bootstrapBackoff = Schedule.exponential("3 seconds", 1.5).pipe(
  * `--debug`) for the first two failures, then to stderr from the third on. Never fires for the
  * final, exhausted attempt.
  *
- * Returns a fresh wrapper with its own failure counter per call.
+ * Yields a fresh wrapper with its own failure counter per evaluation.
  */
-export const bootstrapRetryNotify = () => {
-  let failureCount = 0;
+export const bootstrapRetryNotify = Effect.gen(function* () {
+  const failures = yield* Ref.make(0);
   return <A, E, R>(operation: Effect.Effect<A, E, R>) =>
     operation.pipe(
       Effect.tapError((error) =>
         Effect.gen(function* () {
-          failureCount += 1;
+          const failureCount = yield* Ref.updateAndGet(failures, (count) => count + 1);
           // No notify on the final, exhausted attempt.
           if (failureCount > BOOTSTRAP_MAX_RETRIES) return;
           const toStderr = failureCount * 3 > BOOTSTRAP_MAX_RETRIES;
@@ -55,12 +55,11 @@ export const bootstrapRetryNotify = () => {
         }),
       ),
     );
-};
+});
 
 function stringifyError(error: unknown): string {
   if (typeof error === "object" && error !== null && "message" in error) {
-    const message = (error as { message: unknown }).message;
-    if (typeof message === "string") return message;
+    if (typeof error.message === "string") return error.message;
   }
   return String(error);
 }

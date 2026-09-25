@@ -76,7 +76,7 @@ const GO_JSON_WHITESPACE = new Set([" ", "\t", "\n", "\r"]);
 
 function skipGoJsonWhitespace(value: string, index: number): number {
   let i = index;
-  while (i < value.length && GO_JSON_WHITESPACE.has(value[i]!)) i++;
+  while (i < value.length && GO_JSON_WHITESPACE.has(value.charAt(i))) i++;
   return i;
 }
 
@@ -147,15 +147,19 @@ const GO_JSON_LITERALS: Record<string, string> = { n: "null", t: "true", f: "fal
 function findFirstNonFiniteJsonNumberLiteral(value: string): string | undefined {
   let i = 0;
   while (i < value.length) {
-    const ch = value[i]!;
+    const ch = value.charAt(i);
     if (ch === '"') {
       // Known-valid JSON, so every string closes; skip it whole so its
       // digits are never mistaken for a number token.
-      i = findJsonStringEnd(value, i)!;
+      i = findJsonStringEnd(value, i) ?? value.length;
       continue;
     }
     if (ch === "-" || (ch >= "0" && ch <= "9")) {
-      const literal = JSON_NUMBER_PATTERN.exec(value.slice(i))![0];
+      const literal = JSON_NUMBER_PATTERN.exec(value.slice(i))?.[0];
+      if (literal === undefined) {
+        i++;
+        continue;
+      }
       if (!Number.isFinite(Number(literal))) {
         return literal;
       }
@@ -197,7 +201,7 @@ function goJsonSyntaxErrorMessage(raw: string): string {
     return "unexpected end of JSON input";
   }
 
-  const first = trimmed[0]!;
+  const first = trimmed.charAt(0);
 
   const literal = GO_JSON_LITERALS[first];
   if (literal !== undefined) {
@@ -273,7 +277,7 @@ export function mergeBearerJwtPayload(
       `json: cannot unmarshal number ${overflowingLiteral} into Go value of type float64`,
     );
   }
-  return { ...claims, ...(parsed as Record<string, unknown>) };
+  return { ...claims, ...parsed };
 }
 
 /**

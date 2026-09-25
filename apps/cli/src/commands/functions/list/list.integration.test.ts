@@ -107,7 +107,7 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 describe("functions list integration", () => {
-  it.live("renders a Glamour table with all 6 columns in text mode", () => {
+  it.effect("renders a Glamour table with all 6 columns in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -122,7 +122,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders literal `|` characters in table cells (Go parity)", () => {
+  it.effect("renders literal `|` characters in table cells (Go parity)", () => {
     const { layer, out } = setup({ response: [PIPE_FUNCTION] });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -131,7 +131,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders an empty table when the API returns []", () => {
+  it.effect("renders an empty table when the API returns []", () => {
     const { layer, out } = setup({ response: [] });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -140,7 +140,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event with { functions } for --output-format=json", () => {
+  it.effect("emits a success event with { functions } for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -150,7 +150,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event for --output-format=stream-json", () => {
+  it.effect("emits a success event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -158,7 +158,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
+  it.effect("emits Go-byte-exact indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -169,7 +169,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a YAML array for --output yaml", () => {
+  it.effect("emits a YAML array for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -181,7 +181,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("wraps the result as { functions = [...] } for --output toml", () => {
+  it.effect("wraps the result as { functions = [...] } for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -198,7 +198,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with FunctionsEnvNotSupportedError for --output env", () => {
+  it.effect("fails with FunctionsEnvNotSupportedError for --output env", () => {
     const { layer } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
@@ -211,7 +211,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as identical to text mode (table render)", () => {
+  it.effect("treats --output pretty as identical to text mode (table render)", () => {
     const { layer, out } = setup({ goOutput: "pretty" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -220,7 +220,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lets --output pretty win over --output-format json", () => {
+  it.effect("lets --output pretty win over --output-format json", () => {
     const { layer, out } = setup({ format: "json", goOutput: "pretty" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -230,7 +230,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output flag wins over --output-format", () => {
+  it.effect("--output flag wins over --output-format", () => {
     const { layer, out } = setup({ format: "json", goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -239,7 +239,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes the resolved project ref to listAllFunctions", () => {
+  it.effect("passes the resolved project ref to listAllFunctions", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -248,7 +248,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("accepts unknown future function status strings", () => {
+  it.effect("accepts unknown future function status strings", () => {
     const { layer, out } = setup({ response: [UNKNOWN_STATUS_FUNCTION] });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -256,7 +256,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref over the linked project default", () => {
+  it.effect("uses --project-ref over the linked project default", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.some("qrstuvwxyzabcdefghij") });
@@ -264,7 +264,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with FunctionsListUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with FunctionsListUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
@@ -277,7 +277,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with FunctionsListNetworkError on transport failure", () => {
+  it.effect("fails with FunctionsListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
@@ -290,7 +290,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces malformed 200 JSON bodies as failed to list functions", () => {
+  it.effect("surfaces malformed 200 JSON bodies as failed to list functions", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) =>
@@ -317,7 +317,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats 200 non-json responses as unexpected status", () => {
+  it.effect("treats 200 non-json responses as unexpected status", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) =>
@@ -345,7 +345,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails on invalid optional field types", () => {
+  it.effect("fails on invalid optional field types", () => {
     const { layer } = setup({ response: [INVALID_OPTIONAL_FUNCTION] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
@@ -358,7 +358,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails on non-integer numeric fields", () => {
+  it.effect("fails on non-integer numeric fields", () => {
     const { layer } = setup({ response: [NON_INTEGER_FUNCTION] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
@@ -371,7 +371,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on success", () => {
+  it.effect("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -380,7 +380,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on failure", () => {
+  it.effect("writes linked-project cache + telemetry state on failure", () => {
     const { layer, telemetry, cache } = setupTracked({ status: 503, response: [] });
     return Effect.gen(function* () {
       yield* Effect.exit(functionsList({ projectRef: Option.none() }));
@@ -389,7 +389,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry when project ref resolution fails before the API call", () => {
+  it.effect("flushes telemetry when project ref resolution fails before the API call", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
@@ -424,7 +424,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
+  it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503, response: [] });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);

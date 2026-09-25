@@ -1,3 +1,5 @@
+import { Effect, Schema } from "effect";
+
 import { renderGlamourTable } from "../../output/glamour-table.ts";
 import { formatTimestamp } from "../../command-internal/timestamp.format.ts";
 
@@ -18,14 +20,40 @@ const HEADERS = [
   "UPDATED AT (UTC)",
 ] as const;
 
-export interface SnippetRow {
-  readonly id: string;
-  readonly name: string;
-  readonly visibility: string;
-  readonly owner: { readonly username: string };
-  readonly inserted_at: string;
-  readonly updated_at: string;
-}
+const TolerantString = Schema.String.pipe(
+  Schema.catchDecoding(() => Effect.succeedSome("")),
+  Schema.withDecodingDefaultKey(Effect.succeed("")),
+);
+
+const EMPTY_OWNER = { username: "" };
+
+// Tolerant decode of the API response body. The real `/v1/snippets`
+// payload omits optional fields the generated schema declares required, so
+// routing through the typed client fails with `SchemaError: Missing key …`.
+export const SnippetRow = Schema.Struct({
+  id: TolerantString,
+  name: TolerantString,
+  visibility: TolerantString,
+  owner: Schema.Struct({ username: TolerantString }).pipe(
+    Schema.catchDecoding(() => Effect.succeedSome(EMPTY_OWNER)),
+    Schema.withDecodingDefaultKey(Effect.succeed(EMPTY_OWNER)),
+  ),
+  inserted_at: TolerantString,
+  updated_at: TolerantString,
+}).pipe(
+  Schema.catchDecoding(() =>
+    Effect.succeedSome({
+      id: "",
+      name: "",
+      visibility: "",
+      owner: EMPTY_OWNER,
+      inserted_at: "",
+      updated_at: "",
+    }),
+  ),
+);
+
+export interface SnippetRow extends Schema.Schema.Type<typeof SnippetRow> {}
 
 export function renderSnippetsTable(items: ReadonlyArray<SnippetRow>): string {
   const rows = items.map((snippet) => [

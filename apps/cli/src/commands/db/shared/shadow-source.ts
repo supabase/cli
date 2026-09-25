@@ -6,7 +6,7 @@
  * The `--schema` flag only scopes the diff itself, never what the shadow contains.
  */
 
-import { Effect, Result, type FileSystem, type Path } from "effect";
+import { Effect, Predicate, Result, type FileSystem, type Path } from "effect";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
@@ -320,7 +320,7 @@ export function loadDeclaredSchemas(
     const isSchemasDir = yield* fs.stat(schemasDirAbs).pipe(
       Effect.matchEffect({
         onFailure: (cause) =>
-          cause.reason._tag === "NotFound"
+          Predicate.isTagged(cause.reason, "NotFound")
             ? Effect.succeed(false)
             : Effect.fail(
                 new DeclarativeShadowDbError({

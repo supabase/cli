@@ -1,7 +1,7 @@
 import { describe, expect, it, test } from "@effect/vitest";
 import { afterEach, vi } from "vitest";
 import { Deferred, Effect, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   buildVectorContainerSpec,
@@ -28,7 +28,7 @@ function mockSpawner(
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
       spawned.push(args);
       const result = handler(args);
 
@@ -308,7 +308,7 @@ describe("buildVectorContainerSpec", () => {
 });
 
 describe("resolveDockerDaemonHost", () => {
-  it.live("prefers an explicit DOCKER_HOST env var over any context inspection", () => {
+  it.effect("prefers an explicit DOCKER_HOST env var over any context inspection", () => {
     const mock = mockSpawner(() => ({ exitCode: 1 }));
     return resolveDockerDaemonHost(
       mock.spawner,
@@ -322,7 +322,7 @@ describe("resolveDockerDaemonHost", () => {
     );
   });
 
-  it.live("falls back to the current docker context's endpoint when DOCKER_HOST is unset", () => {
+  it.effect("falls back to the current docker context's endpoint when DOCKER_HOST is unset", () => {
     const mock = mockSpawner((args) => {
       if (args[0] === "context" && args[1] === "inspect") {
         return { exitCode: 0, stdout: "unix:///Users/me/.colima/default/docker.sock\n" };
@@ -336,7 +336,7 @@ describe("resolveDockerDaemonHost", () => {
     );
   });
 
-  it.live("falls back to the platform default when docker context inspect fails", () => {
+  it.effect("falls back to the platform default when docker context inspect fails", () => {
     const mock = mockSpawner(() => ({ exitCode: 1 }));
     return resolveDockerDaemonHost(mock.spawner, {}, "darwin").pipe(
       Effect.map((host) => {
@@ -345,7 +345,7 @@ describe("resolveDockerDaemonHost", () => {
     );
   });
 
-  it.live(
+  it.effect(
     "falls back to the platform default when docker context inspect returns an empty host",
     () => {
       const mock = mockSpawner(() => ({ exitCode: 0, stdout: "\n" }));
@@ -357,7 +357,7 @@ describe("resolveDockerDaemonHost", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "treats an empty DOCKER_HOST value as unset, falling through to context inspection",
     () => {
       const mock = mockSpawner((args) => {

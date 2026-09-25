@@ -90,6 +90,7 @@ const squashMigrations = Effect.fnUntraced(function* (
   path: Path.Path,
   workdir: string,
   migrations: ReadonlyArray<string>,
+  targetPath: string,
   localInputs: LocalDbContainerInputs,
   toml: DbTomlValues,
 ) {
@@ -160,7 +161,6 @@ const squashMigrations = Effect.fnUntraced(function* (
             projectEnvValues: localInputs.context.projectEnvValues,
             client: dumpClient,
           });
-          const targetPath = migrations[migrations.length - 1]!;
           const targetRel = path.relative(workdir, targetPath);
           yield* Effect.scoped(
             Effect.gen(function* () {
@@ -252,7 +252,6 @@ const squashMigrations = Effect.fnUntraced(function* (
             projectEnvValues: localInputs.context.projectEnvValues,
           });
 
-          const targetPath = migrations[migrations.length - 1]!;
           const targetRel = path.relative(workdir, targetPath);
           yield* Effect.scoped(
             Effect.gen(function* () {
@@ -331,11 +330,11 @@ const squashToVersion = Effect.fnUntraced(function* (
 ) {
   const output = yield* Output;
   const migrations = yield* loadPartialMigrations(fs, path, migrationsDir, version);
-  if (migrations.length === 0) {
+  const local = migrations.at(-1);
+  if (local === undefined) {
     return yield* new MigrationSquashMissingVersionError({ message: "version not found" });
   }
 
-  const local = migrations[migrations.length - 1]!;
   const rel = path.relative(workdir, local);
   if (migrations.length === 1) {
     yield* output.raw(`${bold(rel)} is already the earliest migration.\n`, "stderr");
@@ -347,7 +346,7 @@ const squashToVersion = Effect.fnUntraced(function* (
     } satisfies SquashToVersionResult;
   }
 
-  yield* squashMigrations(spawner, fs, path, workdir, migrations, localInputs, toml);
+  yield* squashMigrations(spawner, fs, path, workdir, migrations, local, localInputs, toml);
   yield* output.raw(`Squashed local migrations to ${bold(rel)}\n`, "stderr");
 
   const removed: Array<string> = [];
@@ -404,7 +403,7 @@ const baselineMigrations = Effect.fnUntraced(function* (
         debugLogger.debug(cause.message).pipe(Effect.as<ReadonlyArray<string>>([])),
       ),
     );
-    if (local.length > 0) resolvedVersion = local[0]!;
+    resolvedVersion = local[0] ?? resolvedVersion;
   }
 
   // Printed before connecting, the opposite order from every other prompting migration

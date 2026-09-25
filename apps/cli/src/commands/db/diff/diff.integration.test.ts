@@ -5,6 +5,7 @@ import {
   Cause,
   Config,
   ConfigProvider,
+  Deferred,
   Effect,
   Exit,
   Fiber,
@@ -15,6 +16,7 @@ import {
 } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
@@ -158,11 +160,13 @@ const SHADOW_PORT = 54320;
 function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolean } = {}) {
   const connectedDatabases: Array<string> = [];
   const execCalls: Array<string> = [];
+  const shadowConnectRefused = Deferred.makeUnsafe<void>();
   const layer = Layer.succeed(DbConnection, {
     connect: (cfg: PgConnInput) =>
       Effect.gen(function* () {
         connectedDatabases.push(cfg.database);
         if (opts.neverConnectableShadow === true && cfg.port === SHADOW_PORT) {
+          yield* Deferred.succeed(shadowConnectRefused, undefined);
           return yield* new DbConnectError({ message: "connection refused" });
         }
         const session: DbSession = {
@@ -179,7 +183,7 @@ function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolea
         return session;
       }),
   });
-  return { layer, connectedDatabases, execCalls };
+  return { layer, connectedDatabases, execCalls, shadowConnectRefused };
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -194,6 +198,26 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbNotRunning: opts.dbNotRunning ?? false,
     dbInspectFailsWith: opts.dbInspectFailsWith,
   });
+  const shadowHealthProbed = Deferred.makeUnsafe<void>();
+  const shadowSpawnerLayer = Layer.effect(
+    ChildProcessSpawner.ChildProcessSpawner,
+    Effect.map(ChildProcessSpawner.ChildProcessSpawner, (inner) =>
+      ChildProcessSpawner.make((command) =>
+        inner
+          .spawn(command)
+          .pipe(
+            Effect.tap(() =>
+              ChildProcess.isStandardCommand(command) &&
+              command.args[0] === "container" &&
+              command.args[1] === "inspect" &&
+              command.args[2] === FAKE_SHADOW_CONTAINER_ID
+                ? Deferred.succeed(shadowHealthProbed, undefined)
+                : Effect.void,
+            ),
+          ),
+      ),
+    ),
+  ).pipe(Layer.provide(shadowSpawner.layer));
   // Cache tests need the stateful Docker model since `docker cp` needs real container state.
   const dockerDaemon = opts.statefulDocker === true ? mockDockerDaemonCliSpawner() : undefined;
   const shadowDbConnection = fakeShadowDbConnection({
@@ -419,7 +443,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     edge,
     docker,
     shadowDbConnection.layer,
-    dockerDaemon?.layer ?? shadowSpawner.layer,
+    dockerDaemon?.layer ?? shadowSpawnerLayer,
     mockLocalDockerEngineUnavailableLayer,
     alwaysReadyHttpClientLayer,
     resolver,
@@ -467,9 +491,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     differRegistryEnvAtCall,
     shadowSetupJobCalls,
     shadowSpawned: shadowSpawner.spawned,
+    shadowHealthProbed,
     dockerDaemon,
     shadowConnectedDatabases: shadowDbConnection.connectedDatabases,
     shadowExecCalls: shadowDbConnection.execCalls,
+    shadowConnectRefused: shadowDbConnection.shadowConnectRefused,
   };
 }
 
@@ -1936,7 +1962,7 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.live(
+  it.effect(
     "removes the shadow container on a SIGINT-style interruption during the readiness wait, without waiting for the readiness timeout",
     () => {
       // `acquire` covers only `createShadowDatabase`; the readiness wait runs in the
@@ -1950,9 +1976,7 @@ describe("db diff", () => {
         );
         // Waits until the shadow's readiness gate has refused a connect at least once,
         // proving the fiber is suspended in `waitForShadowReady`'s retry loop.
-        while (s.shadowConnectedDatabases.length === 0) {
-          yield* Effect.sleep("5 millis");
-        }
+        yield* Deferred.await(s.shadowConnectRefused);
         // `Fiber.interrupt` only resolves once finalizers complete; this would hang for
         // up to 30s if `acquire` still covered the readiness wait.
         yield* Fiber.interrupt(fiber);
@@ -2473,7 +2497,7 @@ describe("db diff", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "removes the shadow container on interruption during the health wait for --use-pgadmin too",
       () => {
         const s = setup(tmp.current, { neverHealthyShadow: true });
@@ -2485,16 +2509,7 @@ describe("db diff", () => {
           // Waits for the shadow's own health probe (its 64-hex id); the pgadmin path's
           // separate `supabase_db_test` probe fires first and would satisfy a looser
           // check immediately.
-          while (
-            !s.shadowSpawned.some(
-              (c) =>
-                c.args[0] === "container" &&
-                c.args[1] === "inspect" &&
-                c.args[2] === FAKE_SHADOW_CONTAINER_ID,
-            )
-          ) {
-            yield* Effect.sleep("5 millis");
-          }
+          yield* Deferred.await(s.shadowHealthProbed);
           yield* Fiber.interrupt(fiber);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
@@ -2548,7 +2563,7 @@ describe("db diff", () => {
     // A migra baseline and a pg-delta baseline must not key to the same cache tar and
     // silently restore each other's cluster; `shadow-cache.integration.test.ts` covers
     // the cache's own half, this covers the call site.
-    it.live("a migra-engine baseline is never restored into a pg-delta run", () => {
+    it.effect("a migra-engine baseline is never restored into a pg-delta run", () => {
       return Effect.gen(function* () {
         // Migra's migrate path forces `pg_net` on regardless of config, and publishes
         // that baseline.

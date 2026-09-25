@@ -1,7 +1,7 @@
 import { endpointReports } from "../stack-endpoints.format.ts";
 import { readStackFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
-import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
+import { Effect, Equal, FileSystem, Fiber, Match, Option, Path, Redacted, Ref } from "effect";
 import {
   resolveNativePostgresUser,
   type ServiceCreationInput,
@@ -254,16 +254,16 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       .pipe(Effect.mapError(mapTargetError));
     const selectedRuntime = target.runtime ?? defaultStackRuntime(runtime);
     const postgresUser = yield* resolveNativePostgresUser(selectedRuntime);
-    const ensurePostgresUser =
-      postgresUser._tag === "Unavailable"
-        ? new StackCommandStartError({
-            reason: "lifecycle",
-            message: postgresUser.message,
-            suggestion: postgresUser.suggestion,
-          })
-        : postgresUser._tag === "StepDown"
-          ? output.info(postgresUser.message)
-          : Effect.void;
+    const ensurePostgresUser = Match.valueTags(postgresUser, {
+      Unavailable: (unavailable) =>
+        new StackCommandStartError({
+          reason: "lifecycle",
+          message: unavailable.message,
+          suggestion: unavailable.suggestion,
+        }),
+      StepDown: (stepDown) => output.info(stepDown.message),
+      NotNeeded: () => Effect.void,
+    });
     const configBeforeCreate =
       target.id === undefined ? yield* loadStartConfig(target.projectRoot, fs, path) : undefined;
     if (target.id === undefined) yield* ensurePostgresUser;

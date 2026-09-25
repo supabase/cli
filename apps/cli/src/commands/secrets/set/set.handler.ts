@@ -7,7 +7,7 @@ import {
 import { loadCliConfig, resolveCliConfigSubtree } from "@supabase/config/internal";
 import { V1BulkCreateSecretsInput } from "@supabase/api/effect";
 import { parse as parseDotenv } from "dotenv";
-import { Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
+import { Effect, Exit, FileSystem, Option, Path, Predicate, Redacted, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -35,7 +35,7 @@ const mapSetError = mapHttpError({
   statusMessage: (_status, body) => `Unexpected error setting project secrets: ${body}`,
 });
 
-const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
+const decodeCliConfig = Schema.decodeUnknownExit(CliConfigSchema);
 
 // Excludes arrays: `Object.entries` on an array yields index keys ("0", "1", ...), which would
 // otherwise fabricate spurious secret names from a misconfigured `secrets = [...]` field.
@@ -47,7 +47,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Best-effort recovery of `[edge_runtime.secrets]` from a document that failed schema decode
  * (not a raw parse failure). Matches the CLI's established per-field decode tolerance: an
  * unrelated bad field, or a single bad entry inside `secrets` itself, must not discard every
- * otherwise-valid secret. `Schema.decodeUnknownSync` has no such tolerance, so this re-slices
+ * otherwise-valid secret. A whole-document decode has no such tolerance, so this re-slices
  * `edge_runtime.secrets` out of the pre-decode document and decodes each entry independently.
  */
 function recoverEdgeRuntimeConfig(cause: CliConfigParseError): CliConfig | null {
@@ -61,13 +61,10 @@ function recoverEdgeRuntimeConfig(cause: CliConfigParseError): CliConfig | null 
   // fabricates a bogus secret from its internal fields.
   const secrets = Redacted.isRedacted(secretsField) ? Redacted.value(secretsField) : secretsField;
   const decodableSecrets = isRecord(secrets) ? filterDecodableSecrets(secrets) : undefined;
-  try {
-    return decodeCliConfig({
-      edge_runtime: decodableSecrets !== undefined ? { secrets: decodableSecrets } : {},
-    });
-  } catch {
-    return null;
-  }
+  const recovered = decodeCliConfig({
+    edge_runtime: decodableSecrets !== undefined ? { secrets: decodableSecrets } : {},
+  });
+  return Exit.isSuccess(recovered) ? recovered.value : null;
 }
 
 /**
@@ -80,11 +77,8 @@ function filterDecodableSecrets(secrets: Record<string, unknown>): Record<string
   const kept: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(secrets)) {
     const plainValue = Redacted.isRedacted(value) ? Redacted.value(value) : value;
-    try {
-      decodeCliConfig({ edge_runtime: { secrets: { [name]: plainValue } } });
+    if (Exit.isSuccess(decodeCliConfig({ edge_runtime: { secrets: { [name]: plainValue } } }))) {
       kept[name] = plainValue;
-    } catch {
-      // Drop this entry only.
     }
   }
   return kept;
@@ -207,12 +201,11 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
           (cause) =>
             new SecretsEnvFileOpenError({
               message: `failed to open env file: ${String(cause)}`,
-              reason:
-                cause.reason._tag === "NotFound"
-                  ? "not_found"
-                  : cause.reason._tag === "PermissionDenied"
-                    ? "permission"
-                    : "other",
+              reason: Predicate.isTagged(cause.reason, "NotFound")
+                ? "not_found"
+                : Predicate.isTagged(cause.reason, "PermissionDenied")
+                  ? "permission"
+                  : "other",
             }),
         ),
       );

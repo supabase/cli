@@ -5,7 +5,7 @@
 import { BunPath } from "@effect/platform-bun";
 import { inferFunctionsManifest } from "@supabase/config/effect";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
-import { Effect, FileSystem, Option, Path, Result } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -187,9 +187,7 @@ import { buildSupavisorContainerSpec } from "./services/supavisor.service.ts";
 const ANALYTICS_API_KEY = "api-key";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  return Predicate.isObject(value) ? value : undefined;
 }
 
 /**
@@ -530,14 +528,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     ) {
       yield* output.raw("WARN: no SMS provider is enabled. Disabling phone login\n", "stderr");
     }
-    if (gotrueSessionsForValidation?.timebox !== undefined) {
-      yield* wrapConfigOverride("auth.sessions.timebox", () =>
-        parseGoDuration(gotrueSessionsForValidation.timebox!),
-      );
+    const sessionsTimebox = gotrueSessionsForValidation?.timebox;
+    if (sessionsTimebox !== undefined) {
+      yield* wrapConfigOverride("auth.sessions.timebox", () => parseGoDuration(sessionsTimebox));
     }
-    if (gotrueSessionsForValidation?.inactivity_timeout !== undefined) {
+    const sessionsInactivityTimeout = gotrueSessionsForValidation?.inactivity_timeout;
+    if (sessionsInactivityTimeout !== undefined) {
       yield* wrapConfigOverride("auth.sessions.inactivity_timeout", () =>
-        parseGoDuration(gotrueSessionsForValidation.inactivity_timeout!),
+        parseGoDuration(sessionsInactivityTimeout),
       );
     }
     yield* wrapConfigOverride("auth.mfa.phone.max_frequency", () =>
@@ -630,8 +628,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // 3. A missing container proceeds to startup; other inspect failures propagate. Stopped
     // stacks are recovered unless Bitbucket's lack of named volumes makes removal destructive.
     const inspectDbState = inspectContainerState(spawner, dbContainerId).pipe(
-      Effect.catch((error) =>
-        isContainerNotFoundMessage(error.message) ? Effect.void : Effect.fail(error),
+      Effect.catchIf(
+        (error) => isContainerNotFoundMessage(error.message),
+        () => Effect.void,
       ),
     );
     const dbState = yield* inspectDbState;

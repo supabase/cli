@@ -125,7 +125,7 @@ const baseFlags = {
 describe("network-restrictions update integration", () => {
   // Replace mode (POST /apply)
 
-  it.live("POSTs /apply with partitioned v4/v6 lists and prints the Go-format block", () => {
+  it.effect("POSTs /apply with partitioned v4/v6 lists and prints the Go-format block", () => {
     const { layer, out, api } = setup({ postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({
@@ -149,7 +149,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends empty arrays when no --db-allow-cidr is provided", () => {
+  it.effect("sends empty arrays when no --db-allow-cidr is provided", () => {
     const { layer, api } = setup({ postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
@@ -157,7 +157,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "treats `applied successfully` as false when the POST response status is `stored`",
     () => {
       const { layer, out } = setup({ postResponse: POST_STORED });
@@ -172,7 +172,7 @@ describe("network-restrictions update integration", () => {
     },
   );
 
-  it.live("routes an IPv4-mapped IPv6 input into the v4 request bucket (Go To4 parity)", () => {
+  it.effect("routes an IPv4-mapped IPv6 input into the v4 request bucket (Go To4 parity)", () => {
     const { layer, api } = setup({
       postResponse: {
         ...POST_EMPTY_APPLIED,
@@ -191,19 +191,22 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("allows every CIDR in a comma-separated --db-allow-cidr value (pflag CSV parity)", () => {
-    const { layer, api } = setup();
-    return Effect.gen(function* () {
-      const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24,5.6.7.0/24"]);
-      yield* networkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
-      expect(api.requests[0]?.body).toEqual({
-        dbAllowedCidrs: ["1.2.3.0/24", "5.6.7.0/24"],
-        dbAllowedCidrsV6: [],
-      });
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "allows every CIDR in a comma-separated --db-allow-cidr value (pflag CSV parity)",
+    () => {
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24,5.6.7.0/24"]);
+        yield* networkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
+        expect(api.requests[0]?.body).toEqual({
+          dbAllowedCidrs: ["1.2.3.0/24", "5.6.7.0/24"],
+          dbAllowedCidrsV6: [],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("appends CIDRs across repeated --db-allow-cidr flags", () => {
+  it.effect("appends CIDRs across repeated --db-allow-cidr flags", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24", "5.6.7.0/24"]);
@@ -215,7 +218,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("combines comma-separated and repeated --db-allow-cidr occurrences", () => {
+  it.effect("combines comma-separated and repeated --db-allow-cidr occurrences", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24,5.6.7.0/24", "9.9.9.0/24"]);
@@ -227,7 +230,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("still allows a single --db-allow-cidr value", () => {
+  it.effect("still allows a single --db-allow-cidr value", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24"]);
@@ -239,7 +242,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects an invalid CIDR produced by a comma split before any API call", () => {
+  it.effect("rejects an invalid CIDR produced by a comma split before any API call", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24,notacidr"]);
@@ -254,7 +257,7 @@ describe("network-restrictions update integration", () => {
 
   // Append mode (PATCH /network-restrictions)
 
-  it.live("PATCHes when --append=true with `add` payload and partitions the V2 response", () => {
+  it.effect("PATCHes when --append=true with `add` payload and partitions the V2 response", () => {
     const { layer, out, api } = setup({ patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({
@@ -280,7 +283,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints `&[]` for both arrays when the PATCH response has no matching items", () => {
+  it.effect("prints `&[]` for both arrays when the PATCH response has no matching items", () => {
     const empty: typeof V1PatchNetworkRestrictionsOutput.Type = {
       entitlement: "allowed",
       config: {},
@@ -299,7 +302,7 @@ describe("network-restrictions update integration", () => {
 
   // CIDR validation
 
-  it.live("rejects an input missing the /mask suffix with Go's verbatim message", () => {
+  it.effect("rejects an input missing the /mask suffix with Go's verbatim message", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -317,7 +320,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects an RFC-1918 private IPv4 input with Go's verbatim message", () => {
+  it.effect("rejects an RFC-1918 private IPv4 input with Go's verbatim message", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -335,7 +338,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects an IPv4-mapped private IPv6 input (security regression guard)", () => {
+  it.effect("rejects an IPv4-mapped private IPv6 input (security regression guard)", () => {
     // Without IPv4-mapped detection, ::ffff:10.0.0.0/104 would slip past the private check
     // (its IPv6 first byte is 0, not 0xfc); parseCidr reclassifies it as v4 so the v4 path
     // catches 10.0.0.0/8.
@@ -356,7 +359,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does NOT call the API when CIDR validation fails", () => {
+  it.effect("does NOT call the API when CIDR validation fails", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* Effect.exit(
@@ -369,7 +372,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes private inputs through to the API when --bypass-cidr-checks=true", () => {
+  it.effect("passes private inputs through to the API when --bypass-cidr-checks=true", () => {
     const { layer, api } = setup({
       postResponse: {
         ...POST_EMPTY_APPLIED,
@@ -392,7 +395,7 @@ describe("network-restrictions update integration", () => {
 
   // HTTP error mapping
 
-  it.live("reports a Go-compatible error message when the POST network is unreachable", () => {
+  it.effect("reports a Go-compatible error message when the POST network is unreachable", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkRestrictionsUpdate(baseFlags));
@@ -405,7 +408,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a Go-compatible error message when the POST returns 503", () => {
+  it.effect("reports a Go-compatible error message when the POST returns 503", () => {
     const { layer } = setup({ postStatus: 503, postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkRestrictionsUpdate(baseFlags));
@@ -418,7 +421,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a Go-compatible error message when the PATCH network is unreachable", () => {
+  it.effect("reports a Go-compatible error message when the PATCH network is unreachable", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkRestrictionsUpdate({ ...baseFlags, append: true }));
@@ -431,7 +434,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a Go-compatible error message when the PATCH returns a non-200 status", () => {
+  it.effect("reports a Go-compatible error message when the PATCH returns a non-200 status", () => {
     const { layer } = setup({ patchStatus: 500, patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkRestrictionsUpdate({ ...baseFlags, append: true }));
@@ -446,7 +449,7 @@ describe("network-restrictions update integration", () => {
 
   // Output modes — POST
 
-  it.live("emits a structured JSON success payload via --output-format=json after POST", () => {
+  it.effect("emits a structured JSON success payload via --output-format=json after POST", () => {
     const { layer, out } = setup({ format: "json", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({
@@ -459,7 +462,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event via --output-format=stream-json", () => {
+  it.effect("emits a result event via --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
@@ -469,7 +472,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible JSON when --output=json after POST", () => {
+  it.effect("emits Go-compatible JSON when --output=json after POST", () => {
     const { layer, out } = setup({ goOutput: "json", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
@@ -478,7 +481,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible YAML when --output=yaml after POST", () => {
+  it.effect("emits Go-compatible YAML when --output=yaml after POST", () => {
     const { layer, out } = setup({ goOutput: "yaml", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
@@ -486,7 +489,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible TOML when --output=toml after POST", () => {
+  it.effect("emits Go-compatible TOML when --output=toml after POST", () => {
     const { layer, out } = setup({ goOutput: "toml", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
@@ -494,7 +497,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible env output when --output=env after POST", () => {
+  it.effect("emits Go-compatible env output when --output=env after POST", () => {
     const { layer, out } = setup({ goOutput: "env", postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
@@ -502,7 +505,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty identically to text mode", () => {
+  it.effect("treats --output pretty identically to text mode", () => {
     const { layer, out } = setup({ goOutput: "pretty", postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
@@ -514,7 +517,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over TS --output-format after POST when both are set", () => {
+  it.effect("Go --output wins over TS --output-format after POST when both are set", () => {
     const { layer, out } = setup({
       format: "json",
       goOutput: "yaml",
@@ -529,7 +532,7 @@ describe("network-restrictions update integration", () => {
 
   // Output modes — PATCH
 
-  it.live("emits a structured JSON success payload via --output-format=json after PATCH", () => {
+  it.effect("emits a structured JSON success payload via --output-format=json after PATCH", () => {
     const { layer, out } = setup({ format: "json", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({
@@ -543,7 +546,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible JSON when --output=json after PATCH", () => {
+  it.effect("emits Go-compatible JSON when --output=json after PATCH", () => {
     const { layer, out } = setup({ goOutput: "json", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
@@ -552,7 +555,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible YAML when --output=yaml after PATCH", () => {
+  it.effect("emits Go-compatible YAML when --output=yaml after PATCH", () => {
     const { layer, out } = setup({ goOutput: "yaml", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
@@ -560,7 +563,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible TOML when --output=toml after PATCH", () => {
+  it.effect("emits Go-compatible TOML when --output=toml after PATCH", () => {
     const { layer, out } = setup({ goOutput: "toml", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
@@ -568,7 +571,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible env output when --output=env after PATCH", () => {
+  it.effect("emits Go-compatible env output when --output=env after PATCH", () => {
     const { layer, out } = setup({
       goOutput: "env",
       patchResponse: {
@@ -583,7 +586,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over TS --output-format after PATCH when both are set", () => {
+  it.effect("Go --output wins over TS --output-format after PATCH when both are set", () => {
     const { layer, out } = setup({
       format: "json",
       goOutput: "yaml",
@@ -598,7 +601,7 @@ describe("network-restrictions update integration", () => {
 
   // Project ref resolution
 
-  it.live("uses --project-ref flag value over CommandSettings.projectId", () => {
+  it.effect("uses --project-ref flag value over CommandSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
@@ -610,7 +613,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a malformed resolved project ref before issuing any HTTP call", () => {
+  it.effect("rejects a malformed resolved project ref before issuing any HTTP call", () => {
     const { layer } = setup({ postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -628,7 +631,7 @@ describe("network-restrictions update integration", () => {
 
   // withJsonErrorHandling
 
-  it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
+  it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({
       format: "json",
       postStatus: 503,
@@ -642,7 +645,7 @@ describe("network-restrictions update integration", () => {
 
   // Telemetry and linked-project cache
 
-  it.live("flushes telemetry and writes linked-project cache on success", () => {
+  it.effect("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setupTracked({ postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
@@ -651,7 +654,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry on CIDR validation failure (before any HTTP call)", () => {
+  it.effect("flushes telemetry on CIDR validation failure (before any HTTP call)", () => {
     const { layer, telemetry, cache, api } = setupTracked();
     return Effect.gen(function* () {
       yield* Effect.exit(networkRestrictionsUpdate({ ...baseFlags, dbAllowCidr: ["bad"] }));
@@ -664,7 +667,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry on API failure", () => {
+  it.effect("flushes telemetry on API failure", () => {
     const { layer, telemetry, cache } = setupTracked({
       postStatus: 500,
       postResponse: POST_EMPTY_APPLIED,

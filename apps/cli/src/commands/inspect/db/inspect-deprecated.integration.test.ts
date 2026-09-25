@@ -173,7 +173,7 @@ describe("inspect db deprecated aliases", () => {
   });
 
   for (const testCase of cases) {
-    it.live(`${testCase.alias} warns and runs the ${testCase.routedSpec.name} query`, () => {
+    it.effect(`${testCase.alias} warns and runs the ${testCase.routedSpec.name} query`, () => {
       const ctx = setup();
       return Effect.gen(function* () {
         yield* testCase.handler(flags);

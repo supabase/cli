@@ -450,7 +450,7 @@ function countChangedLines(before: string, after: string): number {
 }
 
 describe("config pull integration", () => {
-  it.live(
+  it.effect(
     "root-target single-property update writes the file with exactly one changed line",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -468,7 +468,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("--dry-run leaves the file untouched and reports dry_run in the payload", () => {
+  it.effect("--dry-run leaves the file untouched and reports dry_run in the payload", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, format: "json", yes: true });
     return Effect.gen(function* () {
@@ -488,7 +488,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a branch-named target creates a new [remotes.<name>] block at EOF", () => {
+  it.effect("a branch-named target creates a new [remotes.<name>] block at EOF", () => {
     const before = 'project_id = "test"\n';
     const { layer } = setup({
       toml: before,
@@ -521,7 +521,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "a first-pull auth.oauth_server.enabled no longer trips the ADR 0021 unpushable warning (CLI-2314)",
     () => {
       // `enabled` is now an ordinary comparable path: writing it converges local and remote
@@ -557,7 +557,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a first-pull auth.rate_limit.email_sent DOES trip the ADR 0021 unpushable warning, for a sparse remote (review round, CLI-2314)",
     () => {
       // applyDisabledSentinels's cross-section rule deletes auth.rate_limit.email_sent whenever
@@ -594,7 +594,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a clean remote reports nothing to write without prompting", () => {
+  it.effect("a clean remote reports nothing to write without prompting", () => {
     const { layer, out } = setup({ toml: 'project_id = "test"\n' });
     return Effect.gen(function* () {
       yield* configPull(noFlags);
@@ -603,7 +603,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("declining the confirmation prompt leaves the file unchanged", () => {
+  it.effect("declining the confirmation prompt leaves the file unchanged", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({
       toml: before,
@@ -624,7 +624,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output-format json reports written flags, destination, and counts", () => {
+  it.effect("--output-format json reports written flags, destination, and counts", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, format: "json", yes: true });
     return Effect.gen(function* () {
@@ -650,7 +650,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("telemetry flushes and the linked-project cache writes on a failed run too", () => {
+  it.effect("telemetry flushes and the linked-project cache writes on a failed run too", () => {
     const { layer, telemetry, linkedProjectCache, api } = setup();
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
@@ -670,7 +670,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "does not climb to an ancestor project's config when --workdir names a subdirectory with no config of its own",
     () =>
       Effect.gen(function* () {
@@ -706,7 +706,7 @@ describe("config pull integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "an explicit --workdir naming a directory that does not exist at all fails before any config load",
     () =>
       Effect.gen(function* () {
@@ -726,7 +726,7 @@ describe("config pull integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "reuses an existing [remotes.*] block regardless of its own label when its project_id matches the target",
     () => {
       const before = [
@@ -750,28 +750,31 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("--remote-label naming the block block reuse already selected succeeds unchanged", () => {
-    const before = [
-      'project_id = "test"',
-      "[remotes.prod]",
-      `project_id = "${BRANCH_REF}"`,
-      "[remotes.prod.api]",
-      "max_rows = 500",
-      "",
-    ].join("\n");
-    const { layer, out } = setup({ toml: before, yes: true });
-    return Effect.gen(function* () {
-      yield* configPull({
-        ...noFlags,
-        projectRef: Option.some("staging"),
-        remoteLabel: Option.some("prod"),
-      });
-      expect(out.stderrText).toContain("→ [remotes.prod]");
-      expect(yield* readConfig).toContain("max_rows = 1000");
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "--remote-label naming the block block reuse already selected succeeds unchanged",
+    () => {
+      const before = [
+        'project_id = "test"',
+        "[remotes.prod]",
+        `project_id = "${BRANCH_REF}"`,
+        "[remotes.prod.api]",
+        "max_rows = 500",
+        "",
+      ].join("\n");
+      const { layer, out } = setup({ toml: before, yes: true });
+      return Effect.gen(function* () {
+        yield* configPull({
+          ...noFlags,
+          projectRef: Option.some("staging"),
+          remoteLabel: Option.some("prod"),
+        });
+        expect(out.stderrText).toContain("→ [remotes.prod]");
+        expect(yield* readConfig).toContain("max_rows = 1000");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live(
+  it.effect(
     "the confirmation prompt names the destination block when writing into a [remotes.*] block (CLI-2064 item F.5)",
     () => {
       const before = [
@@ -793,7 +796,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "--remote-label naming a block that already tracks a different project fails with a collision error",
     () => {
       const before = [
@@ -820,7 +823,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "--remote-label naming a nonexistent label while a different block already tracks the ref fails with a collision error",
     () => {
       const before = [
@@ -848,7 +851,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "an env()-spelled [remotes.*].project_id resolving to the target ref is a hard error, and the file stays untouched",
     () => {
       const before = [
@@ -877,7 +880,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "--remote-label alongside an env-spelled match creates the requested block instead of refusing (CLI-2064 item B)",
     () => {
       const before = [
@@ -902,7 +905,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a branch-named target that collides with an existing, differently-tracked block fails with a collision error, and the file stays untouched (CLI-2064 item A)",
     () => {
       const before = [
@@ -930,7 +933,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a --remote-label collision is still caught when the raw value differs from the existing block's name only by control characters (CLI-2064 item A, sanitization bypass)",
     () => {
       const before = [
@@ -956,7 +959,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "the destination line prints to stderr before any network call, and survives a failed fetch",
     () => {
       const { layer, out } = setup({ toml: 'project_id = "test"\n', v2: "fail" });
@@ -968,7 +971,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("no temp file is left behind in supabase/ after a successful write", () => {
+  it.effect("no temp file is left behind in supabase/ after a successful write", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
@@ -981,7 +984,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "an editor refusal (an edit path through an inline table) leaves the file byte-identical and fails with ConfigPullUnsupportedLayoutError",
     () => {
       // A genuine duplicate [api] table header would be rejected by smol-toml itself at load
@@ -1005,7 +1008,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a local-only declared property survives the write and is reported skipped", () => {
+  it.effect("a local-only declared property survives the write and is reported skipped", () => {
     const before = [
       'project_id = "test"',
       "[auth]",
@@ -1041,7 +1044,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "an env()-declared property is never replaced, even when other keys in the same run are written",
     () => {
       const before = [
@@ -1075,7 +1078,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a declared secret is never written, even though the config file has it declared before AND after the run",
     () => {
       const before = [
@@ -1098,7 +1101,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a REMOTE value spelled as env() is never written — the loader would resolve it against the LOCAL environment on the next load (CLI-2064 security finding)",
     () => {
       const before = [
@@ -1149,7 +1152,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("writing a dual-scope property to the config root warns before the prompt", () => {
+  it.effect("writing a dual-scope property to the config root warns before the prompt", () => {
     const before = 'project_id = "test"\n[auth]\nsite_url = "https://custom.example.com"\n';
     const { layer, out } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
@@ -1161,7 +1164,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "the same dual-scope property written into a [remotes.*] block carries no dual-scope warning",
     () => {
       const { layer, out } = setup({
@@ -1190,7 +1193,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a remote block's write that duplicates the config root's own value warns of redundancy",
     () => {
       // array_drift (an array-valued remote_only write into a block the root also declares) is
@@ -1219,7 +1222,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "uncommitted changes abort without --force in text+non-tty mode, leaving the file untouched",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1236,26 +1239,29 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("uncommitted changes abort without --force in json mode too, even on a real TTY", () => {
-    const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
-    const { layer } = setup({
-      toml: before,
-      gitDirty: true,
-      format: "json",
-      yes: true,
-      stdinIsTty: true,
-    });
-    return Effect.gen(function* () {
-      const exit = yield* configPull(noFlags).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ConfigPullUncommittedChangesError");
-      }
-      expect(yield* readConfig).toBe(before);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "uncommitted changes abort without --force in json mode too, even on a real TTY",
+    () => {
+      const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+      const { layer } = setup({
+        toml: before,
+        gitDirty: true,
+        format: "json",
+        yes: true,
+        stdinIsTty: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPullUncommittedChangesError");
+        }
+        expect(yield* readConfig).toBe(before);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live(
+  it.effect(
     "on a TTY in text mode, --yes does NOT bypass the uncommitted-changes guard — it aborts instead of silently overwriting (CLI-2064 item C)",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1271,7 +1277,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "--force writes despite uncommitted changes, with no warning or prompt-default flip",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1284,7 +1290,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "on a TTY, uncommitted changes warn and flip the confirmation default to no; declining leaves the file untouched",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1305,7 +1311,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a git spawn failure degrades silently and the run proceeds as if clean", () => {
+  it.effect("a git spawn failure degrades silently and the run proceeds as if clean", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, gitSpawnFails: true, yes: true });
     return Effect.gen(function* () {
@@ -1315,7 +1321,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "a converged remote never spawns the git dirty check, even with uncommitted changes (bug A)",
     () => {
       const before = 'project_id = "test"\n';
@@ -1336,7 +1342,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a block-only run is still a write: uncommitted changes abort it too, without --force",
     () => {
       const before = 'project_id = "test"\n';
@@ -1361,7 +1367,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a zero-drift branch target still creates its [remotes.*] block; a second run reuses it and writes nothing",
     () => {
       const before = 'project_id = "test"\n';
@@ -1411,7 +1417,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a zero-drift target with --remote-label creates the named block instead", () => {
+  it.effect("a zero-drift target with --remote-label creates the named block instead", () => {
     const before = 'project_id = "test"\n';
     const { layer, out } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
@@ -1423,7 +1429,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "--dry-run on a zero-drift branch target previews the would-be-created block without writing",
     () => {
       const before = 'project_id = "test"\n';
@@ -1448,7 +1454,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a declined confirmation on a zero-drift branch target creates nothing", () => {
+  it.effect("a declined confirmation on a zero-drift branch target creates nothing", () => {
     const before = 'project_id = "test"\n';
     const { layer, out } = setup({
       toml: before,
@@ -1464,7 +1470,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--yes skips the confirmation prompt entirely, even on a real TTY", () => {
+  it.effect("--yes skips the confirmation prompt entirely, even on a real TTY", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, yes: true, stdinIsTty: true });
     return Effect.gen(function* () {
@@ -1474,7 +1480,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "pulling twice against the same remote converges: the second run reports nothing left to write",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1492,7 +1498,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "the file changing on disk between confirmation and write fails without touching the concurrent edit",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1514,7 +1520,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("every -o/--output value is rejected before any config load or network call", () => {
+  it.effect("every -o/--output value is rejected before any config load or network call", () => {
     const values = GLOBAL_OUTPUT_FORMATS;
     const run = (goOutput: (typeof values)[number]) => {
       const { layer, api } = setup({
@@ -1541,7 +1547,7 @@ describe("config pull integration", () => {
     });
   });
 
-  it.live("a branch-named target resolves via the linked parent project", () => {
+  it.effect("a branch-named target resolves via the linked parent project", () => {
     const { layer, api, out } = setup({
       toml: 'project_id = "test"\n',
       yes: true,
@@ -1558,7 +1564,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a branch UUID target resolves directly, even in an unlinked directory", () => {
+  it.effect("a branch UUID target resolves directly, even in an unlinked directory", () => {
     const { layer, api, out } = setup({
       toml: 'project_id = "test"\n',
       yes: true,
@@ -1588,7 +1594,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a ref-shaped target never calls the branches API", () => {
+  it.effect("a ref-shaped target never calls the branches API", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       yes: true,
@@ -1602,7 +1608,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "a branch name in an unlinked directory fails with a not-linked error before any request",
     () => {
       const { layer, api, telemetry, linkedProjectCache } = setup({
@@ -1627,7 +1633,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a branch-name target with a corrupt linked ref reports it as invalid", () => {
+  it.effect("a branch-name target with a corrupt linked ref reports it as invalid", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       projectId: Option.some("not-a-valid-ref"),
@@ -1648,7 +1654,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an unknown branch fails with a branches-list suggestion", () => {
+  it.effect("an unknown branch fails with a branches-list suggestion", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       branchByName: { status: 404, body: { message: "not found" } },
@@ -1667,7 +1673,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a resolved branch with no project ref yet fails with a not-ready error", () => {
+  it.effect("a resolved branch with no project ref yet fails with a not-ready error", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       branchByName: { status: 200, body: { ...BRANCH_BY_NAME, project_ref: "" } },
@@ -1687,7 +1693,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a non-404 branch lookup failure keeps its status error", () => {
+  it.effect("a non-404 branch lookup failure keeps its status error", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       branchByName: { status: 500, body: { message: "boom" } },
@@ -1704,7 +1710,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a malformed config aborts before any network call, even with a branch target", () => {
+  it.effect("a malformed config aborts before any network call, even with a branch target", () => {
     const { layer, api, telemetry } = setup({ toml: "not [valid toml\n" });
     return Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -1723,7 +1729,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("duplicate [remotes.*] project_ids abort the load", () => {
+  it.effect("duplicate [remotes.*] project_ids abort the load", () => {
     const before = [
       'project_id = "test"',
       "[remotes.a]",
@@ -1742,7 +1748,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an out-of-domain mapped value in the response keeps its typed parse error", () => {
+  it.effect("an out-of-domain mapped value in the response keeps its typed parse error", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -1769,7 +1775,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a 401 on the config read points at re-authenticating", () => {
+  it.effect("a 401 on the config read points at re-authenticating", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 401, body: { message: "unauthorized" } },
@@ -1785,7 +1791,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a 403 on the config read names the sanitized ref", () => {
+  it.effect("a 403 on the config read names the sanitized ref", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 403, body: { message: "forbidden" } },
@@ -1802,7 +1808,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a 404 on the config read suggests projects list and hedges the api host", () => {
+  it.effect("a 404 on the config read suggests projects list and hedges the api host", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 404, body: { message: "not found" } },
@@ -1819,7 +1825,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("other config-read statuses keep the generic unexpected-status message", () => {
+  it.effect("other config-read statuses keep the generic unexpected-status message", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 500, body: { message: "boom" } },
@@ -1833,7 +1839,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "a config.json project is rewritten preserving key order and indent, changing only the drifted property",
     () => {
       const before = `${JSON.stringify({ project_id: "test", api: { max_rows: 500 } }, null, 4)}\n`;
@@ -1847,7 +1853,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a branch-lookup transport failure maps to the read network error", () => {
+  it.effect("a branch-lookup transport failure maps to the read network error", () => {
     const { layer } = setup({ toml: 'project_id = "test"\n', branchByName: "fail" });
     return Effect.gen(function* () {
       const exit = yield* configPull({
@@ -1863,7 +1869,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a fetch failure in json mode still maps cleanly without a spinner", () => {
+  it.effect("a fetch failure in json mode still maps cleanly without a spinner", () => {
     const { layer } = setup({ toml: 'project_id = "test"\n', v2: "fail", format: "json" });
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
@@ -1874,22 +1880,25 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a config-read status failure in json mode still maps cleanly without a spinner", () => {
-    const { layer } = setup({
-      toml: 'project_id = "test"\n',
-      v2: { status: 500, body: { message: "boom" } },
-      format: "json",
-    });
-    return Effect.gen(function* () {
-      const exit = yield* configPull(noFlags).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ConfigPullReadStatusError");
-      }
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "a config-read status failure in json mode still maps cleanly without a spinner",
+    () => {
+      const { layer } = setup({
+        toml: 'project_id = "test"\n',
+        v2: { status: 500, body: { message: "boom" } },
+        format: "json",
+      });
+      return Effect.gen(function* () {
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPullReadStatusError");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("an undecodable config-read body fails as a decode network error", () => {
+  it.effect("an undecodable config-read body fails as a decode network error", () => {
     const { layer } = setup({ toml: 'project_id = "test"\n', v2: "decode-fail" });
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
@@ -1900,7 +1909,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "an undecodable config-read body in json mode still maps cleanly without a spinner",
     () => {
       const { layer } = setup({ toml: 'project_id = "test"\n', v2: "decode-fail", format: "json" });
@@ -1914,7 +1923,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a response body with no data/attributes degrades to an empty scope instead of crashing",
     () => {
       const { layer, out } = setup({
@@ -1929,7 +1938,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("--dry-run in text mode renders the full change-by-change preview", () => {
+  it.effect("--dry-run in text mode renders the full change-by-change preview", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
@@ -1940,7 +1949,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "the file disappearing between confirmation and re-read fails with ConfigPullFileChangedError",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1963,7 +1972,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("--remote-label creates a brand-new block when nothing else conflicts", () => {
+  it.effect("--remote-label creates a brand-new block when nothing else conflicts", () => {
     const before = 'project_id = "test"\n';
     const { layer, out } = setup({
       toml: before,
@@ -1987,7 +1996,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a filesystem write failure maps to ConfigPullWriteError", () => {
+  it.effect("a filesystem write failure maps to ConfigPullWriteError", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
@@ -2005,7 +2014,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a response missing an entire block is noted as not-returned", () => {
+  it.effect("a response missing an entire block is noted as not-returned", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -2024,7 +2033,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("multiple simultaneous changes pluralize the summary and difference counts", () => {
+  it.effect("multiple simultaneous changes pluralize the summary and difference counts", () => {
     const before =
       'project_id = "test"\n[api]\nmax_rows = 500\nextra_search_path = "custom_schema"\n';
     const { layer, out } = setup({ toml: before, yes: true });
@@ -2035,7 +2044,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a branch-named target resolves in json mode without a spinner", () => {
+  it.effect("a branch-named target resolves in json mode without a spinner", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       format: "json",
@@ -2048,7 +2057,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an unknown branch in json mode fails without a spinner", () => {
+  it.effect("an unknown branch in json mode fails without a spinner", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       format: "json",
@@ -2065,7 +2074,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a single declared-but-unpushable property surfaces in the unmanaged note", () => {
+  it.effect("a single declared-but-unpushable property surfaces in the unmanaged note", () => {
     // enabled matches the remote and produces no change; its sibling allow_dynamic_registration
     // is what demonstrates declared-but-unpushable, since DISABLED_SENTINEL_PRUNES drops it from
     // the local projection while the container is disabled.
@@ -2101,7 +2110,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "declared-but-unpushable properties surface in the unmanaged note, pluralized when there's more than one",
     () => {
       // enabled matches the remote and produces no change here; its two siblings
@@ -2143,7 +2152,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a run where every difference is skipped reports 'No changes written', with the skip reason rendered inline",
     () => {
       const before = 'project_id = "test"\n[auth]\nsite_url = "env(SITE_URL)"\n';
@@ -2161,7 +2170,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a warning with a path reaches the machine payload's warnings array", () => {
+  it.effect("a warning with a path reaches the machine payload's warnings array", () => {
     const before = 'project_id = "test"\n[auth]\nsite_url = "https://custom.example.com"\n';
     const { layer, out } = setup({ toml: before, format: "json", yes: true });
     return Effect.gen(function* () {
@@ -2200,7 +2209,7 @@ describe("config pull integration", () => {
     };
   }
 
-  it.live(
+  it.effect(
     "twilio scenario A: the fixpoint absorbs a disabled SMS provider's credentials once its own `enabled` toggle is written, and the written file reloads (CLI-2064 live-bug repro)",
     () => {
       const { layer, out } = setup({
@@ -2239,7 +2248,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "twilio scenario B: the schema-validation gate drops the whole family when a sibling stays unwritable (remote silent on message_service_sid), and the written file still reloads",
     () => {
       const { layer, out } = setup({
@@ -2321,7 +2330,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "twilio scenario B's would_invalidate skip/note reach the machine payload (skipped_reason + warnings.missing_fields)",
     () => {
       const { layer, out } = setup({
@@ -2363,7 +2372,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fixpoint-only case: a gated non-secret sibling absorbed in round 2 lands in the SAME body/payload with warnings applied (auth.captcha, dual_scope)",
     () => {
       const before =
@@ -2407,7 +2416,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a numeric env() value resolvable only via the project's supabase/.env validates and writes normally, nothing dropped (review T0)",
     () => {
       // PULL_TEST_NUMERIC_ENV resolves only through the project's own supabase/.env, never
@@ -2431,7 +2440,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a pre-write decode failure at a path unrelated to the plan is exempted: pull still writes its planned change and exits 0 (review T0)",
     () => {
       // runConfigPull is called directly with a hand-augmented source.loaded.rawDocument/.text:
@@ -2477,7 +2486,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "remote-destination pull: a written value that only violates a business rule once the block is SELECTED gets its family dropped, even though the raw/unmerged document decodes fine on its own (review T1)",
     () => {
       const MERGE_CHECK_REF = "eeeeeeeeeeeeeeeeeeee";

@@ -15,7 +15,7 @@ import {
   Stdio,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -85,8 +85,8 @@ function mockDockerRunSpawnFailure() {
   const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const cmd = command._tag === "StandardCommand" ? command.command : "";
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const cmd = ChildProcess.isStandardCommand(command) ? command.command : "";
+      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
       spawned.push({ command: cmd, args });
 
       if (args[0] === "run") {
@@ -205,7 +205,7 @@ function mockProxy() {
 }
 
 describe("functions download", () => {
-  it.live("downloads a function natively into the legacy workdir", () => {
+  it.effect("downloads a function natively into the legacy workdir", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) =>
@@ -317,7 +317,7 @@ describe("functions download", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "does not treat the --use-docker default as conflicting with an explicit --use-api",
     () => {
       const out = mockOutput({ format: "text" });
@@ -1127,7 +1127,7 @@ describe("functions download", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails on an invalid project config before falling back when Docker is not running",
     () => {
       const out = mockOutput({ format: "text" });
@@ -1371,7 +1371,7 @@ describe("functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "fails with the docker-step prefix when the unbundle container itself cannot be spawned",
     () => {
       const out = mockOutput({ format: "text" });
@@ -1569,7 +1569,7 @@ describe("functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "attaches the first function's on-disk directory to the failure when a later function's download fails",
     () => {
       // The failure must carry the first function's already-written directory
@@ -1625,50 +1625,53 @@ describe("functions download", () => {
     },
   );
 
-  it.live("forwards only --legacy-bundle to the Go proxy, not the --use-docker default too", () => {
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
-    const layer = Layer.mergeAll(
-      buildTestRuntime({
-        out,
-        api,
-        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-      }),
-      proxy.layer,
-      Stdio.layerTest({
-        args: Effect.succeed([
-          "functions",
-          "download",
-          "hello-world",
-          "--legacy-bundle",
-          "--project-ref",
-          "abcdefghijklmnopqrst",
-        ]),
-      }),
-    );
+  it.effect(
+    "forwards only --legacy-bundle to the Go proxy, not the --use-docker default too",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi();
+      const proxy = mockProxy();
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        }),
+        proxy.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--legacy-bundle",
+            "--project-ref",
+            "abcdefghijklmnopqrst",
+          ]),
+        }),
+      );
 
-    return Effect.gen(function* () {
-      // `useDocker: true` mirrors the flag's own default even though only
-      // `--legacy-bundle` was passed; forwarding both would make the Go
-      // binary's own MarkFlagsMutuallyExclusive reject the combination.
-      yield* functionsDownload({ ...baseFlags, useDocker: true, legacyBundle: true });
+      return Effect.gen(function* () {
+        // `useDocker: true` mirrors the flag's own default even though only
+        // `--legacy-bundle` was passed; forwarding both would make the Go
+        // binary's own MarkFlagsMutuallyExclusive reject the combination.
+        yield* functionsDownload({ ...baseFlags, useDocker: true, legacyBundle: true });
 
-      expect(proxy.calls).toEqual([
-        [
-          "functions",
-          "download",
-          "hello-world",
-          "--project-ref",
-          "abcdefghijklmnopqrst",
-          "--legacy-bundle",
-        ],
-      ]);
-      expect(proxy.envs).toEqual([{ SUPABASE_TELEMETRY_DISABLED: "1" }]);
-    }).pipe(Effect.provide(layer));
-  });
+        expect(proxy.calls).toEqual([
+          [
+            "functions",
+            "download",
+            "hello-world",
+            "--project-ref",
+            "abcdefghijklmnopqrst",
+            "--legacy-bundle",
+          ],
+        ]);
+        expect(proxy.envs).toEqual([{ SUPABASE_TELEMETRY_DISABLED: "1" }]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("rejects an invalid slug before ever reaching the Go proxy", () => {
+  it.effect("rejects an invalid slug before ever reaching the Go proxy", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const proxy = mockProxy();
@@ -1704,7 +1707,7 @@ describe("functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "does not redact --project-ref in cli_command_executed (Go parity: cmd/functions.go:178)",
     () => {
       const out = mockOutput({ format: "text" });
@@ -1748,7 +1751,7 @@ describe("functions download", () => {
     },
   );
 
-  it.live("rejects the bundler mutex with cobra's exact error text", () => {
+  it.effect("rejects the bundler mutex with cobra's exact error text", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const proxy = mockProxy();
@@ -1783,7 +1786,7 @@ describe("functions download", () => {
   });
 
   describe("Config.Validate / dotenv / env-override parity (CLI-1963)", () => {
-    it.live(
+    it.effect(
       "fails before any Docker/API work when config.toml has an explicit empty project_id",
       () => {
         const out = mockOutput({ format: "text" });
@@ -1830,7 +1833,7 @@ describe("functions download", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "fails before any Docker/API work on an unrelated Config.Validate branch (unsupported Postgres major version)",
       () => {
         const out = mockOutput({ format: "text" });

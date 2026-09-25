@@ -1,6 +1,6 @@
 import type { OrganizationResponseV1_Output, V1CreateAProjectOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Predicate, Schema } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { mockOutput, mockTelemetryRuntime, mockTty } from "../../../../tests/helpers/mocks.ts";
@@ -117,7 +117,7 @@ function findFailure(exit: Exit.Exit<unknown, unknown>): Record<string, unknown>
 }
 
 describe("projects create integration", () => {
-  it.live("creates a project non-interactively from flags", () => {
+  it.effect("creates a project non-interactively from flags", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -142,7 +142,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("includes desired_instance_size only when --size is set", () => {
+  it.effect("includes desired_instance_size only when --size is set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -157,7 +157,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("includes high_availability only when --high-availability is set", () => {
+  it.effect("includes high_availability only when --high-availability is set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -172,7 +172,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("forwards --high-availability=false when explicitly set", () => {
+  it.effect("forwards --high-availability=false when explicitly set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -187,7 +187,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "sends both release_channel and postgres_engine when both flags and --experimental are set",
     () => {
       const { layer, api } = setup({ experimental: true });
@@ -207,7 +207,7 @@ describe("projects create integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "sends only postgres_engine when only --postgres-engine is set (with --experimental)",
     () => {
       const { layer, api } = setup({ experimental: true });
@@ -226,7 +226,7 @@ describe("projects create integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails with ExperimentalRequiredError when --release-channel is set without --experimental",
     () => {
       const { layer, api } = setup();
@@ -249,7 +249,7 @@ describe("projects create integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails with ExperimentalRequiredError when --postgres-engine is set without --experimental",
     () => {
       const { layer, api } = setup();
@@ -272,7 +272,7 @@ describe("projects create integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "accepts --release-channel and --postgres-engine when only SUPABASE_EXPERIMENTAL is set",
     () => {
       const { layer, api } = setup();
@@ -296,7 +296,7 @@ describe("projects create integration", () => {
     },
   );
 
-  it.live("excludes release_channel and postgres_engine when neither flag is set", () => {
+  it.effect("excludes release_channel and postgres_engine when neither flag is set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -311,7 +311,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores the hidden --plan flag (no-op)", () => {
+  it.effect("ignores the hidden --plan flag (no-op)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -326,7 +326,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails non-interactively when required flags are missing", () => {
+  it.effect("fails non-interactively when required flags are missing", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -341,7 +341,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --interactive=false as non-interactive even on a TTY", () => {
+  it.effect("treats --interactive=false as non-interactive even on a TTY", () => {
     const { layer, api } = setup({ stdinIsTty: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -359,7 +359,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prompts for name, org, region and password when interactive", () => {
+  it.effect("prompts for name, org, region and password when interactive", () => {
     const { layer, out, api } = setup({
       stdinIsTty: true,
       promptTextResponses: ["my-proj"],
@@ -379,7 +379,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectsCreateNameEmptyError when the name prompt is blank", () => {
+  it.effect("fails with ProjectsCreateNameEmptyError when the name prompt is blank", () => {
     const { layer } = setup({ stdinIsTty: true, promptTextResponses: [""] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsCreate({ ...BASE_FLAGS }));
@@ -390,7 +390,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the interactive organization list request errors", () => {
+  it.effect("fails when the interactive organization list request errors", () => {
     const { layer } = setup({
       stdinIsTty: true,
       byMethod: { GET: { status: 500, body: {} }, POST: { status: 201, body: CREATED } },
@@ -406,7 +406,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event for --output-format json", () => {
+  it.effect("emits a success event for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -422,7 +422,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("encodes the created project for --output env", () => {
+  it.effect("encodes the created project for --output env", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -436,7 +436,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("encodes the created project for --output yaml", () => {
+  it.effect("encodes the created project for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -450,7 +450,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
+  it.effect("emits Go-byte-exact indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -465,7 +465,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("wraps the created project under [project]-style toml output", () => {
+  it.effect("wraps the created project under [project]-style toml output", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -479,7 +479,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectsCreateNetworkError on transport failure", () => {
+  it.effect("fails with ProjectsCreateNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -500,7 +500,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectsCreateUnexpectedStatusError on HTTP 500", () => {
+  it.effect("fails with ProjectsCreateUnexpectedStatusError on HTTP 500", () => {
     const { layer } = setup({ byMethod: { POST: { status: 500, body: {} } } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -519,7 +519,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends the request body with Go-sorted keys", () => {
+  it.effect("sends the request body with Go-sorted keys", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -540,7 +540,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("tolerates a 201 response with a placeholder/short ref (lenient parse)", () => {
+  it.effect("tolerates a 201 response with a placeholder/short ref (lenient parse)", () => {
     // The typed client validates refs to be 20+ chars; `executeRaw` bypasses that to render
     // placeholders verbatim.
     const { layer, out } = setup({
@@ -562,7 +562,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on success", () => {
+  it.effect("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -577,7 +577,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry but skips cache when creation fails", () => {
+  it.effect("flushes telemetry but skips cache when creation fails", () => {
     const { layer, telemetry, cache } = setup({ network: "fail" });
     return Effect.gen(function* () {
       yield* Effect.exit(
@@ -594,7 +594,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
+  it.effect("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([projectsCreateCommand]),
       Command.withGlobalFlags(GLOBAL_FLAGS),
@@ -642,10 +642,7 @@ function rejectsInvalidSizeChoice(error: unknown): boolean {
   if (!Array.isArray(errors)) return false;
   return errors.some(
     (candidate: unknown) =>
-      typeof candidate === "object" &&
-      candidate !== null &&
-      "_tag" in candidate &&
-      candidate._tag === "InvalidValue" &&
+      Predicate.isTagged(candidate, "InvalidValue") &&
       "option" in candidate &&
       candidate.option === "size",
   );

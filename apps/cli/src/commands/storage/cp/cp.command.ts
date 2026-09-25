@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, CliError, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -47,16 +47,19 @@ const config = {
     // which a `value < 0` check would wrongly accept), so this parses the raw token with
     // `parseUintBase0` instead; it must sit before `Flag.optional`, which passes `InvalidValue`
     // through untouched.
-    Flag.mapTryCatch(
-      (token) => {
-        const parsed = parseUintBase0(token);
-        if ("cause" in parsed) {
-          throw new Error(storageInvalidJobsMessage(token, parsed.cause));
-        }
-        return parsed.value;
-      },
-      (err) => (err instanceof Error ? err.message : String(err)),
-    ),
+    Flag.mapEffect((token) => {
+      const parsed = parseUintBase0(token);
+      return "cause" in parsed
+        ? Effect.fail(
+            new CliError.InvalidValue({
+              option: "jobs",
+              value: token,
+              expected: storageInvalidJobsMessage(token, parsed.cause),
+              kind: "flag",
+            }),
+          )
+        : Effect.succeed(parsed.value);
+    }),
     Flag.optional,
   ),
   linked: StorageLinkedFlagDef,
@@ -88,7 +91,7 @@ export const storageCpCommand = Command.make("cp", config).pipe(
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // Gate before the mutex check below; see requireExperimental's doc comment for why. A
-      // non-uint `--jobs` never reaches here — `Flag.mapTryCatch` rejects it at parse time.
+      // non-uint `--jobs` never reaches here — `Flag.mapEffect` rejects it at parse time.
       yield* requireExperimental;
       const cliArgs = yield* CliArgs;
       yield* assertStorageTargetsExclusive(cliArgs.args);

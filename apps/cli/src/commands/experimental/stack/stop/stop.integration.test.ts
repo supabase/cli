@@ -56,7 +56,7 @@ describe("stack stop", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("stop all preserves an offline registry without claiming stopped workloads", () =>
+  it.effect("stop all preserves an offline registry without claiming stopped workloads", () =>
     Effect.gen(function* () {
       const f = yield* fixture();
       yield* f.api.create({
@@ -76,7 +76,7 @@ describe("stack stop", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("surfaces a shutdown failure after a successful owner preflight", () =>
+  it.effect("surfaces a shutdown failure after a successful owner preflight", () =>
     Effect.gen(function* () {
       const f = yield* fixture();
       const saved = (yield* f.api.discover(f.locations))[0];

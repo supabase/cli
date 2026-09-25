@@ -1,4 +1,4 @@
-import { DateTime, Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
+import { DateTime, Effect, FileSystem, Option, Path, Predicate, Redacted, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -47,6 +47,11 @@ const MISSING_TOKEN_MESSAGE =
   "Access token not provided. Supply an access token by running `supabase login` or setting the SUPABASE_ACCESS_TOKEN environment variable.";
 
 const BOUNDARY_BYTES = 16;
+
+const decodeJsonBody = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const isRowObject = (element: unknown): element is { readonly [key: string]: unknown } | null =>
+  element === null || Predicate.isObject(element);
 
 export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
   const output = yield* Output;
@@ -193,20 +198,14 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
 
       // The API returns a JSON array of row objects for SELECT, or a plain command tag for
       // DDL/DML; anything else is printed verbatim.
-      const decoded = Schema.decodeOption(Schema.fromJsonString(Schema.Unknown))(body);
+      const decoded = yield* decodeJsonBody(body).pipe(Effect.option);
       if (Option.isNone(decoded)) {
         return yield* output.raw(`${body}\n`);
       }
-      const parsed = decoded.value;
-      const isRowArray =
-        Array.isArray(parsed) &&
-        parsed.every(
-          (element) => element === null || (typeof element === "object" && !Array.isArray(element)),
-        );
-      if (!isRowArray) {
+      const rows = decoded.value;
+      if (!Array.isArray(rows) || !rows.every(isRowObject)) {
         return yield* output.raw(`${body}\n`);
       }
-      const rows = parsed as ReadonlyArray<Record<string, unknown> | null>;
       if (rows.length === 0) {
         return yield* emit(format, [], [], agentMode, Option.none());
       }

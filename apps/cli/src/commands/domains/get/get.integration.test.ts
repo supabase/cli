@@ -81,7 +81,7 @@ function setup(opts: SetupOpts = {}) {
 const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
 
 describe("domains get integration", () => {
-  it.live("prints the hostname status to stderr in text mode", () => {
+  it.effect("prints the hostname status to stderr in text mode", () => {
     const { layer, out, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
@@ -92,7 +92,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success object for --output-format json", () => {
+  it.effect("emits a structured success object for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
@@ -101,7 +101,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success object for --output-format stream-json", () => {
+  it.effect("emits a structured success object for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
@@ -109,7 +109,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
+  it.effect("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
@@ -120,7 +120,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("backfills Go zero values in JSON output when the API omits nested fields", () => {
+  it.effect("backfills Go zero values in JSON output when the API omits nested fields", () => {
     const {
       ownership_verification: _ownershipVerification,
       custom_origin_server: _customOriginServer,
@@ -151,7 +151,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("handles a pending hostname response without SSL details", () => {
+  it.effect("handles a pending hostname response without SSL details", () => {
     const { ssl: _ssl, ...resultWithoutSsl } = HOSTNAME_RESPONSE.data.result;
     const response: typeof V1GetHostnameConfigOutput.Type = {
       ...HOSTNAME_RESPONSE,
@@ -171,7 +171,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("backfills Go zero values in JSON output when the API omits envelope fields", () => {
+  it.effect("backfills Go zero values in JSON output when the API omits envelope fields", () => {
     const {
       status: _status,
       custom_hostname: _customHostname,
@@ -210,7 +210,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints processing guidance in text mode when the API omits envelope fields", () => {
+  it.effect("prints processing guidance in text mode when the API omits envelope fields", () => {
     const {
       status: _status,
       custom_hostname: _customHostname,
@@ -237,7 +237,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints outstanding ACME validation records in text mode", () => {
+  it.effect("prints outstanding ACME validation records in text mode", () => {
     const response: typeof V1GetHostnameConfigOutput.Type = {
       status: "2_initiated",
       custom_hostname: "sbstg4.thewheatfield.org",
@@ -275,7 +275,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not print partial ACME validation records", () => {
+  it.effect("does not print partial ACME validation records", () => {
     const response: typeof V1GetHostnameConfigOutput.Type = {
       ...HOSTNAME_RESPONSE,
       status: "2_initiated",
@@ -301,7 +301,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML to stdout for -o yaml", () => {
+  it.effect("emits YAML to stdout for -o yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
@@ -310,7 +310,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML to stdout for -o toml", () => {
+  it.effect("emits TOML to stdout for -o toml", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
@@ -319,7 +319,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits KEY=VALUE lines for -o env", () => {
+  it.effect("emits KEY=VALUE lines for -o env", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
@@ -327,7 +327,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats -o pretty as text mode (status to stderr only)", () => {
+  it.effect("treats -o pretty as text mode (status to stderr only)", () => {
     const { layer, out } = setup({ goOutput: "pretty" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
@@ -336,7 +336,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("forces Go JSON output when --include-raw-output is set", () => {
+  it.effect("forces Go JSON output when --include-raw-output is set", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
@@ -345,7 +345,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "forces Go JSON even when -o is explicitly pretty and --include-raw-output is set",
     () => {
       const { layer, out } = setup({ goOutput: "pretty" });
@@ -356,7 +356,7 @@ describe("domains get integration", () => {
     },
   );
 
-  it.live("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
     const { layer, telemetry, linkedProjectCache } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsGet(baseFlags));
@@ -372,7 +372,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("suggests upgrade from entitlement_required envelope on 400", () => {
+  it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
     const { layer, out, analytics, api } = setup({
       status: 400,
       response: {
@@ -400,7 +400,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("plain 404 without envelope produces no upgrade hint", () => {
+  it.effect("plain 404 without envelope produces no upgrade hint", () => {
     const { layer, out, analytics, api } = setup({
       status: 404,
       response: { message: "not found" },
@@ -414,7 +414,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps an HTTP error without a spinner in json mode", () => {
+  it.effect("maps an HTTP error without a spinner in json mode", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsGet(baseFlags));
@@ -423,7 +423,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsNetworkError on transport failure", () => {
+  it.effect("fails with DomainsNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsGet(baseFlags));

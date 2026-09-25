@@ -46,7 +46,7 @@ function lsFlags(
 describe("storage ls", () => {
   const tmp = useTempWorkdir("supabase-storage-ls-");
 
-  it.live("lists buckets at the root, filtered by the bucket prefix", () => {
+  it.effect("lists buckets at the root, filtered by the bucket prefix", () => {
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -71,7 +71,7 @@ describe("storage ls", () => {
     });
   });
 
-  it.live("lists objects under a prefix, dirs get a trailing slash", () => {
+  it.effect("lists objects under a prefix, dirs get a trailing slash", () => {
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -96,7 +96,7 @@ describe("storage ls", () => {
     });
   });
 
-  it.live("paginates past PAGE_LIMIT and reports Loading page on stderr", () => {
+  it.effect("paginates past PAGE_LIMIT and reports Loading page on stderr", () => {
     const page0 = Array.from({ length: 100 }, (_, i) => ({ name: `f${i}`, id: `${i}` }));
     const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -122,7 +122,7 @@ describe("storage ls", () => {
     });
   });
 
-  it.live("recursively walks nested dirs and reports an empty bucket", () => {
+  it.effect("recursively walks nested dirs and reports an empty bucket", () => {
     const { layer, out } = setupStorage(tmp.current, {
       local: true,
       toml: 'project_id = "test"\n',
@@ -168,7 +168,7 @@ describe("storage ls", () => {
     });
   });
 
-  it.live("fails on an invalid url without any network call", () => {
+  it.effect("fails on an invalid url without any network call", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -186,7 +186,7 @@ describe("storage ls", () => {
     });
   });
 
-  it.live("surfaces a url-parse error (missing protocol scheme)", () => {
+  it.effect("surfaces a url-parse error (missing protocol scheme)", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -205,7 +205,7 @@ describe("storage ls", () => {
     });
   });
 
-  it.live("propagates a 503 from the bucket service", () => {
+  it.effect("propagates a 503 from the bucket service", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -220,7 +220,7 @@ describe("storage ls", () => {
     });
   });
 
-  it.live("targets the linked project's Storage host and flushes telemetry", () => {
+  it.effect("targets the linked project's Storage host and flushes telemetry", () => {
     const { layer, requests, telemetry, linkedCache } = setupStorage(tmp.current, {
       // No `--local`, so the linked path resolves the ref + service-role key.
       routes: [
@@ -244,7 +244,7 @@ describe("storage ls", () => {
     });
   });
 
-  it.live("lists the project given via --project-ref, overriding VALID_REF", () => {
+  it.effect("lists the project given via --project-ref, overriding VALID_REF", () => {
     // The fake's own fallback stays at its default (VALID_REF); the flag must win and drive
     // the gateway host.
     const FLAG_REF = "flagflagflagflagflag";
@@ -264,7 +264,7 @@ describe("storage ls", () => {
     });
   });
 
-  it.live("rejects --project-ref combined with --local", () => {
+  it.effect("rejects --project-ref combined with --local", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -286,30 +286,33 @@ describe("storage ls", () => {
     });
   });
 
-  it.live("signs --local requests with a SUPABASE_AUTH_SERVICE_ROLE_KEY from supabase/.env", () => {
-    // The storage frame loads the project dotenv itself, so the auth override must reach the
-    // resolver from that walk. Pin the ambient var away so only the dotenv value counts.
-    const { layer, requests } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      local: true,
-      files: { "supabase/.env": "SUPABASE_AUTH_SERVICE_ROLE_KEY=sb_secret_dotenv_only_key\n" },
-      routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
-    });
-    return withEnvVar(
-      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
-      undefined,
-      Effect.gen(function* () {
-        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isSuccess(exit)).toBe(true);
-        expect(requests.length).toBeGreaterThan(0);
-        expect(requests.every((r) => r.headers["apikey"] === "sb_secret_dotenv_only_key")).toBe(
-          true,
-        );
-      }),
-    );
-  });
+  it.effect(
+    "signs --local requests with a SUPABASE_AUTH_SERVICE_ROLE_KEY from supabase/.env",
+    () => {
+      // The storage frame loads the project dotenv itself, so the auth override must reach the
+      // resolver from that walk. Pin the ambient var away so only the dotenv value counts.
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        files: { "supabase/.env": "SUPABASE_AUTH_SERVICE_ROLE_KEY=sb_secret_dotenv_only_key\n" },
+        routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+      });
+      return withEnvVar(
+        "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+        undefined,
+        Effect.gen(function* () {
+          const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(requests.length).toBeGreaterThan(0);
+          expect(requests.every((r) => r.headers["apikey"] === "sb_secret_dotenv_only_key")).toBe(
+            true,
+          );
+        }),
+      );
+    },
+  );
 
-  it.live("emits a { paths } result in json mode", () => {
+  it.effect("emits a { paths } result in json mode", () => {
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -325,7 +328,7 @@ describe("storage ls", () => {
     });
   });
 
-  it.live("paginates without the Loading page line in json mode", () => {
+  it.effect("paginates without the Loading page line in json mode", () => {
     const page0 = Array.from({ length: 100 }, (_, i) => ({ name: `f${i}`, id: `${i}` }));
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -346,7 +349,7 @@ describe("storage ls", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "fails with a missing-project error when --workdir names a config-less subdirectory of a real ancestor project",
     () => {
       return Effect.gen(function* () {
@@ -370,7 +373,7 @@ describe("storage ls", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a remote (--linked) target with the same config-less explicit workdir still succeeds",
     () => {
       // The missing-project hard-fail is local-only: `resolveStorageCredentials` never reads
@@ -398,7 +401,7 @@ describe("storage ls", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "hints at the ancestor's --workdir when it genuinely has a project (shared helper propagation)",
     () => {
       // Confirms `missingProjectConfigMessageEffect`'s "Did you mean" hint isn't `config
@@ -424,7 +427,7 @@ describe("storage ls", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "an explicit --workdir naming a directory that does not exist at all fails before any config load",
     () => {
       return Effect.gen(function* () {
@@ -450,7 +453,7 @@ describe("storage ls", () => {
 describe("stack backend", () => {
   const tmp = useTempWorkdir("supabase-storage-ls-stack-");
 
-  it.live("routes local requests through the stack's api endpoint and JWT", () => {
+  it.effect("routes local requests through the stack's api endpoint and JWT", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n[api]\nport = 65000\n',
       local: true,
@@ -468,7 +471,7 @@ describe("stack backend", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "ignores every legacy config/env input (port, external_url, jwt secret, hostname)",
     () => {
       const { layer, requests } = setupStorage(tmp.current, {
@@ -499,7 +502,7 @@ describe("stack backend", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails with StackStorageCapabilityError when Storage is disabled, before any request",
     () => {
       const { layer, requests } = setupStorage(tmp.current, {
@@ -521,7 +524,7 @@ describe("stack backend", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails with StackStorageUnavailableError when no stack is registered for the project",
     () => {
       const { layer, requests } = setupStorage(tmp.current, {
@@ -543,7 +546,7 @@ describe("stack backend", () => {
     },
   );
 
-  it.live("fails with StackStorageUnavailableError when the stack is stopped", () => {
+  it.effect("fails with StackStorageUnavailableError when the stack is stopped", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -562,7 +565,7 @@ describe("stack backend", () => {
     });
   });
 
-  it.live("fails when the required StackApi service is unavailable", () => {
+  it.effect("fails when the required StackApi service is unavailable", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -579,7 +582,7 @@ describe("stack backend", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "derives Storage credentials from the primary database when Auth credentials are unavailable",
     () => {
       const { layer, requests } = setupStorage(tmp.current, {
@@ -599,7 +602,7 @@ describe("stack backend", () => {
     },
   );
 
-  it.live("fails with StackStorageCapabilityError when the stack exposes no api endpoint", () => {
+  it.effect("fails with StackStorageCapabilityError when the stack exposes no api endpoint", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -616,7 +619,7 @@ describe("stack backend", () => {
     });
   });
 
-  it.live("surfaces the capability error message when Storage failed to start", () => {
+  it.effect("surfaces the capability error message when Storage failed to start", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -634,7 +637,7 @@ describe("stack backend", () => {
     });
   });
 
-  it.live("proceeds to the gateway when Storage is dormant (lazy-activated)", () => {
+  it.effect("proceeds to the gateway when Storage is dormant (lazy-activated)", () => {
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -649,7 +652,7 @@ describe("stack backend", () => {
     });
   });
 
-  it.live("proceeds to the gateway while Storage is stopping with wake retained", () => {
+  it.effect("proceeds to the gateway while Storage is stopping with wake retained", () => {
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -664,7 +667,7 @@ describe("stack backend", () => {
     });
   });
 
-  it.live("fails when Storage is stopping after a manual stop disabled wake", () => {
+  it.effect("fails when Storage is stopping after a manual stop disabled wake", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -681,7 +684,7 @@ describe("stack backend", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "maps a gateway 503 (Storage still activating) to StackStorageCapabilityError under the stack backend",
     () => {
       const { layer } = setupStorage(tmp.current, {
@@ -700,7 +703,7 @@ describe("stack backend", () => {
     },
   );
 
-  it.live("leaves a gateway 503 as StorageGatewayStatusError under the legacy backend", () => {
+  it.effect("leaves a gateway 503 as StorageGatewayStatusError under the legacy backend", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -715,7 +718,7 @@ describe("stack backend", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "uses the api-keys path for --linked and never calls findStack, even with the stack backend enabled",
     () => {
       const { layer, requests, stackCalls } = setupStorage(tmp.current, {
@@ -736,7 +739,7 @@ describe("stack backend", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "leaves a --linked gateway 503 as StorageGatewayStatusError even under the stack backend",
     () => {
       const { layer, stackCalls } = setupStorage(tmp.current, {
@@ -757,7 +760,7 @@ describe("stack backend", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "sanitizes a failed capability's error message, stripping control characters from the stack",
     () => {
       const { layer } = setupStorage(tmp.current, {
@@ -780,7 +783,7 @@ describe("stack backend", () => {
     },
   );
 
-  it.live("suggests starting without excluding Storage when it is disabled", () => {
+  it.effect("suggests starting without excluding Storage when it is disabled", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -799,7 +802,7 @@ describe("stack backend", () => {
     });
   });
 
-  it.live("suggests waiting for the stack to finish stopping", () => {
+  it.effect("suggests waiting for the stack to finish stopping", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -817,7 +820,7 @@ describe("stack backend", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "surfaces the gateway's status and body on a local 503, without suggesting reactivation",
     () => {
       const { layer } = setupStorage(tmp.current, {
@@ -841,7 +844,7 @@ describe("stack backend", () => {
     },
   );
 
-  it.live("suggests retrying shortly while the stack lifecycle is starting", () => {
+  it.effect("suggests retrying shortly while the stack lifecycle is starting", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -859,7 +862,7 @@ describe("stack backend", () => {
     });
   });
 
-  it.live("legacy default still derives the gateway URL from [api] port", () => {
+  it.effect("legacy default still derives the gateway URL from [api] port", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n[api]\nport = 65432\n',
       local: true,

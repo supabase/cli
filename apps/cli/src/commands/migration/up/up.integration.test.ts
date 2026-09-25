@@ -156,7 +156,7 @@ const insertedVersions = (queries: Array<{ sql: string; params?: ReadonlyArray<u
 const tmp = useTempWorkdir();
 
 describe("migration up", () => {
-  it.live("applies pending migrations in order and prints progress", () => {
+  it.effect("applies pending migrations in order and prints progress", () => {
     const { layer, out, queries } = setup(tmp.current, { remote: ["20240101000000"] });
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
@@ -175,7 +175,7 @@ describe("migration up", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("errors with a revert suggestion when a remote version is missing locally", () => {
+  it.effect("errors with a revert suggestion when a remote version is missing locally", () => {
     const { layer } = setup(tmp.current, { remote: ["20240101000000", "20240199000000"] });
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
@@ -194,7 +194,7 @@ describe("migration up", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("errors with an --include-all suggestion on an out-of-order local migration", () => {
+  it.effect("errors with an --include-all suggestion on an out-of-order local migration", () => {
     const { layer } = setup(tmp.current, { remote: ["20240102000000"] });
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
@@ -208,7 +208,7 @@ describe("migration up", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("applies out-of-order migrations with --include-all in the right order", () => {
+  it.effect("applies out-of-order migrations with --include-all in the right order", () => {
     const { layer, queries } = setup(tmp.current, { remote: ["20240102000000"] });
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql"); // out-of-order (before applied 02)
@@ -219,7 +219,7 @@ describe("migration up", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("creates a new [db.vault] secret before applying migrations", () => {
+  it.effect("creates a new [db.vault] secret before applying migrations", () => {
     const { layer, out, queries } = setup(tmp.current, {
       remote: [],
     });
@@ -233,7 +233,7 @@ describe("migration up", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a vault upsert failure", () => {
+  it.effect("reports a vault upsert failure", () => {
     const { layer } = setup(tmp.current, {
       remote: [],
       failVault: true,
@@ -250,7 +250,7 @@ describe("migration up", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("updates an existing [db.vault] secret by id", () => {
+  it.effect("updates an existing [db.vault] secret by id", () => {
     const { layer, queries } = setup(tmp.current, {
       remote: [],
       existingVault: [{ id: "vault-id-1", name: "my_secret" }],
@@ -265,7 +265,7 @@ describe("migration up", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --db-url combined with --linked", () => {
+  it.effect("rejects --db-url combined with --linked", () => {
     const { layer } = setup(tmp.current, { args: ["--db-url", "postgresql://x", "--linked"] });
     return Effect.gen(function* () {
       const exit = yield* migrationUp(
@@ -279,7 +279,7 @@ describe("migration up", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "applies on the project given via --project-ref --linked, overriding the linked ref",
     () => {
       // VALID_REF is the resolver's fallback if the flag were absent; the flag must win.
@@ -296,7 +296,7 @@ describe("migration up", () => {
     },
   );
 
-  it.live("rejects --project-ref on the default local target", () => {
+  it.effect("rejects --project-ref on the default local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, execs, queries, cache } = setup(tmp.current, { remote: [] });
     return Effect.gen(function* () {
@@ -317,7 +317,7 @@ describe("migration up", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured result in json", () => {
+  it.effect("emits a structured result in json", () => {
     const { layer, out } = setup(tmp.current, { format: "json", remote: [] });
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
@@ -328,7 +328,7 @@ describe("migration up", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces an apply failure", () => {
+  it.effect("surfaces an apply failure", () => {
     const { layer } = setup(tmp.current, { remote: [], failApply: true });
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql", "create table boom;\n");

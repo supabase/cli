@@ -10,7 +10,7 @@ import { emitComputeMachineOutput } from "./compute.output.ts";
  * earlier); this pins it as a backstop against silently falling through to TOML.
  */
 describe("emitComputeMachineOutput", () => {
-  it.live("refuses -o env rather than falling through to the TOML encoder", () => {
+  it.effect("refuses -o env rather than falling through to the TOML encoder", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const created = yield* makeComputeProject({

@@ -66,29 +66,27 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
           .pipe(
             Effect.tapError(() => checking?.fail() ?? Effect.void),
             Effect.catch((cause) =>
-              Effect.gen(function* () {
-                // Flip the always-failing mapper into a success so we can inspect the
-                // tagged error before deciding whether to suggest an upgrade, then re-fail.
-                const mapped = yield* Effect.flip(mapCheckError(cause));
-                if (mapped._tag === "VanitySubdomainsCheckUnexpectedStatusError") {
-                  // Unlike `activate`, this command suppresses the upgrade-suggestion
-                  // analytics event.
-                  const upgradeSuggested = yield* suggestUpgrade({
-                    projectRef: ref,
-                    featureKey: "vanity_subdomain",
-                    statusCode: mapped.status,
-                    response: gateResponse(cause),
-                    trackAnalytics: false,
-                  });
-                  return yield* new VanitySubdomainsCheckUnexpectedStatusError({
-                    status: mapped.status,
-                    body: mapped.body,
-                    message: mapped.message,
-                    upgradeSuggested,
-                  });
-                }
-                return yield* Effect.fail(mapped);
-              }),
+              mapCheckError(cause).pipe(
+                Effect.catchTag("VanitySubdomainsCheckUnexpectedStatusError", (mapped) =>
+                  Effect.gen(function* () {
+                    // Unlike `activate`, this command suppresses the upgrade-suggestion
+                    // analytics event.
+                    const upgradeSuggested = yield* suggestUpgrade({
+                      projectRef: ref,
+                      featureKey: "vanity_subdomain",
+                      statusCode: mapped.status,
+                      response: gateResponse(cause),
+                      trackAnalytics: false,
+                    });
+                    return yield* new VanitySubdomainsCheckUnexpectedStatusError({
+                      status: mapped.status,
+                      body: mapped.body,
+                      message: mapped.message,
+                      upgradeSuggested,
+                    });
+                  }),
+                ),
+              ),
             ),
           );
         yield* checking?.clear() ?? Effect.void;

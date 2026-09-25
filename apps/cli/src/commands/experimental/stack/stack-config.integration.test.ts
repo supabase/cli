@@ -43,7 +43,7 @@ describe("loadStackConfig", () => {
     vi.unstubAllEnvs();
   });
 
-  it.live("decodes the default recipe and leaves listeners automatic", () =>
+  it.effect("decodes the default recipe and leaves listeners automatic", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-defaults"
 [edge_runtime]
@@ -79,7 +79,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("preserves explicit listener ports while translating every enabled service", () =>
+  it.effect("preserves explicit listener ports while translating every enabled service", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-ports"
 [api]
@@ -123,7 +123,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("leaves stack-opt-in init listeners automatic except disabled pooler", () =>
+  it.effect("leaves stack-opt-in init listeners automatic except disabled pooler", () =>
     Effect.gen(function* () {
       const root = yield* project(renderCliConfigTemplate("stack-config-init", false, true));
       const config = yield* load(root);
@@ -134,7 +134,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("keeps the shared API port when REST is disabled", () =>
+  it.effect("keeps the shared API port when REST is disabled", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-auth-port"
 [api]
@@ -149,7 +149,7 @@ port = 55431
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects Auth email template content paths deferred by the stack", () =>
+  it.effect("rejects Auth email template content paths deferred by the stack", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-auth-template"
 [auth.email.template.invite]
@@ -161,7 +161,7 @@ content_path = "./templates/invite.html"
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("validates enabled Auth third-party providers", () =>
+  it.effect("validates enabled Auth third-party providers", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-auth-third-party"
 [auth.third_party.firebase]
@@ -174,7 +174,7 @@ project_id = ""
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("loads an empty signing-key file and skips it when Auth is disabled", () =>
+  it.effect("loads an empty signing-key file and skips it when Auth is disabled", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -274,7 +274,7 @@ issuer_url = ""
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects an analytics backend the stack cannot represent", () =>
+  it.effect("rejects an analytics backend the stack cannot represent", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-analytics"
 [analytics]
@@ -288,7 +288,7 @@ backend = "bigquery"
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects unsupported database versions before creating recipes", () =>
+  it.effect("rejects unsupported database versions before creating recipes", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-db-version"
 [db]
@@ -301,7 +301,7 @@ major_version = 14
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("ignores unresolved experimental S3 env placeholders", () => {
+  it.effect("ignores unresolved experimental S3 env placeholders", () => {
     for (const name of ["s3_host", "S3_REGION", "S3_ACCESS_KEY", "S3_SECRET_KEY"])
       vi.stubEnv(name, "");
     return Effect.gen(function* () {
@@ -318,7 +318,7 @@ s3_secret_key = "env(S3_SECRET_KEY)"
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.live("rejects OrioleDB and ignores its inactive S3 settings", () =>
+  it.effect("rejects OrioleDB and ignores its inactive S3 settings", () =>
     Effect.gen(function* () {
       const orioledb = yield* project(`project_id = "stack-config-orioledb"
 [experimental]

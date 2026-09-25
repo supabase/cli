@@ -1,4 +1,4 @@
-import { Data, Effect, type FileSystem, type Path } from "effect";
+import { Array as Arr, Data, Effect, Predicate, type FileSystem, type Path } from "effect";
 
 import {
   actionability,
@@ -75,8 +75,8 @@ export const writePgDeltaMigrations = (
     const migrationsDir = pathSvc.join(workdir, "supabase", "migrations");
     const migrationEntries = yield* fs.readDirectory(migrationsDir).pipe(
       Effect.catchTag("PlatformError", (error) =>
-        error.reason._tag === "NotFound"
-          ? Effect.succeed([] as ReadonlyArray<string>)
+        Predicate.isTagged(error.reason, "NotFound")
+          ? Effect.succeed<ReadonlyArray<string>>([])
           : Effect.fail(
               new PgDeltaMigrationWriteError({
                 message: `failed to read migration directory: ${error.message}`,
@@ -149,9 +149,7 @@ export const writePgDeltaMigrations = (
 
     const written: Array<WrittenMigration> = [];
     const writeAll = Effect.gen(function* () {
-      for (let i = 0; i < files.length; i++) {
-        const w = set[i]!;
-        const file = files[i]!;
+      for (const [w, file] of Arr.zip(set, files)) {
         yield* makeDir(fs, pathSvc.dirname(w.path)).pipe(
           Effect.mapError((cause) => new PgDeltaMigrationWriteError({ message: cause.message })),
         );
@@ -159,10 +157,9 @@ export const writePgDeltaMigrations = (
           Effect.mapError(
             (cause) =>
               new PgDeltaMigrationWriteError({
-                message:
-                  cause.reason._tag === "AlreadyExists"
-                    ? `failed to open migration file: ${cause.message}`
-                    : `failed to write migration file: ${cause.message}`,
+                message: Predicate.isTagged(cause.reason, "AlreadyExists")
+                  ? `failed to open migration file: ${cause.message}`
+                  : `failed to write migration file: ${cause.message}`,
               }),
           ),
         );

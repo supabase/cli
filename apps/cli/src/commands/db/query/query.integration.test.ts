@@ -296,7 +296,7 @@ const SELECT_RESULT: QueryResult = {
 };
 
 describe("db query integration", () => {
-  it.live("runs SQL passed as a positional argument and renders a table for humans", () => {
+  it.effect("runs SQL passed as a positional argument and renders a table for humans", () => {
     const { layer, out, cache } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select * from users"), local: Option.some(true) }));
@@ -307,7 +307,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders a local float8 column with Go's %g, integer columns plain", () => {
+  it.effect("renders a local float8 column with Go's %g, integer columns plain", () => {
     // OIDs: int8=20 → plain; float8=701 → %g (select 1000000::int8, 1000000::float8).
     const { layer, out } = setup({
       result: {
@@ -323,7 +323,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports connecting to the remote database for a --db-url target", () => {
+  it.effect("reports connecting to the remote database for a --db-url target", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, isLocal: false });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), dbUrl: Option.some("postgres://x/y") }));
@@ -331,7 +331,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("errors when no SQL is provided on a TTY", () => {
+  it.effect("errors when no SQL is provided on a TTY", () => {
     const { layer } = setup({ stdinTTY: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(flags({ local: Option.some(true) })).pipe(Effect.exit);
@@ -341,7 +341,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reads SQL piped via stdin", () => {
+  it.effect("reads SQL piped via stdin", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, stdinTTY: false, piped: "select 1\n" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ local: Option.some(true) }));
@@ -349,7 +349,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reads SQL from --file", () => {
+  it.effect("reads SQL from --file", () => {
     const { layer, out } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -362,7 +362,7 @@ describe("db query integration", () => {
     }).pipe(Effect.scoped, Effect.provide(layer));
   });
 
-  it.live("resolves a relative --file against the workdir", () =>
+  it.effect("resolves a relative --file against the workdir", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -376,7 +376,7 @@ describe("db query integration", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("errors when --file cannot be read", () => {
+  it.effect("errors when --file cannot be read", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
@@ -386,7 +386,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("errors on empty stdin", () => {
+  it.effect("errors on empty stdin", () => {
     const { layer } = setup({ stdinTTY: false, piped: "   " });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(flags({ local: Option.some(true) })).pipe(Effect.exit);
@@ -394,7 +394,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints the command tag for DDL with no result columns", () => {
+  it.effect("prints the command tag for DDL with no result columns", () => {
     const { layer, out } = setup({ result: { fields: [], rows: [], commandTag: "CREATE TABLE" } });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("create table t()"), local: Option.some(true) }));
@@ -402,7 +402,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders JSON for agents by default with the untrusted-data envelope", () => {
+  it.effect("renders JSON for agents by default with the untrusted-data envelope", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
@@ -416,7 +416,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("auto-detects an agent from AiTool and defaults to JSON", () => {
+  it.effect("auto-detects an agent from AiTool and defaults to JSON", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "auto", aiTool: "cursor" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
@@ -424,7 +424,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders plain JSON (no envelope) for a human with -o json", () => {
+  it.effect("renders plain JSON (no envelope) for a human with -o json", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", goOutput: "json" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
@@ -437,7 +437,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders plain JSON for --output-format json with --agent no", () => {
+  it.effect("renders plain JSON for --output-format json with --agent no", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "json" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
@@ -448,7 +448,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event for --output-format stream-json with --agent no", () => {
+  it.effect("emits a result event for --output-format stream-json with --agent no", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "stream-json" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
@@ -468,7 +468,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves exact bigint tokens in --output-format stream-json", () => {
+  it.effect("preserves exact bigint tokens in --output-format stream-json", () => {
     const { layer, out } = setup({
       result: {
         fields: ["n"],
@@ -486,7 +486,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lets --output pretty win over --output-format json", () => {
+  it.effect("lets --output pretty win over --output-format json", () => {
     const { layer, out } = setup({
       result: SELECT_RESULT,
       agent: "no",
@@ -500,7 +500,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails JSON output on a non-finite float (Go's json.Encoder error), no stdout", () => {
+  it.effect("fails JSON output on a non-finite float (Go's json.Encoder error), no stdout", () => {
     const { layer, out } = setup({
       result: { fields: ["f"], fieldTypeIds: [701], rows: [[Number.NaN]], commandTag: "SELECT 1" },
       agent: "no",
@@ -516,7 +516,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("records the resolved -o as the telemetry output_format (Go parity)", () => {
+  it.effect("records the resolved -o as the telemetry output_format (Go parity)", () => {
     const human = setup({ result: SELECT_RESULT, agent: "no" });
     const agent = setup({ result: SELECT_RESULT, agent: "yes" });
     const csv = setup({ result: SELECT_RESULT, agent: "no", goOutput: "csv" });
@@ -536,7 +536,7 @@ describe("db query integration", () => {
     });
   });
 
-  it.live("renders CSV with -o csv", () => {
+  it.effect("renders CSV with -o csv", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", goOutput: "csv" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
@@ -544,7 +544,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors an explicit -o table over the agent JSON default", () => {
+  it.effect("honors an explicit -o table over the agent JSON default", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", goOutput: "table" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
@@ -553,7 +553,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors an explicit -o csv over the agent JSON default", () => {
+  it.effect("honors an explicit -o csv over the agent JSON default", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", goOutput: "csv" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
@@ -561,7 +561,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("attaches an RLS advisory in agent JSON mode", () => {
+  it.effect("attaches an RLS advisory in agent JSON mode", () => {
     const { layer, out } = setup({
       result: SELECT_RESULT,
       agent: "yes",
@@ -573,7 +573,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits the advisory when the RLS check fails", () => {
+  it.effect("omits the advisory when the RLS check fails", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", rlsFails: true });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
@@ -581,7 +581,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves the --db-url/config before reading SQL (Go root PreRun order)", () => {
+  it.effect("resolves the --db-url/config before reading SQL (Go root PreRun order)", () => {
     const { layer } = setup({ resolveFails: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
@@ -592,7 +592,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DbQueryExecError when the query errors", () => {
+  it.effect("fails with DbQueryExecError when the query errors", () => {
     const { layer } = setup({ queryFails: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
@@ -602,7 +602,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects conflicting targets (--linked --local) before running any SQL", () => {
+  it.effect("rejects conflicting targets (--linked --local) before running any SQL", () => {
     const { layer, cache } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
@@ -620,7 +620,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --local=false --linked=false as a target conflict (Go flag.Changed)", () => {
+  it.effect("rejects --local=false --linked=false as a target conflict (Go flag.Changed)", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
@@ -637,7 +637,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails an unlinked --linked query without prompting for a project", () => {
+  it.effect("fails an unlinked --linked query without prompting for a project", () => {
     const { layer } = setup({ unlinked: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
@@ -648,7 +648,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces a project-ref read failure instead of reporting not-linked", () => {
+  it.effect("surfaces a project-ref read failure instead of reporting not-linked", () => {
     const { layer } = setup({ refReadFails: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
@@ -660,7 +660,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("queries the linked project over HTTP and writes the linked-project cache", () => {
+  it.effect("queries the linked project over HTTP and writes the linked-project cache", () => {
     const { layer, out, cache } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
@@ -672,7 +672,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("queries the project given via --project-ref without a linked workdir", () => {
+  it.effect("queries the project given via --project-ref without a linked workdir", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, out, cache, httpClient } = setup({
       linkedStatus: 201,
@@ -696,7 +696,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--project-ref overrides an already-linked workdir's project ref", () => {
+  it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, cache, httpClient } = setup({
       linkedStatus: 201,
@@ -719,7 +719,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --project-ref without --linked (query defaults to the local target)", () => {
+  it.effect("rejects --project-ref without --linked (query defaults to the local target)", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, out, cache, httpClient } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {
@@ -736,7 +736,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --linked=false as an explicit linked target (Go gates on flag.Changed)", () => {
+  it.effect("treats --linked=false as an explicit linked target (Go gates on flag.Changed)", () => {
     const { layer, out, cache } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
@@ -748,7 +748,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves the linked DB config before the API call (Go root PreRun order)", () => {
+  it.effect("resolves the linked DB config before the API call (Go root PreRun order)", () => {
     const { layer, out, cache } = setup({
       resolveFails: true,
       linkedStatus: 201,
@@ -765,7 +765,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("caches the linked project even when SQL resolution fails (Go PostRun)", () => {
+  it.effect("caches the linked project even when SQL resolution fails (Go PostRun)", () => {
     const { layer, cache } = setup({ stdinTTY: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(flags({ linked: Option.some(true) })).pipe(Effect.exit);
@@ -775,7 +775,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "errors when the linked API returns a non-201 but still caches the linked project",
     () => {
       const { layer, cache } = setup({
@@ -792,7 +792,7 @@ describe("db query integration", () => {
     },
   );
 
-  it.live("handles an empty linked result array", () => {
+  it.effect("handles an empty linked result array", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[]" });
     return Effect.gen(function* () {
       yield* dbQuery(
@@ -802,7 +802,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints the raw body when the linked response is not a JSON array", () => {
+  it.effect("prints the raw body when the linked response is not a JSON array", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: '{"command":"INSERT"}' });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("insert ..."), linked: Option.some(true) }));
@@ -810,7 +810,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints the raw body when the linked response is not valid JSON", () => {
+  it.effect("prints the raw body when the linked response is not valid JSON", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "CREATE TABLE" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("create ..."), linked: Option.some(true) }));
@@ -818,7 +818,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders linked agent JSON with the envelope (no advisory on the linked path)", () => {
+  it.effect("renders linked agent JSON with the envelope (no advisory on the linked path)", () => {
     const { layer, out } = setup({
       agent: "yes",
       linkedStatus: 201,
@@ -833,7 +833,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("falls back to map keys when the first linked row has no orderable keys", () => {
+  it.effect("falls back to map keys when the first linked row has no orderable keys", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[null]" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
@@ -841,7 +841,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders NULL for a null row object in a linked result", () => {
+  it.effect("renders NULL for a null row object in a linked result", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: '[{"a":1},null]' });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
@@ -850,7 +850,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps a linked HTTP transport failure to an exec error", () => {
+  it.effect("maps a linked HTTP transport failure to an exec error", () => {
     const { layer } = setup({ networkFail: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
@@ -860,7 +860,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("requires login before querying --linked", () => {
+  it.effect("requires login before querying --linked", () => {
     const { layer } = setup({ accessToken: Option.none() });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
@@ -870,7 +870,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "rejects an invalid env access token before the linked query (Go LoadAccessTokenFS)",
     () => {
       const { layer, out } = setup({ accessTokenInvalid: true, linkedStatus: 201 });
@@ -885,7 +885,7 @@ describe("db query integration", () => {
     },
   );
 
-  it.live("runs the --linked login preflight before reading --file (Go PreRun order)", () => {
+  it.effect("runs the --linked login preflight before reading --file (Go PreRun order)", () => {
     const { layer } = setup({ accessToken: Option.none() });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
@@ -896,7 +896,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces a linked config/connection failure before the missing-token error", () => {
+  it.effect("surfaces a linked config/connection failure before the missing-token error", () => {
     const { layer } = setup({ accessToken: Option.none(), resolveFails: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(

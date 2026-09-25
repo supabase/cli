@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Result } from "effect";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -29,17 +29,17 @@ export interface CnameFailure {
 export function parseFirstCname(
   payload: unknown,
   host: string,
-): Effect.Effect<string, CnameFailure> {
+): Result.Result<string, CnameFailure> {
   const answers = isRecord(payload) && Array.isArray(payload["Answer"]) ? payload["Answer"] : [];
   for (const answer of answers) {
     if (isRecord(answer) && answer["type"] === CNAME_TYPE && typeof answer["data"] === "string") {
-      return Effect.succeed(answer["data"]);
+      return Result.succeed(answer["data"]);
     }
   }
   // Cap the embedded answer dump so an oversized DNS response can't flood the error envelope.
   const dump = JSON.stringify(answers, null, 4);
   const capped = dump.length > 1024 ? `${dump.slice(0, 1024)}…` : dump;
-  return Effect.fail({
+  return Result.fail({
     transport: false,
     detail: `failed to locate appropriate CNAME record for ${host}; resolves to ${capped}`,
   });
@@ -78,30 +78,32 @@ export const verifyCname = Effect.fnUntraced(function* (args: {
     HttpClientRequest.setHeader("accept", "application/dns-json"),
   );
 
+  const failedToResolve = (failure: CnameFailure) =>
+    new DomainsCnameError({
+      message: `expected custom hostname '${args.customHostname}' to have a CNAME record pointing to your project at '${expected}', but it failed to resolve: ${failure.detail}`,
+      transport: failure.transport,
+    });
+  const transportFailedToResolve = (cause: unknown) => failedToResolve(transportFailure(cause));
+
   const resolved = yield* Effect.gen(function* () {
     const response = yield* args.httpClient
       .execute(request)
-      .pipe(Effect.mapError(transportFailure));
+      .pipe(Effect.mapError(transportFailedToResolve));
     if (response.status !== 200) {
-      return yield* Effect.fail<CnameFailure>({
+      return yield* failedToResolve({
         transport: true,
         detail: `unexpected DNS query status ${response.status}`,
       });
     }
-    const payload = yield* response.json.pipe(Effect.mapError(transportFailure));
-    return yield* parseFirstCname(payload, args.customHostname);
+    const payload = yield* response.json.pipe(Effect.mapError(transportFailedToResolve));
+    const cname = parseFirstCname(payload, args.customHostname);
+    if (Result.isFailure(cname)) {
+      return yield* failedToResolve(cname.failure);
+    }
+    return cname.success;
   }).pipe(
     Effect.timeout("10 seconds"),
-    Effect.mapError((cause) => {
-      const failure: CnameFailure =
-        typeof cause === "object" && cause !== null && "transport" in cause
-          ? cause
-          : transportFailure(cause);
-      return new DomainsCnameError({
-        message: `expected custom hostname '${args.customHostname}' to have a CNAME record pointing to your project at '${expected}', but it failed to resolve: ${failure.detail}`,
-        transport: failure.transport,
-      });
-    }),
+    Effect.catchTag("TimeoutError", (cause) => Effect.fail(transportFailedToResolve(cause))),
   );
 
   if (resolved !== expected) {

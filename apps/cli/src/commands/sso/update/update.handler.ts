@@ -1,5 +1,5 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Redacted, Result, Stdio } from "effect";
+import { Effect, Option, Predicate, Redacted, Result, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -111,33 +111,38 @@ const SSO_UPDATE_SCAN_SPEC = {
 } as const;
 
 const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError) =>
-  Effect.gen(function* () {
-    const mapped = yield* Effect.flip(mapGetStatusOrNetwork(cause));
-    if (mapped._tag === "SsoUpdateUnexpectedStatusError") {
-      const upgradeSuggested = yield* suggestUpgrade({
-        projectRef: ref,
-        featureKey: "auth.saml_2",
-        statusCode: mapped.status,
-        response: gateResponse(cause),
-      });
-      if (mapped.status === 404) {
-        return yield* new SsoUpdateNotFoundError({
-          message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
+  mapGetStatusOrNetwork(cause).pipe(
+    Effect.catchTag("SsoUpdateUnexpectedStatusError", (mapped) =>
+      Effect.gen(function* () {
+        const upgradeSuggested = yield* suggestUpgrade({
+          projectRef: ref,
+          featureKey: "auth.saml_2",
+          statusCode: mapped.status,
+          response: gateResponse(cause),
+        });
+        if (mapped.status === 404) {
+          return yield* new SsoUpdateNotFoundError({
+            message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
+            upgradeSuggested,
+          });
+        }
+        return yield* new SsoUpdateUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
           upgradeSuggested,
         });
-      }
-      return yield* new SsoUpdateUnexpectedStatusError({
-        status: mapped.status,
-        body: mapped.body,
-        message: mapped.message,
-        upgradeSuggested,
-      });
-    }
-    return yield* Effect.fail(mapped);
-  });
+      }),
+    ),
+  );
 
 interface ExistingDomainItem {
   readonly domain?: string;
+}
+
+// Native parser errors are CLI output; schema decoding discards their messages.
+function parseProviderBody(rawBody: string): unknown {
+  return JSON.parse(rawBody);
 }
 
 /**
@@ -145,18 +150,18 @@ interface ExistingDomainItem {
  * consumes.
  */
 function extractDomainItems(parsed: unknown): ReadonlyArray<ExistingDomainItem> | undefined {
-  if (parsed === null || typeof parsed !== "object") {
+  if (!Predicate.hasProperty(parsed, "domains")) {
     return undefined;
   }
-  const domains = (parsed as Record<string, unknown>)["domains"];
+  const domains = parsed.domains;
   if (!Array.isArray(domains)) {
     return undefined;
   }
   return domains.map((item): ExistingDomainItem => {
-    if (item === null || typeof item !== "object") {
+    if (!Predicate.hasProperty(item, "domain")) {
       return {};
     }
-    const domain = (item as Record<string, unknown>)["domain"];
+    const domain = item.domain;
     return typeof domain === "string" ? { domain } : {};
   });
 }
@@ -347,8 +352,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         const contentType = response.headers["content-type"] ?? "";
         if (response.status === 200 && contentType.includes("json")) {
           const parsed = yield* Effect.try({
-            // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native parser errors are CLI output; schema decoding discards their messages.
-            try: (): unknown => JSON.parse(rawBody),
+            try: () => parseProviderBody(rawBody),
             catch: (cause) =>
               new SsoUpdateNetworkError({
                 message: `failed to get sso provider: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -515,9 +519,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
       if (output.format === "json" || output.format === "stream-json") {
         yield* output.success(
           "",
-          parsedJson !== null && typeof parsedJson === "object"
-            ? (parsedJson as Record<string, unknown>)
-            : { value: parsedJson },
+          Predicate.isObjectOrArray(parsedJson) ? { ...parsedJson } : { value: parsedJson },
         );
         return;
       }

@@ -161,7 +161,7 @@ const baseFlags: BranchesGetFlags = {
 };
 
 describe("branches get integration", () => {
-  it.live("fetches branch detail directly when input is a UUID (no lookup)", () => {
+  it.effect("fetches branch detail directly when input is a UUID (no lookup)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
@@ -174,7 +174,7 @@ describe("branches get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("performs lookup-then-detail when input is a plain name", () => {
+  it.effect("performs lookup-then-detail when input is a plain name", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesGet({ ...baseFlags, name: Option.some("feat-x") });
@@ -185,7 +185,7 @@ describe("branches get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders pretty 7-col table with masked ****** for missing credentials", () => {
+  it.effect("renders pretty 7-col table with masked ****** for missing credentials", () => {
     const { layer, out } = setup({ detailBody: DETAIL_MASKED });
     return Effect.gen(function* () {
       yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
@@ -195,7 +195,7 @@ describe("branches get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits standard-env map for --output-format=json", () => {
+  it.effect("emits standard-env map for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
@@ -210,7 +210,7 @@ describe("branches get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits SUPABASE_PUBLISHABLE_KEY for new-format api keys", () => {
+  it.effect("emits SUPABASE_PUBLISHABLE_KEY for new-format api keys", () => {
     const newFormatKeys: ApiKeys = [
       {
         name: "default",
@@ -234,7 +234,7 @@ describe("branches get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "keeps env-map keys verbatim for --output toml (map payload, exempt from CLI-1975)",
     () => {
       const { layer, out } = setup({ goOutput: "toml" });
@@ -247,7 +247,7 @@ describe("branches get integration", () => {
     },
   );
 
-  it.live("emits standard-env map for --output env (env-format encoder)", () => {
+  it.effect("emits standard-env map for --output env (env-format encoder)", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
@@ -256,7 +256,7 @@ describe("branches get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes WARNING to stderr when pooler parse fails in text mode", () => {
+  it.effect("writes WARNING to stderr when pooler parse fails in text mode", () => {
     const broken: Pooler = [
       {
         ...POOLER[0]!,
@@ -271,7 +271,7 @@ describe("branches get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesPrimaryNotFoundError when no PRIMARY pooler entry", () => {
+  it.effect("fails with BranchesPrimaryNotFoundError when no PRIMARY pooler entry", () => {
     const { layer } = setup({ goOutput: "json", skipPrimary: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -286,7 +286,7 @@ describe("branches get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesFindUnexpectedStatusError on lookup 404", () => {
+  it.effect("fails with BranchesFindUnexpectedStatusError on lookup 404", () => {
     const { layer } = setup({ findStatus: 404 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(branchesGet({ ...baseFlags, name: Option.some("feat-x") }));
@@ -299,7 +299,7 @@ describe("branches get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesGetUnexpectedStatusError on detail 503", () => {
+  it.effect("fails with BranchesGetUnexpectedStatusError on detail 503", () => {
     const { layer } = setup({ detailStatus: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -314,7 +314,7 @@ describe("branches get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesApiKeysUnexpectedStatusError on api-keys 403", () => {
+  it.effect("fails with BranchesApiKeysUnexpectedStatusError on api-keys 403", () => {
     const { layer } = setup({ goOutput: "json", apiKeysStatus: 403 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(

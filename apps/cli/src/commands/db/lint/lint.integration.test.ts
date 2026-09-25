@@ -216,7 +216,7 @@ const flags = (over: Partial<DbLintFlags> = {}): DbLintFlags => ({
 });
 
 describe("db lint", () => {
-  it.live("lints the named schema and prints parsed issues to stdout", () => {
+  it.effect("lints the named schema and prints parsed issues to stdout", () => {
     const { layer, out, connection } = setup({
       schemas: [],
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] },
@@ -238,7 +238,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lints every user schema when --schema is omitted", () => {
+  it.effect("lints every user schema when --schema is omitted", () => {
     const { layer, out, connection } = setup({
       schemas: ["public", "private"],
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])], private: [] },
@@ -251,7 +251,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the plpgsql_check extension cannot be enabled", () => {
+  it.effect("fails when the plpgsql_check extension cannot be enabled", () => {
     const { layer } = setup({ schemas: [], enableFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
@@ -263,7 +263,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails on malformed plpgsql_check json", () => {
+  it.effect("fails on malformed plpgsql_check json", () => {
     const { layer } = setup({ malformed: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
@@ -275,7 +275,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces a query failure from plpgsql_check", () => {
+  it.effect("surfaces a query failure from plpgsql_check", () => {
     const { layer } = setup({ queryFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
@@ -287,7 +287,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces a list-schemas failure", () => {
+  it.effect("surfaces a list-schemas failure", () => {
     const { layer } = setup({ listFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags()));
@@ -299,7 +299,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints 'No schema errors found' to stderr and nothing to stdout when clean", () => {
+  it.effect("prints 'No schema errors found' to stderr and nothing to stdout when clean", () => {
     const { layer, out } = setup({ checkRows: { public: [] } });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"] }));
@@ -308,7 +308,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits nothing on stdout when all issues are below --level (no clean message)", () => {
+  it.effect("emits nothing on stdout when all issues are below --level (no clean message)", () => {
     const { layer, out } = setup({ checkRows: { public: [checkRow("f1", [WARNING_ISSUE])] } });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"], level: Option.some("error") }));
@@ -317,7 +317,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("exits non-zero when --fail-on warning and a warning exists", () => {
+  it.effect("exits non-zero when --fail-on warning and a warning exists", () => {
     const { layer, out } = setup({ checkRows: { public: [checkRow("f1", [WARNING_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -338,7 +338,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("exits non-zero when --fail-on error and an error exists", () => {
+  it.effect("exits non-zero when --fail-on error and an error exists", () => {
     const { layer } = setup({ checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -352,7 +352,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not exit non-zero when --fail-on is none", () => {
+  it.effect("does not exit non-zero when --fail-on is none", () => {
     const { layer } = setup({ checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
@@ -360,7 +360,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not trigger --fail-on warning when --level error filters the warning out", () => {
+  it.effect("does not trigger --fail-on warning when --level error filters the warning out", () => {
     const { layer, out } = setup({ checkRows: { public: [checkRow("f1", [WARNING_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -377,7 +377,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --db-url together with --linked (via args Changed detection)", () => {
+  it.effect("rejects --db-url together with --linked (via args Changed detection)", () => {
     const { layer } = setup({ args: ["--db-url=postgres://x", "--linked"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags({ dbUrl: Option.some("postgres://x") })));
@@ -391,7 +391,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a standard success envelope in json mode", () => {
+  it.effect("emits a standard success envelope in json mode", () => {
     const { layer, out } = setup({
       format: "json",
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] },
@@ -409,7 +409,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits an empty result envelope in json mode when clean", () => {
+  it.effect("emits an empty result envelope in json mode when clean", () => {
     const { layer, out } = setup({ format: "json", checkRows: { public: [] } });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"] }));
@@ -419,7 +419,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event in stream-json mode", () => {
+  it.effect("emits a result event in stream-json mode", () => {
     const { layer, out } = setup({
       format: "stream-json",
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] },
@@ -432,7 +432,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sets exit code 1 without failing the effect on fail-on in json mode", () => {
+  it.effect("sets exit code 1 without failing the effect on fail-on in json mode", () => {
     const { layer, processControl } = setup({
       format: "json",
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] },
@@ -446,7 +446,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("labels the diagnostic 'remote' for a non-local connection", () => {
+  it.effect("labels the diagnostic 'remote' for a non-local connection", () => {
     const { layer, out } = setup({
       isLocal: false,
       checkRows: { public: [] },
@@ -458,7 +458,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lints multiple pre-parsed schemas from a comma-separated --schema value", () => {
+  it.effect("lints multiple pre-parsed schemas from a comma-separated --schema value", () => {
     // CSV parsing happens at `Flag.mapTryCatch` parse time; the handler receives the
     // already-split list directly.
     const { layer, connection } = setup({
@@ -470,7 +470,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes the linked-project cache for --linked (Go PersistentPostRun)", () => {
+  it.effect("writes the linked-project cache for --linked (Go PersistentPostRun)", () => {
     const { layer, projectRef, cache } = setup({
       isLocal: false,
       checkRows: { public: [] },
@@ -483,7 +483,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lints the project given via --project-ref, overriding the workdir's own ref", () => {
+  it.effect("lints the project given via --project-ref, overriding the workdir's own ref", () => {
     // `VALID_REF` stands in for whatever the workdir would resolve to absent the
     // flag; the flag must win.
     const FLAG_REF = "flagflagflagflagflag";
@@ -500,7 +500,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not write the linked-project cache for a local run", () => {
+  it.effect("does not write the linked-project cache for a local run", () => {
     const { layer, cache } = setup({ checkRows: { public: [] } });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"] }));
@@ -508,7 +508,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --project-ref on the default local target", () => {
+  it.effect("rejects --project-ref on the default local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, connection, cache } = setup({ checkRows: { public: [] } });
     return Effect.gen(function* () {
@@ -527,7 +527,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry on success and on failure", () => {
+  it.effect("flushes telemetry on success and on failure", () => {
     const success = setup({ checkRows: { public: [] } });
     const failure = setup({ enableFails: true });
     return Effect.gen(function* () {
@@ -538,7 +538,7 @@ describe("db lint", () => {
     });
   });
 
-  it.live("--linked=false routes to the linked branch (Changed, not value)", () => {
+  it.effect("--linked=false routes to the linked branch (Changed, not value)", () => {
     const { layer, projectRef, cache } = setup({
       isLocal: false,
       checkRows: { public: [] },
@@ -551,7 +551,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--no-linked routes to the linked branch (boolean negation is still Changed)", () => {
+  it.effect("--no-linked routes to the linked branch (boolean negation is still Changed)", () => {
     const { layer, projectRef, cache } = setup({
       isLocal: false,
       checkRows: { public: [] },
@@ -564,26 +564,32 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--local=false --linked fails with mutual-exclusion (sorted set [linked local])", () => {
-    const { layer } = setup({ args: ["--local=false", "--linked"] });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain(
-          "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-        );
-      }
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "--local=false --linked fails with mutual-exclusion (sorted set [linked local])",
+    () => {
+      const { layer } = setup({ args: ["--local=false", "--linked"] });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain(
+            "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("--local=false alone routes to the local branch (Changed local, connType=local)", () => {
-    const { layer, out, cache } = setup({ checkRows: { public: [] }, args: ["--local=false"] });
-    return Effect.gen(function* () {
-      yield* dbLint(flags({ schema: ["public"] }));
-      expect(out.stderrText).toContain("Connecting to local database...");
-      expect(cache.cached).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "--local=false alone routes to the local branch (Changed local, connType=local)",
+    () => {
+      const { layer, out, cache } = setup({ checkRows: { public: [] }, args: ["--local=false"] });
+      return Effect.gen(function* () {
+        yield* dbLint(flags({ schema: ["public"] }));
+        expect(out.stderrText).toContain("Connecting to local database...");
+        expect(cache.cached).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

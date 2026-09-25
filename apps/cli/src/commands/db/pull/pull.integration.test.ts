@@ -1208,7 +1208,7 @@ describe("db pull", () => {
         const exit = yield* dbPull(flags()).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const error = Exit.isFailure(exit)
-          ? exit.cause.reasons.find((reason) => reason._tag === "Fail")?.error
+          ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
           : undefined;
         const message = (error as { message?: string } | undefined)?.message ?? "";
         expect(message).toContain("Cannot read properties of undefined");

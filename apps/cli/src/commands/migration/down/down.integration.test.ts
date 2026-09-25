@@ -175,7 +175,7 @@ const writeProjectFile = Effect.fnUntraced(function* (workdir: string, name: str
 const tmp = useTempWorkdir();
 
 describe("migration down", () => {
-  it.live("rejects --last 0", () => {
+  it.effect("rejects --last 0", () => {
     const { layer } = setup(tmp.current);
     return Effect.gen(function* () {
       const exit = yield* migrationDown(flags({ last: 0 })).pipe(Effect.exit);
@@ -187,7 +187,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves the DB target before rejecting --last 0", () => {
+  it.effect("resolves the DB target before rejecting --last 0", () => {
     const { layer } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
       const exit = yield* migrationDown(flags({ last: 0 })).pipe(Effect.exit);
@@ -199,7 +199,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --last >= total applied migrations", () => {
+  it.effect("rejects --last >= total applied migrations", () => {
     const { layer } = setup(tmp.current, { remote: ["20240101000000"] });
     return Effect.gen(function* () {
       const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
@@ -211,7 +211,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reverts to the target version on confirm (drop + migrate&seed)", () => {
+  it.effect("reverts to the target version on confirm (drop + migrate&seed)", () => {
     const { layer, out, execs, queries } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
@@ -231,7 +231,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "reverts on the project given via --project-ref --linked, overriding the linked ref",
     () => {
       // VALID_REF is the fake resolver's fallback, representing whatever the
@@ -254,7 +254,7 @@ describe("migration down", () => {
     },
   );
 
-  it.live("rejects --project-ref on the default local target", () => {
+  it.effect("rejects --project-ref on the default local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, execs, queries, cache } = setup(tmp.current, {
       remote: ["20240101000000", "20240102000000"],
@@ -277,7 +277,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("cancels on a declined prompt", () => {
+  it.effect("cancels on a declined prompt", () => {
     const { layer, execs } = setup(tmp.current, {
       confirm: false,
       remote: ["20240101000000", "20240102000000"],
@@ -294,7 +294,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("falls back to NO (cancels) without a TTY and no piped answer", () => {
+  it.effect("falls back to NO (cancels) without a TTY and no piped answer", () => {
     // isTTY only changes the read timeout; stdin is still read either way.
     const { layer, out } = setup(tmp.current, {
       isTTY: false,
@@ -311,7 +311,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured result in json with --yes", () => {
+  it.effect("emits a structured result in json with --yes", () => {
     const { layer, out } = setup(tmp.current, {
       format: "json",
       yes: true,
@@ -330,7 +330,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
+  it.effect("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
     // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
     const { layer, out } = setup(tmp.current, {
       format: "json",
@@ -350,7 +350,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a drop-schema failure", () => {
+  it.effect("reports a drop-schema failure", () => {
     const { layer } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
@@ -367,7 +367,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("seeds data from a new seed file and records its hash", () => {
+  it.effect("seeds data from a new seed file and records its hash", () => {
     const { layer, out, queries } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
@@ -383,7 +383,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a seed-apply failure", () => {
+  it.effect("reports a seed-apply failure", () => {
     const { layer } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
@@ -401,7 +401,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("skips an unchanged seed file", () => {
+  it.effect("skips an unchanged seed file", () => {
     const body = "insert into a values (1);\n";
     const hash = createHash("sha256").update(body).digest("hex");
     const { layer, out, queries } = setup(tmp.current, {
@@ -420,7 +420,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("updates the recorded hash (without re-running) for a changed seed file", () => {
+  it.effect("updates the recorded hash (without re-running) for a changed seed file", () => {
     const { layer, out, execs, queries } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
@@ -438,7 +438,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("skips migration apply when db.migrations.enabled = false", () => {
+  it.effect("skips migration apply when db.migrations.enabled = false", () => {
     const { layer, queries } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],

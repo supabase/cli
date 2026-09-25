@@ -100,7 +100,7 @@ const baseFlags: BranchesPauseFlags = {
 };
 
 describe("branches pause integration", () => {
-  it.live("pauses a branch when given a project-ref pattern (skips lookup)", () => {
+  it.effect("pauses a branch when given a project-ref pattern (skips lookup)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesPause({ ...baseFlags, name: Option.some(BRANCH_REF) });
@@ -110,7 +110,7 @@ describe("branches pause integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves a UUID via V1GetABranchConfig and then pauses", () => {
+  it.effect("resolves a UUID via V1GetABranchConfig and then pauses", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesPause({ ...baseFlags, name: Option.some(BRANCH_UUID) });
@@ -123,7 +123,7 @@ describe("branches pause integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves a plain name via the project's branches endpoint", () => {
+  it.effect("resolves a plain name via the project's branches endpoint", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesPause({ ...baseFlags, name: Option.some("feat-x") });
@@ -136,7 +136,7 @@ describe("branches pause integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not emit anything on stdout/stderr on success (silent like Go)", () => {
+  it.effect("does not emit anything on stdout/stderr on success (silent like Go)", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* branchesPause({ ...baseFlags, name: Option.some(BRANCH_REF) });
@@ -145,7 +145,7 @@ describe("branches pause integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesPauseUnexpectedStatusError on non-200", () => {
+  it.effect("fails with BranchesPauseUnexpectedStatusError on non-200", () => {
     const { layer } = setup({ pauseStatus: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -160,7 +160,7 @@ describe("branches pause integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache and telemetry state on success", () => {
+  it.effect("writes linked-project cache and telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
       yield* branchesPause({ ...baseFlags, name: Option.some(BRANCH_REF) });

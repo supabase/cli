@@ -230,7 +230,7 @@ const runStatus = (input: {
     return { effect, out, root };
   }).pipe(Effect.provide(BunServices.layer));
 
-it.live("reports observed lifecycle and health without requesting credentials", () =>
+it.effect("reports observed lifecycle and health without requesting credentials", () =>
   Effect.gen(function* () {
     const databaseCalls = { value: 0 };
     const restCalls = { value: 0 };
@@ -284,7 +284,7 @@ it.live("reports observed lifecycle and health without requesting credentials", 
   }),
 );
 
-it.live("preserves service status failures and marks aggregate readiness unavailable", () =>
+it.effect("preserves service status failures and marks aggregate readiness unavailable", () =>
   Effect.gen(function* () {
     const run = yield* runStatus({
       services: [
@@ -312,7 +312,7 @@ it.live("preserves service status failures and marks aggregate readiness unavail
   }),
 );
 
-it.live("does not label a requested stop as an unexpected process exit", () =>
+it.effect("does not label a requested stop as an unexpected process exit", () =>
   Effect.gen(function* () {
     const stopped = makeObservation("database-id", database, {
       lifecycle: "stopped",
@@ -353,7 +353,7 @@ it.live("does not label a requested stop as an unexpected process exit", () =>
   }),
 );
 
-it.live("reports stopped readiness without treating unbound endpoints as drift", () =>
+it.effect("reports stopped readiness without treating unbound endpoints as drift", () =>
   Effect.gen(function* () {
     const run = yield* runStatus({
       services: [
@@ -380,7 +380,7 @@ it.live("reports stopped readiness without treating unbound endpoints as drift",
   }),
 );
 
-it.live("does not report port drift when a stopped service has no live binding", () =>
+it.effect("does not report port drift when a stopped service has no live binding", () =>
   Effect.gen(function* () {
     const run = yield* runStatus({
       services: [
@@ -404,7 +404,7 @@ it.live("does not report port drift when a stopped service has no live binding",
   }),
 );
 
-it.live("reports changed explicit ports even while a service is stopped", () =>
+it.effect("reports changed explicit ports even while a service is stopped", () =>
   Effect.gen(function* () {
     const changed = { ...database, endpoints: { sql: { port: 54329 } } };
     const run = yield* runStatus({
@@ -431,7 +431,7 @@ it.live("reports changed explicit ports even while a service is stopped", () =>
   }),
 );
 
-it.live("reports unavailable owner and does not query service status", () =>
+it.effect("reports unavailable owner and does not query service status", () =>
   Effect.gen(function* () {
     const statusCalls = { value: 0 };
     const services = [
@@ -450,7 +450,7 @@ it.live("reports unavailable owner and does not query service status", () =>
   }),
 );
 
-it.live("rejects environment export when the owner is unavailable", () =>
+it.effect("rejects environment export when the owner is unavailable", () =>
   Effect.gen(function* () {
     const run = yield* runStatus({
       services: [makeService({ id: "database-id", creation: database, statusCalls: { value: 0 } })],
@@ -468,7 +468,7 @@ it.live("rejects environment export when the owner is unavailable", () =>
   }),
 );
 
-it.live("exports saved credentials only for a running database", () =>
+it.effect("exports saved credentials only for a running database", () =>
   Effect.gen(function* () {
     const services = [
       makeService({
@@ -513,7 +513,7 @@ it.live("exports saved credentials only for a running database", () =>
   }),
 );
 
-it.live("uses only the composition database for environment export", () =>
+it.effect("uses only the composition database for environment export", () =>
   Effect.gen(function* () {
     const shadow = makeObservation("shadow-db", database, {
       lifecycle: "running",
@@ -550,7 +550,7 @@ it.live("uses only the composition database for environment export", () =>
   }),
 );
 
-it.live("keeps status usable with malformed project configuration", () =>
+it.effect("keeps status usable with malformed project configuration", () =>
   Effect.gen(function* () {
     const services = [
       makeService({

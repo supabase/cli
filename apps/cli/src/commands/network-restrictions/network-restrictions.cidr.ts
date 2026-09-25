@@ -59,8 +59,8 @@ export function isPrivateCidr(cidr: ParsedCidr): boolean {
     const octets = cidr.v4MappedAddress ?? cidr.address;
     const parts = octets.split(".");
     if (parts.length !== 4) return false;
-    const a = Number.parseInt(parts[0]!, 10);
-    const b = Number.parseInt(parts[1]!, 10);
+    const a = Number.parseInt(parts[0] ?? "", 10);
+    const b = Number.parseInt(parts[1] ?? "", 10);
     if (a === 10) return true;
     if (a === 172 && b >= 16 && b <= 31) return true;
     if (a === 192 && b === 168) return true;
