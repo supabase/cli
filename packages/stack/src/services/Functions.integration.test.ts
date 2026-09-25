@@ -4,7 +4,6 @@ import { Cause, Effect, FileSystem, Layer, Ref, Schedule, Schema, Stream } from 
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { makeService } from "../Service.ts";
-import { bundleServeMainTemplate } from "../../tests/serve-main-bundler.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 
 const options = (root: string) => ({
@@ -60,13 +59,11 @@ describe("service catalog", () => {
           functionsRoot + "/hello/index.ts",
           "Deno.serve(() => Response.json({ custom: Deno.env.get('CUSTOM_ENV'), root: Deno.env.get('SUPABASE_INTERNAL_FUNCTIONS_ROOT'), port: Deno.env.get('EDGE_RUNTIME_PORT'), url: Deno.env.get('SUPABASE_URL'), db: Deno.env.get('SUPABASE_DB_URL'), jwt: Deno.env.get('SUPABASE_INTERNAL_JWT_SECRET'), jwks: Deno.env.get('SUPABASE_JWKS'), anon: Deno.env.get('SUPABASE_ANON_KEY'), service: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'), publishable: Deno.env.get('SUPABASE_PUBLISHABLE_KEYS'), secret: Deno.env.get('SUPABASE_SECRET_KEYS') }));",
         );
-        const bootstrap = yield* bundleServeMainTemplate;
         const recipe = yield* makeServiceRecipe(
           {
             service: "functions",
             config: {
               functionsRoot,
-              bootstrap,
               databaseUrl: "postgres://functions-db",
               apiUrl: "http://functions-api",
               jwtSecret: "functions-jwt-secret",
@@ -185,7 +182,6 @@ describe("service catalog", () => {
                 service: "functions",
                 config: {
                   functionsRoot,
-                  bootstrap: yield* bundleServeMainTemplate,
                   verifyJwt: false,
                 },
               },
@@ -264,7 +260,6 @@ for (const runtime of ["native", "docker"] as const) {
               config: {
                 functionsRoot,
                 filesRoot,
-                bootstrap: yield* bundleServeMainTemplate,
                 jwtSecret: "test-function-jwt-with-at-least-32-characters",
                 verifyJwt: true,
                 env: {

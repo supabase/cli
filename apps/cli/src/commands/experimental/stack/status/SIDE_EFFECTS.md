@@ -31,8 +31,6 @@ available and is shown as `config_drift.status: "unavailable"` with a message in
 JSON. Status does not apply current configuration. The `services` list may include
 saved standalone instances; composition members identify the services used for
 primary database, environment export, and drift comparisons.
-The source checkout may bundle the default Functions bootstrap while translating
-project configuration for drift; this is in-memory and writes no project files.
 
 Text output includes identity, runtime, owner, lifecycle, readiness, services,
 endpoints, and config drift. JSON nests only identity fields under `identity`;

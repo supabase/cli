@@ -14,7 +14,6 @@ import {
 import { postgres } from "../../src/Tools.ts";
 import { homedir, tmpdir } from "node:os";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { bundleServeMainTemplate } from "../serve-main-bundler.ts";
 import { create, type Stack } from "../../src/effect.ts";
 import type { Observation } from "../../src/Rpc.ts";
 import { vectorAnalyticsConfig } from "./analytics.ts";
@@ -103,7 +102,6 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
       `${functionsRoot}/hello/index.ts`,
       "Deno.serve(async (request) => { const authorization = request.headers.get('authorization') ?? ''; const input = await request.json(); const response = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/whole_stack_items?id=eq.${input.id}`, { headers: { authorization, apikey: authorization.replace('Bearer ', '') } }); return new Response(await response.text(), { status: response.status, headers: { 'content-type': 'application/json' } }); });",
     );
-    const bootstrap = yield* bundleServeMainTemplate;
     const crypto = yield* Crypto.Crypto;
     const secret = `whole-stack-${yield* crypto.randomUUIDv4}-secret`;
     const locations = {
@@ -170,7 +168,7 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
         },
         {
           service: "functions",
-          config: { functionsRoot, bootstrap, verifyJwt: true, jwtSecret: secret },
+          config: { functionsRoot, verifyJwt: true, jwtSecret: secret },
           endpoints: { http: endpoint("auto") },
         },
         { service: "studio", config: { jwtSecret: secret }, endpoints: { http: endpoint("auto") } },
