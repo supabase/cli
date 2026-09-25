@@ -61,7 +61,7 @@
     "@supabase/pg-topo": "1.0.0-alpha.6",
     "@supabase/stack": "workspace:*",
     "@supabase/supabase-js": "catalog:",
-    "@supabase/typegen": "0.1.1",
+    "@supabase/typegen": "0.1.2",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@types/pg": "^8.23.1",
