@@ -107,7 +107,10 @@ export interface ServiceInstance<K extends Kind = Kind> {
   readonly stop: Effect.Effect<void, StackError>;
   readonly restart: (input?: ServiceCreationRestartInput<K>) => Effect.Effect<void, StackError>;
   readonly destroy: Effect.Effect<void, StackError>;
+  /** Ensures the service artifact or image is available without starting the service. */
   readonly prepare: Effect.Effect<void, StackError>;
+  /** Runs the one-shot service initialization command while stopped with wake disabled. */
+  readonly initialize: Effect.Effect<void, StackError>;
   readonly status: Effect.Effect<Observation, StackError>;
   readonly followStatus: Stream.Stream<Observation, StackError>;
   readonly logs: Stream.Stream<
@@ -279,6 +282,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           ),
     destroy: call("destroy", (rpc) => rpc.destroyService({ id })),
     prepare: call("prepare", (rpc) => rpc.prepareService({ id })),
+    initialize: call("initialize", (rpc) => rpc.initializeService({ id })),
     status: call("status", (rpc) => rpc.status({ id }), false),
     followStatus: stream("followStatus", (rpc) => rpc.followStatus({ id })),
     logs: stream("logs", (rpc) => rpc.logs({ id })),

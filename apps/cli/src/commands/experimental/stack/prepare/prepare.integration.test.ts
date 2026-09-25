@@ -53,6 +53,7 @@ const makeFixture = (root: string, failPreparation = false) => {
     destroy: Effect.sync(() => {
       destroyCount += 1;
     }),
+    initialize: Effect.void,
     prepare: Effect.sync(() => {
       prepareCount += 1;
     }).pipe(

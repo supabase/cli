@@ -96,6 +96,7 @@ const makeService = (input: {
   stop: Effect.die("unused"),
   restart: () => Effect.die("unused"),
   destroy: Effect.die("unused"),
+  initialize: Effect.die("unused"),
   prepare: Effect.die("unused"),
   status: Effect.suspend(() => {
     input.statusCalls.value += 1;

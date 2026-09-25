@@ -461,6 +461,155 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       }
     });
 
+    const runStartupCommands = Effect.fn("ProcessRecipe.runStartupCommands")(function* (context: {
+      readonly id: string;
+      readonly config: C;
+      readonly scope: Scope.Closeable;
+    }) {
+      const startupScope = yield* Scope.fork(context.scope, "sequential");
+      let reservation:
+        | {
+            readonly portScope: Scope.Closeable;
+            readonly endpoints: ReadonlyMap<string, ServiceEndpoint>;
+          }
+        | undefined;
+      const result = yield* Effect.gen(function* () {
+        if (spec.startup.length === 0) return;
+        if (options.runtime === "native") {
+          const artifactRoot = yield* Ref.get(preparedRoot);
+          if (artifactRoot === undefined)
+            return yield* serviceError("initialize", "Artifact root was not prepared");
+          const portNames = Object.entries(spec.ports).filter(
+            ([name]) => spec.enabledPort === undefined || spec.enabledPort(context.config, name),
+          );
+          if (spec.nativeStartupEnv !== undefined) {
+            const portScope = yield* Scope.fork(context.scope, "sequential");
+            const reservations = yield* Effect.forEach(portNames, () => reserveNativePort(0), {
+              concurrency: 1,
+            }).pipe(
+              Scope.provide(portScope),
+              Effect.mapError((cause) => serviceError("launch", cause)),
+            );
+            const endpoints = new Map<string, ServiceEndpoint>();
+            for (const [index, [name]] of portNames.entries()) {
+              const value = reservations[index];
+              if (value === undefined)
+                return yield* serviceError("initialize", `Native ${name} port was not reserved`);
+              endpoints.set(name, { kind: "tcp", host: "127.0.0.1", port: value.port });
+            }
+            reservation = { portScope, endpoints };
+          }
+          const startupEndpoints =
+            reservation?.endpoints ??
+            new Map(
+              portNames.map(([name]) => [
+                name,
+                { kind: "tcp" as const, host: "127.0.0.1", port: 0 },
+              ]),
+            );
+          for (const [index, process] of spec.startup.entries()) {
+            yield* Effect.gen(function* () {
+              const startupProcess = yield* spawnNativeProcess(
+                {
+                  executable: `${artifactRoot}/bin/${process.nativeExecutable ?? "prepare"}`,
+                  args: process.args,
+                  env: yield* (spec.nativeStartupEnv ?? spec.env)(
+                    context.config,
+                    startupEndpoints,
+                    false,
+                  ),
+                  cwd: artifactRoot,
+                },
+                defaultNativeProcessLauncher(),
+                {
+                  stackId: String(options.stackId),
+                  workloadId: `${context.id}-${context.config.service}-startup-${index}`,
+                },
+              ).pipe(
+                Scope.provide(startupScope),
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
+                Effect.mapError((cause) => serviceError("initialize", cause)),
+              );
+              const commandResult = yield* awaitStartup(
+                context.config.service,
+                startupProcess,
+                logs,
+              );
+              if (commandResult.code !== 0)
+                return yield* startupFailure(context.config.service, commandResult);
+            }).pipe(
+              Effect.withSpan("ProcessRecipe.runStartupCommand", {
+                attributes: {
+                  service: context.config.service,
+                  runtime: options.runtime,
+                  command: process.nativeExecutable ?? "prepare",
+                  index,
+                },
+              }),
+            );
+          }
+          return;
+        }
+
+        const container = deps.container;
+        if (container === undefined)
+          return yield* serviceError("initialize", "Container runtime unavailable");
+        const resolved = yield* resolveArtifact({
+          service: context.config.service,
+          version: context.config.version,
+        }).pipe(Effect.mapError((cause) => serviceError("initialize", cause)));
+        const desired = new Map<string, ServiceEndpoint>();
+        for (const [name, port] of Object.entries(spec.ports)) {
+          if (spec.enabledPort !== undefined && !spec.enabledPort(context.config, name)) continue;
+          const mapped =
+            spec.containerPort === undefined
+              ? port
+              : spec.containerPort(context.config, name, port);
+          desired.set(name, { kind: "tcp", host: "127.0.0.1", port: mapped });
+        }
+        for (const [index, process] of spec.startup.entries()) {
+          if (process.skipInContainer === true) continue;
+          yield* Effect.gen(function* () {
+            const startupProcess = yield* container
+              .launchTool({
+                image: resolved.image,
+                stackId: options.stackId,
+                instanceId: options.instanceId,
+                env: yield* spec.env(context.config, desired, true),
+                entrypoint: process.containerEntrypoint,
+                args: process.args,
+                mounts: yield* spec.mounts(context.config, { container: true }),
+              })
+              .pipe(
+                Effect.mapError((cause) => serviceError("initialize", cause)),
+                Scope.provide(startupScope),
+              );
+            const commandResult = yield* awaitStartup(context.config.service, startupProcess, logs);
+            yield* startupProcess.remove.pipe(
+              Effect.mapError((cause) => serviceError("initialize", cause)),
+            );
+            if (commandResult.code !== 0)
+              return yield* startupFailure(context.config.service, commandResult);
+          }).pipe(
+            Effect.withSpan("ProcessRecipe.runStartupCommand", {
+              attributes: {
+                service: context.config.service,
+                runtime: options.runtime,
+                command: process.containerEntrypoint ?? "image-default",
+                index,
+              },
+            }),
+          );
+        }
+      }).pipe(Effect.exit);
+      yield* Scope.close(startupScope, Exit.void);
+      if (Exit.isFailure(result)) {
+        if (reservation !== undefined) yield* Scope.close(reservation.portScope, Exit.void);
+        return yield* Effect.failCause(result.cause);
+      }
+      return reservation;
+    });
+
     const launch = Effect.fn("ProcessRecipe.launch")(function* (context: {
       readonly id: string;
       readonly config: C;
@@ -852,9 +1001,26 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       } satisfies RuntimeSession;
     });
 
+    const hasApplicableStartup = spec.startup.some(
+      (process) => options.runtime === "native" || process.skipInContainer !== true,
+    );
     return {
       definition: {
         prepare,
+        ...(!hasApplicableStartup
+          ? {}
+          : {
+              initialize: Effect.fn("ProcessRecipe.initializeStartup")(function* (context) {
+                yield* Effect.annotateCurrentSpan({
+                  service: context.config.service,
+                  runtime: options.runtime,
+                });
+                yield* runStartupCommands(context).pipe(
+                  Effect.asVoid,
+                  Effect.mapError((cause) => serviceError("initialize", cause)),
+                );
+              }),
+            }),
         launch,
         removeData: (context) =>
           (spec.removeData?.(context.config) ?? Effect.void).pipe(

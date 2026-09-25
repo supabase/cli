@@ -185,6 +185,7 @@ const fixture = (
       destroy: Effect.sync(() => {
         destroyed = true;
       }),
+      initialize: Effect.void,
       prepare: Effect.void,
       followStatus: Stream.never,
       logs: Stream.never,
@@ -200,6 +201,7 @@ const fixture = (
       stop: Effect.void,
       restart: () => Effect.void,
       destroy: Effect.void,
+      initialize: Effect.void,
       prepare: Effect.void,
       resetData: Effect.void,
       saveSnapshot: () => Effect.die("unused"),
@@ -242,6 +244,7 @@ const fixture = (
       destroy: Effect.sync(() => {
         destroyed = true;
       }),
+      initialize: Effect.void,
       prepare: Effect.void,
       followStatus: Stream.never,
       logs: Stream.never,

@@ -147,6 +147,18 @@ const widen = <C extends { readonly service: ServiceKind }>(
     isCreation(candidate)
       ? (definition.prepare?.(candidate) ?? Effect.void)
       : Effect.fail(serviceError("prepare", "Service kind cannot change during restart")),
+  ...(definition.initialize === undefined
+    ? {}
+    : {
+        initialize: (context) => {
+          const initialize = definition.initialize;
+          if (initialize === undefined)
+            return Effect.fail(serviceError("initialize", "Service kind cannot change"));
+          return isCreation(context.config)
+            ? initialize({ ...context, config: context.config })
+            : Effect.fail(serviceError("initialize", "Service kind cannot change"));
+        },
+      }),
   launch: (context) =>
     isCreation(context.config)
       ? definition.launch({ ...context, config: context.config })

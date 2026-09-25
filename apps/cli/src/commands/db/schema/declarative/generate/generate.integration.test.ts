@@ -107,6 +107,7 @@ function generateStackApi(workdir: string) {
     stop: unusedStack,
     restart: unusedStackFn,
     destroy: unusedStack,
+    initialize: unusedStack,
     prepare: unusedStack,
     credentials: unusedStackFn,
     saveSnapshot: unusedStackFn,

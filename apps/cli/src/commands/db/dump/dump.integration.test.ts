@@ -74,6 +74,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
     stop: Effect.void,
     restart: () => Effect.void,
     destroy: Effect.void,
+    initialize: Effect.void,
     prepare: Effect.void,
     status: Effect.succeed({
       id,

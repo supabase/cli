@@ -109,6 +109,7 @@ function syncStackApi(workdir: string, port: number) {
     stop: unusedSync,
     restart: unusedSyncFn,
     destroy: unusedSync,
+    initialize: unusedSync,
     prepare: unusedSync,
     credentials: unusedSyncFn,
     saveSnapshot: unusedSyncFn,

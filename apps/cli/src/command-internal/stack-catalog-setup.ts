@@ -79,7 +79,7 @@ type StackCatalogSetupFailure =
   | DbConnectError;
 
 const temporaryServiceError = (
-  operation: "start" | "destroy",
+  operation: "initialize" | "destroy",
   instance: TemporaryServiceInstance,
   cause: unknown,
 ): StackCatalogSetupError =>
@@ -132,12 +132,14 @@ const serviceDefinition = (
   }
 };
 
-const startTemporaryService = (
+const initializeTemporaryService = (
   instance: TemporaryServiceInstance,
 ): Effect.Effect<void, StackCatalogSetupError> =>
-  instance.start.pipe(
-    Effect.andThen(instance.ready),
-    Effect.mapError((cause) => temporaryServiceError("start", instance, cause)),
+  instance.initialize.pipe(
+    Effect.mapError((cause) => temporaryServiceError("initialize", instance, cause)),
+    Effect.withSpan("StackCatalogSetup.temporaryService.initialize", {
+      attributes: { service: instance.service, member_id: instance.id, operation: "initialize" },
+    }),
   );
 
 const destroyTemporaryService = (
@@ -145,6 +147,9 @@ const destroyTemporaryService = (
 ): Effect.Effect<void, StackCatalogSetupError> =>
   instance.destroy.pipe(
     Effect.mapError((cause) => temporaryServiceError("destroy", instance, cause)),
+    Effect.withSpan("StackCatalogSetup.temporaryService.destroy", {
+      attributes: { service: instance.service, member_id: instance.id, operation: "destroy" },
+    }),
   );
 
 const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
@@ -180,11 +185,16 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
           Effect.acquireUseRelease(
             input.target.stack.services
               .create(serviceDefinition(service, serviceCredentials, storagePath))
-              .pipe(Effect.mapError(catalogError)),
-            startTemporaryService,
-            destroyTemporaryService,
+              .pipe(
+                Effect.mapError(catalogError),
+                Effect.withSpan("StackCatalogSetup.temporaryService.create", {
+                  attributes: { service, operation: "create" },
+                }),
+              ),
+            initializeTemporaryService,
+            (instance) => destroyTemporaryService(instance),
           ),
-        { discard: true },
+        { concurrency: "unbounded", discard: true },
       );
 
       const connection = parseConnectionString(hostDatabaseUrl);

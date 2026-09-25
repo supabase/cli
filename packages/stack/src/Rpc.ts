@@ -43,7 +43,7 @@ export const Observation = Schema.Struct({
   cleanupError: Schema.UndefinedOr(ServiceErrorSchema),
   exit: Schema.UndefinedOr(Schema.Exit(Schema.Void, ServiceErrorSchema, Schema.Defect())),
   currentOperation: Schema.UndefinedOr(
-    Schema.Literals(["start", "stop", "restart", "storage", "destroy", "sleep"]),
+    Schema.Literals(["start", "stop", "restart", "initialize", "storage", "destroy", "sleep"]),
   ),
   launchId: Schema.UndefinedOr(Schema.Int),
   intentRevision: Schema.Int,
@@ -86,6 +86,7 @@ export const StackRpc = RpcGroup.make(
   }),
   Rpc.make("destroyService", { payload: Instance, error: StackErrorSchema }),
   Rpc.make("prepareService", { payload: Instance, error: StackErrorSchema }),
+  Rpc.make("initializeService", { payload: Instance, error: StackErrorSchema }),
   Rpc.make("status", { payload: Instance, success: Observation, error: StackErrorSchema }),
   Rpc.make("followStatus", {
     payload: Instance,
