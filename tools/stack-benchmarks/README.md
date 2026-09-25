@@ -63,3 +63,19 @@ python3 tools/stack-benchmarks/run.py \
 
 The renderer uses the pinned `@resvg/resvg-js` 2.6.2 dependency and lockfile
 under `render/`; the first render installs that isolated package when needed.
+
+## Integrated CLI report charts
+
+The September 25 CI campaign publishes separate [stack](../../docs/benchmarks/cli-2026-09-25/stack/README.md) and [schema workflow](../../docs/benchmarks/cli-2026-09-25/schema/README.md) reports. Their shared `report-data.json` retains medians, ranges, sample counts, and workflow provenance. This campaign uses the integrated CLI rather than the older package-level harness above.
+
+Regenerate all eight SVG/PNG cards from that dataset:
+
+```sh
+(cd tools/stack-benchmarks/render && pnpm install --ignore-workspace --frozen-lockfile --ignore-scripts)
+RESVG_NODE_MODULES="$PWD/tools/stack-benchmarks/render/node_modules" \
+  python3 tools/stack-benchmarks/report-tools/render-cli-reports.py \
+  --data docs/benchmarks/cli-2026-09-25/report-data.json \
+  --output docs/benchmarks/cli-2026-09-25
+```
+
+Rendering requires Node.js and the Arial font files used by the original report. On macOS they are discovered under `/System/Library/Fonts/Supplemental`; elsewhere set `BENCHMARK_FONT_DIR` to a directory containing `Arial.ttf`, `Arial Bold.ttf`, `Arial Black.ttf`, and `Arial Unicode.ttf`. The command rebuilds charts only; report prose must be reviewed when replacing the dataset.

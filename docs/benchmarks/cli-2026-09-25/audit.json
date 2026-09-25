@@ -1,0 +1,34 @@
+{
+  "source_sha": "4cebcf8779ef8ba983f38632eb4c48a86c5e829e",
+  "fresh_samples": 70,
+  "reused_legacy_schema_samples": 5,
+  "smoke_excluded": true,
+  "new_cli": {
+    "run_id": 36069768900,
+    "samples": 60,
+    "cold_ready": 45,
+    "cached_ready": 45,
+    "retained_restart_ready": 45,
+    "schema_samples_successful": 15
+  },
+  "legacy_stack": {
+    "run_id": 36070185401,
+    "samples": 10,
+    "cold_ready": 10,
+    "cached_ready": 10,
+    "retained_restart_ready": 10,
+    "cli_version": "2.117.0",
+    "image_registry": "ghcr.io",
+    "image_digests_match_previous_baseline": true,
+    "rate_limit_or_retry_markers": 0
+  },
+  "cold_cache_audit": "Native artifact caches and Docker preflight image inventories empty; preparation images removed before cold starts.",
+  "failures": "No measured runtime failures. Smoke attempt 1 macOS dependency install failed on npm network timeouts before measurements; retry passed.",
+  "limitations": [
+    "CPU and peak RSS not sampled continuously",
+    "Linux hosted runner CPU models vary",
+    "RSS can double count shared pages",
+    "Compressed payload sizes derived from manifests, not wire-byte measurements",
+    "Legacy schema five samples reused from run36057580204"
+  ]
+}
