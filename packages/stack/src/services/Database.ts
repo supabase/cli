@@ -479,9 +479,12 @@ const removeOwnedRoot = Effect.fn("Database.removeOwnedRoot")((
 const nativeProcess = (
   artifact: PreparedNativeArtifact,
   config: DatabaseConfig,
-  dataPath: string,
-  socketPath: string,
-  rootKeyPath: string,
+  paths: {
+    readonly dataPath: string;
+    readonly socketPath: string;
+    readonly hbaPath: string;
+    readonly rootKeyPath: string;
+  },
   settings: ReadonlyArray<string>,
   context: ServiceInstanceContext<DatabaseConfig>,
   stackId: string,
@@ -495,19 +498,21 @@ const nativeProcess = (
       ...(user === undefined ? {} : { uid: user.uid, gid: user.gid, cwd: "/" }),
       args: [
         "-D",
-        dataPath,
+        paths.dataPath,
         "-p",
         "5432",
         "-c",
         "listen_addresses=",
         "-c",
-        `unix_socket_directories=${socketPath}`,
+        `unix_socket_directories=${paths.socketPath}`,
+        "-c",
+        `hba_file=${paths.hbaPath}`,
         ...settings,
       ],
       env: {
         ...(user === undefined ? {} : { HOME: user.home }),
-        PGDATA: dataPath,
-        PGSODIUM_KEY_FILE: rootKeyPath,
+        PGDATA: paths.dataPath,
+        PGSODIUM_KEY_FILE: paths.rootKeyPath,
         POSTGRES_USER: "supabase_admin",
         POSTGRES_DB: "postgres",
         POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
@@ -883,6 +888,14 @@ export const makeDatabase = (
               Scope.provide(context.scope),
               Effect.mapError((cause) => errorFor("launch", cause)),
             );
+            const hbaPath = path.join(socketPath, "pg_hba.conf");
+            yield* fs
+              .writeFileString(
+                hbaPath,
+                "local all supabase_admin trust\nlocal all all scram-sha-256\n",
+                { mode: 0o600 },
+              )
+              .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
             const artifact = (yield* Ref.get(prepared)).get(config.version);
             if (artifact === undefined)
               return yield* errorFor("launch", `Artifact ${config.version} was not prepared`);
@@ -892,6 +905,7 @@ export const makeDatabase = (
                   dataPath,
                   rootKeyPath,
                   socketPath,
+                  hbaPath,
                   bundleRoot: artifact.root,
                   executable: artifact.executable,
                 }),
@@ -899,9 +913,7 @@ export const makeDatabase = (
             const process = yield* nativeProcess(
               artifact,
               config,
-              dataPath,
-              socketPath,
-              rootKeyPath,
+              { dataPath, socketPath, hbaPath, rootKeyPath },
               settings,
               context,
               String(options.stackId),

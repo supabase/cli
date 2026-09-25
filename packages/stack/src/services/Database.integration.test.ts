@@ -1,7 +1,18 @@
 import { PgClient } from "@effect/sql-pg";
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Deferred, Effect, FileSystem, Layer, Path, Redacted, Ref, Stream } from "effect";
+import {
+  Context,
+  Deferred,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Predicate,
+  Redacted,
+  Ref,
+  Stream,
+} from "effect";
 import { tmpdir } from "node:os";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeService } from "../Service.ts";
@@ -23,6 +34,7 @@ const query = (
   password: Redacted.Redacted<string>,
   statement: string,
   database = "postgres",
+  username = "supabase_admin",
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -32,7 +44,7 @@ const query = (
           host,
           port: endpoint.port,
           database,
-          username: "supabase_admin",
+          username,
           password,
         }),
       );
@@ -143,6 +155,54 @@ describe("database component", { timeout: 180_000 }, () => {
           }),
         ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     );
+
+  it.live("requires passwords from non-superusers on the native socket", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-hba-" });
+        const database = yield* makeDatabase({
+          stackId: "stack-integration",
+          instanceId: "hba",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "native",
+        });
+        const service = yield* makeService(database.definition, { id: "database:hba", config });
+        yield* service.start;
+        yield* service.ready;
+        const endpoint = yield* database.endpoint;
+        const rejected = yield* query(
+          endpoint,
+          Redacted.make("wrong-password"),
+          "SELECT 1",
+          "postgres",
+          "postgres",
+        ).pipe(Effect.flip);
+        expect(Predicate.isTagged(rejected.reason, "AuthenticationError")).toBe(true);
+        yield* query(
+          endpoint,
+          config.databasePassword,
+          "CREATE EXTENSION dblink; CREATE ROLE dblink_probe LOGIN PASSWORD 'probe-password'",
+        );
+        const connected = yield* query(
+          endpoint,
+          config.databasePassword,
+          "SELECT dblink_connect(format('host=%s port=%s dbname=postgres user=dblink_probe password=probe-password', current_setting('unix_socket_directories'), current_setting('port'))) AS status",
+          "postgres",
+          "postgres",
+        );
+        expect(connected).toEqual([{ status: "OK" }]);
+        const rotated = Redacted.make("rotated-password");
+        yield* service.restart({ ...config, databasePassword: rotated });
+        yield* service.ready;
+        expect(
+          yield* query(yield* database.endpoint, rotated, "SELECT 1 AS ok", "postgres", "postgres"),
+        ).toEqual([{ ok: 1 }]);
+        yield* service.destroy;
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
 
   it.live(
     "persists SQL data across exact-session stop and reopen, isolates instances, and validates restart before stopping",
