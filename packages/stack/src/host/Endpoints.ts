@@ -12,14 +12,16 @@ export class EndpointError extends Data.TaggedError("EndpointError")<{
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-export const endpointNames = (creation: ServiceCreation): ReadonlyArray<string> => {
+type EndpointIntents = Pick<ServiceCreation, "service" | "endpoints">;
+
+export const endpointNames = (creation: EndpointIntents): ReadonlyArray<string> => {
   const configured: Readonly<Record<string, unknown>> = Object.fromEntries(
     Object.entries(creation.endpoints ?? {}),
   );
   return allowedEndpointNames(creation.service).filter((name) => isRecord(configured[name]));
 };
 
-export const endpointPort = (creation: ServiceCreation, name: string): number | "auto" => {
+export const endpointPort = (creation: EndpointIntents, name: string): number | "auto" => {
   const endpoints: unknown = creation.endpoints;
   if (!isRecord(endpoints)) return "auto";
   const endpoint = endpoints[name];

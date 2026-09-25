@@ -53,10 +53,8 @@ provides per-function values from project environment references. Per-function e
 entrypoints, import maps and static files are forwarded to the worker bootstrap. Configured paths
 are relative to `supabase/` and must remain within the project; Docker mounts that project read-only.
 The inspector port is retained as an endpoint intent and does not enable debugging by itself.
-After an explicit stack stop, start applies changed Functions env values, per-function settings,
-files root, and JWT verification when it updates the saved composition. Existing service identities,
-endpoints, and lazy activation are retained. Running start calls do not refresh Functions from
-changed project files; stop the stack and start it again to apply those changes.
+Running start calls do not refresh Functions from changed project files; stop the stack and start
+it again to apply those changes.
 
 ## Service selection
 
@@ -67,11 +65,16 @@ Studio requires REST; excluding REST while keeping Studio fails before stopping 
 Vector runs a stack-owned default configuration that enables its health API and forwards no service
 logs; log collection into Analytics is not implemented yet.
 
-After an explicit stop, changed exclusions reuse existing service identities, data, and ports.
-Removed services remain saved and stopped so including them again can reuse them. The
-project configuration file is unchanged. Incompatible version, endpoint, or supported configuration
-changes fail before modifying the stopped composition; they are not silently applied to saved
-instances.
+After an explicit stop, start compares the project configuration with the saved composition through
+the stack package's composition plan, ignoring values the composition and stack credentials supply.
+Changed service settings, including Functions env values, per-function settings, files root, and JWT
+verification, replace the saved configuration of the existing instances; their identities, data,
+and ports are retained. Changed exclusions reuse existing service identities, data, and ports.
+Removed services remain saved and stopped so including them again can reuse them; a saved stopped
+instance of a newly included service is reused when its endpoints and versions still match. The
+project configuration file is unchanged. A changed endpoint, artifact version, or PostgreSQL major
+version fails before modifying the stopped composition, naming the changed setting and suggesting
+`supabase stack destroy` to recreate the stack.
 
 ## First startup and retries
 

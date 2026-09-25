@@ -9,10 +9,8 @@
     "./defaults": "./src/Defaults.ts",
     "./tools": "./src/Tools.ts",
     "./internal/dispatch": "./src/internal/dispatch.ts",
-    "./internal/identity": "./src/identity/Identity.ts",
-    "./internal/postgres-artifact": "./src/internal/postgres-artifact.ts",
-    "./internal/release": "./src/internal/release.ts",
-    "./internal/service-catalog": "./src/internal/service-catalog.ts"
+    "./internal/artifacts": "./src/internal/artifacts.ts",
+    "./internal/release": "./src/internal/release.ts"
   },
   "scripts": {
     "generate": "bun run scripts/generate-functions-bootstrap.ts",

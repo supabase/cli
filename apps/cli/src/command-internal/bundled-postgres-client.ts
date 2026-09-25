@@ -17,7 +17,7 @@ import {
   postgresVersion,
   prepareNativeArtifact,
   resolveArtifact,
-} from "@supabase/stack/internal/postgres-artifact";
+} from "@supabase/stack/internal/artifacts";
 
 import { DockerRun, type DockerRunOpts } from "./docker-run.service.ts";
 import { DockerRunError } from "./docker-run.errors.ts";

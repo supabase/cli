@@ -107,6 +107,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
     },
     credentials: { get: Effect.die("unused") },
     composition: {
+      plan: () => Effect.succeed([]),
       describe: Effect.succeed({
         members: [{ id, activation: "eager" as const }],
         dependencies: [],
@@ -136,9 +137,10 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
   return Layer.succeed(StackApi, {
     create: () => Effect.succeed(stack),
     open: () => Effect.succeed(stack),
-    discover: () =>
-      Effect.succeed([
-        {
+    discover: () => Effect.die("unused"),
+    find: () =>
+      Effect.succeed(
+        Option.some({
           definition: {
             id,
             identity: { projectRoot: "/work/project", branchContext: "main", stackName: "default" },
@@ -149,10 +151,8 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
             ports: [],
           },
           host: undefined,
-        },
-      ]),
-    resolveIdentity: () =>
-      Effect.succeed({ projectRoot: "/work/project", branchContext: "main", stackName: "default" }),
+        }),
+      ),
   });
 };
 
@@ -160,7 +160,7 @@ const unusedStackApi = Layer.succeed(StackApi, {
   create: () => Effect.die("unused"),
   open: () => Effect.die("unused"),
   discover: () => Effect.die("unused"),
-  resolveIdentity: () => Effect.die("unused"),
+  find: () => Effect.die("unused"),
 });
 
 function mockResolver(opts: {

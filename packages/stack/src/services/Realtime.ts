@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
-import { databaseConnection, localJwtSecret } from "./ServiceConfig.ts";
+import { databaseConnection, requiredInput, localJwtSecret } from "./ServiceConfig.ts";
 import {
   DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
   DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
@@ -8,7 +8,7 @@ import {
 import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
 
 export const Config = Schema.Struct({
-  databaseUrl: Schema.String,
+  databaseUrl: Schema.optionalKey(Schema.String),
   jwtSecret: Schema.optionalKey(Schema.String),
   jwks: Schema.optionalKey(Schema.String),
   dbEncryptionKey: Schema.optionalKey(Schema.String),
@@ -35,14 +35,19 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   healthPath: "/healthcheck",
   env: (creation, endpoints, container) =>
     Effect.gen(function* () {
-      const db = yield* databaseConnection(creation.config.databaseUrl);
+      const databaseUrl = yield* requiredInput(
+        "realtime",
+        "databaseUrl",
+        creation.config.databaseUrl,
+      );
+      const db = yield* databaseConnection(databaseUrl);
       const http = endpoints.get("http");
       const rpc = endpoints.get("rpc");
       const jwt = creation.config.jwtSecret ?? localJwtSecret;
       return {
-        DATABASE_URL: creation.config.databaseUrl,
+        DATABASE_URL: databaseUrl,
         ...(http === undefined ? {} : { PORT: String(http.port) }),
-        DB_URL: creation.config.databaseUrl,
+        DB_URL: databaseUrl,
         DB_HOST: db.host,
         DB_PORT: db.port,
         DB_USER: db.username ?? "supabase_admin",

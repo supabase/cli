@@ -21,14 +21,14 @@ members remain visible without live lifecycle or health values. Lifecycle,
 health, endpoint, and aggregate readiness values are reported separately so a
 stopped or unhealthy member is distinguishable from an unavailable owner.
 
-The command compares the database version and explicit numeric endpoint ports with the saved
-configuration of existing composition members. It does not compare other service settings or
-changes to membership; an excluded service is not considered drift. Live listener availability
-does not affect this comparison. It reports `config_drift.status` as `unchanged` or
-`changed`, with changed paths, when the comparison is possible. A configuration
-loading failure or unavailable database observation keeps the saved stack report
-available and is shown as `config_drift.status: "unavailable"` with a message in
-JSON. Status does not apply current configuration. The `services` list may include
+The command compares the project configuration, including `supabase/functions/.env`, with the
+saved configuration of existing composition members through the stack package's composition plan.
+Values that the composition or stack credentials supply are ignored, as are changes to membership;
+an excluded service is not considered drift. The comparison reads saved state only, so it is
+available while the owner is unavailable. It reports `config_drift.status` as `unchanged` or
+`changed`, with `services.<service>.<path>` paths, when the comparison is possible. A configuration
+loading failure or unreadable saved state keeps the saved stack report available and is shown as
+`config_drift.status: "unavailable"` with a message in JSON. Status does not apply current configuration. The `services` list may include
 saved standalone instances; composition members identify the services used for
 primary database, environment export, and drift comparisons.
 

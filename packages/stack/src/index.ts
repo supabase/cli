@@ -1,5 +1,5 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
-import { Effect, Exit, Layer, ManagedRuntime, Schema, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Option, Schema, Scope, Stream } from "effect";
 import * as StackEffect from "./effect.ts";
 import { StackError } from "./Rpc.ts";
 import {
@@ -49,8 +49,15 @@ const decodeCreation = (creation: unknown) =>
 export type { CompositionConfig } from "./Orchestrator.ts";
 export type { Observation } from "./Rpc.ts";
 export type { PgProveOptions } from "./effect.ts";
-export type { SupabaseCompositionOptions } from "./effect.ts";
-export type { CreateOptions, DestroyResult, OpenOptions, StackLocations } from "./effect.ts";
+export type { CreationChange, PlannedInstance, SupabaseCompositionOptions } from "./effect.ts";
+export type {
+  CreateOptions,
+  DestroyResult,
+  FindOptions,
+  FoundStack,
+  OpenOptions,
+  StackLocations,
+} from "./effect.ts";
 
 const clientLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 type Runtime = ReturnType<typeof makeRuntime>;
@@ -281,6 +288,11 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime, scope: Scope.Closeab
           ),
           options,
         ),
+      plan: (services: ReadonlyArray<ServiceCreation>, options?: CallOptions) =>
+        run(
+          Effect.forEach(services, decodeCreation).pipe(Effect.flatMap(handle.composition.plan)),
+          options,
+        ),
       configure: (config: StackEffect.CompositionConfig, options?: CallOptions) =>
         run(handle.composition.configure(config), options),
       describe: (options?: CallOptions) => run(handle.composition.describe, options),
@@ -365,3 +377,10 @@ export const discover = (
     }).pipe(Effect.provide(clientLayer)),
   );
 };
+/** Reads one saved stack by id or by project identity; resolves `undefined` when none is saved. */
+export const find = (
+  options: StackEffect.FindOptions,
+): Promise<StackEffect.FoundStack | undefined> =>
+  Effect.runPromise(
+    StackEffect.find(options).pipe(Effect.map(Option.getOrUndefined), Effect.provide(clientLayer)),
+  );

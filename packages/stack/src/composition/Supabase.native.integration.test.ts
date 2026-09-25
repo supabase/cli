@@ -103,7 +103,6 @@ it.live("removes a managed SMTP binding when Mail is excluded", () =>
           const auth = {
             service: "auth" as const,
             config: {
-              databaseUrl: "postgresql://placeholder",
               jwtSecret: "exclude-mail-jwt-secret-with-32-chars",
               jwtExpiry: 3600,
             },
@@ -221,7 +220,6 @@ it.live(
             {
               service: "auth",
               config: {
-                databaseUrl: "postgresql://placeholder",
                 jwtSecret,
                 jwtExpiry: 3600,
               },
@@ -230,7 +228,6 @@ it.live(
             {
               service: "storage",
               config: {
-                databaseUrl: "postgresql://placeholder",
                 filePath: storageRoot,
                 jwtSecret,
               },
@@ -375,7 +372,7 @@ it.live(
             databaseCreation,
             {
               service: "rest",
-              config: { databaseUrl: "postgresql://placeholder" },
+              config: {},
               endpoints: { http: { port: "auto" } },
             },
           ],
@@ -402,7 +399,6 @@ it.live(
             {
               service: "auth",
               config: {
-                databaseUrl: "postgresql://placeholder",
                 jwtSecret: Redacted.value(databaseCreation.config.jwtSecret),
                 jwtExpiry: 3600,
               },
@@ -457,21 +453,18 @@ it.live(
         };
         const rest = {
           service: "rest" as const,
-          config: { databaseUrl: "postgresql://placeholder" },
+          config: {},
           endpoints: { http: { port: "auto" as const } },
         };
         const pgmeta = {
           service: "pgmeta" as const,
-          config: { databaseUrl: "postgresql://placeholder" },
+          config: {},
           endpoints: { http: { port: "auto" as const } },
         };
         const studio = {
           service: "studio" as const,
           config: {
-            pgmetaUrl: "http://placeholder",
             analyticsApiKey: "studio-reuse-analytics-key",
-            apiUrl: "http://placeholder",
-            publicApiUrl: "http://placeholder",
             jwtSecret: "studio-reuse-jwt-secret-with-32-chars",
           },
           endpoints: { http: { port: FIXED_STUDIO_PORT } },

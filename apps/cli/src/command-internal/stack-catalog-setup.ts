@@ -26,6 +26,15 @@ import type { MigrationVaultError, VaultSecret } from "./vault.ts";
 const DATABASE_SERVICES = ["auth", "storage", "realtime"] as const;
 type DatabaseService = (typeof DATABASE_SERVICES)[number];
 
+const isDatabaseService = (service: string): service is DatabaseService =>
+  DATABASE_SERVICES.some((candidate) => candidate === service);
+
+/** Selects the services whose database schemas the catalog provisions. */
+export const catalogDatabaseServices = (
+  services: ReadonlyArray<{ readonly service: string }>,
+): ReadonlyArray<DatabaseService> =>
+  services.flatMap(({ service }) => (isDatabaseService(service) ? [service] : []));
+
 interface ServiceCredentials {
   readonly databaseUrl: string;
   readonly authDatabaseUrl: string;

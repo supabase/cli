@@ -2,7 +2,7 @@ import {
   artifactServiceKinds,
   postgresVersion,
   resolveArtifact,
-} from "@supabase/stack/internal/service-catalog";
+} from "@supabase/stack/internal/artifacts";
 import { Effect, Result } from "effect";
 import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
 import { envOverrideMajorVersion } from "../../command-internal/local-config-values.ts";

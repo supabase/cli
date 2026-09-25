@@ -136,7 +136,6 @@ const composeStack = Effect.fn("DbResetStackE2e.composeStack")(function* (
     {
       service: "rest",
       config: {
-        databaseUrl: "postgresql://placeholder",
         jwtSecret: JWT_SECRET,
       },
       endpoints: { http: { port: "auto" } },
@@ -144,7 +143,6 @@ const composeStack = Effect.fn("DbResetStackE2e.composeStack")(function* (
     {
       service: "auth",
       config: {
-        databaseUrl: "postgresql://placeholder",
         jwtSecret: JWT_SECRET,
       },
       endpoints: { http: { port: "auto" } },

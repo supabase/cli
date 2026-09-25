@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { resolveArtifact, postgresVersion } from "@supabase/stack/internal/postgres-artifact";
+import { resolveArtifact, postgresVersion } from "@supabase/stack/internal/artifacts";
 import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
 import {
   SHADOW_CACHE_ENV,

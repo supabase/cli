@@ -10,7 +10,7 @@ import { OwnerRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
 import type { SavedStack } from "./State.ts";
 import { DEFAULT_LOCAL_JWT_SECRET } from "./Defaults.ts";
-import { ServiceCreation } from "./services/Catalog.ts";
+import { ServiceCreation, type ServiceCreationInput } from "./services/Catalog.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
 
 const stateFor = (root: string) =>
@@ -64,7 +64,7 @@ it.live("forwards and rotates saved identity across composed services in one own
       });
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
 
-      const servicesFor = (jwtSecret?: string) => [
+      const servicesFor = (jwtSecret?: string): ReadonlyArray<ServiceCreationInput> => [
         {
           service: "database" as const,
           config: {
@@ -77,22 +77,22 @@ it.live("forwards and rotates saved identity across composed services in one own
         },
         {
           service: "rest" as const,
-          config: { databaseUrl: "postgresql://placeholder" },
+          config: {},
           endpoints: { http: { port: "auto" as const } },
         },
         {
           service: "auth" as const,
-          config: { databaseUrl: "postgresql://placeholder" },
+          config: {},
           endpoints: { http: { port: "auto" as const } },
         },
         {
           service: "storage" as const,
-          config: { databaseUrl: "postgresql://placeholder", filePath: `${root}/uploads` },
+          config: { filePath: `${root}/uploads` },
           endpoints: { http: { port: "auto" as const } },
         },
         {
           service: "realtime" as const,
-          config: { databaseUrl: "postgresql://placeholder" },
+          config: {},
           endpoints: { http: { port: "auto" as const } },
         },
         {
@@ -106,12 +106,12 @@ it.live("forwards and rotates saved identity across composed services in one own
           endpoints: { http: { port: "auto" as const } },
         },
       ];
-      const identity = (suffix: string, keys: string): State.StackIdentityInput => ({
+      const stackKeys = (suffix: string, gotrueJwtKeys: string): State.StackIdentityInput => ({
         publishableKey: `publishable-${suffix}`,
         secretKey: `secret-${suffix}`,
         anonKey: `anon-${suffix}`,
         serviceRoleKey: `service-role-${suffix}`,
-        gotrueJwtKeys: keys,
+        gotrueJwtKeys,
         publicSigningKeys: "[]",
         anonKeyIsOverride: true,
         serviceRoleKeyIsOverride: true,
@@ -120,7 +120,7 @@ it.live("forwards and rotates saved identity across composed services in one own
       const services = servicesFor(customJwtSecret);
       const first = yield* owner.rpc.supabaseComposition({
         services: services,
-        identity: identity("one", "[]"),
+        keys: stackKeys("one", "[]"),
       });
       const ids = first.map(({ id }) => id);
       const creationFor = (entries: typeof first, service: string) =>
@@ -169,7 +169,7 @@ it.live("forwards and rotates saved identity across composed services in one own
 
       const standaloneRest = yield* owner.rpc.createService({
         service: "rest",
-        config: { databaseUrl: "postgresql://placeholder" },
+        config: {},
         endpoints: {},
       });
       expect(standaloneRest.creation.config).toMatchObject({
@@ -178,7 +178,7 @@ it.live("forwards and rotates saved identity across composed services in one own
       });
       const standaloneAuth = yield* owner.rpc.createService({
         service: "auth",
-        config: { databaseUrl: "postgresql://placeholder" },
+        config: {},
         endpoints: {},
       });
       expect(standaloneAuth.creation.config).toMatchObject({
@@ -187,7 +187,7 @@ it.live("forwards and rotates saved identity across composed services in one own
       });
       const standaloneStorage = yield* owner.rpc.createService({
         service: "storage",
-        config: { databaseUrl: "postgresql://placeholder", filePath: `${root}/standalone-uploads` },
+        config: { filePath: `${root}/standalone-uploads` },
         endpoints: {},
       });
       expect(standaloneStorage.creation.config).toMatchObject({
@@ -219,7 +219,7 @@ it.live("forwards and rotates saved identity across composed services in one own
       const retainedIds = ids.filter((id) => id !== studioId);
       const second = yield* owner.rpc.supabaseComposition({
         services: secondServices,
-        identity: identity("two", "[{}]"),
+        keys: stackKeys("two", "[{}]"),
         reuseIds: retainedIds,
       });
       const secondCredentials = yield* state
@@ -261,7 +261,7 @@ it.live("forwards and rotates saved identity across composed services in one own
       yield* owner.rpc.stopComposition();
       const third = yield* owner.rpc.supabaseComposition({
         services: servicesFor(customJwtSecret),
-        identity: identity("three", "[]"),
+        keys: stackKeys("three", "[]"),
         reuseIds: ids,
       });
       const thirdCredentials = yield* state
@@ -368,7 +368,7 @@ it.live(
         });
         const rest = yield* owner.rpc.createService({
           service: "rest",
-          config: { databaseUrl: "postgresql://placeholder" },
+          config: {},
           endpoints: { http: { port: "auto" } },
         });
         const shadow = yield* owner.rpc.createService({
@@ -521,7 +521,7 @@ it.live(
             },
             {
               service: "rest",
-              config: { databaseUrl: "postgresql://placeholder" },
+              config: {},
               endpoints: { http: { port: "auto" } },
             },
             {
@@ -593,12 +593,12 @@ it.effect("validates Supabase composition recipes before creating instances", ()
           services: [
             {
               service: "rest",
-              config: { databaseUrl: "postgresql://placeholder" },
+              config: {},
               endpoints: { http: { port: 41_001 } },
             },
             {
               service: "auth",
-              config: { databaseUrl: "postgresql://placeholder" },
+              config: {},
               endpoints: { http: { port: 41_002 } },
             },
           ],
@@ -635,7 +635,7 @@ it.effect("validates Supabase composition recipes before creating instances", ()
             { ...database, endpoints: {} },
             {
               service: "rest",
-              config: { databaseUrl: "postgresql://placeholder" },
+              config: {},
               endpoints: { http: { port: "auto" } },
             },
           ],
@@ -732,7 +732,7 @@ it.effect("refuses to generate credentials for a stack whose saved instances con
       yield* state.save(withoutCredentials);
 
       const refused = yield* owner.rpc
-        .createService({ service: "auth", config: { databaseUrl: "postgresql://placeholder" } })
+        .createService({ service: "auth", config: {} })
         .pipe(Effect.flip);
 
       expect(refused.message).toBe(
@@ -741,6 +741,48 @@ it.effect("refuses to generate credentials for a stack whose saved instances con
       const current = yield* state.read(stack.id);
       expect(current?.credentials).toBeUndefined();
       expect(current?.instances).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("rejects a missing required input before starting or stopping the service", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-missing-input-" });
+      const stack = initial("owner-missing-input");
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const unbound = yield* owner.rpc.createService({
+        service: "rest",
+        config: {},
+        endpoints: {},
+      });
+
+      const startFailure = yield* owner.rpc.startService({ id: unbound.id }).pipe(Effect.flip);
+
+      expect(startFailure.message).toContain("rest requires input databaseUrl");
+      expect((yield* owner.rpc.status({ id: unbound.id })).lifecycle).toBe("stopped");
+
+      const provided = yield* owner.rpc.createService({
+        service: "rest",
+        config: { databaseUrl: "postgresql://authenticator@127.0.0.1:1/postgres" },
+        endpoints: {},
+      });
+      yield* owner.rpc.startService({ id: provided.id });
+      const restartFailure = yield* owner.rpc
+        .restartService({ id: provided.id, config: { service: "rest", config: { maxRows: 5 } } })
+        .pipe(Effect.flip);
+
+      expect(restartFailure.message).toContain("rest requires input databaseUrl");
+      const kept = yield* owner.rpc.status({ id: provided.id });
+      expect(kept.lifecycle).toBe("running");
+      expect(kept.config).toMatchObject({
+        config: { databaseUrl: "postgresql://authenticator@127.0.0.1:1/postgres" },
+      });
+      yield* owner.rpc.stopService({ id: provided.id });
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

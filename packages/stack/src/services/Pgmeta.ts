@@ -1,9 +1,9 @@
 import { Effect, Schema } from "effect";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
-import { databaseConnection } from "./ServiceConfig.ts";
+import { databaseConnection, requiredInput } from "./ServiceConfig.ts";
 import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
 
-export const Config = Schema.Struct({ databaseUrl: Schema.String });
+export const Config = Schema.Struct({ databaseUrl: Schema.optionalKey(Schema.String) });
 
 export interface Config extends Schema.Schema.Type<typeof Config> {}
 export const Endpoints = Schema.Struct({ http: Schema.optionalKey(EndpointIntent) });
@@ -21,13 +21,18 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   env: (creation, endpoints, container) =>
     Effect.gen(function* () {
       const http = endpoints.get("http");
-      const db = yield* databaseConnection(creation.config.databaseUrl);
+      const databaseUrl = yield* requiredInput(
+        "pgmeta",
+        "databaseUrl",
+        creation.config.databaseUrl,
+      );
+      const db = yield* databaseConnection(databaseUrl);
       return {
-        DATABASE_URL: creation.config.databaseUrl,
+        DATABASE_URL: databaseUrl,
         PG_META_HOST: container ? "0.0.0.0" : "127.0.0.1",
         ...(container ? {} : { PG_META_ADMIN_PORT: "0" }),
         ...(http === undefined ? {} : { PG_META_PORT: String(http.port) }),
-        PG_META_DB_URL: creation.config.databaseUrl,
+        PG_META_DB_URL: databaseUrl,
         PG_META_DB_HOST: db.host,
         PG_META_DB_PORT: db.port,
         PG_META_DB_NAME: db.database,

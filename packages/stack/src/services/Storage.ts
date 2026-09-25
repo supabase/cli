@@ -1,10 +1,10 @@
 import { Effect, Schema } from "effect";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
-import { databaseConnection, localJwtSecret, serviceJwt } from "./ServiceConfig.ts";
+import { databaseConnection, requiredInput, localJwtSecret, serviceJwt } from "./ServiceConfig.ts";
 import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
 
 export const Config = Schema.Struct({
-  databaseUrl: Schema.String,
+  databaseUrl: Schema.optionalKey(Schema.String),
   filePath: Schema.String,
   jwtSecret: Schema.optionalKey(Schema.String),
   jwks: Schema.optionalKey(Schema.String),
@@ -35,13 +35,18 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   env: (creation, endpoints, container) =>
     Effect.gen(function* () {
       const http = endpoints.get("http");
-      const db = yield* databaseConnection(creation.config.databaseUrl);
+      const databaseUrl = yield* requiredInput(
+        "storage",
+        "databaseUrl",
+        creation.config.databaseUrl,
+      );
+      const db = yield* databaseConnection(databaseUrl);
       const jwt = creation.config.jwtSecret ?? localJwtSecret;
       const anon = yield* serviceJwt("anon", jwt);
       const service = yield* serviceJwt("service_role", jwt);
       const filePath = container ? "/mnt" : creation.config.filePath;
       return {
-        DATABASE_URL: creation.config.databaseUrl,
+        DATABASE_URL: databaseUrl,
         ...(http === undefined ? {} : { STORAGE_PORT: String(http.port), PORT: String(http.port) }),
         ANON_KEY: creation.config.anonKey ?? anon,
         SERVICE_KEY: creation.config.serviceRoleKey ?? service,
@@ -70,7 +75,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
           : {
               VECTOR_BUCKET_PROVIDER: "pgvector",
               VECTOR_STORE_MIGRATIONS_ENABLED: "true",
-              VECTOR_DATABASE_URL: creation.config.vectorDatabaseUrl ?? creation.config.databaseUrl,
+              VECTOR_DATABASE_URL: creation.config.vectorDatabaseUrl ?? databaseUrl,
             }),
         ...(creation.config.vectorMaxBuckets === undefined
           ? {}

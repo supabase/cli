@@ -1,6 +1,5 @@
 import { Data, Effect, FileSystem, Option, Path, Redacted } from "effect";
 import type { DatabaseInstance, ServiceCreationInput, Stack } from "@supabase/stack/effect";
-import { postgresVersion } from "@supabase/stack/internal/postgres-artifact";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -13,9 +12,13 @@ import { currentStackBackend } from "./stack-backend.ts";
 import { StackApi } from "./stack-api.ts";
 import { loadStackConfig } from "./stack-config.ts";
 import { readDbToml } from "./db-config.toml-read.ts";
-import { StackCatalogSetup } from "./stack-catalog-setup.ts";
+import { catalogDatabaseServices } from "./stack-catalog-setup.ts";
 import { resolveExperimentalWithProjectEnv } from "./global-flags.ts";
-import { applyStackMigrateAndSeed, applyStackWebhooksOnly } from "./stack-bootstrap.ts";
+import {
+  applyStackWebhooksOnly,
+  initializeStackDatabase,
+  projectCatalogOverlay,
+} from "./stack-bootstrap.ts";
 import { defaultStackRuntime } from "./stack-runtime.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
@@ -37,20 +40,10 @@ type StackInstances = Effect.Success<Stack["services"]["list"]>;
 const databaseFor = (instances: StackInstances): DatabaseInstance | undefined =>
   instances.find((instance): instance is DatabaseInstance => instance.service === "database");
 
-const stackForProject = Effect.fn("StackLocalDatabase.findProject")(function* (
-  api: StackApi["Service"],
-  settings: Settings,
-  path: Path.Path,
-) {
-  const identity = yield* api.resolveIdentity({ projectRoot: settings.workdir });
-  const discovered = yield* api.discover({ stateRoot: stateRoot(settings, path) });
-  return discovered.find(
-    ({ definition }) =>
-      definition.identity.projectRoot === identity.projectRoot &&
-      definition.identity.branchContext === identity.branchContext &&
-      definition.identity.stackName === identity.stackName,
-  );
-});
+const stackForProject = (api: StackApi["Service"], settings: Settings, path: Path.Path) =>
+  api
+    .find({ stateRoot: stateRoot(settings, path), projectRoot: settings.workdir })
+    .pipe(Effect.map(Option.getOrUndefined));
 
 const openProjectStack = Effect.fn("StackLocalDatabase.openProject")(function* () {
   const api = yield* StackApi;
@@ -104,12 +97,13 @@ export const stackOpenReadyProject = stackOpenProjectBy((cause) => notRunning(ca
   ),
 );
 
+/** The saved project stack's runtime as a hint; an absent or unreadable stack yields none. */
 export const stackProjectRuntime = Effect.gen(function* () {
   const api = yield* StackApi;
   const settings = yield* CommandSettings;
   const path = yield* Path.Path;
   return (yield* stackForProject(api, settings, path))?.definition.runtime;
-});
+}).pipe(Effect.orElseSucceed(() => undefined));
 
 export class StackRuntimeUnavailableError extends Data.TaggedError("StackRuntimeUnavailableError")<{
   readonly message: string;
@@ -132,13 +126,6 @@ export const stackRequireProjectRuntime: Effect.Effect<
 > = stackProjectRuntime.pipe(
   Effect.flatMap((runtime) =>
     runtime === undefined ? Effect.fail(RUNTIME_UNAVAILABLE) : Effect.succeed(runtime),
-  ),
-  Effect.mapError(
-    (cause) =>
-      new StackRuntimeUnavailableError({
-        message: cause.message,
-        suggestion: RUNTIME_UNAVAILABLE.suggestion,
-      }),
   ),
 );
 
@@ -230,8 +217,8 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
   const toml = yield* readDbToml(fs, path, settings.workdir).pipe(Effect.mapError(startFailed));
   const experimental = yield* resolveExperimentalWithProjectEnv({ ...toml.projectEnv });
   const existing = yield* stackForProject(api, settings, path).pipe(Effect.mapError(startFailed));
-  const identity =
-    existing === undefined ? yield* config.identity.pipe(Effect.mapError(startFailed)) : undefined;
+  const keys =
+    existing === undefined ? yield* config.keys.pipe(Effect.mapError(startFailed)) : undefined;
   const stack =
     existing === undefined
       ? yield* api
@@ -258,11 +245,16 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
     return yield* startFailed({ message: "database is disabled in the local configuration" });
   const currentDatabase = yield* databaseFromStack(stack).pipe(Effect.mapError(startFailed));
   if (currentDatabase !== undefined) {
-    const status = yield* currentDatabase.status.pipe(Effect.mapError(startFailed));
+    const planned = yield* stack.composition
+      .plan([databaseCreation])
+      .pipe(Effect.mapError(startFailed));
     if (
-      status.config.service === "database" &&
-      postgresVersion(status.config.config.version) !==
-        postgresVersion(databaseCreation.config.version)
+      planned.some(
+        (entry) =>
+          entry.id === currentDatabase.id &&
+          entry.change === "incompatible" &&
+          entry.paths.includes("config.version"),
+      )
     )
       return yield* startFailed({
         message: "The requested database version does not match the saved stack binding",
@@ -297,41 +289,23 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
       message:
         "A standalone database exists outside the saved stack composition. Destroy the standalone database before starting this stack.",
     });
-  const effectiveIdentity = identity ?? (yield* config.identity.pipe(Effect.mapError(startFailed)));
+  const effectiveKeys = keys ?? (yield* config.keys.pipe(Effect.mapError(startFailed)));
   const [database] = yield* stack.composition
-    .supabase([databaseCreation], { identity: effectiveIdentity })
+    .supabase([databaseCreation], { keys: effectiveKeys })
     .pipe(Effect.mapError(startFailed));
   if (database === undefined || database.service !== "database")
     return yield* startFailed({ message: "stack did not create a database instance" });
   return yield* Effect.gen(function* () {
     yield* database.start.pipe(Effect.mapError(startFailed));
     yield* database.ready.pipe(Effect.mapError(startFailed));
-    const catalog = yield* StackCatalogSetup;
-    const databaseServices = creations.flatMap((creation) =>
-      creation.service === "auth" ||
-      creation.service === "storage" ||
-      creation.service === "realtime"
-        ? [creation.service]
-        : [],
-    );
     const credentials = yield* stack.credentials.get.pipe(Effect.mapError(startFailed));
     if (credentials === undefined)
       return yield* startFailed({ message: "stack credentials were not saved" });
-    yield* catalog
-      .apply({
-        target: { stack, database, databaseServices },
-        overlay: {
-          webhooks: "config",
-          webhooksEnabled: toml.webhooksEnabled,
-          apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
-          vault: toml.vault,
-          workdir: settings.workdir,
-        },
-      })
-      .pipe(Effect.mapError(startFailed));
-    yield* applyStackMigrateAndSeed(database, settings.workdir, toml, experimental).pipe(
-      Effect.mapError(startFailed),
-    );
+    yield* initializeStackDatabase({
+      target: { stack, database, databaseServices: catalogDatabaseServices(creations) },
+      overlay: projectCatalogOverlay(toml, settings.workdir),
+      migrations: { workdir: settings.workdir, toml, experimental },
+    }).pipe(Effect.mapError(startFailed));
     return "started" as const;
   }).pipe(
     Effect.onError(() =>

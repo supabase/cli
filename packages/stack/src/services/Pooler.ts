@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
-import { databaseConnection, localJwtSecret } from "./ServiceConfig.ts";
+import { databaseConnection, requiredInput, localJwtSecret } from "./ServiceConfig.ts";
 import {
   DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
   DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
@@ -8,7 +8,7 @@ import {
 import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
 
 export const Config = Schema.Struct({
-  databaseUrl: Schema.String,
+  databaseUrl: Schema.optionalKey(Schema.String),
   jwtSecret: Schema.optionalKey(Schema.String),
   tenant: Schema.optionalKey(Schema.String),
   defaultPoolSize: Schema.optionalKey(Schema.Finite),
@@ -28,10 +28,11 @@ const environment: ProcessRecipeSpec<Creation>["env"] = (creation, endpoints, co
   Effect.gen(function* () {
     const http = endpoints.get("http");
     const sql = endpoints.get("sql");
-    const db = yield* databaseConnection(creation.config.databaseUrl);
+    const databaseUrl = yield* requiredInput("pooler", "databaseUrl", creation.config.databaseUrl);
+    const db = yield* databaseConnection(databaseUrl);
     const mode = creation.config.poolMode ?? "transaction";
     return {
-      DATABASE_URL: creation.config.databaseUrl,
+      DATABASE_URL: databaseUrl,
       ...(http === undefined ? {} : { PORT: String(http.port) }),
       ...(creation.config.tenant === undefined ? {} : { TENANT_ID: creation.config.tenant }),
       POSTGRES_HOST: db.host,
