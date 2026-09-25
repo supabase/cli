@@ -322,6 +322,10 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           owner.core
             .prepare(id)
             .pipe(Effect.mapError((cause) => stackError("prepareService", cause))),
+        initializeService: ({ id }: { readonly id: string }) =>
+          owner.core
+            .initialize(id)
+            .pipe(Effect.mapError((cause) => stackError("initializeService", cause))),
         status: ({ id }: { readonly id: string }) =>
           owner.core.status(id).pipe(Effect.mapError((cause) => stackError("status", cause))),
         followStatus: ({ id }: { readonly id: string }) =>

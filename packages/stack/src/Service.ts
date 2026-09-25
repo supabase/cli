@@ -15,8 +15,15 @@ import type { Stream } from "effect";
 
 type ServiceLifecycle = "stopped" | "starting" | "running" | "stopping";
 type ServiceHealth = "starting" | "healthy" | "unhealthy";
-type ServiceOperation = "start" | "stop" | "restart" | "storage" | "destroy" | "sleep";
-export type ServiceAdmission = ServiceOperation | "arm";
+type ServiceOperation =
+  | "start"
+  | "stop"
+  | "restart"
+  | "initialize"
+  | "storage"
+  | "destroy"
+  | "sleep";
+export type ServiceAdmission = Exclude<ServiceOperation, "initialize"> | "arm";
 
 export interface ServiceObservation<Config> {
   readonly id: string;
@@ -80,6 +87,10 @@ export class ServiceLaunchError extends Data.TaggedError("ServiceLaunchError")<{
 export interface ServiceDefinition<Config> {
   /** Preparation is performed before lifecycle admission. */
   readonly prepare?: (config: Config) => Effect.Effect<void, ServiceError>;
+  /** Runs one-shot service initialization without starting its long-lived process. */
+  readonly initialize?: (
+    context: ServiceInstanceContext<Config>,
+  ) => Effect.Effect<void, ServiceError>;
   /** Failures after resource acquisition carry the session for ordinary cleanup. */
   readonly launch: (
     context: ServiceInstanceContext<Config>,
@@ -123,6 +134,7 @@ export interface ServiceInstance<Config> {
     void,
     ServiceError | ServiceDestroyed | ServiceNotRunning | ServiceStaleLaunch
   >;
+  readonly initialize: Effect.Effect<void, ServiceError | ServiceDestroyed | ServiceNotStopped>;
   /** Runs instance-owned storage work only while the instance is stopped. */
   readonly storage: <A>(
     operation: Effect.Effect<A, ServiceError>,
@@ -227,6 +239,18 @@ export const makeService = <Config>(
             { uninterruptible: false },
           );
           return yield* restore(Fiber.join(fiber));
+        }),
+      );
+    });
+
+    const runInterruptibly = Effect.fn("Service.runInterruptibly")(function* <
+      A,
+      E extends ServiceError | ServiceDestroyed | ServiceNotStopped,
+    >(operation: Effect.Effect<A, E>) {
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          yield* restore(gate.take(1));
+          return yield* restore(operation).pipe(Effect.ensuring(gate.release(1)));
         }),
       );
     });
@@ -626,6 +650,37 @@ export const makeService = <Config>(
       yield* healthResult;
     });
 
+    const initialize = Effect.fn("Service.initialize")(function* () {
+      yield* runInterruptibly(
+        Effect.gen(function* () {
+          const observation = yield* SubscriptionRef.get(observations);
+          if (!observation.registered) return yield* new ServiceDestroyed({ id: options.id });
+          if (observation.lifecycle !== "stopped" || observation.wakeEnabled) {
+            return yield* new ServiceNotStopped({
+              id: options.id,
+              lifecycle: observation.lifecycle,
+              message: `Service ${options.id} must be stopped with wake disabled before initialization`,
+            });
+          }
+          if (definition.initialize === undefined)
+            return yield* new ServiceError({
+              operation: "initialize",
+              message: `Service ${options.id} does not support one-shot initialization`,
+            });
+          const initializeOperation = definition.initialize;
+          yield* setOperation("initialize");
+          yield* Effect.gen(function* () {
+            const candidate = yield* Ref.get(config);
+            if (definition.prepare !== undefined) yield* definition.prepare(candidate);
+            const scope = yield* Scope.fork(owner, "sequential");
+            yield* initializeOperation(contextFor(options.id, candidate, scope)).pipe(
+              Effect.ensuring(Scope.close(scope, Exit.void)),
+            );
+          }).pipe(Effect.ensuring(setOperation(undefined)));
+        }),
+      );
+    });
+
     const storage = Effect.fn("Service.storage")(function* <A>(
       operation: Effect.Effect<A, ServiceError>,
     ) {
@@ -682,6 +737,7 @@ export const makeService = <Config>(
       stop: stop(),
       restart,
       ready: ready(),
+      initialize: initialize(),
       storage,
       destroy: destroy(),
     };

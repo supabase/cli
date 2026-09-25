@@ -79,7 +79,7 @@ type StackCatalogSetupFailure =
   | DbConnectError;
 
 const temporaryServiceError = (
-  operation: "start" | "destroy",
+  operation: "start" | "initialize" | "destroy",
   instance: TemporaryServiceInstance,
   cause: unknown,
 ): StackCatalogSetupError =>
@@ -150,6 +150,24 @@ const startTemporaryService = (
     );
   });
 
+const initializeTemporaryService = (
+  instance: TemporaryServiceInstance,
+): Effect.Effect<void, StackCatalogSetupError> => {
+  const initialize = instance.initialize;
+  if (initialize === undefined)
+    return Effect.fail(
+      new StackCatalogSetupError({
+        message: `temporary ${instance.service} service cannot initialize`,
+      }),
+    );
+  return initialize.pipe(
+    Effect.mapError((cause) => temporaryServiceError("initialize", instance, cause)),
+    Effect.withSpan("StackCatalogSetup.temporaryService.initialize", {
+      attributes: { service: instance.service, member_id: instance.id, operation: "initialize" },
+    }),
+  );
+};
+
 const destroyTemporaryService = (
   instance: TemporaryServiceInstance,
 ): Effect.Effect<void, StackCatalogSetupError> =>
@@ -202,7 +220,10 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
                 }),
               ),
             (instance) =>
-              startTemporaryService(instance).pipe(
+              (service === "realtime"
+                ? initializeTemporaryService(instance)
+                : startTemporaryService(instance)
+              ).pipe(
                 Effect.andThen(Ref.updateAndGet(readyServices, (count) => count + 1)),
                 Effect.flatMap((count) =>
                   count === input.target.databaseServices.length

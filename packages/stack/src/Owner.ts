@@ -98,6 +98,7 @@ export interface Interface {
     readonly status: (id: string) => Effect.Effect<OwnerObservation, OwnerError>;
     readonly followStatus: (id: string) => Stream.Stream<OwnerObservation, OwnerError>;
     readonly prepare: (id: string) => Effect.Effect<void, OwnerError>;
+    readonly initialize: (id: string) => Effect.Effect<void, OwnerError>;
     readonly logs: (id: string) => Stream.Stream<CatalogLog, OwnerError>;
     readonly start: (id: string) => Effect.Effect<void, OwnerError>;
     readonly ready: (id: string) => Effect.Effect<void, OwnerError>;
@@ -1161,6 +1162,13 @@ const makeOwnerWithDependencies = (
         Effect.mapError((cause) => errorFor("prepare", cause)),
       );
     });
+    const initialize = Effect.fn("Owner.initialize")(function* (id: string) {
+      const isDraining = yield* Ref.get(draining);
+      if (isDraining) return yield* errorFor("initialize", "Owner is draining");
+      const instance = (yield* Ref.get(instances)).get(id);
+      if (instance === undefined) return yield* errorFor("initialize", `Unknown service ${id}`);
+      yield* instance.initialize.pipe(Effect.mapError((cause) => errorFor("initialize", cause)));
+    });
     const start = Effect.fn("Owner.start")((id: string) =>
       operation("start", orchestrator.start(id)),
     );
@@ -1380,6 +1388,7 @@ const makeOwnerWithDependencies = (
             ),
           ).pipe(Stream.mapEffect((value) => enrichObservation(id, value))),
         prepare,
+        initialize,
         logs: (id) =>
           Stream.unwrap(
             getRecipe(id).pipe(

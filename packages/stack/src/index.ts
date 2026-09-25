@@ -73,7 +73,10 @@ export interface ServiceInstance<K extends Kind = Kind> {
     options?: CallOptions,
   ) => Promise<void>;
   readonly destroy: (options?: CallOptions) => Promise<void>;
+  /** Ensures the service artifact or image is available without starting the service. */
   readonly prepare: (options?: CallOptions) => Promise<void>;
+  /** Runs one-shot service initialization while stopped, without starting its long-lived process. */
+  readonly initialize?: (options?: CallOptions) => Promise<void>;
   readonly status: (options?: CallOptions) => Promise<StackEffect.Observation>;
   readonly followStatus: () => AsyncIterable<StackEffect.Observation>;
   readonly logs: () => AsyncIterable<{
@@ -204,6 +207,12 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
       ),
     destroy: (options) => run(service.destroy, options),
     prepare: (options) => run(service.prepare, options),
+    initialize: (options) =>
+      service.initialize === undefined
+        ? Promise.reject(
+            new StackError({ operation: "initialize", message: "Initialization is unavailable" }),
+          )
+        : run(service.initialize, options),
     status: (options) => run(service.status, options),
     followStatus: () => iterable(service.followStatus),
     logs: () => iterable(service.logs),

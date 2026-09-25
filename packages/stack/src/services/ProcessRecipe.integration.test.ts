@@ -580,6 +580,131 @@ const countingSpawner = (
 });
 
 describe("process recipe startup", () => {
+  it.effect("runs Realtime preparation without launching its server", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const launched: Array<{
+          readonly entrypoint?: string;
+          readonly args?: ReadonlyArray<string>;
+        }> = [];
+        const removed = yield* Ref.make(false);
+        const container: ContainerRuntime = {
+          prepare: () => Effect.void,
+          prepareImage: (image) => Effect.succeed(image),
+          launch: () => Effect.die("one-shot initialization must not launch the service"),
+          launchTool: (input) =>
+            Effect.sync(() => {
+              launched.push({ entrypoint: input.entrypoint, args: input.args });
+              return {
+                id: "realtime-prepare",
+                ports: {},
+                stdout: Stream.empty,
+                stderr: Stream.empty,
+                exitCode: Effect.succeed(0),
+                stdin: Sink.drain,
+                stop: Effect.void,
+                discard: Effect.void,
+                kill: Effect.void,
+                remove: Ref.set(removed, true),
+              } satisfies ContainerProcess;
+            }),
+        };
+        const realtime = yield* realtimeService(container);
+
+        yield* realtime.initialize;
+
+        expect(launched).toEqual([{ entrypoint: "/app/bin/prepare", args: [] }]);
+        expect(yield* Ref.get(removed)).toBe(true);
+        expect((yield* realtime.get).lifecycle).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(platform)),
+  );
+
+  it.effect("reports preparation output after cleaning up a failed one-shot process", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stopped = yield* Ref.make(false);
+        const removed = yield* Ref.make(false);
+        const container: ContainerRuntime = {
+          prepare: () => Effect.void,
+          prepareImage: (image) => Effect.succeed(image),
+          launch: () => Effect.die("one-shot initialization must not launch the service"),
+          launchTool: () => {
+            const process = {
+              id: "realtime-prepare",
+              ports: {},
+              stdout: Stream.make(encode("controlled migration failure\n")),
+              stderr: Stream.empty,
+              exitCode: Effect.succeed(1),
+              stdin: Sink.drain,
+              stop: Ref.set(stopped, true),
+              discard: Effect.void,
+              kill: Effect.void,
+              remove: Ref.set(removed, true),
+            } satisfies ContainerProcess;
+            return Effect.gen(function* () {
+              const scope = yield* Scope.Scope;
+              yield* Scope.addFinalizer(scope, process.stop.pipe(Effect.andThen(process.remove)));
+              return process;
+            });
+          },
+        };
+        const realtime = yield* realtimeService(container);
+
+        const error = yield* Effect.flip(realtime.initialize);
+
+        expect(error.message).toContain("realtime startup exited with 1");
+        expect(error.message).toContain("controlled migration failure");
+        expect(yield* Ref.get(stopped)).toBe(true);
+        expect(yield* Ref.get(removed)).toBe(true);
+        expect((yield* realtime.get).lifecycle).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(platform)),
+  );
+
+  it.effect("interrupts and removes the one-shot initialization process before returning", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const stopped = yield* Ref.make(false);
+        const removed = yield* Ref.make(false);
+        const container: ContainerRuntime = {
+          prepare: () => Effect.void,
+          prepareImage: (image) => Effect.succeed(image),
+          launch: () => Effect.die("one-shot initialization must not launch the service"),
+          launchTool: () =>
+            Effect.gen(function* () {
+              const process = {
+                id: "realtime-prepare",
+                ports: {},
+                stdout: Stream.empty,
+                stderr: Stream.empty,
+                exitCode: Effect.never,
+                stdin: Sink.drain,
+                stop: Ref.set(stopped, true),
+                discard: Effect.void,
+                kill: Effect.void,
+                remove: Ref.set(removed, true),
+              } satisfies ContainerProcess;
+              const scope = yield* Scope.Scope;
+              yield* Scope.addFinalizer(scope, process.stop.pipe(Effect.andThen(process.remove)));
+              yield* Deferred.succeed(started, undefined);
+              return process;
+            }),
+        };
+        const realtime = yield* realtimeService(container);
+        const initialization = yield* realtime.initialize.pipe(Effect.forkScoped);
+        yield* Deferred.await(started);
+
+        yield* Fiber.interrupt(initialization);
+
+        expect(yield* Ref.get(stopped)).toBe(true);
+        expect(yield* Ref.get(removed)).toBe(true);
+        expect((yield* realtime.get).lifecycle).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(platform)),
+  );
+
   it.effect("reports the startup process's recent stdout and stderr when it exits non-zero", () =>
     Effect.scoped(
       Effect.gen(function* () {

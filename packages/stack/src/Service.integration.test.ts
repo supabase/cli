@@ -194,6 +194,39 @@ const stopFixture = (service: ServiceInstance<Config>, plan: RuntimePlan) =>
   });
 
 describe("service kernel", () => {
+  it.effect("awaits one-shot initialization cleanup when its caller is interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        const cleaned = yield* Ref.make(false);
+        const service = yield* makeService(
+          {
+            initialize: () =>
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(gate)),
+                Effect.ensuring(Ref.set(cleaned, true)),
+              ),
+            launch: () => Effect.die("initialization must not launch the service"),
+            removeData: () => Effect.void,
+          },
+          { id: "initialize-interruption", config: { version: 1 } },
+        );
+        const initialization = yield* service.initialize.pipe(Effect.forkScoped);
+        yield* Deferred.await(started);
+        expect((yield* service.get).currentOperation).toBe("initialize");
+
+        yield* Fiber.interrupt(initialization);
+
+        expect(yield* Ref.get(cleaned)).toBe(true);
+        expect((yield* service.get).currentOperation).toBeUndefined();
+        expect((yield* service.get).lifecycle).toBe("stopped");
+        yield* service.destroy;
+        expect((yield* service.get).registered).toBe(false);
+      }),
+    ),
+  );
+
   it.live("submits stop while launch is delayed and completes it after launch", () =>
     Effect.scoped(
       Effect.gen(function* () {
