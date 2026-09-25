@@ -578,6 +578,7 @@ TestDbMutuallyExclusiveFlagsError
 TestDbNoTestsError
 TestDbRunError
 TestNewFileExistsError
+TestNewInvalidNameError
 TestNewWriteError
 UnknownComputeExposureError
 UnknownComputeRuntimeError
