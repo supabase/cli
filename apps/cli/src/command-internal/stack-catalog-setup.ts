@@ -202,7 +202,7 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
             (instance) => startTemporaryService(instance),
             (instance) => destroyTemporaryService(instance),
           ),
-        { discard: true },
+        { concurrency: "unbounded", discard: true },
       );
 
       const connection = parseConnectionString(hostDatabaseUrl);
