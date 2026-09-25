@@ -1,71 +1,69 @@
 import {
   Context,
   Crypto,
-  Data,
   Effect,
+  Fiber,
   FileSystem,
+  Layer,
+  Option,
   Path,
-  Redacted,
   Ref,
-  Scope,
   Schema,
+  Scope,
   Semaphore,
   Stream,
-  Layer,
 } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import type { Rpc, RpcGroup } from "effect/unstable/rpc";
+import { failureMessage } from "./internal/failure-message.ts";
 import * as Network from "./Network.ts";
-import * as Container from "./runtime/Container.ts";
-import type { NetworkBinding, NetworkNamespace } from "./Network.ts";
+import type { NetworkEndpoint, NetworkNamespace } from "./Network.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import type { CompositionConfig, RegisteredInstance } from "./Orchestrator.ts";
+import type { CompositionConfig } from "./Orchestrator.ts";
 import {
   makeService,
   ServiceError,
-  ServiceLaunchError,
+  type ServiceAdmission,
   type ServiceInstance,
+  type ServiceInstanceContext,
   type ServiceObservation,
 } from "./Service.ts";
-import { ProxyError, type BackendAddress } from "./Proxy.ts";
-import type { NetworkEndpoint } from "./Network.ts";
+import { ProxyError } from "./Proxy.ts";
 import {
-  apiRoute,
+  backendAddress,
   credentialsFor,
   endpointNames,
   endpointPort,
-  EndpointError,
   outputsFor,
   publicUrl,
+  sharedRoutes,
 } from "./host/Endpoints.ts";
 import {
+  consumesCredentials,
+  CredentialError,
+  credentialOverrides,
+  nextCredentials,
+  withCredentials,
+  withoutUnusedCredentials,
+} from "./host/Credentials.ts";
+import {
   makeSupabaseComposition,
-  SupabaseCompositionError,
   type SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
 import {
   makeServiceRecipe,
   ServiceCreation,
-  ServiceCreationInput,
-  type CatalogLog,
-  type CatalogRecipe,
   serviceSchemas,
+  type CatalogRecipe,
+  type ServiceCreationInput,
 } from "./services/Catalog.ts";
+import type { CatalogError } from "./services/Recipe.ts";
+import * as Container from "./runtime/Container.ts";
+import { stackError, type OwnerRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
-import type { SavedInstance, SavedStack, StackCredentials } from "./State.ts";
-import { resolveStackIdentity } from "./services/ServiceConfig.ts";
-import {
-  DEFAULT_LOCAL_DATABASE_PASSWORD,
-  DEFAULT_LOCAL_JWT_SECRET,
-  DEFAULT_POSTGRES_ROOT_KEY,
-} from "./Defaults.ts";
+import type { SavedStack, StackIdentityInput } from "./State.ts";
 import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
-
-export class OwnerError extends Data.TaggedError("OwnerError")<{
-  readonly operation: string;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
 
 export interface OwnerOptions {
   readonly saved: SavedStack;
@@ -74,1362 +72,621 @@ export interface OwnerOptions {
   readonly cacheRoot: string;
 }
 
-export class Service extends Context.Service<Service, Interface>()("@supabase/stack/Owner") {}
+type OwnerRpcs = RpcGroup.Rpcs<typeof OwnerRpc>;
 
-type OwnerObservation = ServiceObservation<ServiceCreation> & {
-  readonly endpoints: ReadonlyArray<NetworkBinding>;
+/** RPC handlers for the owner's instance and composition operations. */
+type Handlers = {
+  readonly [Current in OwnerRpcs as Current["_tag"]]: (
+    payload: Rpc.Payload<Current>,
+  ) => Rpc.ResultFrom<Current, never>;
 };
 
+/** Removes containers labeled with this stack and data root; native stacks own none. */
+export const sweepContainers = Effect.fn("Owner.sweepContainers")(function* (
+  saved: Pick<SavedStack, "id" | "runtime">,
+  root: string,
+) {
+  if (saved.runtime !== "native")
+    yield* Container.removeStackContainers({ engine: saved.runtime, stackId: saved.id, root });
+});
+
+type NamespaceError =
+  | Orchestrator.OrchestratorError
+  | Orchestrator.LifecycleError
+  | Network.NetworkError
+  | State.StateError
+  | Effect.Error<ReturnType<typeof sweepContainers>>;
+
 export interface Interface {
-  readonly services: {
-    readonly create: (
-      creation: unknown,
-    ) => Effect.Effect<{ id: string; creation: ServiceCreation }, OwnerError>;
-    readonly get: (
-      id: string,
-    ) => Effect.Effect<{ id: string; creation: ServiceCreation }, OwnerError>;
-    readonly list: Effect.Effect<
-      ReadonlyArray<{ id: string; creation: ServiceCreation }>,
-      OwnerError
-    >;
-  };
-  readonly core: {
-    readonly get: (id: string) => Effect.Effect<OwnerObservation, OwnerError>;
-    readonly status: (id: string) => Effect.Effect<OwnerObservation, OwnerError>;
-    readonly followStatus: (id: string) => Stream.Stream<OwnerObservation, OwnerError>;
-    readonly prepare: (id: string) => Effect.Effect<void, OwnerError>;
-    readonly logs: (id: string) => Stream.Stream<CatalogLog, OwnerError>;
-    readonly start: (id: string) => Effect.Effect<void, OwnerError>;
-    readonly ready: (id: string) => Effect.Effect<void, OwnerError>;
-    readonly stop: (id: string) => Effect.Effect<void, OwnerError>;
-    readonly restart: (id: string, creation?: unknown) => Effect.Effect<void, OwnerError>;
-    readonly destroy: (id: string) => Effect.Effect<void, OwnerError>;
-  };
-  readonly composition: {
-    readonly supabase: (
-      creations: ReadonlyArray<ServiceCreationInput>,
-      options?: SupabaseCompositionOptions,
-    ) => Effect.Effect<ReadonlyArray<{ id: string; creation: ServiceCreation }>, OwnerError>;
-    readonly configure: (configuration: CompositionConfig) => Effect.Effect<void, OwnerError>;
-    readonly get: Effect.Effect<CompositionConfig, OwnerError>;
-    readonly start: Effect.Effect<ReadonlyArray<OwnerObservation>, OwnerError>;
-    readonly stop: Effect.Effect<ReadonlyArray<OwnerObservation>, OwnerError>;
-    readonly restart: Effect.Effect<ReadonlyArray<OwnerObservation>, OwnerError>;
-  };
-  readonly credentials: (
-    id: string,
-    from: "host" | "runtime",
-  ) => Effect.Effect<Readonly<Record<string, string>>, OwnerError>;
-  readonly snapshots: {
-    readonly saveSnapshot: (id: string, key: string) => Effect.Effect<void, OwnerError>;
-    readonly restoreSnapshot: (id: string, key: string) => Effect.Effect<boolean, OwnerError>;
-    readonly resetData: (id: string) => Effect.Effect<void, OwnerError>;
-  };
+  readonly handlers: Handlers;
   readonly namespace: {
-    readonly stop: Effect.Effect<void, OwnerError>;
-    readonly destroy: Effect.Effect<void, OwnerError>;
+    /** Stops every instance after in-flight definition changes settle, then removes containers. */
+    readonly stop: Effect.Effect<void, NamespaceError>;
+    /**
+     * Destroys every instance once in-flight definition changes settle, then releases owned
+     * containers, claims and saved state.
+     */
+    readonly destroy: Effect.Effect<void, NamespaceError>;
   };
-  readonly setDraining: (draining: boolean) => Effect.Effect<void, OwnerError>;
-  readonly getServing: Effect.Effect<boolean, OwnerError>;
+  readonly setDraining: (draining: boolean) => Effect.Effect<void>;
+  readonly getServing: Effect.Effect<boolean>;
 }
 
-const errorFor = (operation: string, cause: unknown) =>
-  new OwnerError({
-    operation,
-    message: cause instanceof Error ? cause.message : String(cause),
-    cause,
-  });
+export class Service extends Context.Service<Service, Interface>()("@supabase/stack/Owner") {}
 
-const supabaseError = (cause: unknown) =>
-  cause instanceof SupabaseCompositionError
-    ? cause
-    : new SupabaseCompositionError({
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      });
+interface Entry extends Orchestrator.RegisteredInstance {
+  readonly core: ServiceInstance<ServiceCreation>;
+  readonly recipe: CatalogRecipe;
+  /** The saved creation, which composition wiring and launches update. */
+  readonly creation: Ref.Ref<ServiceCreation>;
+  readonly namespace: NetworkNamespace;
+}
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const consumesCredentials = (creation: unknown): boolean => {
-  if (!isRecord(creation) || typeof creation.service !== "string") return true;
-  if (creation.service === "database") return true;
-  if (["auth", "realtime", "storage", "functions", "studio", "pooler"].includes(creation.service))
-    return true;
-  if (creation.service !== "rest") return false;
-  const config = isRecord(creation.config) ? creation.config : {};
-  return config.jwks === undefined || config.jwtSecret !== undefined;
-};
+const serviceError =
+  (operation: string) =>
+  (cause: unknown): ServiceError =>
+    new ServiceError({ operation, message: failureMessage(cause), cause });
 
-const credentialOverridesFor = (creation: ServiceCreationInput): Record<string, string> => {
-  const overrides: Record<string, string> = {};
-  if (creation.service === "database") {
-    if (creation.config.jwtSecret !== undefined)
-      overrides.jwtSecret = Redacted.value(creation.config.jwtSecret);
-    if (creation.config.rootKey !== undefined)
-      overrides.postgresRootKey = Redacted.value(creation.config.rootKey);
-    if (creation.config.databasePassword !== undefined)
-      overrides.databasePassword = Redacted.value(creation.config.databasePassword);
-  } else if ("jwtSecret" in creation.config && creation.config.jwtSecret !== undefined) {
-    overrides.jwtSecret = creation.config.jwtSecret;
-  }
-  return overrides;
-};
+const rpcError = (operation: string) =>
+  Effect.mapError((cause: unknown) => stackError(operation, cause));
 
-const clearUnusedCredentials = (current: SavedStack): SavedStack => {
-  if (
-    current.credentials === undefined ||
-    current.instances.some(({ creation }) => consumesCredentials(creation))
-  )
-    return current;
-  const withoutCredentials = { ...current };
-  delete withoutCredentials.credentials;
-  return withoutCredentials;
-};
+const mergeInputs = (creation: ServiceCreation, inputs: Record<string, string | undefined>) =>
+  Schema.decodeUnknownEffect(ServiceCreation)({
+    ...creation,
+    config: Object.fromEntries(
+      Object.entries({ ...creation.config, ...inputs }).filter(([, value]) => value !== undefined),
+    ),
+  }).pipe(Effect.mapError(serviceError("inputs")));
 
-const creationJson = Schema.toCodecJson(ServiceCreation);
-const encodeCreation = (creation: ServiceCreation) => Schema.encodeEffect(creationJson)(creation);
+const restartCreation = (creation: ServiceCreation, candidate: unknown) =>
+  candidate === undefined
+    ? Effect.succeed(creation)
+    : Schema.decodeUnknownEffect(ServiceCreation)({
+        ...creation,
+        config: isRecord(candidate) && "config" in candidate ? candidate.config : candidate,
+      }).pipe(Effect.mapError(serviceError("restart")));
 
-const makeOwnerWithDependencies = (
-  options: OwnerOptions,
-  orchestrator: Orchestrator.Interface,
-  network: Network.Interface,
-) =>
-  Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const http = yield* HttpClient.HttpClient;
-    const ownerScope = yield* Scope.Scope;
-    const helperOwnerId = yield* crypto.randomUUIDv4.pipe(
-      Effect.mapError((cause) => errorFor("identity", cause)),
+const withoutInstance = (current: SavedStack, id: string): SavedStack =>
+  withoutUnusedCredentials({
+    ...current,
+    instances: current.instances.filter((instance) => instance.id !== id),
+    composition: {
+      members: current.composition.members.filter((member) => member.id !== id),
+      dependencies: current.composition.dependencies.filter(
+        (dependency) => dependency.from !== id && dependency.to !== id,
+      ),
+    },
+  });
+
+const drainingBlocks: ReadonlyArray<ServiceAdmission> = ["start", "arm", "restart", "storage"];
+
+const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
+  const services = yield* Effect.context<
+    | FileSystem.FileSystem
+    | Path.Path
+    | Crypto.Crypto
+    | ChildProcessSpawner.ChildProcessSpawner
+    | HttpClient.HttpClient
+    | Scope.Scope
+  >();
+  const ownerScope = Context.get(services, Scope.Scope);
+  const crypto = Context.get(services, Crypto.Crypto);
+  const network = yield* Network.Service;
+  const orchestrator = yield* Orchestrator.make<Entry>();
+  const helpers = yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4);
+  const definitionGate = yield* Semaphore.make(1);
+  const draining = yield* Ref.make(false);
+  const { id: stackId, runtime } = options.saved;
+  const routeKeys = {
+    publishableKey: options.saved.credentials?.publishableKey ?? "",
+    secretKey: options.saved.credentials?.secretKey ?? "",
+    anonKey: options.saved.credentials?.anonKey ?? "",
+    serviceRoleKey: options.saved.credentials?.serviceRoleKey ?? "",
+  };
+
+  const rejectWhileDraining = Ref.get(draining).pipe(
+    Effect.flatMap((isDraining) =>
+      isDraining
+        ? Effect.fail(new ServiceError({ operation: "draining", message: "Owner is draining" }))
+        : Effect.void,
+    ),
+  );
+
+  // Mask only the permit handoff; admitted definition changes belong to the owner scope. A change
+  // arriving while draining fails before waiting behind the shutdown that holds the permit.
+  const definitionChange = <A, E>(work: Effect.Effect<A, E>) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        yield* rejectWhileDraining;
+        yield* restore(definitionGate.take(1));
+        const fiber = yield* Effect.forkIn(
+          rejectWhileDraining.pipe(
+            Effect.andThen(work),
+            Effect.ensuring(definitionGate.release(1)),
+          ),
+          ownerScope,
+          { uninterruptible: false },
+        );
+        return yield* restore(Fiber.join(fiber));
+      }),
     );
-    const helpers = yield* makeDockerHelperRegistry(helperOwnerId);
-    const recipes = yield* Ref.make(new Map<string, CatalogRecipe>());
-    const instances = yield* Ref.make(new Map<string, ServiceInstance<ServiceCreation>>());
-    const namespaces = yield* Ref.make(new Map<string, NetworkNamespace>());
-    const composition = yield* Ref.make<CompositionConfig>({
-      members: [],
-      dependencies: [],
-    });
-    const registryGate = yield* Semaphore.make(1);
-    const compositionGate = yield* Semaphore.make(1);
-    const draining = yield* Ref.make(false);
-    const runtime = options.saved.runtime;
 
-    const updateState = Effect.fn("Owner.updateState")(function* (
-      update: (current: SavedStack) => Effect.Effect<SavedStack, OwnerError>,
-    ) {
-      return yield* options.state
-        .withLock(
-          Effect.gen(function* () {
-            const current = yield* options.state
-              .read(options.saved.id)
-              .pipe(Effect.mapError((cause) => errorFor("state", cause)));
-            if (current === undefined) return yield* errorFor("state", "Saved stack is missing");
-            const next = yield* update(current);
-            yield* options.state
-              .save(next)
-              .pipe(Effect.mapError((cause) => errorFor("state", cause)));
-            return next;
-          }),
-        )
-        .pipe(
-          Effect.mapError((cause) =>
-            cause instanceof OwnerError ? cause : errorFor("state", cause),
-          ),
-        );
-    });
+  const readSaved = options.state
+    .read(stackId)
+    .pipe(
+      Effect.flatMap((saved) =>
+        saved === undefined
+          ? Effect.fail(
+              new State.StateError({ operation: "read", message: "Saved stack is missing" }),
+            )
+          : Effect.succeed(saved),
+      ),
+    );
+  const updateState = (update: (current: SavedStack) => SavedStack) =>
+    options.state.withLock(
+      readSaved.pipe(Effect.flatMap((current) => options.state.save(update(current)))),
+    );
 
-    const persistCreation = Effect.fn("Owner.persistCreation")(function* (
-      id: string,
-      creation: ServiceCreation,
-    ) {
-      const encoded = yield* encodeCreation(creation).pipe(
-        Effect.mapError((cause) => errorFor("state", cause)),
-      );
-      yield* updateState((current) =>
-        Effect.succeed({
-          ...current,
-          instances: current.instances.map((instance) =>
-            instance.id === id ? { ...instance, creation: encoded } : instance,
+  const requireStopped = (configuration: CompositionConfig) =>
+    Effect.forEach(
+      new Set([
+        ...configuration.members.map(({ id }) => id),
+        ...configuration.dependencies.flatMap(({ from, to }) => [from, to]),
+      ]),
+      (id) =>
+        orchestrator.get(id).pipe(
+          Effect.flatMap((entry) => entry.core.get),
+          Effect.flatMap(({ lifecycle, wakeEnabled }) =>
+            lifecycle === "stopped" && !wakeEnabled
+              ? Effect.void
+              : Effect.fail(
+                  new CredentialError({
+                    message: `Service ${id} must be stopped with wake disabled before identity changes`,
+                  }),
+                ),
           ),
-        }),
-      );
-      yield* Ref.update(recipes, (values) => {
-        const recipe = values.get(id);
-        if (recipe === undefined) return values;
-        return new Map(values).set(id, { ...recipe, creation });
+        ),
+      { discard: true },
+    );
+
+  const resolveStackCredentials = Effect.fn("Owner.resolveStackCredentials")(function* (
+    overrides: Effect.Success<ReturnType<typeof credentialOverrides>>,
+    identity?: StackIdentityInput,
+  ) {
+    const credentials = yield* options.state.withLock(
+      Effect.gen(function* () {
+        const current = yield* readSaved;
+        const next = yield* nextCredentials(current, overrides, identity);
+        if (next === current.credentials) return next;
+        if (current.credentials !== undefined) yield* requireStopped(current.composition);
+        yield* options.state.save({ ...current, credentials: next });
+        return next;
+      }),
+    );
+    Object.assign(routeKeys, credentials);
+    return credentials;
+  });
+
+  const resolveCredentials = Effect.fn("Owner.resolveCredentials")(function* (
+    creation: ServiceCreationInput,
+  ) {
+    if (!consumesCredentials(creation))
+      return yield* Schema.decodeUnknownEffect(ServiceCreation)(creation);
+    const credentials = yield* resolveStackCredentials(yield* credentialOverrides([creation]));
+    return yield* withCredentials(creation, credentials);
+  });
+
+  const recipeFor = (creation: ServiceCreation, id: string) =>
+    makeServiceRecipe(creation, {
+      stackId,
+      instanceId: id,
+      root: options.root,
+      cacheRoot: options.cacheRoot,
+      runtime,
+      helpers,
+    }).pipe(Effect.provideContext(services));
+
+  const persistCreation = (entry: Pick<Entry, "id" | "creation">, creation: ServiceCreation) =>
+    updateState((current) => ({
+      ...current,
+      instances: current.instances.map((instance) =>
+        instance.id === entry.id ? { ...instance, creation } : instance,
+      ),
+    })).pipe(Effect.andThen(Ref.set(entry.creation, creation)));
+
+  const register = Effect.fn("Owner.register")(function* (id: string, recipe: CatalogRecipe) {
+    if (Option.isSome(yield* orchestrator.get(id).pipe(Effect.option)))
+      return yield* new Orchestrator.OrchestratorError({
+        operation: "register",
+        message: `Duplicate instance ${id}`,
       });
-    });
-
-    const addCreation = Effect.fn("Owner.addCreation")(function* (
-      id: string,
-      creation: ServiceCreation,
-    ) {
-      const encoded = yield* encodeCreation(creation).pipe(
-        Effect.mapError((cause) => errorFor("state", cause)),
-      );
-      yield* updateState((current) =>
-        Effect.succeed({
-          ...current,
-          instances: [...current.instances, { id, creation: encoded } satisfies SavedInstance],
-        }),
-      );
-    });
-
-    const routeKeys = {
-      publishableKey: options.saved.credentials?.publishableKey ?? "",
-      secretKey: options.saved.credentials?.secretKey ?? "",
-      anonKey: options.saved.credentials?.anonKey ?? "",
-      serviceRoleKey: options.saved.credentials?.serviceRoleKey ?? "",
-    };
-    const resolveStackCredentials = Effect.fn("Owner.resolveStackCredentials")(function* (
-      overrides: Record<string, string>,
-      identity?: State.StackIdentityInput,
-    ) {
-      const credentials = yield* options.state
-        .withLock(
-          Effect.gen(function* () {
-            const current = yield* options.state
-              .read(options.saved.id)
-              .pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
-            if (current === undefined)
-              return yield* errorFor("credentials", "Saved stack is missing");
-            const saved = current.credentials;
-            if (saved === undefined) {
-              const hasCredentialConsumer = current.instances.some(({ creation: value }) =>
-                consumesCredentials(value),
-              );
-              if (hasCredentialConsumer)
-                return yield* errorFor(
-                  "credentials",
-                  "Saved instances have no stack credential record; refusing to infer credentials",
-                );
-              const jwtSecret = overrides.jwtSecret ?? DEFAULT_LOCAL_JWT_SECRET;
-              const resolvedIdentity = yield* resolveStackIdentity(jwtSecret, identity, undefined);
-              const initial: StackCredentials = {
-                jwtSecret,
-                postgresRootKey: overrides.postgresRootKey ?? DEFAULT_POSTGRES_ROOT_KEY,
-                databasePassword: overrides.databasePassword ?? DEFAULT_LOCAL_DATABASE_PASSWORD,
-                ...resolvedIdentity,
-              };
-              yield* options.state
-                .save({ ...current, credentials: initial })
-                .pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
-              return initial;
-            }
-            const conflict =
-              (overrides.postgresRootKey !== undefined &&
-                overrides.postgresRootKey !== saved.postgresRootKey &&
-                "rootKey") ||
-              (overrides.databasePassword !== undefined &&
-                overrides.databasePassword !== saved.databasePassword &&
-                "databasePassword") ||
-              (identity === undefined &&
-                overrides.jwtSecret !== undefined &&
-                overrides.jwtSecret !== saved.jwtSecret &&
-                "jwtSecret");
-            if (conflict !== false && conflict !== undefined)
-              return yield* errorFor(
-                "credentials",
-                `Credential override ${conflict} conflicts with the saved stack value`,
-              );
-            const jwtSecret =
-              identity === undefined
-                ? saved.jwtSecret
-                : (overrides.jwtSecret ?? DEFAULT_LOCAL_JWT_SECRET);
-            const resolvedIdentity = yield* resolveStackIdentity(jwtSecret, identity, saved);
-            const next: StackCredentials = {
-              ...saved,
-              jwtSecret,
-              ...resolvedIdentity,
-            };
-            const identityChanged =
-              next.jwtSecret !== saved.jwtSecret ||
-              next.publishableKey !== saved.publishableKey ||
-              next.secretKey !== saved.secretKey ||
-              next.anonKey !== saved.anonKey ||
-              next.serviceRoleKey !== saved.serviceRoleKey ||
-              next.jwks !== saved.jwks ||
-              next.gotrueJwtKeys !== saved.gotrueJwtKeys ||
-              next.remoteJwks !== saved.remoteJwks ||
-              next.anonKeyIsOverride !== saved.anonKeyIsOverride ||
-              next.serviceRoleKeyIsOverride !== saved.serviceRoleKeyIsOverride;
-            if (identityChanged) {
-              const savedComposition = yield* Schema.decodeUnknownEffect(
-                Orchestrator.CompositionConfig,
-              )(current.composition).pipe(
-                Effect.mapError((cause) => errorFor("credentials", cause)),
-              );
-              const memberIds = new Set([
-                ...savedComposition.members.map(({ id }) => id),
-                ...savedComposition.dependencies.flatMap(({ from, to }) => [from, to]),
-              ]);
-              for (const id of memberIds) {
-                const { lifecycle, wakeEnabled } = yield* observation(id).pipe(
-                  Effect.mapError((cause) => errorFor("credentials", cause)),
-                );
-                if (lifecycle !== "stopped" || wakeEnabled)
-                  return yield* errorFor(
-                    "credentials",
-                    `Service ${id} must be stopped with wake disabled before identity changes`,
-                  );
-              }
-              yield* options.state
-                .save({ ...current, credentials: next })
-                .pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
-            }
-            return next;
-          }),
-        )
-        .pipe(
-          Effect.mapError((cause) =>
-            cause instanceof OwnerError ? cause : errorFor("credentials", cause),
+    const initial = recipe.creation;
+    const creation = yield* Ref.make(initial);
+    const namespaceRef = yield* Ref.make<NetworkNamespace | undefined>(undefined);
+    const core = yield* makeService(
+      {
+        ...recipe.definition,
+        launch: (context) =>
+          persistCreation({ id, creation }, context.config).pipe(
+            Effect.mapError(serviceError("state")),
+            Effect.andThen(recipe.definition.launch(context)),
           ),
-        );
-      Object.assign(routeKeys, credentials);
-      return credentials;
-    });
-
-    const resolveCredentials = Effect.fn("Owner.resolveCredentials")(function* (input: unknown) {
-      const creation = yield* Schema.decodeUnknownEffect(ServiceCreationInput)(input).pipe(
-        Effect.mapError((cause) => errorFor("config", cause)),
-      );
-      if (!consumesCredentials(creation))
-        return yield* Schema.decodeUnknownEffect(ServiceCreation)(creation).pipe(
-          Effect.mapError((cause) => errorFor("config", cause)),
-        );
-      const overrides = credentialOverridesFor(creation);
-      const credentials = yield* resolveStackCredentials(overrides);
-
-      const config = { ...creation.config };
-      if (creation.service === "database") {
-        Object.assign(config, {
-          databasePassword: Redacted.make(credentials.databasePassword),
-          jwtSecret: Redacted.make(credentials.jwtSecret),
-          rootKey: Redacted.make(credentials.postgresRootKey),
-        });
-      } else {
-        Object.assign(config, { jwtSecret: credentials.jwtSecret });
-        switch (creation.service) {
-          case "auth":
-            Object.assign(config, {
-              gotrueJwtKeys: creation.config.gotrueJwtKeys ?? credentials.gotrueJwtKeys,
-            });
-            break;
-          case "rest":
-          case "realtime":
-            Object.assign(config, {
-              jwks: creation.config.jwks ?? credentials.jwks,
-            });
-            break;
-          case "storage":
-            Object.assign(config, {
-              jwks: creation.config.jwks ?? credentials.jwks,
-              anonKey: creation.config.anonKey ?? credentials.anonKey,
-              serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
-            });
-            break;
-          case "functions":
-            Object.assign(config, {
-              jwks: creation.config.jwks ?? credentials.jwks,
-              anonKey: creation.config.anonKey ?? credentials.anonKey,
-              serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
-              publishableKey: creation.config.publishableKey ?? credentials.publishableKey,
-              secretKey: creation.config.secretKey ?? credentials.secretKey,
-            });
-            break;
-          case "studio":
-            Object.assign(config, {
-              anonKey: creation.config.anonKey ?? credentials.anonKey,
-              serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
-              publishableKey: creation.config.publishableKey ?? credentials.publishableKey,
-              secretKey: creation.config.secretKey ?? credentials.secretKey,
-            });
-            break;
-          default:
-            break;
-        }
-      }
-      return yield* Schema.decodeUnknownEffect(ServiceCreation)({
-        ...creation,
-        config,
-      }).pipe(Effect.mapError((cause) => errorFor("credentials", cause)));
-    });
-
-    const removeCreation = (id: string) =>
-      updateState((current) =>
-        Effect.succeed(
-          clearUnusedCredentials({
-            ...current,
-            instances: current.instances.filter((instance) => instance.id !== id),
-          }),
-        ),
-      ).pipe(Effect.asVoid);
-
-    const persistComposition = (value: CompositionConfig) =>
-      updateState((current) => Effect.succeed({ ...current, composition: value })).pipe(
-        Effect.asVoid,
-      );
-    const clearCredentialsIfUnused = () =>
-      updateState((current) => {
-        return Effect.succeed(clearUnusedCredentials(current));
-      }).pipe(Effect.asVoid);
-    const removeInstance = (id: string) => {
-      const prune = (current: CompositionConfig): CompositionConfig => ({
-        members: current.members.filter((member) => member.id !== id),
-        dependencies: current.dependencies.filter(
-          (dependency) => dependency.from !== id && dependency.to !== id,
-        ),
-      });
-      return updateState((current) =>
-        Schema.decodeUnknownEffect(Orchestrator.CompositionConfig)(current.composition).pipe(
-          Effect.mapError((cause) => errorFor("state", cause)),
-          Effect.map((savedComposition) =>
-            clearUnusedCredentials({
-              ...current,
-              instances: current.instances.filter((instance) => instance.id !== id),
-              composition: prune(savedComposition),
-            }),
-          ),
-        ),
-      ).pipe(
-        Effect.tap(() => Ref.update(composition, prune)),
-        Effect.asVoid,
-      );
-    };
-
-    const recipeFor = (input: unknown, id: string) =>
-      makeServiceRecipe(input, {
-        stackId: options.saved.id,
-        instanceId: id,
-        root: options.root,
-        cacheRoot: options.cacheRoot,
-        runtime,
-        helpers,
-      }).pipe(Effect.mapError((cause) => errorFor("recipe", cause)));
-    const recipeReady = (input: unknown, id: string) =>
-      recipeFor(input, id).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-        Effect.provideService(Crypto.Crypto, crypto),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(HttpClient.HttpClient, http),
-        Effect.provideService(Scope.Scope, ownerScope),
-      );
-
-    const getRecipe = (id: string) =>
-      Ref.get(recipes).pipe(
-        Effect.flatMap((values) => {
-          const recipe = values.get(id);
-          return recipe === undefined
-            ? Effect.fail(errorFor("get", `Unknown service ${id}`))
-            : Effect.succeed(recipe);
-        }),
-      );
-
-    const getCreation = (id: string) => getRecipe(id).pipe(Effect.map((recipe) => recipe.creation));
-
-    const mergeInputs = (creation: ServiceCreation, inputs: Record<string, string | undefined>) =>
-      Schema.decodeUnknownEffect(ServiceCreation)({
-        ...creation,
-        config: Object.fromEntries(
-          Object.entries({ ...creation.config, ...inputs }).filter(
-            ([, value]) => value !== undefined,
-          ),
-        ),
-      }).pipe(
-        Effect.mapError(
-          (cause) => new ServiceError({ operation: "inputs", message: String(cause) }),
-        ),
-      );
-
-    const restartCreation = (
-      creation: ServiceCreation,
-      candidate: unknown,
-    ): Effect.Effect<ServiceCreation, ServiceError> => {
-      if (candidate === undefined) return Effect.succeed(creation);
-      const config = isRecord(candidate) && "config" in candidate ? candidate.config : candidate;
-      return Schema.decodeUnknownEffect(ServiceCreation)({
-        ...creation,
-        config,
-      }).pipe(
-        Effect.mapError(
-          (cause) => new ServiceError({ operation: "restart", message: String(cause) }),
-        ),
-      );
-    };
-
-    const register = Effect.fn("Owner.register")(function* (id: string, recipe: CatalogRecipe) {
-      const initial = recipe.creation;
-      const namespaceRef = yield* Ref.make<NetworkNamespace | undefined>(undefined);
-      const instance = yield* makeService(
-        {
-          ...recipe.definition,
-          launch: (context) =>
-            persistCreation(id, context.config).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ServiceError({
-                    operation: "state",
-                    message: cause.message,
-                    cause,
-                  }),
-              ),
-              Effect.andThen(recipe.definition.launch(context)),
-              Effect.map((session) => ({
-                ...session,
-                remove: session.remove.pipe(
-                  Effect.andThen(
-                    Ref.get(namespaceRef).pipe(
-                      Effect.flatMap((value) => value?.close ?? Effect.void),
-                      Effect.mapError(
-                        (cause) =>
-                          new ServiceError({
-                            operation: "close",
-                            message: cause.message,
-                            cause,
-                          }),
-                      ),
-                    ),
-                  ),
-                ),
-              })),
-              Effect.catchTag("ServiceLaunchError", (failure) =>
-                Effect.fail(
-                  new ServiceLaunchError({
-                    failure: failure.failure,
-                    runtime: {
-                      ...failure.runtime,
-                      remove: failure.runtime.remove.pipe(
-                        Effect.andThen(
-                          Ref.get(namespaceRef).pipe(
-                            Effect.flatMap((value) => value?.close ?? Effect.void),
-                            Effect.mapError(
-                              (cause) =>
-                                new ServiceError({
-                                  operation: "close",
-                                  message: cause.message,
-                                  cause,
-                                }),
-                            ),
-                          ),
-                        ),
-                      ),
-                    },
-                  }),
-                ),
+        removeData: (context) =>
+          recipe.definition.removeData(context).pipe(
+            Effect.andThen(
+              Ref.get(namespaceRef).pipe(
+                Effect.flatMap((namespace) => namespace?.release ?? Effect.void),
+                Effect.mapError(serviceError("release")),
               ),
             ),
-          removeData: (context) =>
-            recipe.definition.removeData(context).pipe(
-              Effect.andThen(
-                Ref.get(namespaceRef).pipe(
-                  Effect.flatMap((value) => value?.release ?? Effect.void),
-                  Effect.mapError(
-                    (cause) =>
-                      new ServiceError({
-                        operation: "release",
-                        message: cause.message,
-                        cause,
-                      }),
-                  ),
-                ),
-              ),
-              Effect.andThen(
-                removeInstance(id).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ServiceError({
-                        operation: "state",
-                        message: cause.message,
-                        cause,
-                      }),
-                  ),
-                ),
+            Effect.andThen(
+              updateState((current) => withoutInstance(current, id)).pipe(
+                Effect.mapError(serviceError("state")),
               ),
             ),
-        },
-        {
-          id,
-          config: initial,
-          coordinate: (operation, transition) =>
-            Ref.get(draining).pipe(
-              Effect.flatMap((isDraining) =>
-                isDraining && ["start", "arm", "restart", "storage"].includes(operation)
-                  ? Effect.fail(
-                      new ServiceError({
-                        operation: "draining",
-                        message: "Owner is draining",
-                      }),
-                    )
-                  : orchestrator.admissionFor(id)(operation, transition),
-              ),
-            ),
-        },
-      );
-      const enabled = instance.get.pipe(
-        Effect.map(
-          (observation) =>
-            observation.registered &&
-            observation.lifecycle !== "stopped" &&
-            !(observation.exit !== undefined && !observation.wakeEnabled),
-        ),
-      );
-      const endpointEntries = Object.fromEntries(
-        endpointNames(initial).map((name) => {
-          const route = name === "http" ? apiRoute(initial.service) : undefined;
-          const endpoint: NetworkEndpoint = {
-            protocol: name === "http" ? ("http" as const) : ("tcp" as const),
-            port: endpointPort(initial, name),
-            backend: orchestrator.acquire(id, name !== "inspector").pipe(
-              Effect.flatMap(() => recipe.endpoint(name)),
-              Effect.flatMap((address): Effect.Effect<BackendAddress, ProxyError> => {
-                if (address.kind === "unix") {
-                  return address.path === undefined
-                    ? Effect.fail(
-                        new ProxyError({
-                          message: "Unix endpoint has no path",
-                        }),
-                      )
-                    : Effect.succeed({
-                        path: `${address.path}/.s.PGSQL.${address.port}`,
-                      });
-                }
-                return Effect.succeed({
-                  host: address.host ?? "127.0.0.1",
-                  port: address.port,
-                });
-              }),
-              Effect.mapError((cause) =>
-                cause instanceof ProxyError
-                  ? cause
-                  : new ProxyError({ message: String(cause), cause }),
-              ),
-            ),
-            enabled,
-            ...(route === undefined
-              ? {}
-              : {
-                  shared:
-                    initial.service === "realtime"
-                      ? [
-                          {
-                            prefix: "/realtime/v1/api",
-                            upstreamPrefix: "/api",
-                            upstreamHost: "realtime-dev",
-                            keyRewrite: { policy: "bearer" as const, keys: routeKeys },
-                          },
-                          {
-                            prefix: route,
-                            upstreamPrefix: "/socket",
-                            upstreamHost: "realtime-dev",
-                            keyRewrite: { policy: "query" as const, keys: routeKeys },
-                          },
-                        ]
-                      : initial.service === "storage"
-                        ? [
-                            {
-                              prefix: `${route}/s3`,
-                              upstreamPrefix: "/s3",
-                            },
-                            {
-                              prefix: route,
-                              upstreamPrefix: "/",
-                              keyRewrite: { policy: "bearer" as const, keys: routeKeys },
-                            },
-                          ]
-                        : [
-                            {
-                              prefix: route,
-                              upstreamPrefix: "/",
-                              ...(initial.service === "rest" || initial.service === "auth"
-                                ? { keyRewrite: { policy: "bearer" as const, keys: routeKeys } }
-                                : initial.service === "functions"
-                                  ? {
-                                      keyRewrite: {
-                                        policy: "sb-api-key" as const,
-                                        keys: routeKeys,
-                                      },
-                                    }
-                                  : {}),
-                            },
-                          ],
-                }),
-          };
-          return [name, endpoint];
-        }),
-      );
-      const namespace = yield* network
-        .register({ id, endpoints: endpointEntries })
-        .pipe(Effect.mapError((cause) => errorFor("network", cause)));
-      yield* Ref.set(namespaceRef, namespace);
-      const endpointAddress = (name: string, from: "host" | "runtime") =>
-        namespace.address(name, from).pipe(
-          Effect.mapError(
-            (cause) =>
-              new EndpointError({
-                message: cause instanceof Error ? cause.message : String(cause),
-                cause,
-              }),
           ),
-        );
-      const databasePassword = () =>
-        getCreation(id).pipe(
-          Effect.flatMap((creation) =>
-            creation.service === "database"
-              ? Effect.succeed(Redacted.value(creation.config.databasePassword))
-              : Effect.fail(new EndpointError({ message: "Output requires a database" })),
-          ),
-          Effect.mapError((cause) =>
-            cause instanceof EndpointError
-              ? cause
-              : new EndpointError({
-                  message: cause instanceof Error ? cause.message : String(cause),
-                  cause,
-                }),
-          ),
-        );
-      const outputs = Object.fromEntries(
-        Object.entries(outputsFor(initial, endpointAddress, databasePassword)).map(
-          ([name, value]) => [
-            name,
-            value.pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ServiceError({
-                    operation: "output",
-                    message: cause.message,
-                    cause,
-                  }),
-              ),
-            ),
-          ],
-        ),
-      );
-      const registered: RegisteredInstance = {
+      },
+      {
         id,
-        core: {
-          get: instance.get,
-          ready: instance.ready,
-          stop: instance.stop,
-          destroy: instance.destroy,
-          arm: instance.arm,
-          armAt: instance.armAt,
-          sleep: instance.sleep,
-          observation: instance.observation,
-        },
-        startAt: (revision, inputs, wake, guard) =>
-          getCreation(id).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServiceError({
-                  operation: "get",
-                  message: cause.message,
-                  cause,
-                }),
-            ),
-            Effect.flatMap((creation) => mergeInputs(creation, inputs)),
-            Effect.flatMap((candidate) => instance.startAt(revision, candidate, wake, guard)),
+        config: initial,
+        coordinate: (operation, transition) =>
+          (drainingBlocks.includes(operation) ? rejectWhileDraining : Effect.void).pipe(
+            Effect.andThen(orchestrator.admissionFor(id)(operation, transition)),
           ),
-        restart: (revision, inputs, candidate, guard) =>
-          getCreation(id).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServiceError({
-                  operation: "get",
-                  message: cause.message,
-                  cause,
-                }),
+      },
+    ).pipe(Effect.provideService(Scope.Scope, ownerScope));
+    const enabled = core.get.pipe(
+      Effect.map(
+        (observation) =>
+          observation.registered &&
+          observation.lifecycle !== "stopped" &&
+          !(observation.exit !== undefined && !observation.wakeEnabled),
+      ),
+    );
+    const endpoints = Object.fromEntries(
+      endpointNames(initial).map((name) => {
+        const shared = sharedRoutes(initial, name, routeKeys);
+        const endpoint: NetworkEndpoint = {
+          protocol: name === "http" ? "http" : "tcp",
+          port: endpointPort(initial, name),
+          backend: orchestrator.acquire(id, name !== "inspector").pipe(
+            Effect.andThen(recipe.endpoint(name)),
+            Effect.flatMap(backendAddress),
+            Effect.mapError((cause) =>
+              cause instanceof ProxyError
+                ? cause
+                : new ProxyError({ message: cause.message, cause }),
             ),
-            Effect.flatMap((creation) => restartCreation(creation, candidate)),
-            Effect.flatMap((creation) => mergeInputs(creation, inputs)),
-            Effect.flatMap((next) => instance.restart(next, revision, guard)),
           ),
-        bind: namespace.bind.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ServiceError({
-                operation: "bind",
-                message: cause.message,
-                cause,
-              }),
+          enabled,
+          ...(shared === undefined ? {} : { shared }),
+        };
+        return [name, endpoint];
+      }),
+    );
+    const namespace = yield* network.register({ id, endpoints });
+    yield* Ref.set(namespaceRef, namespace);
+    const entry: Entry = {
+      id,
+      core,
+      recipe,
+      creation,
+      namespace,
+      startAt: (revision, inputs, wake, guard) =>
+        Ref.get(creation).pipe(
+          Effect.flatMap((current) => mergeInputs(current, inputs)),
+          Effect.flatMap((candidate) => core.startAt(revision, candidate, wake, guard)),
+        ),
+      restart: (revision, inputs, candidate, guard) =>
+        Ref.get(creation).pipe(
+          Effect.flatMap((current) => restartCreation(current, candidate)),
+          Effect.flatMap((next) => mergeInputs(next, inputs)),
+          Effect.flatMap((next) => core.restart(next, revision, guard)),
+        ),
+      bind: namespace.bind.pipe(Effect.mapError(serviceError("bind"))),
+      close: namespace.close.pipe(Effect.mapError(serviceError("close"))),
+      hasEndpoint: endpointNames(initial).length > 0,
+      inputs: Object.keys(serviceSchemas[initial.service].fields),
+      outputs: Object.fromEntries(
+        Object.entries(outputsFor(initial, Ref.get(creation), namespace.address)).map(
+          ([name, output]) => [name, output.pipe(Effect.mapError(serviceError("output")))],
+        ),
+      ),
+    };
+    yield* orchestrator
+      .register(entry)
+      .pipe(Effect.catch((cause) => namespace.release.pipe(Effect.andThen(Effect.fail(cause)))));
+  });
+
+  for (const saved of options.saved.instances)
+    yield* register(saved.id, yield* recipeFor(saved.creation, saved.id));
+  yield* orchestrator.configure(options.saved.composition);
+
+  const removeSaved = (id: string) => updateState((current) => withoutInstance(current, id));
+
+  const addInstance = Effect.fn("Owner.addInstance")(function* (creation: ServiceCreation) {
+    const id = yield* crypto.randomUUIDv4;
+    const rollback = <E>(cause: E) => removeSaved(id).pipe(Effect.andThen(Effect.fail(cause)));
+    const recipe = yield* recipeFor(creation, id);
+    yield* updateState((current) => ({
+      ...current,
+      instances: [...current.instances, { id, creation }],
+    })).pipe(Effect.andThen(register(id, recipe)), Effect.catch(rollback), Effect.uninterruptible);
+    return { id, creation };
+  });
+
+  type ComposeError =
+    | Effect.Error<ReturnType<typeof addInstance>>
+    | Orchestrator.LifecycleError
+    | Network.NetworkError;
+
+  const configure = (configuration: CompositionConfig) =>
+    options.state.withLock(
+      orchestrator.configure(
+        configuration,
+        readSaved.pipe(
+          Effect.flatMap((current) =>
+            options.state.save({ ...current, composition: configuration }),
           ),
         ),
-        close: namespace.close.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ServiceError({
-                operation: "close",
-                message: cause.message,
-                cause,
-              }),
-          ),
-          Effect.tap(() =>
-            instance.get.pipe(
-              Effect.flatMap((observation) =>
-                observation.registered
-                  ? Effect.void
-                  : Effect.all(
-                      [
-                        Ref.update(recipes, (values) => {
-                          const next = new Map(values);
-                          next.delete(id);
-                          return next;
-                        }),
-                        Ref.update(instances, (values) => {
-                          const next = new Map(values);
-                          next.delete(id);
-                          return next;
-                        }),
-                        Ref.update(namespaces, (values) => {
-                          const next = new Map(values);
-                          next.delete(id);
-                          return next;
-                        }),
-                      ],
-                      { discard: true },
+      ),
+    );
+
+  // A failed cleanup must not replace the failure that triggered it.
+  const clearUnusedCredentials = updateState(withoutUnusedCredentials).pipe(
+    Effect.catch((cause) => Effect.logWarning("Unused stack credentials were not cleared", cause)),
+  );
+  const compose = Effect.fn("Owner.compose")(
+    function* (
+      inputs: ReadonlyArray<ServiceCreationInput>,
+      compositionOptions: SupabaseCompositionOptions,
+    ) {
+      yield* resolveStackCredentials(
+        yield* credentialOverrides(inputs),
+        compositionOptions.identity,
+      );
+      const creations = yield* Effect.forEach(inputs, resolveCredentials);
+      return yield* makeSupabaseComposition<ComposeError>(
+        {
+          currentComposition: orchestrator.composition,
+          get: (id) =>
+            orchestrator.get(id).pipe(
+              Effect.flatMap((entry) => Ref.get(entry.creation)),
+              Effect.map((creation) => ({ id, creation })),
+            ),
+          status: (id) => orchestrator.get(id).pipe(Effect.flatMap((entry) => entry.core.get)),
+          create: addInstance,
+          destroy: orchestrator.destroy,
+          bind: (id) => orchestrator.get(id).pipe(Effect.flatMap((entry) => entry.bind)),
+          address: (id, endpoint, from) =>
+            orchestrator.get(id).pipe(
+              Effect.flatMap((entry) => entry.namespace.address(endpoint, from)),
+              Effect.map(({ host, port }) => publicUrl(host, port)),
+            ),
+          output: (id, name) =>
+            orchestrator
+              .get(id)
+              .pipe(
+                Effect.flatMap(
+                  (entry) =>
+                    entry.outputs[name] ??
+                    Effect.fail(
+                      new ServiceError({ operation: "output", message: `Missing output ${name}` }),
                     ),
+                ),
+              ),
+          updateCreation: (id, values) =>
+            Effect.gen(function* () {
+              const entry = yield* orchestrator.get(id);
+              const creation = yield* mergeInputs(yield* Ref.get(entry.creation), values);
+              yield* persistCreation(entry, creation);
+              return { id, creation };
+            }),
+          replaceCreation: (id, creation) =>
+            Effect.gen(function* () {
+              const entry = yield* orchestrator.get(id);
+              if (creation.service !== (yield* Ref.get(entry.creation)).service)
+                return yield* new ServiceError({
+                  operation: "compose",
+                  message: `Reused service ${id} cannot change service kind`,
+                });
+              yield* persistCreation(entry, creation);
+              return { id, creation };
+            }),
+          configure,
+        },
+        creations,
+        compositionOptions,
+      );
+    },
+    Effect.catch((cause) => clearUnusedCredentials.pipe(Effect.andThen(Effect.fail(cause)))),
+  );
+
+  const restart = Effect.fn("Owner.restart")(function* (
+    id: string,
+    input: ServiceCreationInput | undefined,
+  ) {
+    if (input === undefined) return yield* orchestrator.restart(id);
+    const previous = yield* Ref.get((yield* orchestrator.get(id)).creation);
+    const next = yield* resolveCredentials(input);
+    if (next.service !== previous.service)
+      return yield* new ServiceError({
+        operation: "restart",
+        message: "Service kind cannot change",
+      });
+    return yield* orchestrator.restart(id, next);
+  });
+
+  const observe = (entry: Entry, value: ServiceObservation<ServiceCreation>) =>
+    Effect.all({ config: Ref.get(entry.creation), endpoints: entry.namespace.bindings }).pipe(
+      Effect.map((current) => ({ ...value, ...current })),
+    );
+  const observation = (id: string) =>
+    orchestrator
+      .get(id)
+      .pipe(
+        Effect.flatMap((entry) =>
+          entry.core.get.pipe(Effect.flatMap((value) => observe(entry, value))),
+        ),
+      );
+  const observeAll = (values: ReadonlyArray<{ readonly id: string }>) =>
+    Effect.forEach(values, ({ id }) => observation(id));
+
+  const databaseData = Effect.fn("Owner.databaseData")(function* <A>(
+    id: string,
+    select: (
+      recipe: CatalogRecipe,
+    ) =>
+      | ((context: ServiceInstanceContext<ServiceCreation>) => Effect.Effect<A, CatalogError>)
+      | undefined,
+  ) {
+    const entry = yield* orchestrator.get(id);
+    const action = select(entry.recipe);
+    if (action === undefined)
+      return yield* new ServiceError({
+        operation: "storage",
+        message: "Snapshots and data reset are only supported for databases",
+      });
+    return yield* entry.core.storage(
+      Effect.acquireUseRelease(
+        Scope.make("parallel"),
+        (scope) =>
+          Ref.get(entry.creation).pipe(
+            Effect.flatMap((config) => action({ id, config, scope })),
+            Effect.mapError(serviceError("storage")),
+          ),
+        (scope, exit) => Scope.close(scope, exit),
+      ),
+    );
+  });
+
+  const handlers: Handlers = {
+    createService: (input) =>
+      definitionChange(
+        Effect.gen(function* () {
+          const introduced = (yield* readSaved).credentials === undefined;
+          // Credentials a failed creation introduced must not pin a retry to its values.
+          return yield* resolveCredentials(input).pipe(
+            Effect.flatMap(addInstance),
+            Effect.catch((cause) =>
+              (introduced ? clearUnusedCredentials : Effect.void).pipe(
+                Effect.andThen(Effect.fail(cause)),
               ),
             ),
-          ),
-        ),
-        hasEndpoint: endpointNames(initial).length > 0,
-        inputs: Object.keys(serviceSchemas[initial.service].fields),
-        outputs,
-      };
-      yield* registryGate.withPermits(1)(
-        orchestrator.register(registered).pipe(
-          Effect.catch((cause) => namespace.release.pipe(Effect.andThen(Effect.fail(cause)))),
-          Effect.mapError(
-            (cause) =>
-              new ServiceError({
-                operation: "register",
-                message: String(cause),
-                cause,
-              }),
-          ),
-        ),
-      );
-      yield* Ref.update(recipes, (values) => new Map(values).set(id, recipe));
-      yield* Ref.update(instances, (values) => new Map(values).set(id, instance));
-      yield* Ref.update(namespaces, (values) => new Map(values).set(id, namespace));
-    });
-    const registerReady = (id: string, recipe: CatalogRecipe) =>
-      register(id, recipe).pipe(Effect.provideService(Scope.Scope, ownerScope));
-
-    for (const saved of options.saved.instances) {
-      const creation = yield* Schema.decodeUnknownEffect(creationJson)(saved.creation).pipe(
-        Effect.mapError((cause) => errorFor("state", cause)),
-      );
-      yield* registerReady(saved.id, yield* recipeReady(creation, saved.id));
-    }
-    const savedComposition = yield* Schema.decodeUnknownEffect(Orchestrator.CompositionConfig)(
-      options.saved.composition,
-    ).pipe(Effect.mapError((cause) => errorFor("configure", cause)));
-    yield* orchestrator
-      .configure(savedComposition)
-      .pipe(Effect.mapError((cause) => errorFor("configure", cause)));
-    yield* Ref.set(composition, savedComposition);
-
-    const get = Effect.fn("Owner.get")(function* (id: string) {
-      return yield* getCreation(id).pipe(
-        Effect.map((creation) => ({ id, creation })),
-        Effect.mapError((cause) => errorFor("get", cause)),
-      );
-    });
-    const enrichObservation = (id: string, value: ServiceObservation<unknown>) =>
-      getCreation(id).pipe(
-        Effect.mapError((cause) => errorFor("status", cause)),
-        Effect.flatMap((creation) =>
-          Ref.get(namespaces).pipe(
-            Effect.mapError((cause) => errorFor("status", cause)),
-            Effect.flatMap((values) => {
-              const namespace = values.get(id);
-              return namespace === undefined
-                ? Effect.fail(errorFor("status", "Service namespace is missing"))
-                : namespace.bindings.pipe(
-                    Effect.map((endpoints) => ({
-                      ...value,
-                      config: creation,
-                      endpoints,
-                    })),
-                    Effect.mapError((cause) => errorFor("status", cause)),
-                  );
-            }),
-          ),
-        ),
-      );
-    const observation = Effect.fn("Owner.status")(function* (id: string) {
-      return yield* orchestrator.get(id).pipe(
-        Effect.flatMap((instance) => instance.core.get),
-        Effect.flatMap((value) => enrichObservation(id, value)),
-        Effect.mapError((cause) =>
-          cause instanceof OwnerError ? cause : errorFor("status", cause),
-        ),
-      );
-    });
-    const operation = <A, E>(
-      name: string,
-      effect: Effect.Effect<A, E>,
-    ): Effect.Effect<A, OwnerError> =>
-      effect.pipe(Effect.mapError((cause) => errorFor(name, cause)));
-    const storage = <A>(
-      id: string,
-      action: Effect.Effect<A, OwnerError>,
-    ): Effect.Effect<A, OwnerError> =>
-      Ref.get(instances).pipe(
-        Effect.flatMap((values) => {
-          const instance = values.get(id);
-          return instance === undefined
-            ? Effect.fail(errorFor("storage", `Unknown service ${id}`))
-            : instance
-                .storage(
-                  action.pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new ServiceError({
-                          operation: "storage",
-                          message: String(cause),
-                        }),
-                    ),
-                  ),
-                )
-                .pipe(Effect.mapError((cause) => errorFor("storage", cause)));
-        }),
-      );
-    const createService = Effect.fn("Owner.createService")(function* (input: unknown) {
-      yield* Ref.get(draining).pipe(
-        Effect.flatMap((isDraining) =>
-          isDraining ? Effect.fail(errorFor("create", "Owner is draining")) : Effect.void,
-        ),
-      );
-      const creation = yield* resolveCredentials(input);
-      const id = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) => errorFor("identity", cause)),
-      );
-      yield* addCreation(id, creation);
-      yield* Effect.gen(function* () {
-        const recipe = yield* recipeReady(creation, id);
-        yield* registerReady(id, recipe);
-      }).pipe(
-        Effect.catch((cause) => removeCreation(id).pipe(Effect.andThen(Effect.fail(cause)))),
-        Effect.mapError((cause) => errorFor("register", cause)),
-      );
-      return { id, creation };
-    });
-
-    const configureComposition = Effect.fn("Owner.configureComposition")(function* (
-      input: CompositionConfig,
-    ) {
-      yield* Ref.get(draining).pipe(
-        Effect.flatMap((isDraining) => {
-          if (isDraining) return Effect.fail(errorFor("configure", "Owner is draining"));
-          return Schema.decodeEffect(Orchestrator.CompositionConfig)(input).pipe(
-            Effect.mapError((cause) => errorFor("configure", cause)),
           );
         }),
-        Effect.tap((value) =>
-          orchestrator
-            .configure(value)
-            .pipe(Effect.mapError((cause) => errorFor("configure", cause))),
-        ),
-        Effect.tap((value) => Ref.set(composition, value)),
-        Effect.tap((value) => persistComposition(value)),
-        Effect.asVoid,
-      );
-    });
-
-    const updateCreation = Effect.fn("Owner.updateCreation")(function* (
-      id: string,
-      inputs: Record<string, string | undefined>,
-    ) {
-      return yield* getCreation(id).pipe(
-        Effect.flatMap((creation) => mergeInputs(creation, inputs)),
-        Effect.mapError((cause) => errorFor("supabase", cause)),
-        Effect.tap((creation) => persistCreation(id, creation)),
-        Effect.map((creation) => ({ id, creation })),
-      );
-    });
-
-    const replaceCreation = Effect.fn("Owner.replaceCreation")(function* (
-      id: string,
-      input: ServiceCreation,
-    ) {
-      const creation = yield* Schema.decodeEffect(ServiceCreation)(input).pipe(
-        Effect.mapError((cause) => errorFor("supabase", cause)),
-      );
-      const current = yield* getCreation(id).pipe(
-        Effect.mapError((cause) => errorFor("supabase", cause)),
-      );
-      if (creation.service !== current.service)
-        return yield* errorFor("supabase", `Reused service ${id} cannot change service kind`);
-      yield* persistCreation(id, creation);
-      return { id, creation };
-    });
-
-    const supabaseComposition = Effect.fn("Owner.supabaseComposition")(
-      (
-        inputs: ReadonlyArray<ServiceCreationInput>,
-        compositionOptions?: SupabaseCompositionOptions,
-      ) =>
-        Effect.gen(function* () {
-          const overrides: Record<string, string> = {};
-          for (const input of inputs) {
-            for (const [key, value] of Object.entries(credentialOverridesFor(input))) {
-              if (overrides[key] !== undefined && overrides[key] !== value)
-                return yield* errorFor(
-                  "credentials",
-                  `Credential override ${key} conflicts within the stack composition`,
-                );
-              overrides[key] = value;
-            }
-          }
-          yield* resolveStackCredentials(overrides, compositionOptions?.identity);
-          return yield* Effect.forEach(inputs, resolveCredentials);
-        }).pipe(
-          Effect.flatMap((creations) =>
-            makeSupabaseComposition(
-              {
-                currentComposition: Ref.get(composition),
-                get: (id) => get(id).pipe(Effect.mapError(supabaseError)),
-                status: (id) =>
-                  observation(id).pipe(
-                    Effect.map(({ lifecycle, wakeEnabled }) => ({
-                      lifecycle,
-                      wakeEnabled,
-                    })),
-                    Effect.mapError(supabaseError),
-                  ),
-                create: (creation) => createService(creation).pipe(Effect.mapError(supabaseError)),
-                destroy: (id) => destroy(id).pipe(Effect.mapError(supabaseError)),
-                bind: (id) =>
-                  orchestrator.get(id).pipe(
-                    Effect.flatMap((registered) => registered.bind),
-                    Effect.mapError(supabaseError),
-                  ),
-                address: (id, endpoint, from) =>
-                  Ref.get(namespaces).pipe(
-                    Effect.flatMap((values) => {
-                      const namespace = values.get(id);
-                      return namespace === undefined
-                        ? Effect.fail(supabaseError("Service namespace is missing"))
-                        : namespace.address(endpoint, from).pipe(
-                            Effect.map(({ host, port }) => publicUrl(host, port)),
-                            Effect.mapError(supabaseError),
-                          );
-                    }),
-                  ),
-                output: (id, name) =>
-                  orchestrator.get(id).pipe(
-                    Effect.flatMap((registered) => {
-                      const output = registered.outputs[name];
-                      return output === undefined
-                        ? Effect.fail(supabaseError(`Missing output ${name}`))
-                        : output.pipe(Effect.mapError(supabaseError));
-                    }),
-                    Effect.mapError(supabaseError),
-                  ),
-                updateCreation: (id, values) =>
-                  updateCreation(id, values).pipe(Effect.mapError(supabaseError)),
-                replaceCreation: (id, creation) =>
-                  replaceCreation(id, creation).pipe(Effect.mapError(supabaseError)),
-                configure: (configuration) =>
-                  configureComposition(configuration).pipe(Effect.mapError(supabaseError)),
-              },
-              creations,
-              compositionOptions,
+      ).pipe(rpcError("createService")),
+    startService: ({ id }) => orchestrator.start(id).pipe(rpcError("startService")),
+    readyService: ({ id }) =>
+      orchestrator.get(id).pipe(
+        Effect.flatMap((entry) => entry.core.ready),
+        rpcError("readyService"),
+      ),
+    stopService: ({ id }) => orchestrator.stop(id).pipe(rpcError("stopService")),
+    // A config-changing restart can adopt saved credentials, so it serializes with definition
+    // changes that introduce or roll them back.
+    restartService: ({ id, config }) =>
+      (config === undefined ? restart(id, config) : definitionChange(restart(id, config))).pipe(
+        rpcError("restartService"),
+      ),
+    destroyService: ({ id }) =>
+      definitionChange(orchestrator.destroy(id)).pipe(rpcError("destroyService")),
+    prepareService: ({ id }) =>
+      orchestrator.get(id).pipe(
+        Effect.flatMap((entry) =>
+          Ref.get(entry.creation).pipe(
+            Effect.flatMap(
+              (creation) => entry.recipe.definition.prepare?.(creation) ?? Effect.void,
             ),
           ),
-          Effect.catch((cause) =>
-            clearCredentialsIfUnused().pipe(Effect.andThen(Effect.fail(cause))),
-          ),
-          Effect.mapError((cause) => {
-            if (cause instanceof OwnerError) return cause;
-            if (cause instanceof SupabaseCompositionError && cause.cause instanceof OwnerError)
-              return cause.cause;
-            return errorFor("supabase", cause);
-          }),
         ),
-    );
+        rpcError("prepareService"),
+      ),
+    status: ({ id }) => observation(id).pipe(rpcError("status")),
+    followStatus: ({ id }) =>
+      Stream.unwrap(
+        orchestrator
+          .get(id)
+          .pipe(
+            Effect.map((entry) =>
+              entry.core.observation.pipe(Stream.mapEffect((value) => observe(entry, value))),
+            ),
+          ),
+      ).pipe(Stream.mapError((cause) => stackError("followStatus", cause))),
+    logs: ({ id }) =>
+      Stream.unwrap(orchestrator.get(id).pipe(Effect.map((entry) => entry.recipe.logs))).pipe(
+        Stream.map(({ stream, bytes }) => ({ stream, bytes })),
+        Stream.mapError((cause) => stackError("logs", cause)),
+      ),
+    credentials: ({ id, from }) =>
+      orchestrator.get(id).pipe(
+        Effect.flatMap((entry) =>
+          Ref.get(entry.creation).pipe(
+            Effect.flatMap((creation) => credentialsFor(creation, entry.namespace.address, from)),
+          ),
+        ),
+        rpcError("credentials"),
+      ),
+    saveSnapshot: ({ id, key }) =>
+      databaseData(id, ({ saveDatabaseSnapshot: save }) =>
+        save === undefined ? undefined : (context) => save(context, key),
+      ).pipe(rpcError("saveSnapshot")),
+    restoreSnapshot: ({ id, key }) =>
+      databaseData(id, ({ restoreDatabaseSnapshot: restore }) =>
+        restore === undefined ? undefined : (context) => restore(context, key),
+      ).pipe(rpcError("restoreSnapshot")),
+    resetData: ({ id }) =>
+      databaseData(id, ({ resetDatabaseData }) => resetDatabaseData).pipe(rpcError("resetData")),
+    supabaseComposition: ({ services, reuseIds, identity }) =>
+      definitionChange(compose(services, { reuseIds, identity })).pipe(
+        rpcError("supabaseComposition"),
+      ),
+    configureComposition: (configuration) =>
+      definitionChange(configure(configuration)).pipe(rpcError("configureComposition")),
+    startComposition: () =>
+      orchestrator.startComposition.pipe(Effect.flatMap(observeAll), rpcError("startComposition")),
+    stopComposition: () =>
+      orchestrator.stopComposition.pipe(Effect.flatMap(observeAll), rpcError("stopComposition")),
+    restartComposition: () =>
+      orchestrator.restartComposition.pipe(
+        Effect.flatMap(observeAll),
+        rpcError("restartComposition"),
+      ),
+  };
 
-    const prepare = Effect.fn("Owner.prepare")(function* (id: string) {
-      return yield* getRecipe(id).pipe(
-        Effect.flatMap((recipe) => recipe.definition.prepare?.(recipe.creation) ?? Effect.void),
-        Effect.mapError((cause) => errorFor("prepare", cause)),
-      );
-    });
-    const start = Effect.fn("Owner.start")((id: string) =>
-      operation("start", orchestrator.start(id)),
-    );
-    const ready = Effect.fn("Owner.ready")((id: string) =>
-      operation("ready", orchestrator.get(id).pipe(Effect.flatMap((value) => value.core.ready))),
-    );
-    const stop = Effect.fn("Owner.stop")((id: string) => operation("stop", orchestrator.stop(id)));
-    const restart = Effect.fn("Owner.restart")(function* (id: string, input?: unknown) {
-      const effect =
-        input === undefined
-          ? orchestrator.restart(id)
-          : Effect.gen(function* () {
-              const previous = yield* getCreation(id);
-              const next = yield* resolveCredentials(input);
-              if (next.service !== previous.service)
-                return yield* errorFor("restart", "Service kind cannot change");
-              return yield* orchestrator.restart(id, next);
-            });
-      return yield* operation("restart", effect);
-    });
-    const destroy = Effect.fn("Owner.destroy")((id: string) =>
-      operation("destroy", orchestrator.destroy(id)),
-    );
-    const credentials = Effect.fn("Owner.credentials")((id: string, from: "host" | "runtime") =>
-      get(id).pipe(
-        Effect.flatMap(({ creation }) =>
-          Ref.get(namespaces).pipe(
-            Effect.flatMap((values) => {
-              const namespace = values.get(id);
-              if (namespace === undefined)
-                return Effect.fail(errorFor("credentials", "Service namespace is missing"));
-              const address = (endpoint: string, source: "host" | "runtime") =>
-                namespace.address(endpoint, source).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new EndpointError({
-                        message: cause instanceof Error ? cause.message : String(cause),
-                        cause,
-                      }),
-                  ),
-                );
-              const password = () =>
-                getCreation(id).pipe(
-                  Effect.flatMap((value) =>
-                    value.service === "database"
-                      ? Effect.succeed(Redacted.value(value.config.databasePassword))
-                      : Effect.fail(
-                          new EndpointError({
-                            message: "Credentials require a database",
-                          }),
-                        ),
-                  ),
-                  Effect.mapError((cause) =>
-                    cause instanceof EndpointError
-                      ? cause
-                      : new EndpointError({
-                          message: cause instanceof Error ? cause.message : String(cause),
-                          cause,
-                        }),
-                  ),
-                );
-              return credentialsFor(creation, address, password, from).pipe(
-                Effect.mapError((cause) => errorFor("credentials", cause)),
-              );
-            }),
-          ),
-        ),
+  const sweep = sweepContainers(options.saved, options.root).pipe(Effect.provideContext(services));
+  return {
+    handlers,
+    namespace: {
+      stop: orchestrator.stopNamespace.pipe(
+        Effect.andThen(sweep),
+        definitionGate.withPermits(1),
+        Effect.withSpan("Owner.stopNamespace"),
       ),
-    );
-    const compose = Effect.fn("Owner.compose")(
-      (creations: ReadonlyArray<ServiceCreationInput>, options?: SupabaseCompositionOptions) =>
-        compositionGate.withPermits(1)(supabaseComposition(creations, options)),
-    );
-    const configure = Effect.fn("Owner.configure")((input: CompositionConfig) =>
-      compositionGate.withPermits(1)(configureComposition(input)),
-    );
-    const compositionStart = orchestrator.startComposition.pipe(
-      Effect.mapError((cause) => errorFor("start", cause)),
-      Effect.flatMap((values) => Effect.forEach(values, (value) => observation(value.id))),
-      Effect.withSpan("Owner.startComposition"),
-    );
-    const compositionStop = orchestrator.stopComposition.pipe(
-      Effect.mapError((cause) => errorFor("stop", cause)),
-      Effect.flatMap((values) => Effect.forEach(values, (value) => observation(value.id))),
-      Effect.withSpan("Owner.stopComposition"),
-    );
-    const compositionRestart = orchestrator.restartComposition.pipe(
-      Effect.mapError((cause) => errorFor("restart", cause)),
-      Effect.flatMap((values) => Effect.forEach(values, (value) => observation(value.id))),
-      Effect.withSpan("Owner.restartComposition"),
-    );
-    const saveSnapshot = Effect.fn("Owner.saveSnapshot")((id: string, key: string) =>
-      get(id).pipe(
-        Effect.flatMap(({ creation }) =>
-          creation.service === "database"
-            ? storage(
-                id,
-                Effect.gen(function* () {
-                  const current = yield* getRecipe(id);
-                  const save = current.saveDatabaseSnapshot;
-                  if (save === undefined)
-                    return yield* errorFor("saveSnapshot", "Database snapshots are unavailable");
-                  return yield* Effect.acquireUseRelease(
-                    Scope.make("parallel"),
-                    (scope) =>
-                      save({ id, config: current.creation, scope }, key).pipe(
-                        Effect.mapError((cause) => errorFor("saveSnapshot", cause)),
-                      ),
-                    (scope, exit) => Scope.close(scope, exit),
-                  );
-                }),
-              )
-            : Effect.fail(errorFor("saveSnapshot", "Snapshots are only supported for databases")),
-        ),
-      ),
-    );
-    const restoreSnapshot = Effect.fn("Owner.restoreSnapshot")((id: string, key: string) =>
-      get(id).pipe(
-        Effect.flatMap(({ creation }) =>
-          creation.service === "database"
-            ? storage(
-                id,
-                Effect.gen(function* () {
-                  const current = yield* getRecipe(id);
-                  const restore = current.restoreDatabaseSnapshot;
-                  if (restore === undefined)
-                    return yield* errorFor("restoreSnapshot", "Database snapshots are unavailable");
-                  return yield* Effect.acquireUseRelease(
-                    Scope.make("parallel"),
-                    (scope) =>
-                      restore({ id, config: current.creation, scope }, key).pipe(
-                        Effect.mapError((cause) => errorFor("restoreSnapshot", cause)),
-                      ),
-                    (scope, exit) => Scope.close(scope, exit),
-                  );
-                }),
-              )
-            : Effect.fail(
-                errorFor("restoreSnapshot", "Snapshots are only supported for databases"),
-              ),
-        ),
-      ),
-    );
-    const resetData = Effect.fn("Owner.resetData")((id: string) =>
-      get(id).pipe(
-        Effect.flatMap(({ creation }) =>
-          creation.service === "database"
-            ? storage(
-                id,
-                Effect.gen(function* () {
-                  const current = yield* getRecipe(id);
-                  const reset = current.resetDatabaseData;
-                  if (reset === undefined)
-                    return yield* errorFor("resetData", "Database reset is unavailable");
-                  return yield* Effect.acquireUseRelease(
-                    Scope.make("parallel"),
-                    (scope) =>
-                      reset({ id, config: current.creation, scope }).pipe(
-                        Effect.mapError((cause) => errorFor("resetData", cause)),
-                      ),
-                    (scope, exit) => Scope.close(scope, exit),
-                  );
-                }),
-              )
-            : Effect.fail(errorFor("resetData", "Reset is only supported for databases")),
-        ),
-      ),
-    );
-    const stopNamespace = operation("stopNamespace", orchestrator.stopNamespace).pipe(
-      Effect.withSpan("Owner.stopNamespace"),
-    );
-    const destroyNamespace = operation(
-      "destroyNamespace",
-      orchestrator.destroyNamespace.pipe(
+      destroy: orchestrator.destroyNamespace.pipe(
         Effect.andThen(network.release),
-        Effect.andThen(
-          options.saved.runtime === "native"
-            ? Effect.void
-            : Container.removeStackContainers({
-                engine: options.saved.runtime,
-                stackId: options.saved.id,
-                root: options.root,
-              }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
-        ),
-        Effect.andThen(options.state.remove(options.saved.id)),
+        Effect.andThen(sweep),
+        Effect.andThen(options.state.remove(stackId)),
+        definitionGate.withPermits(1),
+        Effect.withSpan("Owner.destroyNamespace"),
       ),
-    ).pipe(Effect.withSpan("Owner.destroyNamespace"));
-    const setDraining = Effect.fn("Owner.setDraining")((value: boolean) =>
-      Ref.set(draining, value).pipe(Effect.mapError((cause) => errorFor("draining", cause))),
-    );
-    const getServing = Effect.gen(function* () {
-      return !(yield* Ref.get(draining));
-    }).pipe(Effect.withSpan("Owner.getServing"));
-
-    const owner: Interface = {
-      services: {
-        create: createService,
-        get,
-        list: Ref.get(recipes).pipe(
-          Effect.map((values) =>
-            [...values].map(([id, recipe]) => ({
-              id,
-              creation: recipe.creation,
-            })),
-          ),
-          Effect.mapError((cause) => errorFor("list", cause)),
-        ),
-      },
-      core: {
-        get: observation,
-        status: observation,
-        followStatus: (id) =>
-          Stream.unwrap(
-            orchestrator.get(id).pipe(
-              Effect.map((instance) => instance.core.observation),
-              Effect.mapError((cause) => errorFor("status", cause)),
-            ),
-          ).pipe(Stream.mapEffect((value) => enrichObservation(id, value))),
-        prepare,
-        logs: (id) =>
-          Stream.unwrap(
-            getRecipe(id).pipe(
-              Effect.map((recipe) => recipe.logs),
-              Effect.mapError((cause) => errorFor("logs", cause)),
-            ),
-          ).pipe(Stream.mapError((cause) => errorFor("logs", cause))),
-        start,
-        ready,
-        stop,
-        restart,
-        destroy,
-      },
-      composition: {
-        supabase: compose,
-        configure,
-        get: Ref.get(composition),
-        start: compositionStart,
-        stop: compositionStop,
-        restart: compositionRestart,
-      },
-      credentials,
-      snapshots: {
-        saveSnapshot,
-        restoreSnapshot,
-        resetData,
-      },
-      namespace: {
-        stop: stopNamespace,
-        destroy: destroyNamespace,
-      },
-      setDraining,
-      getServing,
-    };
-    return owner;
-  });
+    },
+    setDraining: (value) => Ref.set(draining, value),
+    getServing: Ref.get(draining).pipe(Effect.map((isDraining) => !isDraining)),
+  } satisfies Interface;
+});
 
 export const layer = (options: Omit<OwnerOptions, "state">) =>
   Layer.effect(
     Service,
     Effect.gen(function* () {
       const state = yield* State.Service;
-      const orchestrator = yield* Orchestrator.Service;
-      const network = yield* Network.Service;
-      return Service.of(
-        yield* makeOwnerWithDependencies({ ...options, state }, orchestrator, network),
-      );
+      return Service.of(yield* makeOwner({ ...options, state }));
     }),
   ).pipe(
-    Layer.provide(Layer.fresh(Orchestrator.layer)),
     Layer.provide(
       Network.layer({
         stackId: options.saved.id,

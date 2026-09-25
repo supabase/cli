@@ -1,9 +1,10 @@
-import { Data, Schema } from "effect";
+import { Exit, Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/unstable/rpc";
 import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
-import { CompositionConfig } from "./Orchestrator.ts";
+import { causeMessage, CompositionConfig, OrchestratorError } from "./Orchestrator.ts";
 import { PgProveOptions, PostgresTool } from "./Tools.ts";
 import { StackIdentityInput } from "./State.ts";
+import { failureMessage } from "./internal/failure-message.ts";
 
 const Outcome = Schema.Struct({
   id: Schema.String,
@@ -11,15 +12,28 @@ const Outcome = Schema.Struct({
   error: Schema.optionalKey(Schema.String),
 });
 
-export const StackErrorSchema = Schema.TaggedStruct("StackError", {
+/** A typed failure returned by the stack owner. */
+export class StackError extends Schema.TaggedError<StackError>()("StackError", {
   operation: Schema.String,
   message: Schema.String,
   outcomes: Schema.optionalKey(Schema.Array(Outcome)),
-});
-type StackErrorPayload = Omit<Schema.Schema.Type<typeof StackErrorSchema>, "_tag">;
+}) {}
 
-/** A typed failure returned by the stack owner. */
-export class StackError extends Data.TaggedError("StackError")<StackErrorPayload> {}
+/** Maps an owner failure to the RPC error, preserving per-member composition outcomes. */
+export const stackError = (operation: string, cause: unknown): StackError => {
+  if (Schema.is(StackError)(cause)) return cause;
+  if (cause instanceof OrchestratorError && cause.outcomes !== undefined)
+    return new StackError({
+      operation,
+      message: failureMessage(cause),
+      outcomes: cause.outcomes.map(({ id, result }) => ({
+        id,
+        succeeded: Exit.isSuccess(result),
+        ...(Exit.isFailure(result) ? { error: causeMessage(result.cause) } : {}),
+      })),
+    });
+  return new StackError({ operation, message: failureMessage(cause) });
+};
 
 const ServiceErrorSchema = Schema.TaggedStruct("ServiceError", {
   operation: Schema.String,
@@ -68,47 +82,45 @@ export const ToolEvent = Schema.TaggedUnion({
   Completed: { jobId: Schema.String, exitCode: Schema.Int },
 });
 
-/** The private transport contract; lifecycle admission remains in the owner. */
-export const StackRpc = RpcGroup.make(
+/** Instance and composition operations served by the owner. */
+export const OwnerRpc = RpcGroup.make(
   Rpc.make("createService", {
     payload: ServiceCreationInput,
     success: Definition,
-    error: StackErrorSchema,
+    error: StackError,
   }),
-  Rpc.make("getService", { payload: Instance, success: Definition, error: StackErrorSchema }),
-  Rpc.make("listServices", { success: Schema.Array(Definition), error: StackErrorSchema }),
-  Rpc.make("startService", { payload: Instance, error: StackErrorSchema }),
-  Rpc.make("readyService", { payload: Instance, error: StackErrorSchema }),
-  Rpc.make("stopService", { payload: Instance, error: StackErrorSchema }),
+  Rpc.make("startService", { payload: Instance, error: StackError }),
+  Rpc.make("readyService", { payload: Instance, error: StackError }),
+  Rpc.make("stopService", { payload: Instance, error: StackError }),
   Rpc.make("restartService", {
     payload: { ...Instance, config: Schema.optionalKey(ServiceCreationInput) },
-    error: StackErrorSchema,
+    error: StackError,
   }),
-  Rpc.make("destroyService", { payload: Instance, error: StackErrorSchema }),
-  Rpc.make("prepareService", { payload: Instance, error: StackErrorSchema }),
-  Rpc.make("status", { payload: Instance, success: Observation, error: StackErrorSchema }),
+  Rpc.make("destroyService", { payload: Instance, error: StackError }),
+  Rpc.make("prepareService", { payload: Instance, error: StackError }),
+  Rpc.make("status", { payload: Instance, success: Observation, error: StackError }),
   Rpc.make("followStatus", {
     payload: Instance,
     success: Observation,
-    error: StackErrorSchema,
+    error: StackError,
     stream: true,
   }),
-  Rpc.make("logs", { payload: Instance, success: Log, error: StackErrorSchema, stream: true }),
+  Rpc.make("logs", { payload: Instance, success: Log, error: StackError, stream: true }),
   Rpc.make("credentials", {
     payload: { ...Instance, from: Schema.Literals(["host", "runtime"]) },
     success: Schema.Record(Schema.String, Schema.String),
-    error: StackErrorSchema,
+    error: StackError,
   }),
   Rpc.make("saveSnapshot", {
     payload: { ...Instance, key: Schema.String },
-    error: StackErrorSchema,
+    error: StackError,
   }),
   Rpc.make("restoreSnapshot", {
     payload: { ...Instance, key: Schema.String },
     success: Schema.Boolean,
-    error: StackErrorSchema,
+    error: StackError,
   }),
-  Rpc.make("resetData", { payload: Instance, error: StackErrorSchema }),
+  Rpc.make("resetData", { payload: Instance, error: StackError }),
   Rpc.make("supabaseComposition", {
     payload: {
       services: Schema.Array(ServiceCreationInput),
@@ -116,14 +128,17 @@ export const StackRpc = RpcGroup.make(
       identity: Schema.optionalKey(StackIdentityInput),
     },
     success: Schema.Array(Definition),
-    error: StackErrorSchema,
+    error: StackError,
   }),
-  Rpc.make("configureComposition", { payload: CompositionConfig, error: StackErrorSchema }),
-  Rpc.make("getComposition", { success: CompositionConfig, error: StackErrorSchema }),
-  Rpc.make("startComposition", { success: Schema.Array(Observation), error: StackErrorSchema }),
-  Rpc.make("stopComposition", { success: Schema.Array(Observation), error: StackErrorSchema }),
-  Rpc.make("restartComposition", { success: Schema.Array(Observation), error: StackErrorSchema }),
-  Rpc.make("shutdown", { payload: { destroy: Schema.Boolean }, error: StackErrorSchema }),
+  Rpc.make("configureComposition", { payload: CompositionConfig, error: StackError }),
+  Rpc.make("startComposition", { success: Schema.Array(Observation), error: StackError }),
+  Rpc.make("stopComposition", { success: Schema.Array(Observation), error: StackError }),
+  Rpc.make("restartComposition", { success: Schema.Array(Observation), error: StackError }),
+);
+
+/** The private transport contract; lifecycle admission remains in the owner. */
+export const StackRpc = OwnerRpc.add(
+  Rpc.make("shutdown", { payload: { destroy: Schema.Boolean }, error: StackError }),
   Rpc.make("runTool", {
     payload: {
       attachmentId: Schema.String,
@@ -134,11 +149,11 @@ export const StackRpc = RpcGroup.make(
       stdin: Schema.Boolean,
     },
     success: ToolEvent,
-    error: StackErrorSchema,
+    error: StackError,
     stream: true,
   }),
   Rpc.make("toolInput", {
     payload: { attachmentId: Schema.String, bytes: Schema.NullOr(Schema.Uint8ArrayFromBase64) },
-    error: StackErrorSchema,
+    error: StackError,
   }),
 );

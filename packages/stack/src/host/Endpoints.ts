@@ -1,5 +1,8 @@
 import { allowedEndpointNames, type ServiceCreation } from "../services/Catalog.ts";
-import { Data, Effect } from "effect";
+import type { ServiceEndpoint } from "../services/Recipe.ts";
+import type { NetworkEndpoint } from "../Network.ts";
+import { ProxyError, type BackendAddress } from "../Proxy.ts";
+import { Data, Effect, Redacted } from "effect";
 
 export class EndpointError extends Data.TaggedError("EndpointError")<{
   readonly message: string;
@@ -41,6 +44,58 @@ export const apiRoute = (service: ServiceCreation["service"]): string | undefine
   }
 };
 
+type RouteKeys = NonNullable<NonNullable<NetworkEndpoint["shared"]>[number]["keyRewrite"]>["keys"];
+
+/** Routes a service's HTTP endpoint on the shared API listener, or `undefined` for a dedicated one. */
+export const sharedRoutes = (
+  creation: ServiceCreation,
+  name: string,
+  keys: RouteKeys,
+): NetworkEndpoint["shared"] => {
+  const route = name === "http" ? apiRoute(creation.service) : undefined;
+  if (route === undefined) return undefined;
+  switch (creation.service) {
+    case "realtime":
+      return [
+        {
+          prefix: "/realtime/v1/api",
+          upstreamPrefix: "/api",
+          upstreamHost: "realtime-dev",
+          keyRewrite: { policy: "bearer", keys },
+        },
+        {
+          prefix: route,
+          upstreamPrefix: "/socket",
+          upstreamHost: "realtime-dev",
+          keyRewrite: { policy: "query", keys },
+        },
+      ];
+    case "storage":
+      return [
+        { prefix: `${route}/s3`, upstreamPrefix: "/s3" },
+        { prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } },
+      ];
+    case "rest":
+    case "auth":
+      return [{ prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } }];
+    case "functions":
+      return [{ prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "sb-api-key", keys } }];
+    default:
+      return [{ prefix: route, upstreamPrefix: "/" }];
+  }
+};
+
+/** Translates a launched runtime's endpoint into the proxy's backend address. */
+export const backendAddress = (
+  endpoint: ServiceEndpoint,
+): Effect.Effect<BackendAddress, ProxyError> => {
+  if (endpoint.kind === "unix")
+    return endpoint.path === undefined
+      ? Effect.fail(new ProxyError({ message: "Unix endpoint has no path" }))
+      : Effect.succeed({ path: `${endpoint.path}/.s.PGSQL.${endpoint.port}` });
+  return Effect.succeed({ host: endpoint.host ?? "127.0.0.1", port: endpoint.port });
+};
+
 export const publicUrl = (host: string, port: number) => `http://${host}:${port}`;
 
 const postgresUrl = (
@@ -57,21 +112,25 @@ interface EndpointAddress {
   readonly port: number;
 }
 
-export type EndpointAddressFor = (
+export type EndpointAddressFor<E> = (
   endpoint: string,
   from: "host" | "runtime",
-) => Effect.Effect<EndpointAddress, EndpointError>;
+) => Effect.Effect<EndpointAddress, E>;
 
-export type EndpointPassword = () => Effect.Effect<string, EndpointError>;
+const databasePassword = (creation: ServiceCreation): Effect.Effect<string, EndpointError> =>
+  creation.service === "database"
+    ? Effect.succeed(Redacted.value(creation.config.databasePassword))
+    : Effect.fail(new EndpointError({ message: "Database URLs require a database" }));
 
-export const outputsFor = (
+/** Renders dependency outputs; `current` supplies the saved creation at resolution time. */
+export const outputsFor = <E>(
   creation: ServiceCreation,
-  address: EndpointAddressFor,
-  password: EndpointPassword,
-): Readonly<Record<string, Effect.Effect<string, EndpointError>>> => {
+  current: Effect.Effect<ServiceCreation>,
+  address: EndpointAddressFor<E>,
+): Readonly<Record<string, Effect.Effect<string, E | EndpointError>>> => {
   const output = (name: string) =>
     address(name, "runtime").pipe(Effect.map(({ host, port }) => publicUrl(host, port)));
-  const outputs: Record<string, Effect.Effect<string, EndpointError>> = {};
+  const outputs: Record<string, Effect.Effect<string, E | EndpointError>> = {};
   if (endpointNames(creation).includes("http")) {
     outputs.url = output("http");
     outputs.hostUrl = address("http", "host").pipe(
@@ -93,54 +152,53 @@ export const outputsFor = (
     ] as const)
       outputs[name] = address("sql", "runtime").pipe(
         Effect.flatMap(({ host, port }) =>
-          password().pipe(Effect.map((value) => postgresUrl(host, port, role, value, database))),
+          current.pipe(
+            Effect.flatMap(databasePassword),
+            Effect.map((value) => postgresUrl(host, port, role, value, database)),
+          ),
         ),
       );
   }
   return outputs;
 };
 
-export const credentialsFor = Effect.fn("Endpoints.credentialsFor")(
-  (
-    creation: ServiceCreation,
-    address: EndpointAddressFor,
-    password: EndpointPassword,
-    from: "host" | "runtime",
-  ): Effect.Effect<Readonly<Record<string, string>>, EndpointError> =>
-    Effect.gen(function* () {
-      const credentials: Record<string, string> = {};
-      if (endpointNames(creation).includes("http")) {
-        const { host, port } = yield* address("http", from);
-        const origin = publicUrl(host, port);
-        credentials.url = `${origin}${apiRoute(creation.service) ?? ""}`;
-        if (apiRoute(creation.service) !== undefined) credentials.apiUrl = origin;
-      }
-      if (creation.service === "mail") {
-        if (endpointNames(creation).includes("smtp")) {
-          const { host, port } = yield* address("smtp", from);
-          credentials.smtpUrl = `smtp://${host}:${port}`;
-        }
-        if (endpointNames(creation).includes("pop3")) {
-          const { host, port } = yield* address("pop3", from);
-          credentials.pop3Url = `pop3://${host}:${port}`;
-        }
-      }
-      if (creation.service === "pooler" && endpointNames(creation).includes("sql")) {
-        const { host, port } = yield* address("sql", from);
-        credentials.sqlUrl = `postgresql://${host}:${port}`;
-      }
-      if (creation.service === "database" && endpointNames(creation).includes("sql")) {
-        const { host, port } = yield* address("sql", from);
-        const value = yield* password();
-        for (const [name, role, database] of [
-          ["databaseUrl", "supabase_admin", "postgres"],
-          ["authenticatorUrl", "authenticator", "postgres"],
-          ["authDatabaseUrl", "supabase_auth_admin", "postgres"],
-          ["storageDatabaseUrl", "supabase_storage_admin", "postgres"],
-          ["internalDatabaseUrl", "supabase_admin", "_supabase"],
-        ] as const)
-          credentials[name] = postgresUrl(host, port, role, value, database);
-      }
-      return credentials;
-    }),
-);
+export const credentialsFor = Effect.fn("Endpoints.credentialsFor")(function* <E>(
+  creation: ServiceCreation,
+  address: EndpointAddressFor<E>,
+  from: "host" | "runtime",
+) {
+  const credentials: Record<string, string> = {};
+  if (endpointNames(creation).includes("http")) {
+    const { host, port } = yield* address("http", from);
+    const origin = publicUrl(host, port);
+    credentials.url = `${origin}${apiRoute(creation.service) ?? ""}`;
+    if (apiRoute(creation.service) !== undefined) credentials.apiUrl = origin;
+  }
+  if (creation.service === "mail") {
+    if (endpointNames(creation).includes("smtp")) {
+      const { host, port } = yield* address("smtp", from);
+      credentials.smtpUrl = `smtp://${host}:${port}`;
+    }
+    if (endpointNames(creation).includes("pop3")) {
+      const { host, port } = yield* address("pop3", from);
+      credentials.pop3Url = `pop3://${host}:${port}`;
+    }
+  }
+  if (creation.service === "pooler" && endpointNames(creation).includes("sql")) {
+    const { host, port } = yield* address("sql", from);
+    credentials.sqlUrl = `postgresql://${host}:${port}`;
+  }
+  if (creation.service === "database" && endpointNames(creation).includes("sql")) {
+    const { host, port } = yield* address("sql", from);
+    const value = yield* databasePassword(creation);
+    for (const [name, role, database] of [
+      ["databaseUrl", "supabase_admin", "postgres"],
+      ["authenticatorUrl", "authenticator", "postgres"],
+      ["authDatabaseUrl", "supabase_auth_admin", "postgres"],
+      ["storageDatabaseUrl", "supabase_storage_admin", "postgres"],
+      ["internalDatabaseUrl", "supabase_admin", "_supabase"],
+    ] as const)
+      credentials[name] = postgresUrl(host, port, role, value, database);
+  }
+  return credentials;
+});

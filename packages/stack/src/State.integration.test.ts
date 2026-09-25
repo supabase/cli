@@ -58,7 +58,7 @@ describe("durable stack state", () => {
                 ...current,
                 instances: [
                   ...current.instances,
-                  { id, creation: { service: "database", config: { version: "17" } } },
+                  { id, creation: { service: "mail", config: {} } },
                 ],
               });
             }),
@@ -439,6 +439,57 @@ describe("durable stack state", () => {
 
         expect((yield* store.list).map(({ id }) => id)).toEqual([initial.id]);
         expect(reported.toSorted()).toEqual(["directory", "malformed", "mismatched", "stray-file"]);
+      }),
+    ),
+  );
+
+  it.live("decodes saved compositions, creations, and instance ids strictly", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-typed-" });
+        const reported: Array<string> = [];
+        const store = yield* Layer.build(
+          State.layer({
+            root,
+            onInvalidState: (id) => Effect.sync(() => reported.push(id)),
+          }),
+        ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+        yield* store.save(initial);
+        const mail = { service: "mail", config: {} };
+        const invalid = {
+          "bad-composition": { composition: { members: "none", dependencies: [] } },
+          "bad-creation": { instances: [{ id: "one", creation: { service: "unknown" } }] },
+          "duplicate-ids": {
+            instances: [
+              { id: "one", creation: mail },
+              { id: "one", creation: mail },
+            ],
+          },
+        };
+        for (const [id, override] of Object.entries(invalid)) {
+          yield* fs.makeDirectory(path.join(root, id));
+          yield* fs.writeFileString(
+            path.join(root, id, "state.json"),
+            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+              ...initial,
+              id,
+              ...override,
+            }),
+          );
+        }
+
+        expect((yield* store.list).map(({ id }) => id)).toEqual([initial.id]);
+        expect(reported.toSorted()).toEqual(Object.keys(invalid));
+        for (const id of Object.keys(invalid)) {
+          const failure = yield* store.read(id).pipe(Effect.flip);
+          expect(failure.operation).toBe("decode");
+          expect(failure.message).toContain("Unable to decode state");
+          expect(failure.message).toContain(`for stack ${id}`);
+        }
+        const duplicate = yield* store.read("duplicate-ids").pipe(Effect.flip);
+        expect(duplicate.message).toContain("Expected unique instance ids");
       }),
     ),
   );

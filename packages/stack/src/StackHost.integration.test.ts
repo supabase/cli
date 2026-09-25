@@ -16,12 +16,10 @@ import {
 } from "effect";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as HttpClient from "effect/unstable/http/HttpClient";
-import { ChildProcessSpawner } from "effect/unstable/process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration observes exact listener closure.
 import * as Net from "node:net";
 import { acquireHost, launchHost } from "./HostProcess.ts";
 import * as Owner from "./Owner.ts";
-import { OwnerError } from "./Owner.ts";
 import { OrchestratorError } from "./Orchestrator.ts";
 import { StackRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
@@ -112,14 +110,6 @@ const inProcessRuntime = (
   owner: Parameters<typeof makeRuntime>[0],
   state: State.Interface,
   root: string,
-  options?: {
-    readonly container?: {
-      readonly engine: "docker" | "podman";
-      readonly stackId: string;
-      readonly root: string;
-    };
-    readonly spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
-  },
 ) =>
   Effect.gen(function* () {
     const acquired = yield* acquireHost(state, "stack");
@@ -131,7 +121,7 @@ const inProcessRuntime = (
         runtime: "native",
       }),
     );
-    const runtimeEffect = makeRuntime(
+    const runtime = yield* makeRuntime(
       owner,
       {
         stackId: "stack",
@@ -141,13 +131,7 @@ const inProcessRuntime = (
       },
       acquired.server,
       acquired.closeConnections,
-      options?.container,
     ).pipe(Effect.provideService(ToolRunner.Service, Context.get(toolContext, ToolRunner.Service)));
-    const runtime = yield* options?.spawner === undefined
-      ? runtimeEffect
-      : runtimeEffect.pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.spawner),
-        );
     yield* runtime.serve;
     return { runtime, port: acquired.port };
   });
@@ -179,6 +163,22 @@ const abortBeforeRpcBody = (port: number) =>
     });
   });
 
+const occupiedPort = Effect.acquireRelease(
+  Effect.callback<Net.Server, HostTestError>((resume) => {
+    const server = Net.createServer();
+    server.once("error", (cause) => resume(Effect.fail(hostTestError(cause))));
+    server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+  }),
+  (server) => Effect.callback<void>((resume) => void server.close(() => resume(Effect.void))),
+).pipe(
+  Effect.flatMap((server) => {
+    const address = server.address();
+    return typeof address === "object" && address !== null
+      ? Effect.succeed(address.port)
+      : Effect.fail(new HostTestError({ message: "Occupied listener has no port" }));
+  }),
+);
+
 it.live("preserves composition outcomes over RPC", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -200,41 +200,36 @@ it.live("preserves composition outcomes over RPC", () =>
         root: `${root}/data`,
         cacheRoot: "/tmp/supabase-stack-artifacts",
       });
-      const failed = new OrchestratorError({
-        operation: "start",
-        message: "member failed",
-        cause: new Error("member failed", { cause: new Error("EACCES: permission denied") }),
-      });
-      const delayedOwner = {
-        ...owner,
-        composition: {
-          ...owner.composition,
-          start: Effect.fail(
-            new OwnerError({
-              operation: "composition",
-              message: "Composition start had failures",
-              cause: new OrchestratorError({
-                operation: "start",
-                message: "Composition start had failures",
-                outcomes: [
-                  { id: "healthy", result: Exit.succeed(undefined) },
-                  { id: "failed", result: Exit.fail(failed) },
-                ],
-              }),
-            }),
-          ),
-        },
-      };
-      const { runtime } = yield* inProcessRuntime(delayedOwner, state, root);
+      const { runtime } = yield* inProcessRuntime(owner, state, root);
       const client = yield* clientFor(runtime.endpoint.port);
+      const port = yield* occupiedPort;
+      const lazy = yield* client.createService({
+        service: "mail",
+        config: {},
+        endpoints: { http: { port: "auto" } },
+      });
+      const blocked = yield* client.createService({
+        service: "mail",
+        config: {},
+        endpoints: { http: { port } },
+      });
+      yield* client.configureComposition({
+        members: [
+          { id: lazy.id, activation: "lazy" },
+          { id: blocked.id, activation: "eager" },
+        ],
+        dependencies: [],
+      });
+
       const error = yield* client.startComposition().pipe(Effect.flip);
+
       expect("outcomes" in error).toBe(true);
       if (!("outcomes" in error)) return yield* Effect.die("Missing composition outcomes");
       expect(error.outcomes).toEqual([
-        { id: "healthy", succeeded: true },
-        { id: "failed", succeeded: false, error: "member failed: EACCES: permission denied" },
+        { id: lazy.id, succeeded: true },
+        { id: blocked.id, succeeded: false, error: expect.stringContaining(String(port)) },
       ]);
-      yield* client.shutdown({ destroy: false });
+      yield* client.shutdown({ destroy: true });
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
@@ -264,14 +259,16 @@ it.live("keeps serving when namespace shutdown fails", () =>
         ...owner,
         namespace: {
           ...owner.namespace,
-          stop: Effect.fail(new OwnerError({ operation: "stop", message: "cleanup failed" })),
+          stop: Effect.fail(
+            new OrchestratorError({ operation: "stop", message: "cleanup failed" }),
+          ),
         },
       };
       const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
       const client = yield* clientFor(runtime.endpoint.port);
       const failure = yield* client.shutdown({ destroy: false }).pipe(Effect.flip);
       expect("operation" in failure).toBe(true);
-      expect((yield* client.listServices()).length).toBe(0);
+      yield* client.configureComposition({ members: [], dependencies: [] });
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
@@ -303,19 +300,15 @@ it.live("reports destroy and fallback stop failures together", () =>
         id: string,
         reason: string,
       ) =>
-        new OwnerError({
+        new OrchestratorError({
           operation,
           message,
-          cause: new OrchestratorError({
-            operation,
-            message,
-            outcomes: [
-              {
-                id,
-                result: Exit.fail(new OrchestratorError({ operation, message: reason })),
-              },
-            ],
-          }),
+          outcomes: [
+            {
+              id,
+              result: Exit.fail(new OrchestratorError({ operation, message: reason })),
+            },
+          ],
         });
       const failedOwner = {
         ...owner,
@@ -457,7 +450,7 @@ it.live("retains ownership when namespace shutdown defects and retries cleanup",
         200,
       );
       expect(yield* owner.getServing).toBe(true);
-      expect((yield* client.listServices()).length).toBe(0);
+      yield* client.configureComposition({ members: [], dependencies: [] });
       yield* runtime.shutdown(false);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
@@ -497,14 +490,14 @@ it.live(
           ),
         );
         yield* abortBeforeRpcBody(endpoint.port);
-        expect((yield* client.listServices()).length).toBe(0);
+        expect(yield* client.startComposition()).toEqual([]);
         const mail = yield* client.createService({
           service: "mail",
           config: {},
           endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
         });
         expect(mail.creation.service).toBe("mail");
-        expect((yield* client.listServices()).length).toBe(1);
+        expect((yield* client.status({ id: mail.id })).lifecycle).toBe("stopped");
         const toolAttachment = "early-stdin";
         const toolEvents = yield* client
           .runTool({
@@ -690,12 +683,12 @@ it.live("withdraws a command waiting for its prerequisite", () =>
       const allow = yield* Deferred.make<void>();
       const delayedOwner = {
         ...owner,
-        core: {
-          ...owner.core,
-          start: (id: string) =>
+        handlers: {
+          ...owner.handlers,
+          startService: (payload: { readonly id: string }) =>
             Deferred.succeed(entered, undefined).pipe(
               Effect.andThen(Deferred.await(allow)),
-              Effect.andThen(owner.core.start(id)),
+              Effect.andThen(owner.handlers.startService(payload)),
               Effect.ensuring(Deferred.succeed(cancelled, undefined)),
             ),
         },
@@ -719,6 +712,255 @@ it.live("withdraws a command waiting for its prerequisite", () =>
       yield* Deferred.succeed(allow, undefined);
       expect((yield* client.status({ id: mail.id })).lifecycle).toBe("stopped");
       yield* client.shutdown({ destroy: false });
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+const disconnectFixture = (prefix: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix });
+    const state = yield* stateFor(`${root}/state`);
+    const saved: State.SavedStack = {
+      id: "stack",
+      runtime: "native",
+      identity: { projectRoot: root, branchContext: "main", stackName: prefix },
+      instances: [],
+      composition: { members: [], dependencies: [] },
+      ports: [],
+    };
+    yield* state.save(saved);
+    return { root, state, saved };
+  });
+
+it.live("finishes a service creation after its caller disconnects", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { root, state, saved } = yield* disconnectFixture("stack-host-create-abort-");
+      const persisted = yield* Deferred.make<void>();
+      const allow = yield* Deferred.make<void>();
+      yield* Effect.addFinalizer(() => Deferred.succeed(allow, undefined));
+      const owner = yield* ownerFor({
+        saved,
+        state: {
+          ...state,
+          save: (next) =>
+            state
+              .save(next)
+              .pipe(
+                Effect.andThen(
+                  next.instances.length === 0
+                    ? Effect.void
+                    : Deferred.succeed(persisted, undefined).pipe(
+                        Effect.andThen(Deferred.await(allow)),
+                      ),
+                ),
+              ),
+        },
+        root: `${root}/data`,
+        cacheRoot: "/tmp/supabase-stack-artifacts",
+      });
+      const interrupted = yield* Deferred.make<void>();
+      const { runtime } = yield* inProcessRuntime(
+        {
+          ...owner,
+          handlers: {
+            ...owner.handlers,
+            createService: (input: Parameters<typeof owner.handlers.createService>[0]) =>
+              owner.handlers
+                .createService(input)
+                .pipe(Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))),
+          },
+        },
+        state,
+        root,
+      );
+      const client = yield* clientFor(runtime.endpoint.port);
+      const creation = yield* Effect.forkScoped(
+        client.createService({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        }),
+      );
+      yield* Deferred.await(persisted);
+      yield* Fiber.interrupt(creation);
+      yield* Deferred.await(interrupted);
+      yield* Deferred.succeed(allow, undefined);
+      // Definition changes are serialized, so this returns after the abandoned creation settles.
+      yield* client.configureComposition({ members: [], dependencies: [] });
+
+      const [instance, ...others] = (yield* state.read(saved.id))?.instances ?? [];
+      if (instance === undefined) return yield* Effect.die("creation was not persisted");
+      expect(others).toEqual([]);
+      expect((yield* client.status({ id: instance.id })).lifecycle).toBe("stopped");
+      yield* client.destroyService({ id: instance.id });
+      yield* client.shutdown({ destroy: true });
+      yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
+      expect(yield* state.read(saved.id)).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("persists a composition change after its caller disconnects", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { root, state, saved } = yield* disconnectFixture("stack-host-configure-abort-");
+      const entered = yield* Deferred.make<void>();
+      const allow = yield* Deferred.make<void>();
+      yield* Effect.addFinalizer(() => Deferred.succeed(allow, undefined));
+      const owner = yield* ownerFor({
+        saved,
+        state: {
+          ...state,
+          save: (next) =>
+            (next.composition.members.length === 0
+              ? Effect.void
+              : Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(allow)))
+            ).pipe(Effect.andThen(state.save(next))),
+        },
+        root: `${root}/data`,
+        cacheRoot: "/tmp/supabase-stack-artifacts",
+      });
+      const interrupted = yield* Deferred.make<void>();
+      const { runtime } = yield* inProcessRuntime(
+        {
+          ...owner,
+          handlers: {
+            ...owner.handlers,
+            configureComposition: (
+              input: Parameters<typeof owner.handlers.configureComposition>[0],
+            ) =>
+              owner.handlers
+                .configureComposition(input)
+                .pipe(Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))),
+          },
+        },
+        state,
+        root,
+      );
+      const client = yield* clientFor(runtime.endpoint.port);
+      const mail = yield* client.createService({
+        service: "mail",
+        config: {},
+        endpoints: { http: { port: "auto" } },
+      });
+      const members = [{ id: mail.id, activation: "eager" as const }];
+      const configure = yield* Effect.forkScoped(
+        client.configureComposition({ members, dependencies: [] }),
+      );
+      yield* Deferred.await(entered);
+      yield* Fiber.interrupt(configure);
+      yield* Deferred.await(interrupted);
+      yield* Deferred.succeed(allow, undefined);
+      yield* client.createService({ service: "mail", config: {}, endpoints: {} });
+
+      expect((yield* state.read(saved.id))?.composition).toEqual({ members, dependencies: [] });
+      yield* client.shutdown({ destroy: true });
+      yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+const abandonedComposition = (prefix: string, destroy: boolean) =>
+  Effect.gen(function* () {
+    const { root, state, saved } = yield* disconnectFixture(prefix);
+    const persisted = yield* Deferred.make<void>();
+    const allow = yield* Deferred.make<void>();
+    yield* Effect.addFinalizer(() => Deferred.succeed(allow, undefined));
+    const owner = yield* ownerFor({
+      saved,
+      state: {
+        ...state,
+        save: (next) =>
+          state
+            .save(next)
+            .pipe(
+              Effect.andThen(
+                next.instances.length === 0
+                  ? Effect.void
+                  : Deferred.succeed(persisted, undefined).pipe(
+                      Effect.andThen(Deferred.await(allow)),
+                    ),
+              ),
+            ),
+      },
+      root: `${root}/data`,
+      cacheRoot: "/tmp/supabase-stack-artifacts",
+    });
+    const interrupted = yield* Deferred.make<void>();
+    const draining = yield* Deferred.make<void>();
+    const { runtime } = yield* inProcessRuntime(
+      {
+        ...owner,
+        setDraining: (value: boolean) =>
+          owner
+            .setDraining(value)
+            .pipe(Effect.andThen(value ? Deferred.succeed(draining, undefined) : Effect.void)),
+        handlers: {
+          ...owner.handlers,
+          supabaseComposition: (input: Parameters<typeof owner.handlers.supabaseComposition>[0]) =>
+            owner.handlers
+              .supabaseComposition(input)
+              .pipe(Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))),
+        },
+      },
+      state,
+      root,
+    );
+    const client = yield* clientFor(runtime.endpoint.port);
+    const composition = yield* Effect.forkScoped(
+      client.supabaseComposition({
+        services: [
+          {
+            service: "database",
+            config: {
+              version: "17",
+              databasePassword: Redacted.make("abandoned-composition-password"),
+              jwtSecret: Redacted.make("abandoned-composition-jwt-secret-at-least-32-chars"),
+              jwtExpiry: 3600,
+            },
+            endpoints: { sql: { port: "auto" } },
+          },
+        ],
+      }),
+    );
+    yield* Deferred.await(persisted);
+    yield* Fiber.interrupt(composition);
+    yield* Deferred.await(interrupted);
+    const shutdown = yield* Effect.forkScoped(client.shutdown({ destroy }));
+    yield* Deferred.await(draining);
+    yield* Deferred.succeed(allow, undefined);
+    yield* Fiber.join(shutdown);
+    yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
+    return { root, state, saved };
+  });
+
+it.live("stops a stack only after an abandoned composition settles", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { state, saved } = yield* abandonedComposition("stack-host-compose-stop-", false);
+
+      const current = yield* state.read(saved.id);
+      const instanceIds = current?.instances.map(({ id }) => id) ?? [];
+      expect(instanceIds).toHaveLength(1);
+      expect(current?.composition.members.map(({ id }) => id)).toEqual(instanceIds);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("destroys a stack only after an abandoned composition settles", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { root, state, saved } = yield* abandonedComposition(
+        "stack-host-compose-destroy-",
+        true,
+      );
+
+      expect(yield* state.read(saved.id)).toBeUndefined();
+      const data = `${root}/data`;
+      expect((yield* fs.exists(data)) ? yield* fs.readDirectory(data) : []).toEqual([]);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

@@ -1,5 +1,5 @@
 import { StackError } from "@supabase/stack/effect";
-import { Data } from "effect";
+import { Data, Schema } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -37,12 +37,11 @@ export const stackPrepareError = (error: unknown): StackCommandPrepareError => {
       ? error.message
       : String(error);
   return new StackCommandPrepareError({
-    reason:
-      error instanceof StackError
-        ? error.operation === "prepareService"
-          ? "artifact"
-          : "unknown"
-        : "unknown",
+    reason: Schema.is(StackError)(error)
+      ? error.operation === "prepareService"
+        ? "artifact"
+        : "unknown"
+      : "unknown",
     message,
     cause: error,
   });

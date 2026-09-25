@@ -28,7 +28,7 @@ const program = Effect.scoped(
               return yield* Effect.die("Missing writer state");
             yield* state.save({
               ...saved,
-              instances: [...saved.instances, { id, creation: {} }],
+              instances: [...saved.instances, { id, creation: { service: "mail", config: {} } }],
             });
             return;
           }

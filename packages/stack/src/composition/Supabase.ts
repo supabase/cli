@@ -18,34 +18,29 @@ interface SupabaseCompositionEntry {
   readonly creation: ServiceCreation;
 }
 
-export interface SupabaseCompositionOperations {
+/** Owner operations the composition drives; their failures surface as composition errors. */
+export interface SupabaseCompositionOperations<E = SupabaseCompositionError> {
   readonly currentComposition: Effect.Effect<CompositionConfig>;
-  readonly get: (id: string) => Effect.Effect<SupabaseCompositionEntry, SupabaseCompositionError>;
-  readonly status: (
-    id: string,
-  ) => Effect.Effect<Pick<Observation, "lifecycle" | "wakeEnabled">, SupabaseCompositionError>;
-  readonly create: (
-    creation: ServiceCreation,
-  ) => Effect.Effect<SupabaseCompositionEntry, SupabaseCompositionError>;
-  readonly destroy: (id: string) => Effect.Effect<void, SupabaseCompositionError>;
-  readonly bind: (id: string) => Effect.Effect<void, SupabaseCompositionError>;
+  readonly get: (id: string) => Effect.Effect<SupabaseCompositionEntry, E>;
+  readonly status: (id: string) => Effect.Effect<Pick<Observation, "lifecycle" | "wakeEnabled">, E>;
+  readonly create: (creation: ServiceCreation) => Effect.Effect<SupabaseCompositionEntry, E>;
+  readonly destroy: (id: string) => Effect.Effect<void, E>;
+  readonly bind: (id: string) => Effect.Effect<void, E>;
   readonly address: (
     id: string,
     endpoint: string,
     from: "host" | "runtime",
-  ) => Effect.Effect<string, SupabaseCompositionError>;
-  readonly output: (id: string, name: string) => Effect.Effect<string, SupabaseCompositionError>;
+  ) => Effect.Effect<string, E>;
+  readonly output: (id: string, name: string) => Effect.Effect<string, E>;
   readonly updateCreation: (
     id: string,
     inputs: Record<string, string | undefined>,
-  ) => Effect.Effect<SupabaseCompositionEntry, SupabaseCompositionError>;
+  ) => Effect.Effect<SupabaseCompositionEntry, E>;
   readonly replaceCreation: (
     id: string,
     creation: ServiceCreation,
-  ) => Effect.Effect<SupabaseCompositionEntry, SupabaseCompositionError>;
-  readonly configure: (
-    configuration: CompositionConfig,
-  ) => Effect.Effect<void, SupabaseCompositionError>;
+  ) => Effect.Effect<SupabaseCompositionEntry, E>;
+  readonly configure: (configuration: CompositionConfig) => Effect.Effect<void, E>;
 }
 
 export interface SupabaseCompositionOptions {
@@ -63,8 +58,8 @@ const compositionErrorFrom = (cause: unknown) =>
     : compositionError(cause instanceof Error ? cause.message : String(cause), cause);
 
 export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
-  (
-    operations: SupabaseCompositionOperations,
+  <E>(
+    operations: SupabaseCompositionOperations<E>,
     inputs: ReadonlyArray<ServiceCreation>,
     options: SupabaseCompositionOptions = {},
   ) =>
@@ -332,7 +327,10 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
             .bind(entry.id)
             .pipe(
               Effect.mapError((cause) =>
-                compositionError(`${entry.creation.service} ${entry.id}: ${cause.message}`, cause),
+                compositionError(
+                  `${entry.creation.service} ${entry.id}: ${compositionErrorFrom(cause).message}`,
+                  cause,
+                ),
               ),
             );
         }

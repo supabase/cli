@@ -803,7 +803,10 @@ function mockResetStackApi(opts: {
               id: RESET_STACK_ID,
               identity: { projectRoot: opts.workdir, branchContext: "main", stackName: "default" },
               runtime: "native" as const,
-              instances: members.map((member) => ({ id: member.id, creation: {} })),
+              instances: members.map((member) => ({
+                id: member.id,
+                creation: { service: "mail" as const, config: {} },
+              })),
               composition: { members: [], dependencies: [] },
               ports: [],
             },
