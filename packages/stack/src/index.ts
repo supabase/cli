@@ -207,12 +207,7 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
       ),
     destroy: (options) => run(service.destroy, options),
     prepare: (options) => run(service.prepare, options),
-    initialize: (options) =>
-      service.initialize === undefined
-        ? Promise.reject(
-            new StackError({ operation: "initialize", message: "Initialization is unavailable" }),
-          )
-        : run(service.initialize, options),
+    initialize: (options) => run(service.initialize, options),
     status: (options) => run(service.status, options),
     followStatus: () => iterable(service.followStatus),
     logs: () => iterable(service.logs),

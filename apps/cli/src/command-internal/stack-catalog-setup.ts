@@ -134,14 +134,13 @@ const serviceDefinition = (
 
 const initializeTemporaryService = (
   instance: TemporaryServiceInstance,
-): Effect.Effect<void, StackCatalogSetupError> => {
-  return instance.initialize.pipe(
+): Effect.Effect<void, StackCatalogSetupError> =>
+  instance.initialize.pipe(
     Effect.mapError((cause) => temporaryServiceError("initialize", instance, cause)),
     Effect.withSpan("StackCatalogSetup.temporaryService.initialize", {
       attributes: { service: instance.service, member_id: instance.id, operation: "initialize" },
     }),
   );
-};
 
 const destroyTemporaryService = (
   instance: TemporaryServiceInstance,
