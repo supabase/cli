@@ -11,7 +11,7 @@ on:
       baseline_ref:
         description: Instrumented base revision
         required: true
-        default: 9b1d07032
+        default: 9b1d070321034f08146dc70fbddd56051dfaa3a6
         type: string
       changed_ref:
         description: Instrumented product revision
@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ matrix.variant == 'baseline' && (github.event.inputs.baseline_ref || '9b1d07032') || (github.event.inputs.changed_ref || github.sha) }}
+          ref: ${{ matrix.variant == 'baseline' && (github.event.inputs.baseline_ref || '9b1d070321034f08146dc70fbddd56051dfaa3a6') || (github.event.inputs.changed_ref || github.sha) }}
           persist-credentials: false
           fetch-depth: 0
       - uses: ./.github/actions/setup
