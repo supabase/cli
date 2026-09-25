@@ -35,7 +35,8 @@ Native startup refuses root because PostgreSQL `initdb` cannot run as root, unle
 sandbox is detected or `SUPABASE_NATIVE_POSTGRES_USER` names a non-root user. PostgreSQL then runs
 as that user: the CLI chowns the instance data, root key, socket directory, and the cached bundle's
 `pgsodium_getkey.sh` to it, and adds traverse-only `o+x` to their parent directories, including
-root's home directory.
+root's home directory. Later commands that restrict the artifact cache and stack state roots to
+their owner keep that grant.
 
 Database is eager by default. Other services are lazy; traffic wakes them through their listeners.
 Lazy services with idle policies stop after 60 seconds without traffic; Functions has no automatic

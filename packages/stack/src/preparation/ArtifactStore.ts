@@ -3,6 +3,7 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
 import { validateRelativePath, validateSha256 } from "./Integrity.ts";
+import { restrictDirectoryToOwner } from "../runtime/postgres-user.ts";
 
 /** A concrete artifact identity. `key` may contain subdirectories but never an absolute or traversing path. */
 export interface ArtifactRequest {
@@ -235,7 +236,7 @@ const ensureDirectory = (
       return yield* artifactError("Artifact directory contains a symlink", { path: resolved });
     if (!pathAtOrBelow(root, real, path.sep))
       return yield* artifactError("Artifact directory escapes cache root", { path: resolved });
-    yield* mapFs(resolved, "secure artifact directory", fs.chmod(resolved, 0o700));
+    yield* mapFs(resolved, "secure artifact directory", restrictDirectoryToOwner(fs, resolved));
   });
 
 const ensureSafeRoot = (
@@ -815,7 +816,7 @@ export const makeArtifactStore = Effect.fn("ArtifactStore.makeStore")(function* 
   );
   if (rootInfo.type !== "Directory")
     return yield* artifactError("Artifact cache root must be a directory", { path: cacheRoot });
-  yield* mapFs(cacheRoot, "secure artifact cache root", fs.chmod(cacheRoot, 0o700));
+  yield* mapFs(cacheRoot, "secure artifact cache root", restrictDirectoryToOwner(fs, cacheRoot));
   const prepare = Effect.fn("ArtifactStore.prepare")(function* (
     request: ArtifactRequest,
     onProgress?: (state: "downloading" | "preparing") => void,

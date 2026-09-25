@@ -114,6 +114,15 @@ const ancestorsOf = (path: Path.Path, start: string): ReadonlyArray<string> => {
   return parent === start ? [start] : [start, ...ancestorsOf(path, parent)];
 };
 
+/**
+ * Restricts a directory to its owner but keeps an existing traverse-only grant, because a
+ * stepped-down PostgreSQL resolves bundle and data paths through the cache and state roots while it runs.
+ */
+export const restrictDirectoryToOwner = (fs: FileSystem.FileSystem, directory: string) =>
+  fs
+    .stat(directory)
+    .pipe(Effect.flatMap(({ mode }) => fs.chmod(directory, 0o700 | (mode & 0o001))));
+
 const allowTraverse = Effect.fn("NativePostgresUser.allowTraverse")(function* (
   user: PasswdEntry,
   directories: ReadonlyArray<string>,
