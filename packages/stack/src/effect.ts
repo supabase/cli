@@ -75,6 +75,7 @@ export interface CreateOptions extends StackLocations {
   readonly projectRoot: string;
   readonly name?: string;
   readonly runtime: "native" | "docker" | "podman";
+  readonly startOwner?: boolean;
 }
 /** Opens a previously registered stack. */
 export interface OpenOptions extends StackLocations {
@@ -494,6 +495,25 @@ export const create = Effect.fn("Stack.create")(
         yield* state.save(saved);
       }),
     );
+    if (options.startOwner)
+      yield* Effect.scoped(launchHost(state, { ...options, stackId: id })).pipe(
+        Effect.matchEffect({
+          onFailure: (launchError) =>
+            state.withLock(state.remove(id)).pipe(
+              Effect.matchEffect({
+                onFailure: (removeError) =>
+                  Effect.fail(
+                    failure(
+                      "create",
+                      `${failure("create", launchError).message}; failed to remove stack ${id} after startup failure: ${failure("create", removeError).message}`,
+                    ),
+                  ),
+                onSuccess: () => Effect.fail(failure("create", launchError)),
+              }),
+            ),
+          onSuccess: () => Effect.void,
+        }),
+      );
     return yield* makeHandle(state, saved, options);
   },
   Effect.mapError((cause) => failure("create", cause)),
