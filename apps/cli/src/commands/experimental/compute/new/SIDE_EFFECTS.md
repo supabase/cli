@@ -87,8 +87,12 @@ Writes to `config.toml` are append-only. A compute already recorded under
 and before anything reaches disk — because editing an entry the user owns is
 not this command's job.
 
-Nothing at the destination is ever removed or overwritten: a destination that
-exists and is not empty is refused, and clearing it is left to the user.
+Nothing that was already at the destination is ever removed or overwritten: a
+destination that exists and is not empty is refused, and clearing it is left to
+the user. A write that fails partway, including the final `config.toml` append,
+takes back only what this run wrote — the starter files, then the destination
+itself when this run created it and it is empty again — so a retry finds it
+free. Parent directories created along the way are left in place.
 `--source` is refused when it resolves to the project root, `supabase/`,
 `supabase/functions/`, `supabase/migrations/`, or outside the project. Symlinks
 are resolved first, so a path inside the project that points outside it is
