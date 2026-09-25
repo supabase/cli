@@ -114,7 +114,7 @@ const commandNotFound = (command: string): Error =>
 
 /**
  * The registry `Host` for `gen types`: spawns through the Effect spawner, and hands TypeScript
- * back unformatted so `oxfmt` stays out of the binary and the output stays what it always was.
+ * back unformatted so `oxfmt` stays out of the binary.
  */
 export const makeTypegenHost = (options: TypegenHostOptions): Host => ({
   cwd: options.cwd,

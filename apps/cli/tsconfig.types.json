@@ -1,8 +1,8 @@
 {
-  // Type-check-only overlay, kept for the `@supabase/pg-topo` pin inherited from `tsconfig.json`
-  // (see the note there). `@supabase/postgrest-typegen` used to be pinned here too, until it
-  // compiled under this workspace's options (SDK-1963); it is now reached only through
-  // `@supabase/typegen` and type-checked from source like every other `bun`-condition package.
+  // Type-check-only overlay for the `@supabase/pg-topo` pin from `tsconfig.json` (see the note
+  // there). The pin cannot live in `tsconfig.json` alone for type-checking purposes because Bun
+  // honours `paths` at runtime too, and would then load a declaration file instead of the
+  // implementation.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     // `paths` replaces the base map wholesale, so the inherited pin is repeated here.
