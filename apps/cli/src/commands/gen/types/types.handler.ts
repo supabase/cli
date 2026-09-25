@@ -124,7 +124,6 @@ const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
   ["local", "linked", "project-id", "db-url"],
 ];
 
-// Established output contract; ends with a `.`.
 const POSTGREST_V9_COMPAT_DEPRECATION_LINE =
   "Flag --postgrest-v9-compat has been deprecated, PostgREST 9 reached end of life; the flag still disables one-to-one relationship detection.";
 
