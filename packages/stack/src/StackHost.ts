@@ -1,10 +1,12 @@
 import { NodeHttpServerRequest, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import {
   Context,
+  Cause,
   Data,
   Deferred,
   Effect,
   Exit,
+  FileSystem,
   Fiber,
   Layer,
   Option,
@@ -28,6 +30,8 @@ import { StackError, StackRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
 import { makeToolAttachments, type ToolAttachmentPayload } from "./host/ToolAttachments.ts";
 import * as ToolRunner from "./host/ToolRunner.ts";
+import * as Container from "./runtime/Container.ts";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import type { CatalogLog } from "./services/Catalog.ts";
 
 export interface StackHostOptions {
@@ -126,10 +130,20 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
     endpoint: HostEndpoint,
     server: HttpServer.HttpServer["Service"],
     closeConnections: Effect.Effect<void>,
-  ): Effect.Effect<StackHostRuntime, never, Scope.Scope | ToolRunner.Service> =>
+    container?: {
+      readonly engine: "docker" | "podman";
+      readonly stackId: string;
+      readonly root: string;
+    },
+  ): Effect.Effect<
+    StackHostRuntime,
+    never,
+    Scope.Scope | ToolRunner.Service | ChildProcessSpawner.ChildProcessSpawner
+  > =>
     Effect.gen(function* () {
       const scope = yield* Scope.Scope;
       const runner = yield* ToolRunner.Service;
+      const childSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const attachments = yield* makeToolAttachments({
         admit: owner.getServing.pipe(
           Effect.flatMap(isOpen),
@@ -160,7 +174,8 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                 Effect.gen(function* () {
                   const existing = yield* Ref.get(current);
                   if (existing !== undefined) {
-                    if (existing.destroy !== destroy)
+                    if (existing.destroy && !destroy) return existing.fiber;
+                    if (!existing.destroy && destroy)
                       return yield* new StackError({
                         operation: "shutdown",
                         message: "Shutdown mode is already selected",
@@ -172,10 +187,24 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                     response === undefined ? undefined : yield* Deferred.make<void>();
                   if (response !== undefined && responseClosedSignal !== undefined)
                     yield* watchResponse(response, responseClosedSignal);
-                  const cleanup = Effect.gen(function* () {
+                  let retiringAfterDestroyFailure = false;
+                  const removeOwned =
+                    container === undefined
+                      ? Effect.void
+                      : Container.removeStackContainers(container).pipe(
+                          Effect.provideService(
+                            ChildProcessSpawner.ChildProcessSpawner,
+                            childSpawner,
+                          ),
+                          Effect.mapError((cause) => stackError("shutdown", cause)),
+                        );
+                  const stopOwned = Effect.gen(function* () {
                     yield* attachments.stopAll;
-                    if (destroy) yield* runner.cleanup;
-                    yield* destroy ? owner.namespace.destroy : owner.namespace.stop;
+                    yield* runner.cleanup;
+                    yield* owner.namespace.stop;
+                    yield* removeOwned;
+                  });
+                  const finish = Effect.gen(function* () {
                     if (response !== undefined) {
                       if (responseClosedSignal === undefined) return;
                       yield* Effect.forkIn(
@@ -189,14 +218,70 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                       yield* closeConnections;
                       yield* Deferred.succeed(exit, undefined);
                     }
+                  });
+                  const cleanup = Effect.gen(function* () {
+                    if (!destroy) {
+                      yield* stopOwned;
+                      yield* finish;
+                      return;
+                    }
+                    const destroyExit = yield* Effect.gen(function* () {
+                      yield* attachments.stopAll;
+                      yield* runner.cleanup;
+                      yield* owner.namespace.destroy;
+                    }).pipe(Effect.exit);
+                    if (Exit.isSuccess(destroyExit)) {
+                      yield* finish;
+                      return;
+                    }
+                    const stopExit = yield* stopOwned.pipe(Effect.exit);
+                    if (Exit.isFailure(stopExit)) {
+                      const describeCause = (cause: Cause.Cause<unknown>) => {
+                        const error = Option.match(Cause.findErrorOption(cause), {
+                          onNone: () =>
+                            new StackError({
+                              operation: "shutdown",
+                              message: Cause.pretty(cause),
+                            }),
+                          onSome: (value) => stackError("shutdown", value),
+                        });
+                        const failedOutcomes = error.outcomes
+                          ?.filter(({ succeeded }) => !succeeded)
+                          .map(({ id, error: reason }) => `${id}: ${reason ?? "failed"}`)
+                          .join("; ");
+                        return {
+                          error,
+                          message:
+                            failedOutcomes === undefined || failedOutcomes.length === 0
+                              ? error.message
+                              : `${error.message} (${failedOutcomes})`,
+                        };
+                      };
+                      const destroyFailure = describeCause(destroyExit.cause);
+                      const stopFailure = describeCause(stopExit.cause);
+                      const outcomes = [
+                        ...(destroyFailure.error.outcomes ?? []),
+                        ...(stopFailure.error.outcomes ?? []),
+                      ];
+                      return yield* new StackError({
+                        operation: "shutdown",
+                        message: `${destroyFailure.message}; fallback stop failed: ${stopFailure.message}`,
+                        ...(outcomes.length === 0 ? {} : { outcomes }),
+                      });
+                    }
+                    retiringAfterDestroyFailure = true;
+                    yield* finish;
+                    return yield* Effect.failCause(destroyExit.cause);
                   }).pipe(
                     Effect.mapError((cause) => stackError("shutdown", cause)),
                     Effect.catchCause((cause) =>
-                      owner.setDraining(false).pipe(
-                        Effect.mapError((reset) => stackError("shutdown", reset)),
-                        Effect.andThen(gate.withPermits(1)(Ref.set(current, undefined))),
-                        Effect.andThen(Effect.failCause(cause)),
-                      ),
+                      retiringAfterDestroyFailure
+                        ? Effect.failCause(cause)
+                        : owner.setDraining(false).pipe(
+                            Effect.mapError((reset) => stackError("shutdown", reset)),
+                            Effect.andThen(gate.withPermits(1)(Ref.set(current, undefined))),
+                            Effect.andThen(Effect.failCause(cause)),
+                          ),
                     ),
                   );
                   const fiber = yield* Effect.forkIn(cleanup, scope);
@@ -337,6 +422,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
         return HttpServerResponse.empty({ status: 404 });
       });
       const serve: Effect.Effect<void, never, Scope.Scope> = server.serve(application);
+
       return { endpoint, serve, shutdown, closeConnections, exit };
     }),
 );
@@ -357,19 +443,29 @@ export const runStackHost = Effect.fn("StackHost.run")(
           const stateContext = yield* Layer.build(State.layer({ root: options.stateRoot }));
           const state = Context.get(stateContext, State.Service);
           const path = yield* Path.Path;
+          const fs = yield* FileSystem.FileSystem;
           const saved = yield* state.read(options.stackId);
           if (saved === undefined) return yield* hostError("startup", "Stack is not registered");
           const acquired = yield* acquireHost(state, options.stackId);
+          const dataRootPath = path.join(options.stateRoot, saved.id, "data");
+          yield* fs.makeDirectory(dataRootPath, { recursive: true });
+          const dataRoot = yield* fs.realPath(dataRootPath);
+          if (saved.runtime !== "native")
+            yield* Container.removeStackContainers({
+              engine: saved.runtime,
+              stackId: saved.id,
+              root: dataRoot,
+            }).pipe(Effect.mapError((cause) => hostError("startup-cleanup", cause)));
           const services = yield* Layer.build(
             Layer.merge(
               Owner.layer({
                 saved,
-                root: path.join(options.stateRoot, saved.id, "data"),
+                root: dataRoot,
                 cacheRoot: options.cacheRoot,
               }),
               ToolRunner.layer({
                 stackId: saved.id,
-                root: path.join(options.stateRoot, saved.id, "data"),
+                root: dataRoot,
                 cacheRoot: options.cacheRoot,
                 runtime: saved.runtime,
               }),
@@ -387,6 +483,9 @@ export const runStackHost = Effect.fn("StackHost.run")(
             endpoint,
             acquired.server,
             acquired.closeConnections,
+            saved.runtime === "native"
+              ? undefined
+              : { engine: saved.runtime, stackId: saved.id, root: dataRoot },
           ).pipe(
             Effect.provideService(ToolRunner.Service, Context.get(services, ToolRunner.Service)),
           );
@@ -406,9 +505,10 @@ export const runStackHost = Effect.fn("StackHost.run")(
             Effect.raceFirst(Queue.take(signals).pipe(Effect.map(() => "signal" as const))),
           );
           if (event === "done") break;
-          const shutdownSucceeded = yield* started
-            .shutdown(false)
-            .pipe(Effect.match({ onSuccess: () => true, onFailure: () => false }));
+          const shutdownSucceeded = yield* started.shutdown(false).pipe(
+            Effect.tapCause((cause) => Effect.logError("Stack shutdown failed", cause)),
+            Effect.matchCause({ onSuccess: () => true, onFailure: () => false }),
+          );
           if (shutdownSucceeded) break;
         }
       }),

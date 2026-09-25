@@ -269,20 +269,33 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     if (target.id === undefined) yield* ensurePostgresUser;
     const stateRoot = path.join(settings.supabaseHome, "stacks");
     const cacheRoot = path.join(settings.supabaseHome, "cache", "stack");
-    const stack =
+    const startupComplete = yield* Ref.make(false);
+    const stack = yield* Effect.acquireRelease(
       target.id === undefined
-        ? yield* stackApi
-            .create({
-              projectRoot: target.projectRoot,
-              stateRoot,
-              cacheRoot,
-              runtime: selectedRuntime,
-              ...(target.name === undefined ? {} : { name: target.name }),
-            })
-            .pipe(Effect.mapError(stackError))
-        : yield* stackApi
-            .open({ id: target.id, stateRoot, cacheRoot, startOwner: true })
-            .pipe(Effect.mapError(stackError));
+        ? stackApi.create({
+            projectRoot: target.projectRoot,
+            stateRoot,
+            cacheRoot,
+            runtime: selectedRuntime,
+            ...(target.name === undefined ? {} : { name: target.name }),
+          })
+        : stackApi.open({ id: target.id, stateRoot, cacheRoot, startOwner: true }),
+      (stack) =>
+        Ref.get(startupComplete).pipe(
+          Effect.flatMap((complete) =>
+            complete || target.hostRunning
+              ? Effect.void
+              : stack.stop.pipe(
+                  Effect.catch((error) =>
+                    output.raw(
+                      `Failed to stop stack host ${stack.id}: ${error.message}. Run supabase stack stop --stack-id ${stack.id} to stop it.\n`,
+                      "stderr",
+                    ),
+                  ),
+                ),
+          ),
+        ),
+    ).pipe(Effect.mapError(stackError));
     const existingServices = yield* stack.services.list.pipe(Effect.mapError(stackError));
     const composition = yield* stack.composition.describe.pipe(Effect.mapError(stackError));
     const currentInstances = yield* Effect.forEach(composition.members, ({ id }) =>
@@ -297,6 +310,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       databaseStatus?.lifecycle === "running" &&
       currentStatuses.every(({ lifecycle, wakeEnabled }) => lifecycle === "running" || wakeEnabled);
     if (fullyStarted) {
+      yield* Ref.set(startupComplete, true);
       const endpoints = Object.fromEntries(
         currentStatuses.flatMap((observation, index) => {
           const instance = currentInstances[index];
@@ -473,7 +487,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       Effect.tapError((error) => starting.fail(error.message)),
       Effect.mapError(stackError),
     );
-    const initialCleanupComplete = yield* Ref.make(!initialComposition);
     if (initialComposition) {
       const existingIds = new Set(existingServices.map(({ id }) => id));
       const owned = members.filter(({ id }) => !existingIds.has(id));
@@ -502,7 +515,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         ),
       );
       yield* Effect.addFinalizer(() =>
-        Ref.get(initialCleanupComplete).pipe(
+        Ref.get(startupComplete).pipe(
           Effect.flatMap((complete) => (complete ? Effect.void : cleanupInitialSafe)),
         ),
       );
@@ -658,7 +671,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       Effect.mapError((error) => stackError(error, members)),
     );
     yield* Effect.forEach(preparation, (fiber) => Fiber.join(fiber));
-    yield* Ref.set(initialCleanupComplete, true);
+    yield* Ref.set(startupComplete, true);
     const endpoints = Object.fromEntries(
       (yield* Effect.forEach(members, (member) =>
         member.status.pipe(

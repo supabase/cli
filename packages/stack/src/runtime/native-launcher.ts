@@ -101,17 +101,19 @@ export const runNativeLauncher = (): void => {
   let groupTerminated = false;
   let childExited = false;
 
-  const terminateGroup = (signal: NodeJS.Signals): void => {
+  const terminateWorkloadGroup = (signal: NodeJS.Signals): void => {
     if (groupTerminated) return;
     groupTerminated = true;
     if (process.platform === "win32") {
-      spawn("taskkill", ["/pid", String(process.pid), "/T", "/F"], { stdio: "ignore" });
+      spawn("taskkill", ["/pid", String(child?.pid ?? process.pid), "/T", "/F"], {
+        stdio: "ignore",
+      });
       return;
     }
     try {
-      // The launcher is the detached process-group leader, so this targets only
-      // the process tree created for this workload.
-      process.kill(-process.pid, signal);
+      // The workload owns a separate group so its descendants can be reaped
+      // before this launcher exits while preserving the workload's exit code.
+      process.kill(-(child?.pid ?? process.pid), signal);
     } catch {
       child?.kill(signal);
     }
@@ -123,14 +125,14 @@ export const runNativeLauncher = (): void => {
   const forwardSignal = (signal: NodeJS.Signals): void => {
     if (groupTerminated || gracefulForwarded) return;
     if (child === undefined) {
-      terminateGroup(signal);
+      terminateWorkloadGroup(signal);
       return;
     }
     gracefulForwarded = true;
     try {
       child.kill(signal);
     } catch {
-      terminateGroup(signal);
+      terminateWorkloadGroup(signal);
     }
   };
   process.on("SIGTERM", () => forwardSignal("SIGTERM"));
@@ -144,7 +146,7 @@ export const runNativeLauncher = (): void => {
       specGracefulStopSignal === undefined ||
       specGracefulStopTimeoutMs === undefined
     ) {
-      terminateGroup("SIGKILL");
+      terminateWorkloadGroup("SIGKILL");
       return;
     }
     let sent = false;
@@ -154,7 +156,7 @@ export const runNativeLauncher = (): void => {
       sent = false;
     }
     if (!sent) {
-      terminateGroup("SIGKILL");
+      terminateWorkloadGroup("SIGKILL");
       return;
     }
     ownerLossGraceful = true;
@@ -162,7 +164,7 @@ export const runNativeLauncher = (): void => {
     // no detached work can outlive its owner process.
     Effect.runFork(
       Effect.sleep(Duration.millis(specGracefulStopTimeoutMs)).pipe(
-        Effect.andThen(Effect.sync(() => terminateGroup("SIGKILL"))),
+        Effect.andThen(Effect.sync(() => terminateWorkloadGroup("SIGKILL"))),
       ),
     );
   };
@@ -207,17 +209,24 @@ export const runNativeLauncher = (): void => {
       env: { ...Effect.runSync(inheritedEnvironment), ...spec.env },
       uid: spec.uid,
       gid: spec.gid,
-      detached: false,
-      stdio: ["ignore", "inherit", "inherit"],
+      detached: true,
+      stdio: ["inherit", "inherit", "inherit"],
     });
+    try {
+      writeSync(5, `${child.pid ?? 0}\n`);
+    } catch {
+      terminateWorkloadGroup("SIGKILL");
+      process.exit(127);
+    }
     child.on("error", (error) => {
       writeSync(2, `Native workload failed to start: ${error.message}\n`);
       process.exit(127);
     });
     child.on("exit", (code, signal) => {
       childExited = true;
+      terminateWorkloadGroup("SIGKILL");
       if (ownerLossGraceful) {
-        terminateGroup("SIGKILL");
+        process.exit(code ?? 1);
         return;
       }
       ownerPipe.destroy();

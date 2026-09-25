@@ -96,8 +96,8 @@ const owner = Effect.scoped(
     } finally {
       closeSync(3);
     }
-    yield* Deferred.await(shutdown);
     if (mode === "rpc-held") yield* awaitBarrier;
+    else yield* Deferred.await(shutdown);
   }),
 );
 

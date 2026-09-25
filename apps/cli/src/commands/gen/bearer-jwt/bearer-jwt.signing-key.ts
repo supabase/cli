@@ -82,6 +82,11 @@ function normalizeStoredJwk(record: Record<string, unknown>): Jwk {
   };
 }
 
+// Native parser errors are CLI output; schema decoding discards their messages.
+function parseJwkInput(input: string): unknown {
+  return JSON.parse(input);
+}
+
 /**
  * Branch A (reached when `[auth].signing_keys_path` is NOT configured):
  * prompt for a raw JWK, falling back to the built-in default ES256 dev key
@@ -94,16 +99,13 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
   if (input.length === 0) {
     return DEFAULT_SIGNING_KEY;
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(input);
-  } catch (cause) {
-    return yield* Effect.fail(
+  const parsed = yield* Effect.try({
+    try: () => parseJwkInput(input),
+    catch: (cause) =>
       new GenBearerJwtKeyParseError({
         message: `failed to parse JWK: ${bearerJwtErrorMessage(cause)}`,
       }),
-    );
-  }
+  });
   // A JSON `null` answer decodes to a zero-value JWK (same as `{}`), which
   // fails downstream at sign time with "unsupported key type: " — distinct
   // from a truly blank answer (handled above), which falls back to the
@@ -112,25 +114,21 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
     return normalizeStoredJwk({});
   }
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
-    return yield* Effect.fail(
-      new GenBearerJwtKeyParseError({
-        message: `failed to parse JWK: json: cannot unmarshal ${goJsonKindName(parsed)} into Go value of type config.JWK`,
-      }),
-    );
+    return yield* new GenBearerJwtKeyParseError({
+      message: `failed to parse JWK: json: cannot unmarshal ${goJsonKindName(parsed)} into Go value of type config.JWK`,
+    });
   }
   const record = parsed as Record<string, unknown>;
   // Case-insensitive lookup: the `alg` allowlist check runs regardless of
   // the key's casing; see `resolveJwkFieldValue` in `gen.signing-keys-config.ts`.
   const alg = resolveJwkFieldValue(record, "alg");
-  try {
-    assertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
-  } catch (cause) {
-    return yield* Effect.fail(
+  yield* Effect.try({
+    try: () => assertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined),
+    catch: (cause) =>
       new GenBearerJwtKeyParseError({
         message: `failed to parse JWK: ${bearerJwtErrorMessage(cause)}`,
       }),
-    );
-  }
+  });
   // `assertNoMalformedDuplicateJwkField` checks the raw `input` text, not
   // `record`: `JSON.parse` already collapsed any duplicate top-level key to
   // its last occurrence, silently discarding evidence (e.g. `{"kid":1,"kid":"k"}`
@@ -175,16 +173,14 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
     if (kid.length === 0 && availableKeys.length > 0) {
       return availableKeys[0]!;
     }
-    return yield* Effect.fail(
-      new GenBearerJwtKeyNotFoundError({ message: `signing key not found: ${kid}` }),
-    );
+    return yield* new GenBearerJwtKeyNotFoundError({ message: `signing key not found: ${kid}` });
   }
 
   if (availableKeys.length === 0) {
     // A zero-item list must quit immediately: `@clack/prompts`' own
     // `select()` has no "quit on empty options" behavior, and calling it
     // with zero options would crash with a raw `TypeError` instead.
-    return yield* Effect.fail(new GenBearerJwtKeyPickerAbortedError({ message: "user aborted" }));
+    return yield* new GenBearerJwtKeyPickerAbortedError({ message: "user aborted" });
   }
 
   const output = yield* Output;

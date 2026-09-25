@@ -142,7 +142,7 @@ const makeFixture = (root: string, failPreparation = false) => {
     output.layer,
     telemetry.layer,
     Layer.succeed(StackTargetResolver, {
-      resolve: () => Effect.succeed({ projectRoot: root }),
+      resolve: () => Effect.succeed({ projectRoot: root, hostRunning: false }),
     }),
     Layer.succeed(StackApi, {
       create: () => Effect.succeed(stack),

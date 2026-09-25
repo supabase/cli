@@ -97,7 +97,7 @@ describe("genTypesRuntimeLayer — IdentityStitch exposure", () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(genTypesRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(genTypesRuntimeLayer.pipe(Layer.provide(ambientStubs()))));
     },
   );
 });

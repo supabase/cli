@@ -19,6 +19,7 @@ import { create, type Stack } from "../../src/effect.ts";
 import type { Observation } from "../../src/Rpc.ts";
 import { vectorAnalyticsConfig } from "./analytics.ts";
 import { cleanupDockerRoot } from "../docker-cleanup.ts";
+import { destroyTestStack } from "../stack-cleanup.ts";
 
 type AnyService = Effect.Success<Stack["services"]["list"]>[number];
 
@@ -120,9 +121,7 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         const current = yield* Ref.get(owner);
-        const destroy = Option.isSome(current)
-          ? current.value.destroy.pipe(Effect.catchCause(Effect.die))
-          : Effect.void;
+        const destroy = Option.isSome(current) ? destroyTestStack(current.value) : Effect.void;
         yield* runtime === "docker"
           ? destroy.pipe(Effect.ensuring(cleanupDockerRoot(storageRoot)))
           : destroy;

@@ -3,8 +3,10 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Crypto,
   Data,
+  Deferred,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Layer,
   Option,
@@ -12,6 +14,7 @@ import {
   Schema,
   Sink,
   Scope,
+  Ref,
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -120,6 +123,78 @@ const docker = Effect.fn("DockerStorageTest.docker")((args: ReadonlyArray<string
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 describe("Docker database storage", { timeout: 120_000 }, () => {
+  it.live("waits for helper creation to settle before cleaning up an interrupted operation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-helper-create-cancel-" });
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const present = yield* Ref.make(false);
+        const removals = yield* Ref.make(0);
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (!ChildProcess.isStandardCommand(command))
+              return yield* Effect.die("Unexpected command");
+            const creating = command.args[0] === "run";
+            if (creating) yield* Deferred.succeed(started, undefined);
+            if (command.args[0] === "rm") {
+              yield* Ref.update(removals, (count) => count + 1);
+              yield* Ref.set(present, false);
+            }
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(0),
+              exitCode: (creating
+                ? Deferred.await(release).pipe(Effect.andThen(Ref.set(present, true)))
+                : Effect.void
+              ).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              stdout: creating
+                ? Stream.succeed(new TextEncoder().encode("a".repeat(64)))
+                : Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            });
+          }),
+        );
+        const storage = yield* makeDockerDatabaseStorage({
+          runtime: "podman",
+          stackId: "helper-create-cancel",
+          instanceId: "database",
+          instanceRoot: root,
+          root,
+          cacheRoot: path.join(root, "cache"),
+          fs,
+          path,
+          crypto,
+          spawner,
+          container: {
+            prepare: () => Effect.void,
+            prepareImage: (image) => Effect.succeed(image),
+            launch: () => Effect.die("unused"),
+            launchTool: () => Effect.die("unused"),
+          },
+        });
+        yield* storage.prepare("17");
+        const operation = yield* storage.removeData("17").pipe(Effect.forkScoped);
+        yield* Deferred.await(started);
+        yield* Effect.sync(() => operation.interruptUnsafe());
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.await(operation);
+        expect(yield* Ref.get(removals)).toBe(1);
+        expect(yield* Ref.get(present)).toBe(false);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("starts a storage helper with the mirror image selected during preparation", () => {
     const engine = fakeHelperEngine();
     return Effect.scoped(
@@ -134,6 +209,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(instanceRoot, { recursive: true });
         const container = yield* makeContainerRuntime({
           engine: "podman",
+          root,
           imageMirrors: () => [helperMirror],
         });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -199,6 +275,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         );
         const container = yield* makeContainerRuntime({
           engine: "podman",
+          root,
           imageMirrors: () => [helperMirror],
         });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -245,7 +322,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(sourceRoot, { recursive: true });
         yield* fs.makeDirectory(targetRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
-        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const container = yield* makeContainerRuntime({ engine: "docker", root });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const stackId = `storage-pg15-${yield* crypto.randomUUIDv4}`;
         const makeStorage = (instanceId: string, instanceRoot: string) =>
@@ -348,7 +425,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(sourceRoot, { recursive: true });
         yield* fs.makeDirectory(targetRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
-        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const container = yield* makeContainerRuntime({ engine: "docker", root });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const makeStorageAt = (
           instanceId: string,
@@ -580,7 +657,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           path.join(instanceRoot, ".supabase-database-ready.json"),
           '{"version":"17","runtime":"docker","profile":"supabase"}',
         );
-        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const container = yield* makeContainerRuntime({ engine: "docker", root });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         yield* docker([
           "run",
@@ -630,7 +707,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const instanceRoot = path.join(storageRoot, "recovery");
         yield* fs.makeDirectory(instanceRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
-        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const container = yield* makeContainerRuntime({ engine: "docker", root });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const stackId = `storage-helper-recovery-${yield* crypto.randomUUIDv4}`;
         const instanceId = "recovery";
@@ -691,7 +768,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const instanceRoot = path.join(storageRoot, "database");
         yield* fs.makeDirectory(instanceRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
-        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const container = yield* makeContainerRuntime({ engine: "docker", root });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const stackId = `storage-helper-owner-${yield* crypto.randomUUIDv4}`;
         const firstScope = yield* Scope.make();
@@ -783,7 +860,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const instanceRoot = path.join(storageRoot, "missing");
         yield* fs.makeDirectory(instanceRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
-        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const container = yield* makeContainerRuntime({ engine: "docker", root });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const stackId = `storage-missing-${yield* crypto.randomUUIDv4}`;
         const makeStorage = () =>
@@ -870,7 +947,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           path.join(instanceRoot, ".supabase-database-ready.json"),
           '{"version":"17","runtime":"docker","profile":"supabase"}',
         );
-        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const container = yield* makeContainerRuntime({ engine: "docker", root });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         yield* docker([
           "run",
@@ -980,7 +1057,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(sourceRoot, { recursive: true });
         yield* fs.makeDirectory(targetRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
-        const container = yield* makeContainerRuntime({ engine: "docker" });
+        const container = yield* makeContainerRuntime({ engine: "docker", root });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const makeStorageWithCache = (
           instanceId: string,

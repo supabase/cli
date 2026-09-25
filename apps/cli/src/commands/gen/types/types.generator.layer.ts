@@ -6,6 +6,7 @@ import {
   generateTypescript,
   introspect,
   sortGeneratorMetadata,
+  type GeneratorMetadata,
   type Queryable,
 } from "@supabase/postgrest-typegen";
 
@@ -41,8 +42,41 @@ export const genTypesGeneratorLayer = Layer.effect(
           // context (rather than a bare detached `Effect.runPromise`) keeps the Promise bridge
           // anchored to this generator effect instead of a disconnected top-level runtime.
           const runQuery = Effect.runPromiseWith(yield* Effect.context<never>());
-          return yield* Effect.tryPromise({
-            try: async (signal) => {
+          const toGenerationError = (cause: unknown) =>
+            new GenTypesGenerationError({
+              message: `failed to generate ${input.lang} types: ${
+                cause instanceof Error ? cause.message : String(cause)
+              }`,
+              cause,
+            });
+          const generateSource = (metadata: GeneratorMetadata) => {
+            switch (input.lang) {
+              case "typescript":
+                return Effect.tryPromise({
+                  try: () =>
+                    generateTypescript(metadata, {
+                      detectOneToOneRelationships: input.detectOneToOneRelationships,
+                      // TypeScript is emitted as the generator wrote it. oxfmt is not bundled.
+                      format: (code) => Promise.resolve(code),
+                    }),
+                  catch: toGenerationError,
+                });
+              case "go":
+                return Effect.try({ try: () => generateGo(metadata), catch: toGenerationError });
+              case "python":
+                return Effect.try({
+                  try: () => generatePython(metadata),
+                  catch: toGenerationError,
+                });
+              case "swift":
+                return Effect.try({
+                  try: () => generateSwift(metadata, { accessControl: input.swiftAccessControl }),
+                  catch: toGenerationError,
+                });
+            }
+          };
+          const metadata = yield* Effect.tryPromise({
+            try: (signal) => {
               // `signal` aborts when this generate call is interrupted, so forwarding it to
               // every `runQuery` stops an in-flight introspection query instead of leaving it
               // detached from the fiber that started it.
@@ -50,32 +84,15 @@ export const genTypesGeneratorLayer = Layer.effect(
                 query: (sql) =>
                   runQuery(session.query(sql), { signal }).then((rows) => ({ rows: [...rows] })),
               };
-              const metadata = sortGeneratorMetadata(
-                await introspect(queryable, { includedSchemas: [...input.includedSchemas] }),
-              );
-              switch (input.lang) {
-                case "typescript":
-                  return await generateTypescript(metadata, {
-                    detectOneToOneRelationships: input.detectOneToOneRelationships,
-                    // TypeScript is emitted as the generator wrote it. oxfmt is not bundled.
-                    format: (code) => Promise.resolve(code),
-                  });
-                case "go":
-                  return generateGo(metadata);
-                case "python":
-                  return generatePython(metadata);
-                case "swift":
-                  return generateSwift(metadata, { accessControl: input.swiftAccessControl });
-              }
+              return introspect(queryable, { includedSchemas: [...input.includedSchemas] });
             },
-            catch: (cause) =>
-              new GenTypesGenerationError({
-                message: `failed to generate ${input.lang} types: ${
-                  cause instanceof Error ? cause.message : String(cause)
-                }`,
-                cause,
-              }),
-          }).pipe(Effect.map(withTrailingNewline));
+            catch: toGenerationError,
+          }).pipe(
+            Effect.flatMap((raw) =>
+              Effect.try({ try: () => sortGeneratorMetadata(raw), catch: toGenerationError }),
+            ),
+          );
+          return withTrailingNewline(yield* generateSource(metadata));
         }),
     });
   }),

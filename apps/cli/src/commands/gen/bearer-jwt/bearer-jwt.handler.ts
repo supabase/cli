@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Clock, Effect, FileSystem, Option, Path } from "effect";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
 import { signJwtWithJwk } from "../../../command-internal/go-jwt.ts";
@@ -38,17 +38,15 @@ export const genBearerJwt = Effect.fn("gen.bearer-jwt")(function* (flags: GenBea
 
   return yield* Effect.gen(function* () {
     if (Option.isNone(flags.role)) {
-      return yield* Effect.fail(
-        new GenBearerJwtRoleRequiredError({
-          message: `required flag(s) "role" not set`,
-        }),
-      );
+      return yield* new GenBearerJwtRoleRequiredError({
+        message: `required flag(s) "role" not set`,
+      });
     }
     const role = flags.role.value;
 
     // Not floored to whole seconds — see `BearerJwtClaimsInput.nowInstant`
     // for why pre-flooring would shorten a sub-second `--valid-for`.
-    const nowMs = Date.now();
+    const nowMs = yield* Clock.currentTimeMillis;
     const nowInstant = {
       wholeSeconds: Math.floor(nowMs / 1000),
       nanos: (nowMs % 1000) * 1_000_000,

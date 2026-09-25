@@ -81,11 +81,15 @@ files using the service-role JWT. Storage is started and made ready before those
 stack is not re-seeded. Projects without configured buckets make no bucket-seeding requests.
 
 A failure or interruption during the first startup stops and unconfigures that initial composition,
-then destroys only the service instances created by this invocation. Cleanup diagnostics name any
-instance that could not be removed. Existing instances and their data are retained. After successful
-cleanup, fixing the cause and retrying starts from an empty composition. Failed resumes do not
-destroy existing data. Abrupt process termination that bypasses finalizers requires manual inspection
-and, for an incomplete first bootstrap, destruction before retrying; there is no recovery journal.
+then destroys only the service instances created by this invocation. When startup began without a
+running owner, failure cleanup stops any owner launched during startup and waits for its exit. A
+target with a running owner keeps it. Existing instances and their data are retained, and failed
+resumes do not destroy existing data. Cleanup diagnostics name any instance that could not be removed
+or owner that could not be stopped. After successful cleanup, fixing the cause and retrying starts
+from an empty composition.
+Successful startup leaves the owner available after the CLI exits. Abrupt process termination that
+bypasses finalizers requires manual inspection and, for an incomplete first bootstrap, destruction
+before retrying; there is no recovery journal.
 
 ## Processes, network, and output
 

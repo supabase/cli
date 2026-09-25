@@ -36,8 +36,6 @@
         "brew",
         // apps/cli/tests/smoke-test-windows.ts
         "cygpath",
-        // apps/cli/src/commands/seed/buckets/buckets.integration.test.ts
-        "mkfifo",
         // apps/cli/scripts/build.ts
         "nfpm",
         // apps/cli/scripts/build.ts

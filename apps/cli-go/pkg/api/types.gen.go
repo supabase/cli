@@ -7483,6 +7483,9 @@ type ReadOnlyStatusResponseOutput struct {
 
 // RealtimeConfigResponseOutput defines model for RealtimeConfigResponse_Output.
 type RealtimeConfigResponseOutput struct {
+	// AdminSuspendedAt If set, the Realtime service has been suspended by an admin.
+	AdminSuspendedAt nullable.Nullable[time.Time] `json:"admin_suspended_at"`
+
 	// ConnectionPool Sets connection pool size for Realtime Authorization
 	ConnectionPool nullable.Nullable[int] `json:"connection_pool"`
 
@@ -7692,9 +7695,9 @@ type SnippetResponseOutput struct {
 	Content struct {
 		// Favorite Deprecated: Rely on root-level favorite property instead.
 		// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-		Favorite      *bool  `json:"favorite,omitempty"`
-		SchemaVersion string `json:"schema_version"`
-		Sql           string `json:"sql"`
+		Favorite      *bool   `json:"favorite,omitempty"`
+		SchemaVersion *string `json:"schema_version,omitempty"`
+		Sql           string  `json:"sql"`
 	} `json:"content"`
 	Description nullable.Nullable[string] `json:"description"`
 	Favorite    bool                      `json:"favorite"`
@@ -9152,14 +9155,6 @@ type V1GetProjectFunctionCombinedStatsParamsInterval string
 
 // V1GetProjectLogsParams defines parameters for V1GetProjectLogs.
 type V1GetProjectLogsParams struct {
-	// Sql Custom SQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.
-	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
-	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
-	IsoTimestampEnd   *time.Time `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
-}
-
-// V1GetProjectLogsAllParams defines parameters for V1GetProjectLogsAll.
-type V1GetProjectLogsAllParams struct {
 	// Sql Custom SQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.
 	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
 	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`

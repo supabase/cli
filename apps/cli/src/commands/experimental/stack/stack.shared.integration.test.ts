@@ -77,7 +77,12 @@ describe("stack target resolver", () => {
         ),
         { projectRoot: path.join(root, "missing-current-project"), id, runtime: "auto" },
       );
-      expect(target).toEqual({ projectRoot: storedRoot, id, runtime: "native" });
+      expect(target).toEqual({
+        projectRoot: storedRoot,
+        id,
+        runtime: "native",
+        hostRunning: false,
+      });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

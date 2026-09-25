@@ -1,7 +1,19 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { TestClock } from "effect/testing";
-import { Context, Deferred, Effect, Exit, Fiber, FileSystem, Layer, Path, Schema } from "effect";
+import {
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Path,
+  PlatformError,
+  Ref,
+  Schema,
+} from "effect";
 import * as State from "./State.ts";
 import type { SavedStack } from "./State.ts";
 
@@ -85,6 +97,265 @@ describe("durable stack state", () => {
         }
         const valid = yield* store.read(initial.id);
         expect(Schema.is(State.SavedStack)(valid)).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("reports replacement errno and destination while preserving the prior state", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-state-rename-",
+        });
+        const renameCalls = yield* Ref.make(0);
+        const failRename = yield* Ref.make(false);
+        const firstFailure = yield* Deferred.make<void>();
+        const injectedFs = Layer.effect(
+          FileSystem.FileSystem,
+          Effect.succeed({
+            ...fs,
+            rename: (from: string, to: string) =>
+              Ref.updateAndGet(renameCalls, (calls) => calls + 1).pipe(
+                Effect.flatMap(() =>
+                  Effect.map(Ref.get(failRename), (shouldFail) => ({
+                    shouldFail,
+                  })),
+                ),
+                Effect.flatMap(({ shouldFail }) =>
+                  shouldFail && from.endsWith("state.json") && to.endsWith("state.json")
+                    ? Deferred.succeed(firstFailure, undefined).pipe(
+                        Effect.andThen(
+                          Effect.fail(
+                            PlatformError.systemError({
+                              _tag: "Unknown",
+                              module: "FileSystem",
+                              method: "rename",
+                              pathOrDescriptor: to,
+                              description: "injected replacement failure",
+                              cause: Object.assign(new Error("sharing violation"), {
+                                code: "EPERM",
+                              }),
+                            }),
+                          ),
+                        ),
+                      )
+                    : fs.rename(from, to),
+                ),
+              ),
+          }),
+        );
+        const store = yield* Layer.build(
+          State.layer({ root, platform: "win32" }).pipe(Layer.provide(injectedFs)),
+        ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+        yield* store.save(initial);
+        yield* Ref.set(renameCalls, 0);
+        yield* Ref.set(failRename, true);
+        const saving = yield* store
+          .save({
+            ...initial,
+            identity: { ...initial.identity, stackName: "next" },
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(firstFailure);
+        yield* TestClock.adjust("950 millis");
+        const error = yield* Fiber.join(saving).pipe(Effect.flip);
+        expect(error.operation).toBe("publish");
+        expect(error.message).toContain("EPERM");
+        expect(error.message).toContain(path.join(root, "stack-main", "state.json"));
+        expect(yield* Ref.get(renameCalls)).toBe(13);
+        expect(yield* store.read(initial.id)).toEqual(initial);
+        expect(
+          (yield* fs.readDirectory(root)).some((entry) => entry.startsWith(".state-write-")),
+        ).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("recovers from each Windows replacement errno using the same temporary state", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        for (const code of ["EPERM", "EACCES", "EBUSY"]) {
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: `stack-state-retry-${code}-`,
+          });
+          const calls = yield* Ref.make(0);
+          const temporaryPaths = yield* Ref.make<ReadonlyArray<string>>([]);
+          const failOnce = yield* Ref.make(false);
+          const firstFailure = yield* Deferred.make<void>();
+          const injectedFs = Layer.effect(
+            FileSystem.FileSystem,
+            Effect.succeed({
+              ...fs,
+              rename: (from: string, to: string) =>
+                Effect.gen(function* () {
+                  yield* Ref.update(calls, (count) => count + 1);
+                  if (yield* Ref.get(failOnce)) {
+                    yield* Ref.set(failOnce, false);
+                    yield* Ref.update(temporaryPaths, (paths) => [...paths, from]);
+                    yield* Deferred.succeed(firstFailure, undefined);
+                    return yield* PlatformError.systemError({
+                      _tag:
+                        code === "EACCES"
+                          ? "PermissionDenied"
+                          : code === "EBUSY"
+                            ? "Busy"
+                            : "Unknown",
+                      module: "FileSystem",
+                      method: "rename",
+                      pathOrDescriptor: to,
+                      cause: Object.assign(new Error("sharing violation"), {
+                        code,
+                      }),
+                    });
+                  }
+                  yield* Ref.update(temporaryPaths, (paths) => [...paths, from]);
+                  return yield* fs.rename(from, to);
+                }),
+            }),
+          );
+          const store = yield* Layer.build(
+            State.layer({ root, platform: "win32" }).pipe(Layer.provide(injectedFs)),
+          ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+          yield* store.save(initial);
+          yield* Ref.set(calls, 0);
+          yield* Ref.set(temporaryPaths, []);
+          yield* Ref.set(failOnce, true);
+          const publishing = yield* store
+            .save({
+              ...initial,
+              identity: { ...initial.identity, stackName: code },
+            })
+            .pipe(Effect.forkScoped);
+          yield* Deferred.await(firstFailure);
+          expect(yield* store.read(initial.id)).toEqual(initial);
+          expect(
+            (yield* fs.readDirectory(root)).some((entry) => entry.startsWith(".state-write-")),
+          ).toBe(true);
+          yield* TestClock.adjust("10 millis");
+          yield* Fiber.join(publishing);
+          expect(yield* Ref.get(calls)).toBe(2);
+          const retriedPaths = yield* Ref.get(temporaryPaths);
+          expect(retriedPaths).toHaveLength(2);
+          expect(retriedPaths[0]).toContain(".state-write-");
+          expect(retriedPaths[1]).toBe(retriedPaths[0]);
+          expect((yield* store.read(initial.id))?.identity.stackName).toBe(code);
+          expect(
+            (yield* fs.readDirectory(root)).some((entry) => entry.startsWith(".state-write-")),
+          ).toBe(false);
+        }
+      }),
+    ),
+  );
+
+  it.effect("does not retry non-Windows or unrelated replacement errors", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        for (const [platform, code] of [
+          ["darwin", "EPERM"],
+          ["win32", "EINVAL"],
+        ] as const) {
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "stack-state-no-retry-",
+          });
+          const calls = yield* Ref.make(0);
+          const injectedFs = Layer.effect(
+            FileSystem.FileSystem,
+            Effect.succeed({
+              ...fs,
+              rename: (from: string, to: string) =>
+                Ref.update(calls, (count) => count + 1).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      PlatformError.systemError({
+                        _tag: "Unknown",
+                        module: "FileSystem",
+                        method: "rename",
+                        pathOrDescriptor: to,
+                        cause: Object.assign(new Error("injected failure"), {
+                          code,
+                        }),
+                      }),
+                    ),
+                  ),
+                ),
+            }),
+          );
+          const store = yield* Layer.build(
+            State.layer({ root, platform }).pipe(Layer.provide(injectedFs)),
+          ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+          const error = yield* store.save(initial).pipe(Effect.flip);
+          expect(error.operation).toBe("publish");
+          expect(yield* Ref.get(calls)).toBe(1);
+          expect(
+            (yield* fs.readDirectory(root)).some((entry) => entry.startsWith(".state-write-")),
+          ).toBe(false);
+        }
+      }),
+    ),
+  );
+
+  it.effect("cleans up a cancelled Windows replacement and releases the state lock", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-state-cancel-rename-",
+        });
+        const calls = yield* Ref.make(0);
+        const failRename = yield* Ref.make(false);
+        const firstFailure = yield* Deferred.make<void>();
+        const injectedFs = Layer.effect(
+          FileSystem.FileSystem,
+          Effect.succeed({
+            ...fs,
+            rename: (from: string, to: string) =>
+              Effect.gen(function* () {
+                if (from.endsWith("state.json") && to.endsWith("state.json")) {
+                  yield* Ref.update(calls, (count) => count + 1);
+                  if (yield* Ref.get(failRename)) {
+                    yield* Deferred.succeed(firstFailure, undefined);
+                    return yield* PlatformError.systemError({
+                      _tag: "Busy",
+                      module: "FileSystem",
+                      method: "rename",
+                      pathOrDescriptor: to,
+                      cause: Object.assign(new Error("sharing violation"), {
+                        code: "EBUSY",
+                      }),
+                    });
+                  }
+                }
+                return yield* fs.rename(from, to);
+              }),
+          }),
+        );
+        const store = yield* Layer.build(
+          State.layer({ root, platform: "win32" }).pipe(Layer.provide(injectedFs)),
+        ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+        yield* store.save(initial);
+        yield* Ref.set(calls, 0);
+        yield* Ref.set(failRename, true);
+        const next = {
+          ...initial,
+          identity: { ...initial.identity, stackName: "next" },
+        };
+        const saving = yield* store.withLock(store.save(next)).pipe(Effect.forkScoped);
+        yield* Deferred.await(firstFailure);
+        yield* TestClock.adjust("1 millis");
+        expect(yield* Ref.get(calls)).toBe(1);
+        yield* Fiber.interrupt(saving);
+        expect(yield* store.read(initial.id)).toEqual(initial);
+        expect(
+          (yield* fs.readDirectory(root)).some((entry) => entry.startsWith(".state-write-")),
+        ).toBe(false);
+
+        yield* Ref.set(failRename, false);
+        yield* store.withLock(store.save(next));
+        expect((yield* store.read(initial.id))?.identity.stackName).toBe("next");
       }),
     ),
   );

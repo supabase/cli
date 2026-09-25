@@ -7,6 +7,7 @@ import { create as createStack } from "@supabase/stack/effect";
 import { tmpdir } from "node:os";
 
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
+import { destroyTestStack } from "../../../../../../packages/stack/tests/stack-cleanup.ts";
 
 const COMMAND_TIMEOUT_MS = 8 * 60_000;
 const TEST_TIMEOUT_MS = COMMAND_TIMEOUT_MS + 2 * 60_000;
@@ -120,13 +121,7 @@ const composeStack = Effect.fn("DbResetStackE2e.composeStack")(function* (
     cacheRoot: `${home}/cache/stack`,
     runtime,
   });
-  yield* Effect.addFinalizer(() =>
-    stack.destroy.pipe(
-      Effect.catch((cause) =>
-        Effect.die(new DbResetStackE2eError({ message: "stack cleanup failed", cause })),
-      ),
-    ),
-  );
+  yield* Effect.addFinalizer(() => destroyTestStack(stack));
   yield* stack.composition.supabase([
     {
       service: "database",

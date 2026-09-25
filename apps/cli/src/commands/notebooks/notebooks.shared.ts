@@ -1,7 +1,6 @@
-import { join } from "node:path";
 import type { ApiClient } from "@supabase/api/effect";
 import { V2GetNotebookInput, V2UpdateNotebookInput } from "@supabase/api/effect";
-import { Effect, Exit, FileSystem, Predicate, Schema } from "effect";
+import { Effect, Exit, FileSystem, Path, Predicate, Schema } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
 import { notebooksMachineOutputRequested } from "./notebooks.output.ts";
 import { sanitizeInlineName, mapHttpError } from "../../command-internal/http-errors.ts";
@@ -33,9 +32,10 @@ import {
  */
 
 /** `supabase/notebooks/`, alongside `supabase/functions/` and `supabase/workers/`. */
-export function notebooksDir(workdir: string): string {
-  return join(workdir, "supabase", "notebooks");
-}
+export const notebooksDir = Effect.fnUntraced(function* (workdir: string) {
+  const path = yield* Path.Path;
+  return path.join(workdir, "supabase", "notebooks");
+});
 
 const notebookFileExtension = ".json";
 
@@ -71,6 +71,12 @@ const NotebookFileSchema = Schema.Struct({
 
 export type NotebookFile = typeof NotebookFileSchema.Type;
 
+const NotebookFileJson = Schema.fromJsonString(Schema.Unknown, { space: 2 });
+
+const NameJson = Schema.fromJsonString(Schema.String);
+
+const quoteName = (name: string) => Schema.encodeEffect(NameJson)(name).pipe(Effect.orDie);
+
 /** A project notebook as the list route describes it — no cells. */
 export interface RemoteNotebook {
   readonly id: string;
@@ -95,9 +101,10 @@ export function isNotebookNameWritable(name: string): boolean {
   });
 }
 
-function notebookFilePath(workdir: string, name: string): string {
-  return join(notebooksDir(workdir), `${name}${notebookFileExtension}`);
-}
+const notebookFilePath = Effect.fnUntraced(function* (workdir: string, name: string) {
+  const path = yield* Path.Path;
+  return path.join(yield* notebooksDir(workdir), `${name}${notebookFileExtension}`);
+});
 
 /**
  * Refuses a notebooks path that canonicalizes outside the project root. A checkout is shared
@@ -131,7 +138,7 @@ const ensureNotebookPathContained = Effect.fnUntraced(function* (workdir: string
 });
 
 export const validateNotebookId = Effect.fnUntraced(function* (value: string) {
-  return yield* Schema.decodeUnknownEffect(notebookIdSchema)(value).pipe(
+  return yield* Schema.decodeEffect(notebookIdSchema)(value).pipe(
     Effect.mapError(
       () =>
         new NotebookIdError({
@@ -145,7 +152,7 @@ export const validateNotebookId = Effect.fnUntraced(function* (value: string) {
 const ensureNotebookNameWritable = Effect.fnUntraced(function* (name: string) {
   if (!isNotebookNameWritable(name)) {
     return yield* new NotebookFileError({
-      detail: `The project notebook name ${JSON.stringify(name)} cannot be stored as a file name.`,
+      detail: `The project notebook name ${yield* quoteName(name)} cannot be stored as a file name.`,
       suggestion: "Rename the notebook in the dashboard, then run the command again.",
     });
   }
@@ -159,7 +166,7 @@ const ensureNotebookNameWritable = Effect.fnUntraced(function* (name: string) {
  */
 const readNotebookDirectory = Effect.fnUntraced(function* (workdir: string) {
   const fs = yield* FileSystem.FileSystem;
-  const dir = yield* ensureNotebookPathContained(workdir, notebooksDir(workdir));
+  const dir = yield* ensureNotebookPathContained(workdir, yield* notebooksDir(workdir));
   const entries = yield* fs.readDirectory(dir).pipe(
     Effect.catchTag("PlatformError", (cause) =>
       Predicate.isTagged(cause.reason, "NotFound")
@@ -211,7 +218,7 @@ export const ensureNotebookDestinationsUnique = Effect.fnUntraced(function* (
       existing.find((entry) => isPortableFilenameAlias(entry, filename) && entry !== filename);
     if (collision !== undefined) {
       return yield* new NotebookNameConflictError({
-        detail: `${JSON.stringify(filename)} and ${JSON.stringify(collision)} refer to the same portable filename.`,
+        detail: `${yield* quoteName(filename)} and ${yield* quoteName(collision)} refer to the same portable filename.`,
         suggestion: "Rename the conflicting notebooks or local files before pulling them.",
       });
     }
@@ -221,7 +228,7 @@ export const ensureNotebookDestinationsUnique = Effect.fnUntraced(function* (
 
 export const readNotebookFile = Effect.fnUntraced(function* (workdir: string, name: string) {
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* ensureNotebookPathContained(workdir, notebookFilePath(workdir, name));
+  const path = yield* ensureNotebookPathContained(workdir, yield* notebookFilePath(workdir, name));
 
   const contents = yield* fs.readFileString(path).pipe(
     Effect.catch(
@@ -234,7 +241,7 @@ export const readNotebookFile = Effect.fnUntraced(function* (workdir: string, na
   );
 
   const parsed = yield* Effect.try({
-    try: (): unknown => JSON.parse(contents),
+    try: () => parseNotebookJson(contents),
     catch: (cause) =>
       new NotebookFileError({
         detail: `${path} is not valid JSON: ${String(cause)}`,
@@ -255,6 +262,11 @@ export const readNotebookFile = Effect.fnUntraced(function* (workdir: string, na
   );
 });
 
+// Native `JSON.parse` keeps the runtime's syntax-error text in the `is not valid JSON` message.
+function parseNotebookJson(text: string): unknown {
+  return JSON.parse(text);
+}
+
 /**
  * Writes one notebook file, creating `supabase/notebooks/` if this is the first.
  * Trailing newline and two-space indent so a pulled notebook is a normal
@@ -268,13 +280,14 @@ export const writeNotebookFile = Effect.fnUntraced(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   yield* ensureNotebookNameWritable(name);
-  const dir = notebooksDir(workdir);
-  const path = yield* ensureNotebookPathContained(workdir, notebookFilePath(workdir, name));
+  const dir = yield* notebooksDir(workdir);
+  const path = yield* ensureNotebookPathContained(workdir, yield* notebookFilePath(workdir, name));
 
   yield* Effect.gen(function* () {
     yield* fs.makeDirectory(dir, { recursive: true });
     const temporaryPath = yield* fs.makeTempFileScoped({ directory: dir, prefix: ".notebook-" });
-    yield* fs.writeFileString(temporaryPath, `${JSON.stringify(notebook, null, 2)}\n`);
+    const contents = yield* Schema.encodeEffect(NotebookFileJson)(notebook).pipe(Effect.orDie);
+    yield* fs.writeFileString(temporaryPath, `${contents}\n`);
     if (mode === "replace") {
       yield* fs.rename(temporaryPath, path);
     } else {
@@ -296,7 +309,7 @@ export const writeNotebookFile = Effect.fnUntraced(function* (
 
 export const removeNotebookFile = Effect.fnUntraced(function* (workdir: string, name: string) {
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* ensureNotebookPathContained(workdir, notebookFilePath(workdir, name));
+  const path = yield* ensureNotebookPathContained(workdir, yield* notebookFilePath(workdir, name));
   yield* fs.remove(path).pipe(
     Effect.mapError(
       (cause) =>
@@ -390,7 +403,7 @@ export const ensureRemoteNotebookNamesUnique = Effect.fnUntraced(function* (
   for (const [name, count] of counts) {
     if (count > 1) {
       return yield* new NotebookNameConflictError({
-        detail: `The project has ${count} notebooks named ${JSON.stringify(name)}.`,
+        detail: `The project has ${count} notebooks named ${yield* quoteName(name)}.`,
         suggestion:
           "Rename them in the dashboard so each notebook has its own name, then run the command again.",
       });

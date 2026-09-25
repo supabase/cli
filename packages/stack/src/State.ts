@@ -1,5 +1,6 @@
 import {
   Data,
+  Duration,
   Effect,
   FileSystem,
   Context,
@@ -126,6 +127,7 @@ const decodeState = (
 
 interface Options {
   readonly root: string;
+  readonly platform?: NodeJS.Platform;
   readonly onInvalidState?: (id: string, error: StateError) => Effect.Effect<void>;
 }
 
@@ -145,6 +147,36 @@ const makeState = (
 
     const stackRoot = (id: string) => path.join(root, id);
     const statePath = (id: string) => path.join(stackRoot(id), "state.json");
+    const publishRetrySchedule = Schedule.exponential("10 millis", 2).pipe(
+      Schedule.modifyDelay(({ duration }) =>
+        Effect.succeed(Duration.min(duration, Duration.millis(100))),
+      ),
+      Schedule.upTo({ times: 12 }),
+    );
+    const renameErrorCode = (error: unknown): string | undefined => {
+      if (!Predicate.hasProperty(error, "cause")) return undefined;
+      return Predicate.hasProperty(error.cause, "code") && typeof error.cause.code === "string"
+        ? error.cause.code
+        : undefined;
+    };
+    const publish = Effect.fn("State.publish")(function* (temporary: string, target: string) {
+      yield* fs.rename(temporary, target).pipe(
+        Effect.retry({
+          schedule: publishRetrySchedule,
+          while: (error) =>
+            (options.platform ?? process.platform) === "win32" &&
+            ["EPERM", "EACCES", "EBUSY"].includes(renameErrorCode(error) ?? ""),
+        }),
+        Effect.mapError(
+          (cause) =>
+            new StateError({
+              operation: "publish",
+              message: `Unable to publish state to ${target}${renameErrorCode(cause) ? ` (${renameErrorCode(cause)})` : ""}: ${cause instanceof Error ? cause.message : String(cause)}`,
+              cause,
+            }),
+        ),
+      );
+    });
     const removeEmptyDirectory = (directory: string) =>
       Effect.tryPromise({
         try: () => rmdir(directory),
@@ -215,9 +247,7 @@ const makeState = (
             yield* fs
               .writeFileString(temporary, serialized, { mode: 0o600 })
               .pipe(Effect.mapError((cause) => stateError("write", cause)));
-            yield* fs
-              .rename(temporary, target)
-              .pipe(Effect.mapError((cause) => stateError("publish", cause)));
+            yield* publish(temporary, target);
           }),
         (directory) =>
           fs

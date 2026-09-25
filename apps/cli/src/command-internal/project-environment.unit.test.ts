@@ -99,6 +99,22 @@ describe("resolveProjectEnvironmentValues", () => {
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("test-project");
   });
 
+  it("prefers an explicit supabaseEnv argument over process.env SUPABASE_ENV", () => {
+    process.env["SUPABASE_ENV"] = "production";
+    writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=bare-env-project\n");
+    writeFileSync(join(root, ".env.local"), "SUPABASE_PROJECT_ID=local-project\n");
+    const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root, "test");
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("bare-env-project");
+  });
+
+  it("falls back to process.env SUPABASE_ENV when no supabaseEnv argument is given", () => {
+    process.env["SUPABASE_ENV"] = "production";
+    writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=bare-env-project\n");
+    writeFileSync(join(root, ".env.production"), "SUPABASE_PROJECT_ID=prod-project\n");
+    const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("prod-project");
+  });
+
   it("strips quotes the same way the shared dotenv parser does", () => {
     writeFileSync(join(root, ".env"), 'SUPABASE_AUTH_JWT_SECRET="a quoted value"\n');
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);

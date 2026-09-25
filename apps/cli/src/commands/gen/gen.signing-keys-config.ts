@@ -1,6 +1,6 @@
 import { loadCliProjectEnvironment } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Config, Effect, FileSystem, Option, Path } from "effect";
 import { assertDecodableJwkAlgorithm } from "../../command-internal/go-jwt.ts";
 import { goJsonKindName } from "../../command-internal/go-json.ts";
 import { resolveProjectEnvironmentValues } from "../../command-internal/project-environment.ts";
@@ -195,6 +195,16 @@ function skipJsonValue(text: string, start: number): number {
 }
 
 /**
+ * Parses only the first JSON value's span and ignores trailing content, since plain
+ * `JSON.parse` would otherwise error on trailing bytes that a single-value decode
+ * should silently ignore. Native parser errors are CLI output; schema decoding discards
+ * their messages.
+ */
+function parseLeadingJsonValue(text: string): unknown {
+  return JSON.parse(text.slice(0, skipJsonValue(text, 0)));
+}
+
+/**
  * Splits a JSON array literal into each top-level element's exact source substring, without
  * re-serializing through `JSON.stringify` (which would erase a duplicate key) — used by
  * {@link readSigningKeysFile} for {@link assertNoMalformedDuplicateJwkField}.
@@ -313,16 +323,25 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
   // Loads the dotenv cascade explicitly before `loadCliConfig` decodes `env(...)` TOML
   // references — `loadCliConfig`'s own internal env resolution covers only
   // `supabase/.env[.local]`, not `.env.<SUPABASE_ENV>[.local]` or `<workdir>/.env`.
+  const supabaseEnv = yield* Config.option(Config.string("SUPABASE_ENV")).pipe(
+    Effect.mapError(() =>
+      onConfigParseError("failed to resolve environment variable: SUPABASE_ENV"),
+    ),
+  );
+  const supabaseEnvValue = Option.getOrElse(
+    Option.filter(supabaseEnv, (value) => value.length > 0),
+    () => "development",
+  );
   const projectEnv = yield* loadCliProjectEnvironment({
     cwd,
     baseEnv: process.env,
     search: false,
-    skipEnvLocal: (process.env["SUPABASE_ENV"] || "development") === "test",
+    skipEnvLocal: supabaseEnvValue === "test",
   }).pipe(
     Effect.mapError((cause) => onConfigParseError(`failed to read config: ${String(cause)}`)),
   );
   const projectEnvValues = yield* Effect.try({
-    try: () => resolveProjectEnvironmentValues(projectEnv, cwd),
+    try: () => resolveProjectEnvironmentValues(projectEnv, cwd, supabaseEnvValue),
     catch: (cause) => onConfigParseError(`failed to read config: ${String(cause)}`),
   });
   const loaded = yield* loadCliConfig(cwd, {
@@ -388,10 +407,7 @@ export const readSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
     .readFileString(actualPath)
     .pipe(Effect.mapError((cause) => onReadError(`failed to read signing keys: ${String(cause)}`)));
   const decoded = yield* Effect.try({
-    // Parses only the first JSON value's span and ignores trailing content, since plain
-    // `JSON.parse` would otherwise error on trailing bytes that a single-value decode
-    // should silently ignore.
-    try: () => JSON.parse(raw.slice(0, skipJsonValue(raw, 0))),
+    try: () => parseLeadingJsonValue(raw),
     catch: (cause) => onDecodeError(`failed to decode signing keys: ${String(cause)}`),
   });
   if (!Array.isArray(decoded)) {
@@ -416,20 +432,20 @@ export const readSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
   ).entries()) {
     const record = item === null ? {} : item;
     const elementText = elementTexts[index];
-    try {
-      // The `alg` allowlist check runs case-insensitively, matching decode-time validation.
-      const alg = resolveJwkFieldValue(record, "alg");
-      assertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
-      if (elementText !== undefined) {
-        assertNoMalformedDuplicateJwkField(elementText);
-      }
-    } catch (cause) {
-      return yield* Effect.fail(
+    yield* Effect.try({
+      try: () => {
+        // The `alg` allowlist check runs case-insensitively, matching decode-time validation.
+        const alg = resolveJwkFieldValue(record, "alg");
+        assertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
+        if (elementText !== undefined) {
+          assertNoMalformedDuplicateJwkField(elementText);
+        }
+      },
+      catch: (cause) =>
         onDecodeError(
           `failed to decode signing keys: failed to parse response body: ${cause instanceof Error ? cause.message : String(cause)}`,
         ),
-      );
-    }
+    });
     normalized.push(record);
   }
   return normalized as ReadonlyArray<StoredSigningKeyJwk>;

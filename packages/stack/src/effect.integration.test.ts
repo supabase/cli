@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Redacted } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted, Schema } from "effect";
 import { tmpdir } from "node:os";
 import {
   create,
@@ -10,8 +10,12 @@ import {
   type DatabaseInstance,
   type ServiceInstance,
 } from "./effect.ts";
+import { destroyTestStack } from "../tests/stack-cleanup.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const databaseOwnerMarker = Schema.fromJsonString(
+  Schema.Struct({ stackId: Schema.String, instanceId: Schema.String }),
+);
 
 it.live("registers and discovers saved definitions without inventing live observations", () =>
   Effect.gen(function* () {
@@ -82,13 +86,75 @@ it.live("starts the owner on opt-in reopen without starting saved services", () 
         const observation = yield* (yield* reopened.services.get(mail.id)).status;
         expect(observation.lifecycle).toBe("stopped");
       }),
-      Effect.exit(stack.destroy).pipe(
-        Effect.map((exit) => {
-          expect(Exit.isSuccess(exit)).toBe(true);
-        }),
-      ),
+      destroyTestStack(stack),
     );
   }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "stops the owner after destroy fails and retains saved data for retry",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-failure-" });
+        const options = {
+          projectRoot: root,
+          stateRoot: `${root}/state`,
+          cacheRoot: `${root}/cache`,
+          runtime: "native",
+        } satisfies Parameters<typeof create>[0];
+        const stack = yield* create(options);
+        yield* Effect.addFinalizer(() => stack.stop.pipe(Effect.ignore));
+        const instance = yield* stack.services.create({
+          service: "database",
+          config: {
+            version: "17",
+            databasePassword: Redacted.make("destroy-test-password"),
+            jwtSecret: Redacted.make("destroy-test-jwt-secret-at-least-thirty-two-characters"),
+            jwtExpiry: 3600,
+          },
+        });
+        const dataRoot = `${options.stateRoot}/${stack.id}/data/${instance.id}`;
+        const marker = `${dataRoot}/.supabase-database-owner.json`;
+        yield* fs.makeDirectory(dataRoot, { recursive: true });
+        const writeMarker = Schema.encodeEffect(databaseOwnerMarker);
+        yield* writeMarker({ stackId: "another-stack", instanceId: instance.id }).pipe(
+          Effect.flatMap((value) => fs.writeFileString(marker, value)),
+        );
+        const running = yield* discover(options);
+        expect(running).toHaveLength(1);
+        expect(running[0]?.host).toBeDefined();
+
+        const destroyExit = yield* stack.destroy.pipe(Effect.exit);
+        expect(Exit.isFailure(destroyExit)).toBe(true);
+        if (Exit.isFailure(destroyExit)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(destroyExit.cause));
+          expect(error).toMatchObject({
+            operation: "shutdown",
+            message: "Composition destroy had failures",
+            outcomes: [
+              {
+                id: instance.id,
+                succeeded: false,
+                error: expect.stringContaining("Database root belongs to another instance"),
+              },
+            ],
+          });
+        }
+        expect(yield* fs.readFileString(marker)).toContain("another-stack");
+        const retained = yield* discover(options);
+        expect(retained).toHaveLength(1);
+        expect(retained[0]?.host).toBeUndefined();
+
+        yield* writeMarker({ stackId: stack.id, instanceId: instance.id }).pipe(
+          Effect.flatMap((value) => fs.writeFileString(marker, value)),
+        );
+        yield* stack.destroy;
+        expect(yield* discover(options)).toHaveLength(0);
+      }),
+    ).pipe(Effect.provide(layer)),
+  { timeout: 30_000 },
 );
 
 const resetDataStory = (runtime: "native" | "docker") =>
@@ -253,12 +319,7 @@ const resetDataStory = (runtime: "native" | "docker") =>
           );
           expect(reopenedCleared.stdout.trim()).toBe("t");
         }),
-      (owned) =>
-        Effect.exit(owned.destroy).pipe(
-          Effect.map((exit) => {
-            expect(Exit.isSuccess(exit)).toBe(true);
-          }),
-        ),
+      destroyTestStack,
     );
   }).pipe(Effect.scoped, Effect.provide(layer));
 
