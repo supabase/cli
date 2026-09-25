@@ -154,12 +154,10 @@ const runLinked = Effect.fnUntraced(function* (
       ),
     );
     if (Option.isNone(tokenOpt)) {
-      return yield* Effect.fail(
-        new DbAdvisorsNotLoggedInError({
-          message: missingAccessTokenMessage(),
-          suggestion: loginSuggestion(),
-        }),
-      );
+      return yield* new DbAdvisorsNotLoggedInError({
+        message: missingAccessTokenMessage(),
+        suggestion: loginSuggestion(),
+      });
     }
 
     const lints: Array<AdvisorLint> = [];
@@ -203,7 +201,7 @@ const outputAndCheck = Effect.fnUntraced(function* (
     // Echoes the raw `--fail-on` flag value.
     const message = `fail-on is set to ${failOn}, non-zero exit`;
     if (output.format === "text") {
-      return yield* Effect.fail(new DbAdvisorsFailOnError({ message }));
+      return yield* new DbAdvisorsFailOnError({ message });
     }
     yield* processControl.setExitCode(1);
   }
@@ -218,22 +216,18 @@ const runAdvisors = Effect.fnUntraced(function* (
   // explicitly-set flags, not the `--local` default value.
   const setFlags = target.setFlags;
   if (setFlags.length > 1) {
-    return yield* Effect.fail(
-      new DbAdvisorsMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new DbAdvisorsMutuallyExclusiveFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
+    });
   }
 
   // `--project-ref` never implies `--linked` and must not be silently discarded on a non-linked
   // target (see push.handler.ts's identical guard). Defaults to the local/db-url path otherwise.
   if (Option.isSome(flags.projectRef) && target.connType !== "linked") {
-    return yield* Effect.fail(
-      new DbAdvisorsMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new DbAdvisorsMutuallyExclusiveFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   const advisorType = Option.getOrElse(flags.type, () => "all");

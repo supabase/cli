@@ -82,206 +82,195 @@ export const declarativeSeamLayer = Layer.effect(
     const context = yield* Effect.context<StartLocalDatabaseDeps>();
 
     return DeclarativeSeam.of({
-      ensureLocalDatabaseStarted: () =>
-        Effect.gen(function* () {
-          const backend = yield* currentStackBackend;
-          if (backend.kind === "stack") {
-            return yield* stackEnsurePostgresOnlyStarted().pipe(
-              Effect.asVoid,
-              Effect.provideContext(context),
-              Effect.provideService(StackApi, stackApi),
-              Effect.provideService(ExperimentalFlag, experimentalFlag),
-              Effect.provideService(CliArgs, cliArgs),
-              Effect.provideService(StackCatalogSetup, stackCatalogSetup),
-              Effect.mapError(
-                (cause) =>
-                  new DeclarativeShadowDbError({
-                    message: cause.message,
-                    ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
-                    ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
-                  }),
-              ),
-            );
-          }
-          const running = yield* isLocalDbRunning(
-            spawner,
-            fs,
-            path,
-            cliSettings.workdir,
-            Option.getOrUndefined(cliSettings.projectId),
-          ).pipe(
-            // Satisfies the probe's `LocalDockerEngine` requirement from the captured deps.
+      ensureLocalDatabaseStarted: Effect.gen(function* () {
+        const backend = yield* currentStackBackend;
+        if (backend.kind === "stack") {
+          return yield* stackEnsurePostgresOnlyStarted().pipe(
+            Effect.asVoid,
             Effect.provideContext(context),
+            Effect.provideService(StackApi, stackApi),
+            Effect.provideService(ExperimentalFlag, experimentalFlag),
+            Effect.provideService(CliArgs, cliArgs),
+            Effect.provideService(StackCatalogSetup, stackCatalogSetup),
             Effect.mapError(
               (cause) =>
                 new DeclarativeShadowDbError({
                   message: cause.message,
                   ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
-                  // The inspect error's Docker-install recovery text must survive the seam, or
-                  // the normalizer falls back to its generic debug hint.
                   ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
                 }),
             ),
           );
-          if (running) return; // already running — the seam never prints anything here.
-          yield* startLocalDatabase().pipe(
-            Effect.provideContext(context),
-            Effect.asVoid,
-            Effect.catch((cause) =>
-              Effect.fail(
-                new DeclarativeShadowDbError({
-                  message: `failed to start local database: ${cause.message}`,
-                  ...(hasDaemonSignal(cause) ? { docker: "daemon" as const } : {}),
-                  ...("suggestion" in cause && typeof cause.suggestion === "string"
-                    ? { suggestion: cause.suggestion }
-                    : {}),
-                }),
-              ),
-            ),
-          );
-        }),
-      ensureLocalPostgresImageCurrent: () =>
-        Effect.gen(function* () {
-          const backend = yield* currentStackBackend;
-          if (backend.kind === "stack") return;
-          return yield* Effect.scoped(
-            Effect.gen(function* () {
-              const toml = yield* readDbToml(fs, path, cliSettings.workdir).pipe(
-                Effect.mapError(
-                  (error) =>
-                    new DeclarativeShadowDbError({
-                      message: `failed to read config for local Postgres image check: ${error.message}`,
-                    }),
-                ),
-              );
-              const { image } = yield* resolveDbImage(
-                fs,
-                path,
-                cliSettings.workdir,
-                toml.majorVersion,
-                Option.getOrUndefined(toml.orioledbVersion),
-              );
-              const tomlProjectId = toml.projectId;
-              const projectId = resolveLocalProjectId(
-                Option.getOrUndefined(cliSettings.projectId),
-                Option.getOrUndefined(tomlProjectId),
-                cliSettings.workdir,
-              );
-              const containerId = localDbContainerId(projectId);
-              const child = yield* spawnContainerCli(
-                spawner,
-                ["container", "inspect", containerId],
-                {
-                  stdin: "ignore",
-                  stdout: "pipe",
-                  stderr: "pipe",
-                  extendEnv: true,
-                },
-              ).pipe(
-                Effect.mapError(
-                  () =>
-                    new DeclarativeShadowDbError({
-                      message: "failed to inspect local Postgres container.",
-                      docker: "daemon",
-                    }),
-                ),
-              );
-              const stdoutChunks: Array<Uint8Array> = [];
-              const stderrChunks: Array<Uint8Array> = [];
-              yield* Stream.runForEach(child.stdout, (chunk) =>
-                Effect.sync(() => {
-                  stdoutChunks.push(chunk);
-                }),
-              ).pipe(
-                Effect.mapError(
-                  () =>
-                    new DeclarativeShadowDbError({
-                      message: "failed to inspect local Postgres container.",
-                      docker: "daemon",
-                    }),
-                ),
-              );
-              yield* Stream.runForEach(child.stderr, (chunk) =>
-                Effect.sync(() => {
-                  stderrChunks.push(chunk);
-                }),
-              ).pipe(
-                Effect.mapError(
-                  () =>
-                    new DeclarativeShadowDbError({
-                      message: "failed to inspect local Postgres container.",
-                      docker: "daemon",
-                    }),
-                ),
-              );
-              const inspectExit = yield* child.exitCode.pipe(
-                Effect.map(Number),
-                Effect.mapError(
-                  () =>
-                    new DeclarativeShadowDbError({
-                      message: "failed to inspect local Postgres container.",
-                      docker: "daemon",
-                    }),
-                ),
-              );
-              const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
-                const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
-                const bytes = new Uint8Array(total);
-                let offset = 0;
-                for (const chunk of chunks) {
-                  bytes.set(chunk, offset);
-                  offset += chunk.length;
-                }
-                return new TextDecoder().decode(bytes).trim();
-              };
-              const stderr = decodeChunks(stderrChunks);
-              const stdout = decodeChunks(stdoutChunks);
-              if (inspectExit !== 0) {
-                if (isMissingContainerInspectError(stderr)) return;
-                return yield* Effect.fail(
+        }
+        const running = yield* isLocalDbRunning(
+          spawner,
+          fs,
+          path,
+          cliSettings.workdir,
+          Option.getOrUndefined(cliSettings.projectId),
+        ).pipe(
+          // Satisfies the probe's `LocalDockerEngine` requirement from the captured deps.
+          Effect.provideContext(context),
+          Effect.mapError(
+            (cause) =>
+              new DeclarativeShadowDbError({
+                message: cause.message,
+                ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
+                // The inspect error's Docker-install recovery text must survive the seam, or
+                // the normalizer falls back to its generic debug hint.
+                ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
+              }),
+          ),
+        );
+        if (running) return; // already running — the seam never prints anything here.
+        yield* startLocalDatabase().pipe(
+          Effect.provideContext(context),
+          Effect.asVoid,
+          Effect.mapError(
+            (cause) =>
+              new DeclarativeShadowDbError({
+                message: `failed to start local database: ${cause.message}`,
+                ...(hasDaemonSignal(cause) ? { docker: "daemon" as const } : {}),
+                ...("suggestion" in cause && typeof cause.suggestion === "string"
+                  ? { suggestion: cause.suggestion }
+                  : {}),
+              }),
+          ),
+        );
+      }),
+      ensureLocalPostgresImageCurrent: Effect.gen(function* () {
+        const backend = yield* currentStackBackend;
+        if (backend.kind === "stack") return;
+        return yield* Effect.scoped(
+          Effect.gen(function* () {
+            const toml = yield* readDbToml(fs, path, cliSettings.workdir).pipe(
+              Effect.mapError(
+                (error) =>
                   new DeclarativeShadowDbError({
-                    message:
-                      stderr.length > 0
-                        ? `failed to inspect local Postgres container: ${stderr}`
-                        : "failed to inspect local Postgres container.",
-                    ...shadowDockerCause(stderr),
+                    message: `failed to read config for local Postgres image check: ${error.message}`,
                   }),
-                );
+              ),
+            );
+            const { image } = yield* resolveDbImage(
+              fs,
+              path,
+              cliSettings.workdir,
+              toml.majorVersion,
+              Option.getOrUndefined(toml.orioledbVersion),
+            );
+            const tomlProjectId = toml.projectId;
+            const projectId = resolveLocalProjectId(
+              Option.getOrUndefined(cliSettings.projectId),
+              Option.getOrUndefined(tomlProjectId),
+              cliSettings.workdir,
+            );
+            const containerId = localDbContainerId(projectId);
+            const child = yield* spawnContainerCli(spawner, ["container", "inspect", containerId], {
+              stdin: "ignore",
+              stdout: "pipe",
+              stderr: "pipe",
+              extendEnv: true,
+            }).pipe(
+              Effect.mapError(
+                () =>
+                  new DeclarativeShadowDbError({
+                    message: "failed to inspect local Postgres container.",
+                    docker: "daemon",
+                  }),
+              ),
+            );
+            const stdoutChunks: Array<Uint8Array> = [];
+            const stderrChunks: Array<Uint8Array> = [];
+            yield* Stream.runForEach(child.stdout, (chunk) =>
+              Effect.sync(() => {
+                stdoutChunks.push(chunk);
+              }),
+            ).pipe(
+              Effect.mapError(
+                () =>
+                  new DeclarativeShadowDbError({
+                    message: "failed to inspect local Postgres container.",
+                    docker: "daemon",
+                  }),
+              ),
+            );
+            yield* Stream.runForEach(child.stderr, (chunk) =>
+              Effect.sync(() => {
+                stderrChunks.push(chunk);
+              }),
+            ).pipe(
+              Effect.mapError(
+                () =>
+                  new DeclarativeShadowDbError({
+                    message: "failed to inspect local Postgres container.",
+                    docker: "daemon",
+                  }),
+              ),
+            );
+            const inspectExit = yield* child.exitCode.pipe(
+              Effect.map(Number),
+              Effect.mapError(
+                () =>
+                  new DeclarativeShadowDbError({
+                    message: "failed to inspect local Postgres container.",
+                    docker: "daemon",
+                  }),
+              ),
+            );
+            const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
+              const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
+              const bytes = new Uint8Array(total);
+              let offset = 0;
+              for (const chunk of chunks) {
+                bytes.set(chunk, offset);
+                offset += chunk.length;
               }
-              const actual = resolveContainerInspectImageName(stdout);
-              const expected = yield* getRegistryImageUrl(image, toml.projectEnv).pipe(
-                Effect.mapError(
-                  (error) =>
-                    new DeclarativeShadowDbError({
-                      message: `failed to resolve local Postgres image registry: ${error.message}`,
-                    }),
-                ),
-                Effect.map((value) => value.trim()),
-              );
-              const actualTag = dockerImageTag(actual);
-              const expectedTag = dockerImageTag(expected);
-              if (actual.length === 0 || actualTag.length === 0 || expectedTag.length === 0) {
-                return;
-              }
-              // Slim refs never go through a registry mirror, so a family mismatch
-              // (e.g. a docker.io container satisfying a ghcr.io/supabase/cli
-              // expectation) is stale even when the tags happen to match.
-              const familyMismatch = isSlimImageRef(expected) !== isSlimImageRef(actual);
-              if (!familyMismatch && actualTag === expectedTag) {
-                return;
-              }
-              const remediation =
-                familyMismatch && actualTag === expectedTag
-                  ? "The tags match but the image family does not (slim vs docker.io). Run supabase stop, then supabase start with the same SUPABASE_USE_SLIM_IMAGES setting before syncing declarative schemas."
-                  : "Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas.";
-              return yield* Effect.fail(
-                new DeclarativeShadowDbError({
-                  message: `local Postgres container image is stale: running ${actual} but expected ${expected}. ${remediation}`,
-                }),
-              );
-            }),
-          );
-        }),
+              return new TextDecoder().decode(bytes).trim();
+            };
+            const stderr = decodeChunks(stderrChunks);
+            const stdout = decodeChunks(stdoutChunks);
+            if (inspectExit !== 0) {
+              if (isMissingContainerInspectError(stderr)) return;
+              return yield* new DeclarativeShadowDbError({
+                message:
+                  stderr.length > 0
+                    ? `failed to inspect local Postgres container: ${stderr}`
+                    : "failed to inspect local Postgres container.",
+                ...shadowDockerCause(stderr),
+              });
+            }
+            const actual = resolveContainerInspectImageName(stdout);
+            const expected = yield* getRegistryImageUrl(image, toml.projectEnv).pipe(
+              Effect.mapError(
+                (error) =>
+                  new DeclarativeShadowDbError({
+                    message: `failed to resolve local Postgres image registry: ${error.message}`,
+                  }),
+              ),
+              Effect.map((value) => value.trim()),
+            );
+            const actualTag = dockerImageTag(actual);
+            const expectedTag = dockerImageTag(expected);
+            if (actual.length === 0 || actualTag.length === 0 || expectedTag.length === 0) {
+              return;
+            }
+            // Slim refs never go through a registry mirror, so a family mismatch
+            // (e.g. a docker.io container satisfying a ghcr.io/supabase/cli
+            // expectation) is stale even when the tags happen to match.
+            const familyMismatch = isSlimImageRef(expected) !== isSlimImageRef(actual);
+            if (!familyMismatch && actualTag === expectedTag) {
+              return;
+            }
+            const remediation =
+              familyMismatch && actualTag === expectedTag
+                ? "The tags match but the image family does not (slim vs docker.io). Run supabase stop, then supabase start with the same SUPABASE_USE_SLIM_IMAGES setting before syncing declarative schemas."
+                : "Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas.";
+            return yield* new DeclarativeShadowDbError({
+              message: `local Postgres container image is stale: running ${actual} but expected ${expected}. ${remediation}`,
+            });
+          }),
+        );
+      }),
     });
   }),
 ).pipe(Layer.provide(stackApiLayer));

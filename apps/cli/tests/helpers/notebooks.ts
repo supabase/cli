@@ -1,9 +1,6 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { makeApiClient } from "@supabase/api/effect";
-import { Effect, Layer, Option, Predicate, Stdio } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Predicate, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -107,7 +104,7 @@ function mockNotebooksHttp(routes: NotebooksHttpRoutes) {
       // have to be stubbed a fixed number of times.
       const stub = queue.length === 1 ? queue[0]! : queue.shift()!;
       if (stub.transportError !== undefined)
-        return yield* Effect.fail(transportFailure(request, stub.transportError));
+        return yield* transportFailure(request, stub.transportError);
       return respond(request, stub);
     });
 
@@ -195,17 +192,30 @@ export function notebookResource(options: {
   };
 }
 
-/** A per-test temp project, optionally pre-seeded with files. */
-export function makeNotebooksProject(files: Readonly<Record<string, string>> = {}): {
-  readonly dir: string;
-} {
-  const dir = mkdtempSync(join(tmpdir(), "supabase-notebooks-"));
-  for (const [relativePath, contents] of Object.entries(files)) {
-    const absolutePath = join(dir, relativePath);
-    mkdirSync(dirname(absolutePath), { recursive: true });
-    writeFileSync(absolutePath, contents);
-  }
-  return { dir };
+/** The `supabase/notebooks/` files of a test project, read and written through `FileSystem`. */
+export function notebooksProject(dir: string) {
+  const file = Effect.fnUntraced(function* (name: string) {
+    const path = yield* Path.Path;
+    return path.join(dir, "supabase", "notebooks", `${name}.json`);
+  });
+  return {
+    dir,
+    write: Effect.fnUntraced(function* (name: string, contents: string) {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const target = yield* file(name);
+      yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+      yield* fs.writeFileString(target, contents);
+    }),
+    read: Effect.fnUntraced(function* (name: string) {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* fs.readFileString(yield* file(name));
+    }),
+    exists: Effect.fnUntraced(function* (name: string) {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* fs.exists(yield* file(name));
+    }),
+  };
 }
 
 /** A complete resolver mock; only resolution is replaced, never the service type. */

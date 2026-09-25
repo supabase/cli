@@ -242,7 +242,7 @@ function globDeclaredSchemaPaths(
       for (const pattern of skipped) problems.push(`no files matched pattern: ${pattern}`);
     }
     if (problems.length > 0) {
-      return yield* Effect.fail(new DeclarativeShadowDbError({ message: problems.join("\n") }));
+      return yield* new DeclarativeShadowDbError({ message: problems.join("\n") });
     }
     return result;
   });

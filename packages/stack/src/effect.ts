@@ -53,7 +53,7 @@ export {
 } from "./Defaults.ts";
 
 export { postgres } from "./Tools.ts";
-export { nativePostgresRootError } from "./services/Database.ts";
+export { resolveNativePostgresUser } from "./runtime/postgres-user.ts";
 export { StackError } from "./Rpc.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
 export type ServiceCreationInput = CatalogServiceCreationInput;

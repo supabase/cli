@@ -36,6 +36,8 @@ const describeHttpError = (cause: unknown): string =>
     ? (cause.reason.description ?? cause.reason._tag)
     : String(cause);
 
+const decodeAdvisorsBody = (rawBody: string) => apiResponseToAdvisorLints(JSON.parse(rawBody));
+
 /** Identity stitcher: every Management API response is wrapped in identity
  *  stitching; the raw-HTTP advisor path runs it explicitly. */
 type StitchFn = (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<void>;
@@ -71,7 +73,7 @@ const fetchAdvisors = Effect.fnUntraced(function* (
 
   if (response.status !== 200) {
     const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    return yield* Effect.fail(endpoint.status(response.status, sanitizeErrorBody(rawBody)));
+    return yield* endpoint.status(response.status, sanitizeErrorBody(rawBody));
   }
 
   // The 200 body is only decoded when the Content-Type header contains "json";
@@ -80,7 +82,7 @@ const fetchAdvisors = Effect.fnUntraced(function* (
   const contentType = response.headers["content-type"] ?? "";
   if (!contentType.toLowerCase().includes("json")) {
     const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    return yield* Effect.fail(endpoint.status(200, sanitizeErrorBody(rawBody)));
+    return yield* endpoint.status(200, sanitizeErrorBody(rawBody));
   }
 
   const rawBody = yield* response.text;
@@ -88,7 +90,7 @@ const fetchAdvisors = Effect.fnUntraced(function* (
   // so map both JSON syntax errors and structural-shape rejections (thrown by
   // `apiResponseToAdvisorLints`) to the endpoint's network error.
   return yield* Effect.try({
-    try: () => apiResponseToAdvisorLints(JSON.parse(rawBody) as unknown),
+    try: () => decodeAdvisorsBody(rawBody),
     catch: (cause) => endpoint.network(String(cause), { decode: true }),
   });
 });

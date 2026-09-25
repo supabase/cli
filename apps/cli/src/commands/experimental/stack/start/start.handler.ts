@@ -3,7 +3,7 @@ import { readStackFunctionsEnv } from "../../../../command-internal/stack-functi
 import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
 import {
-  nativePostgresRootError,
+  resolveNativePostgresUser,
   type ServiceCreationInput,
   type Stack,
   type StackError,
@@ -253,13 +253,20 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       })
       .pipe(Effect.mapError(mapTargetError));
     const selectedRuntime = target.runtime ?? defaultStackRuntime(runtime);
+    const postgresUser = yield* resolveNativePostgresUser(selectedRuntime);
+    const ensurePostgresUser =
+      postgresUser._tag === "Unavailable"
+        ? new StackCommandStartError({
+            reason: "lifecycle",
+            message: postgresUser.message,
+            suggestion: postgresUser.suggestion,
+          })
+        : postgresUser._tag === "StepDown"
+          ? output.info(postgresUser.message)
+          : Effect.void;
     const configBeforeCreate =
       target.id === undefined ? yield* loadStartConfig(target.projectRoot, fs, path) : undefined;
-    if (target.id === undefined) {
-      const rootError = nativePostgresRootError(selectedRuntime, process.getuid?.());
-      if (rootError !== undefined)
-        return yield* new StackCommandStartError({ reason: "lifecycle", message: rootError });
-    }
+    if (target.id === undefined) yield* ensurePostgresUser;
     const stateRoot = path.join(settings.supabaseHome, "stacks");
     const cacheRoot = path.join(settings.supabaseHome, "cache", "stack");
     const startupComplete = yield* Ref.make(false);
@@ -329,11 +336,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "The stack is in a partial lifecycle state",
         suggestion: "Run supabase stack stop, then supabase stack start to recover the stack.",
       });
-    if (target.id !== undefined) {
-      const rootError = nativePostgresRootError(selectedRuntime, process.getuid?.());
-      if (rootError !== undefined)
-        return yield* new StackCommandStartError({ reason: "lifecycle", message: rootError });
-    }
+    if (target.id !== undefined) yield* ensurePostgresUser;
     const shadowDatabase =
       composition.members.length === 0
         ? existingServices.find((instance) => instance.service === "database")

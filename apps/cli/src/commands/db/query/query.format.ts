@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { DateTime, Option } from "effect";
 
 import { goFormatFloat } from "../../../command-internal/go-float.ts";
 import { stringWidth } from "../../../command-internal/rune-width.ts";
@@ -102,16 +102,17 @@ function parsePgUtcInstant(raw: string): PgUtcInstant | undefined {
   const [, y, mo, d, hh, mi, ss, frac, sign, oh, om, os] = m;
   // `Date.UTC` remaps years 0-99 to 1900-1999 (corrupting `0001-01-01`); `setUTCFullYear` does
   // not remap, so build the instant that way instead.
-  const dt = new Date(0);
-  dt.setUTCFullYear(Number(y), Number(mo) - 1, Number(d));
-  dt.setUTCHours(Number(hh ?? "0"), Number(mi ?? "0"), Number(ss ?? "0"), 0);
-  let utcMs = dt.getTime();
+  const dt = DateTime.mutateUtc(DateTime.makeUnsafe(0), (date) => {
+    date.setUTCFullYear(Number(y), Number(mo) - 1, Number(d));
+    date.setUTCHours(Number(hh ?? "0"), Number(mi ?? "0"), Number(ss ?? "0"), 0);
+  });
+  let utcMs = DateTime.toEpochMillis(dt);
   if (sign !== undefined) {
     // The text offset is the zone's offset from UTC; subtract it to reach UTC.
     const offsetSeconds = Number(oh) * 3600 + Number(om ?? "0") * 60 + Number(os ?? "0");
     utcMs -= (sign === "-" ? -offsetSeconds : offsetSeconds) * 1000;
   }
-  const u = new Date(utcMs);
+  const u = DateTime.toDateUtc(DateTime.mapEpochMillis(dt, () => utcMs));
   return {
     year: u.getUTCFullYear(),
     month: u.getUTCMonth() + 1,
