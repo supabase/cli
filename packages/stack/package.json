@@ -12,7 +12,8 @@
     "./internal/identity": "./src/identity/Identity.ts",
     "./internal/functions/serve-main": "./src/functions/serve.main.ts",
     "./internal/postgres-artifact": "./src/internal/postgres-artifact.ts",
-    "./internal/service-catalog": "./src/internal/service-catalog.ts"
+    "./internal/service-catalog": "./src/internal/service-catalog.ts",
+    "./internal/startup-tracing": "./src/runtime/StartupTracing.ts"
   },
   "scripts": {
     "test": "pnpm run test:unit && pnpm run test:integration",

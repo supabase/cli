@@ -16,6 +16,7 @@ import {
   Semaphore,
   Stream,
   Path,
+  Tracer,
 } from "effect";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
@@ -33,6 +34,7 @@ import * as ToolRunner from "./host/ToolRunner.ts";
 import * as Container from "./runtime/Container.ts";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { CatalogLog } from "./services/Catalog.ts";
+import { startupTracingTracer } from "./runtime/StartupTracing.ts";
 
 export interface StackHostOptions {
   readonly stateRoot: string;
@@ -514,6 +516,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
       }),
     ).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provideService(Tracer.Tracer, startupTracingTracer),
       Effect.mapError((cause) =>
         cause instanceof StackHostError ? cause : hostError("host", cause),
       ),

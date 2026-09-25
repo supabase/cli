@@ -135,16 +135,29 @@ const serviceDefinition = (
 const startTemporaryService = (
   instance: TemporaryServiceInstance,
 ): Effect.Effect<void, StackCatalogSetupError> =>
-  instance.start.pipe(
-    Effect.andThen(instance.ready),
-    Effect.mapError((cause) => temporaryServiceError("start", instance, cause)),
-  );
+  Effect.gen(function* () {
+    yield* instance.start.pipe(
+      Effect.mapError((cause) => temporaryServiceError("start", instance, cause)),
+      Effect.withSpan("StackCatalogSetup.temporaryService.start", {
+        attributes: { service: instance.service, member_id: instance.id, operation: "start" },
+      }),
+    );
+    yield* instance.ready.pipe(
+      Effect.mapError((cause) => temporaryServiceError("start", instance, cause)),
+      Effect.withSpan("StackCatalogSetup.temporaryService.ready", {
+        attributes: { service: instance.service, member_id: instance.id, operation: "ready" },
+      }),
+    );
+  });
 
 const destroyTemporaryService = (
   instance: TemporaryServiceInstance,
 ): Effect.Effect<void, StackCatalogSetupError> =>
   instance.destroy.pipe(
     Effect.mapError((cause) => temporaryServiceError("destroy", instance, cause)),
+    Effect.withSpan("StackCatalogSetup.temporaryService.destroy", {
+      attributes: { service: instance.service, member_id: instance.id, operation: "destroy" },
+    }),
   );
 
 const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
@@ -180,9 +193,14 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
           Effect.acquireUseRelease(
             input.target.stack.services
               .create(serviceDefinition(service, serviceCredentials, storagePath))
-              .pipe(Effect.mapError(catalogError)),
-            startTemporaryService,
-            destroyTemporaryService,
+              .pipe(
+                Effect.mapError(catalogError),
+                Effect.withSpan("StackCatalogSetup.temporaryService.create", {
+                  attributes: { service, operation: "create" },
+                }),
+              ),
+            (instance) => startTemporaryService(instance),
+            (instance) => destroyTemporaryService(instance),
           ),
         { discard: true },
       );

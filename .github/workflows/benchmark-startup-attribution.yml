@@ -1,0 +1,91 @@
+name: Validate Effect startup traces
+
+on:
+  push:
+    branches: [bench/startup-effect-traces-2026-09-25]
+    paths:
+      - .github/workflows/benchmark-startup-attribution.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            platform: linux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          dependency-cache: "false"
+      - name: Verify product base
+        run: git merge-base --is-ancestor 4cebcf8779ef8ba983f38632eb4c48a86c5e829e HEAD
+      - name: Build instrumented CLI
+        run: pnpm exec turbo run supabase#build
+      - name: Build direct API entrypoint
+        run: pnpm exec bun apps/cli/scripts/startup-api-build.ts
+      - name: Record provenance and package binaries
+        run: |
+          mkdir -p bundle
+          git rev-parse HEAD > bundle/instrumentation-commit.txt
+          printf '%s\n' '4cebcf8779ef8ba983f38632eb4c48a86c5e829e' > bundle/product-commit.txt
+          shasum -a 256 apps/cli/dist/supabase apps/cli/dist/startup-api > bundle/binary-sha256.txt
+          tar -czf bundle/binaries.tar.gz -C apps/cli/dist supabase supabase-go startup-api
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: attribution-binaries-${{ matrix.platform }}
+          path: bundle/
+          retention-days: 14
+  measure:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            platform: linux
+            runtime: native
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: attribution-binaries-${{ matrix.platform }}
+          path: bundle
+      - name: Unpack binaries
+        run: |
+          mkdir -p benchmark-bin benchmark-results
+          tar -xzf bundle/binaries.tar.gz -C benchmark-bin
+          cp bundle/*.txt benchmark-results/
+      - name: Run paired startup measurements
+        run: |
+          runtimes='${{ matrix.runtime }}'
+          if [ "$runtimes" = both ]; then runtimes='native docker'; fi
+          for runtime in $runtimes; do
+            python3 scripts/benchmarks/startup-attribution.py \
+              --cli "$GITHUB_WORKSPACE/benchmark-bin/supabase" \
+              --api "$GITHUB_WORKSPACE/benchmark-bin/startup-api" \
+              --runtime "$runtime" \
+              --output "$GITHUB_WORKSPACE/benchmark-results/$runtime/startup-results.json" \
+              --samples 1
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: startup-attribution-${{ matrix.platform }}-${{ matrix.runtime }}
+          path: benchmark-results/
+          if-no-files-found: error
+          retention-days: 30

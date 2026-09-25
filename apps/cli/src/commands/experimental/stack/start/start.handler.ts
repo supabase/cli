@@ -221,10 +221,19 @@ const compose = (
   reuseIds: ReadonlyArray<string>,
   identity: StackIdentityInput,
 ) =>
-  stack.composition.supabase(creations, {
-    identity,
-    ...(reuseIds.length === 0 ? {} : { reuseIds }),
-  });
+  stack.composition
+    .supabase(creations, {
+      identity,
+      ...(reuseIds.length === 0 ? {} : { reuseIds }),
+    })
+    .pipe(
+      Effect.tap((members) =>
+        Effect.annotateCurrentSpan({
+          "composition.members": members.map(({ id, service }) => ({ id, service })),
+        }),
+      ),
+      Effect.withSpan("experimental.stack.compose"),
+    );
 
 /** Starts the selected managed stack and applies the local database overlays. */
 export const stackStart = Effect.fn("experimental.stack.start")(function* (flags: StackStartFlags) {
@@ -555,10 +564,16 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     yield* database.start.pipe(
       Effect.tapError((error) => starting.fail(error.message)),
       Effect.mapError(stackError),
+      Effect.withSpan("experimental.stack.databaseStart", {
+        attributes: { service: "database", member_id: database.id, operation: "start" },
+      }),
     );
     yield* database.ready.pipe(
       Effect.tapError((error) => starting.fail(error.message)),
       Effect.mapError(stackError),
+      Effect.withSpan("experimental.stack.databaseReady", {
+        attributes: { service: "database", member_id: database.id, operation: "ready" },
+      }),
     );
     const stackCredentials = yield* stack.credentials.get.pipe(Effect.mapError(stackError));
     if (stackCredentials === undefined)
@@ -594,11 +609,15 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         .pipe(
           Effect.tapError((error) => starting.fail(error.message)),
           Effect.mapError(stackError),
+          Effect.withSpan("experimental.stack.catalogMigrations", {
+            attributes: { "service.names": databaseServices },
+          }),
         );
       const experimental = yield* resolveExperimentalWithProjectEnv({ ...toml.projectEnv });
       yield* applyStackMigrateAndSeed(database, target.projectRoot, toml, experimental).pipe(
         Effect.tapError((error) => starting.fail(error.message)),
         Effect.mapError(stackError),
+        Effect.withSpan("experimental.stack.projectMigrations"),
       );
     } else if (serviceKindsChanged) {
       yield* catalog
@@ -666,6 +685,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     yield* stack.composition.start.pipe(
       Effect.tapError((error) => starting.fail(error.message)),
       Effect.mapError((error) => stackError(error, members)),
+      Effect.withSpan("experimental.stack.compositionStart", {
+        attributes: {
+          operation: "start",
+          members: members.map(({ id, service }) => ({ id, service })),
+        },
+      }),
     );
     yield* Effect.forEach(preparation, (fiber) => Fiber.join(fiber));
     yield* Ref.set(startupComplete, true);
