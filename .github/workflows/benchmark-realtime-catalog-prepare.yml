@@ -1,0 +1,416 @@
+name: Compare one-shot Realtime catalog preparation
+
+on:
+  push:
+    branches: [bench/realtime-one-shot-attribution-20260925]
+    paths:
+      - .github/workflows/benchmark-realtime-catalog-prepare.yml
+      - scripts/benchmarks/startup-attribution.py
+      - scripts/benchmarks/patch-realtime-candidate-image.py
+  workflow_dispatch:
+    inputs:
+      realtime_cli_ref:
+        description: CLI commit that initializes Realtime only
+        required: false
+        default: d321ac042a73708c7ac67b0be2fdb0b50157a873
+        type: string
+      all_services_cli_ref:
+        description: CLI commit that initializes Realtime, Auth, and Storage
+        required: false
+        default: 9d681dfdb081b316c61fd2414ac89f781843adcf
+        type: string
+      slim_services_run_id:
+        description: slim-services workflow run that produced the candidate Linux artifacts
+        required: false
+        default: "36134114988"
+        type: string
+      slim_services_head_sha:
+        description: Expected slim-services commit for that workflow run
+        required: false
+        default: 1f16632ea76b3238f63a573b01db2db508e7aad2
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, realtime, all-services]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.variant == 'baseline' && '4e5b1e251fe69f88eea0d319d289ea2b6803a0be' || (matrix.variant == 'realtime' && (inputs.realtime_cli_ref || 'd321ac042a73708c7ac67b0be2fdb0b50157a873') || (inputs.all_services_cli_ref || '9d681dfdb081b316c61fd2414ac89f781843adcf')) }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: benchmark
+          persist-credentials: false
+      - name: Verify candidate lineage
+        env:
+          VARIANT: ${{ matrix.variant }}
+          BASELINE_REF: 4e5b1e251fe69f88eea0d319d289ea2b6803a0be
+          REALTIME_REF: ${{ inputs.realtime_cli_ref || 'd321ac042a73708c7ac67b0be2fdb0b50157a873' }}
+          ALL_SERVICES_REF: ${{ inputs.all_services_cli_ref || '9d681dfdb081b316c61fd2414ac89f781843adcf' }}
+        run: |
+          if [ "$VARIANT" = baseline ]; then
+            test "$(git rev-parse HEAD)" = "$BASELINE_REF"
+          else
+            git merge-base --is-ancestor "$BASELINE_REF" HEAD
+            if [ "$VARIANT" = realtime ]; then
+              test "$(git rev-parse HEAD)" = "$REALTIME_REF"
+            else
+              test "$(git rev-parse HEAD)" = "$ALL_SERVICES_REF"
+              git merge-base --is-ancestor "$REALTIME_REF" HEAD
+            fi
+          fi
+          git rev-parse HEAD
+      - uses: ./.github/actions/setup
+        with:
+          dependency-cache: "false"
+      - name: Install archive tools
+        run: sudo apt-get update && sudo apt-get install --yes zstd
+      - name: Point candidate Docker build at local image tag
+        if: matrix.variant != 'baseline'
+        run: |
+          python3 benchmark/scripts/benchmarks/patch-realtime-candidate-image.py \
+            --artifacts-source packages/stack/src/Artifacts.ts \
+            --local-image local/realtime:v2.134.5-linux-amd64
+      - name: Build compiled CLI
+        run: pnpm exec turbo run supabase#build
+      - name: Save CLI and provenance
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p bundle
+          git rev-parse HEAD > bundle/cli-commit.txt
+          (cd apps/cli/dist && shasum -a 256 supabase) > bundle/cli-sha256.txt
+          tar -czf bundle/cli.tar.gz -C apps/cli/dist supabase supabase-go
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: realtime-catalog-cli-${{ matrix.variant }}
+          path: bundle/
+          retention-days: 14
+
+  integration:
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      SLIM_SERVICES_RUN_ID: ${{ inputs.slim_services_run_id || '36134114988' }}
+      SLIM_SERVICES_HEAD_SHA: ${{ inputs.slim_services_head_sha || '1f16632ea76b3238f63a573b01db2db508e7aad2' }}
+      ALL_SERVICES_CLI_REF: ${{ inputs.all_services_cli_ref || '9d681dfdb081b316c61fd2414ac89f781843adcf' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.ALL_SERVICES_CLI_REF }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: benchmark
+          persist-credentials: false
+      - name: Verify candidate lineage
+        run: git merge-base --is-ancestor 4e5b1e251fe69f88eea0d319d289ea2b6803a0be HEAD
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        id: slim-token
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: supabase
+          repositories: slim-services
+          permission-actions: read
+      - name: Wait for candidate Linux artifacts
+        env:
+          GH_TOKEN: ${{ steps.slim-token.outputs.token }}
+        run: |
+          for attempt in $(seq 1 60); do
+            run_info="$(gh api "repos/supabase/slim-services/actions/runs/$SLIM_SERVICES_RUN_ID" --jq '[.head_sha, .conclusion // ""] | @tsv')"
+            read -r actual_head run_conclusion <<< "$run_info"
+            test "$actual_head" = "$SLIM_SERVICES_HEAD_SHA"
+            target_job="$(gh api "repos/supabase/slim-services/actions/runs/$SLIM_SERVICES_RUN_ID/jobs?per_page=100" --jq '.jobs[] | select(.name == "realtime linux/amd64") | [.status, (.conclusion // "")] | @tsv')"
+            read -r target_status target_conclusion <<< "$target_job"
+            artifact_names="$(gh api "repos/supabase/slim-services/actions/runs/$SLIM_SERVICES_RUN_ID/artifacts" --paginate --jq '[.artifacts[].name] | unique | join(",")')"
+            if [ "$target_status" = completed ] && [ "$target_conclusion" = success ] \
+              && [[ ",$artifact_names," == *",release-assets-realtime-v2.134.5-linux-amd64,"* ]] \
+              && [[ ",$artifact_names," == *",release-image-realtime-v2.134.5-amd64,"* ]]; then
+              echo "Candidate Linux assets ready; overall slim-services run conclusion: ${run_conclusion:-in progress}"
+              break
+            fi
+            if [ "$target_status" = completed ] && [ "$target_conclusion" != success ]; then
+              echo "Candidate Linux artifact job failed: $target_conclusion" >&2
+              exit 1
+            fi
+            if [ "$attempt" = 60 ]; then
+              echo "Timed out waiting for candidate assets" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-assets-realtime-v2.134.5-linux-amd64
+          repository: supabase/slim-services
+          run-id: ${{ env.SLIM_SERVICES_RUN_ID }}
+          github-token: ${{ steps.slim-token.outputs.token }}
+          path: candidate-assets
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-image-realtime-v2.134.5-amd64
+          repository: supabase/slim-services
+          run-id: ${{ env.SLIM_SERVICES_RUN_ID }}
+          github-token: ${{ steps.slim-token.outputs.token }}
+          path: candidate-image
+      - uses: ./.github/actions/setup
+        with:
+          dependency-cache: "false"
+      - name: Install archive tools
+        run: sudo apt-get update && sudo apt-get install --yes zstd
+      - name: Verify, stage, and seed the candidate artifact
+        run: |
+          asset="$(find candidate-assets -name 'realtime-v2.134.5-linux-amd64.tar.zst' -print -quit)"
+          sums="$(find candidate-assets -name '*SHA256SUMS' -print -quit)"
+          test -n "$asset" && test -n "$sums"
+          python3 - "$asset" "$sums" > candidate-archive.sha256 <<'PY'
+          import pathlib, sys
+          archive, sums = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+          for line in sums.read_text().splitlines():
+              fields = line.split(maxsplit=1)
+              if len(fields) == 2 and fields[1].lstrip('*').removeprefix('./') == archive.name:
+                  print(fields[0])
+                  break
+          else:
+              raise SystemExit(f"no checksum for {archive.name} in {sums}")
+          PY
+          sha256sum --check <(printf '%s  %s\n' "$(cat candidate-archive.sha256)" "$asset")
+          mkdir -p candidate-assets/verified
+          cp "$asset" candidate-assets/verified/realtime.tar.zst
+          cp candidate-archive.sha256 candidate-assets/verified/
+          docker_image="$(find candidate-image -name '*.image.tar.gz' -print -quit)"
+          test -n "$docker_image"
+          docker load --input "$docker_image"
+          docker image inspect local/realtime:v2.134.5-linux-amd64
+          python3 benchmark/scripts/benchmarks/patch-realtime-candidate-image.py \
+            --artifacts-source packages/stack/src/Artifacts.ts \
+            --local-image local/realtime:v2.134.5-linux-amd64
+          python3 - "$GITHUB_WORKSPACE/benchmark/scripts/benchmarks/startup-attribution.py" "$(cat candidate-archive.sha256)" "$GITHUB_WORKSPACE/candidate-assets/verified/realtime.tar.zst" <<'PY'
+          import pathlib, runpy, sys, tempfile
+          helper = runpy.run_path(sys.argv[1], run_name="realtime_catalog_benchmark_helper")
+          helper["seed_realtime_cache"](
+              pathlib.Path(sys.argv[3]), sys.argv[2],
+              pathlib.Path(tempfile.gettempdir()) / "supabase-stack-artifacts",
+          )
+          PY
+      - name: Exercise candidate schema setup, SQL overlay, and cleanup
+        run: pnpm --filter supabase run test:integration:run src/command-internal/stack-catalog-setup.integration.test.ts
+
+  measure:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [native, docker]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    env:
+      REALTIME_CLI_REF: ${{ inputs.realtime_cli_ref || 'd321ac042a73708c7ac67b0be2fdb0b50157a873' }}
+      ALL_SERVICES_CLI_REF: ${{ inputs.all_services_cli_ref || '9d681dfdb081b316c61fd2414ac89f781843adcf' }}
+      SLIM_SERVICES_RUN_ID: ${{ inputs.slim_services_run_id || '36134114988' }}
+      SLIM_SERVICES_HEAD_SHA: ${{ inputs.slim_services_head_sha || '1f16632ea76b3238f63a573b01db2db508e7aad2' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Create read token for slim-services build artifacts
+        id: slim-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: supabase
+          repositories: slim-services
+          permission-actions: read
+      - name: Wait for candidate Linux artifacts and verify their source
+        id: candidate-assets
+        env:
+          GH_TOKEN: ${{ steps.slim-token.outputs.token }}
+          RUN_ID: ${{ env.SLIM_SERVICES_RUN_ID }}
+          EXPECTED_HEAD: ${{ env.SLIM_SERVICES_HEAD_SHA }}
+        run: |
+          for attempt in $(seq 1 60); do
+            run_info="$(gh api "repos/supabase/slim-services/actions/runs/$RUN_ID" --jq '[.head_sha, .status, (.conclusion // "")] | @tsv')"
+            read -r actual_head status conclusion <<< "$run_info"
+            test "$actual_head" = "$EXPECTED_HEAD"
+            run_conclusion="$(gh api "repos/supabase/slim-services/actions/runs/$RUN_ID" --jq '.conclusion // ""')"
+            target_job="$(gh api "repos/supabase/slim-services/actions/runs/$RUN_ID/jobs?per_page=100" --jq '.jobs[] | select(.name == "realtime linux/amd64") | [.status, (.conclusion // "")] | @tsv')"
+            read -r target_status target_conclusion <<< "$target_job"
+            artifact_names="$(gh api "repos/supabase/slim-services/actions/runs/$RUN_ID/artifacts" --paginate --jq '[.artifacts[].name] | unique | join(",")')"
+            if [ "$target_status" = completed ] && [ "$target_conclusion" = success ] \
+              && [[ ",$artifact_names," == *",release-assets-realtime-v2.134.5-linux-amd64,"* ]] \
+              && [[ ",$artifact_names," == *",release-image-realtime-v2.134.5-amd64,"* ]]; then
+              echo "Verified candidate linux/amd64 assets from run $RUN_ID at $actual_head (overall run: ${run_conclusion:-in progress})"
+              echo "run_conclusion=${run_conclusion:-in progress}" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            if [ "$target_status" = completed ] && [ "$target_conclusion" != success ]; then
+              echo "slim-services realtime linux/amd64 job ended with $target_conclusion" >&2
+              exit 1
+            fi
+            if [ "$attempt" = 60 ]; then
+              echo "Timed out waiting for candidate slim-services build artifacts" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: realtime-catalog-cli-baseline
+          path: bundles/baseline
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: realtime-catalog-cli-realtime
+          path: bundles/realtime
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: realtime-catalog-cli-all-services
+          path: bundles/all-services
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-assets-realtime-v2.134.5-linux-amd64
+          repository: supabase/slim-services
+          run-id: ${{ env.SLIM_SERVICES_RUN_ID }}
+          github-token: ${{ steps.slim-token.outputs.token }}
+          path: candidate-assets
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-image-realtime-v2.134.5-amd64
+          repository: supabase/slim-services
+          run-id: ${{ env.SLIM_SERVICES_RUN_ID }}
+          github-token: ${{ steps.slim-token.outputs.token }}
+          path: candidate-image
+      - name: Unpack CLIs and verify candidate release asset
+        env:
+          GH_TOKEN: ${{ steps.slim-token.outputs.token }}
+          RUN_ID: ${{ env.SLIM_SERVICES_RUN_ID }}
+          EXPECTED_HEAD: ${{ env.SLIM_SERVICES_HEAD_SHA }}
+        run: |
+          for variant in baseline realtime all-services; do
+            mkdir -p "benchmark-bin/$variant"
+            tar -xzf "bundles/$variant/cli.tar.gz" -C "benchmark-bin/$variant"
+            cp "bundles/$variant/cli-commit.txt" "benchmark-bin/$variant/"
+            cp "bundles/$variant/cli-sha256.txt" "benchmark-bin/$variant/"
+            expected="$(awk '{print $1}' "benchmark-bin/$variant/cli-sha256.txt")"
+            actual="$(sha256sum "benchmark-bin/$variant/supabase" | awk '{print $1}')"
+            test "$actual" = "$expected"
+          done
+          asset="$(find candidate-assets -name 'realtime-v2.134.5-linux-amd64.tar.zst' -print -quit)"
+          sums="$(find candidate-assets -name '*SHA256SUMS' -print -quit)"
+          test -n "$asset" && test -n "$sums"
+          python3 - "$asset" "$sums" > candidate-archive.sha256 <<'PY'
+          import pathlib, sys
+          archive, sums = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+          for line in sums.read_text().splitlines():
+              fields = line.split(maxsplit=1)
+              if len(fields) == 2 and fields[1].lstrip('*').removeprefix('./') == archive.name:
+                  print(fields[0])
+                  break
+          else:
+              raise SystemExit(f"no checksum for {archive.name} in {sums}")
+          PY
+          sha256sum --check <(printf '%s  %s\n' "$(cat candidate-archive.sha256)" "$asset")
+          mkdir -p candidate-assets/verified
+          cp "$asset" candidate-assets/verified/realtime.tar.zst
+          cp "candidate-archive.sha256" candidate-assets/verified/
+          find candidate-image -name '*.image.json' -print -quit > candidate-image/metadata-path.txt
+          metadata="$(cat candidate-image/metadata-path.txt)"
+          test -n "$metadata"
+          python3 - "$metadata" <<'PY'
+          import json, pathlib, sys
+          metadata = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          if metadata.get("platform") != "linux/amd64":
+              raise SystemExit(f"unexpected image platform: {metadata.get('platform')}")
+          if metadata.get("local_image") != "local/realtime:v2.134.5-linux-amd64":
+              raise SystemExit(f"unexpected local image tag: {metadata.get('local_image')}")
+          PY
+          echo "slim-services run $RUN_ID revision $EXPECTED_HEAD" > benchmark-provenance.txt
+      - name: Load candidate Docker image
+        if: matrix.runtime == 'docker'
+        run: |
+          image_archive="$(find candidate-image -name '*.image.tar.gz' -print -quit)"
+          test -n "$image_archive"
+          docker load --input "$image_archive"
+          docker image inspect local/realtime:v2.134.5-linux-amd64 > candidate-image-inspect.json
+          docker image inspect --format '{{.Id}}' local/realtime:v2.134.5-linux-amd64 > candidate-image-id.txt
+      - name: Install archive tools
+        run: sudo apt-get update && sudo apt-get install --yes zstd
+      - name: Run baseline versus Realtime-only CLI comparison
+        env:
+          SLIM_SERVICES_RUN_CONCLUSION: ${{ steps.candidate-assets.outputs.run_conclusion }}
+        run: |
+          python3 scripts/benchmarks/startup-attribution.py \
+            --cli "$GITHUB_WORKSPACE/benchmark-bin/baseline/supabase" \
+            --api "$GITHUB_WORKSPACE/benchmark-bin/baseline/supabase" \
+            --baseline-cli "$GITHUB_WORKSPACE/benchmark-bin/baseline/supabase" \
+            --changed-cli "$GITHUB_WORKSPACE/benchmark-bin/realtime/supabase" \
+            --runtime '${{ matrix.runtime }}' \
+            --output "$GITHUB_WORKSPACE/benchmark-results/${{ matrix.runtime }}-baseline-vs-realtime.json" \
+            --samples 3 --isolated-variant-homes \
+            --candidate-realtime-archive "$GITHUB_WORKSPACE/candidate-assets/verified/realtime.tar.zst" \
+            --candidate-realtime-sha256 "$(cat candidate-assets/verified/candidate-archive.sha256)" \
+            --candidate-image-reference local/realtime:v2.134.5-linux-amd64 \
+            --candidate-image-id "$(cat candidate-image-id.txt 2>/dev/null || true)" \
+            --candidate-image-inspect "$GITHUB_WORKSPACE/candidate-image-inspect.json" \
+            --baseline-cli-commit "$(cat benchmark-bin/baseline/cli-commit.txt)" \
+            --baseline-cli-sha256 "$(awk '{print $1}' benchmark-bin/baseline/cli-sha256.txt)" \
+            --changed-cli-commit "$(cat benchmark-bin/realtime/cli-commit.txt)" \
+            --changed-cli-sha256 "$(awk '{print $1}' benchmark-bin/realtime/cli-sha256.txt)" \
+            --candidate-artifact-run-id "$SLIM_SERVICES_RUN_ID" \
+            --candidate-artifact-source-sha "$SLIM_SERVICES_HEAD_SHA" \
+            --candidate-artifact-run-conclusion "$SLIM_SERVICES_RUN_CONCLUSION" \
+            --candidate-initialized-services realtime
+      - name: Run baseline versus all-services CLI comparison
+        env:
+          SLIM_SERVICES_RUN_CONCLUSION: ${{ steps.candidate-assets.outputs.run_conclusion }}
+        run: |
+          python3 scripts/benchmarks/startup-attribution.py \
+            --cli "$GITHUB_WORKSPACE/benchmark-bin/baseline/supabase" \
+            --api "$GITHUB_WORKSPACE/benchmark-bin/baseline/supabase" \
+            --baseline-cli "$GITHUB_WORKSPACE/benchmark-bin/baseline/supabase" \
+            --changed-cli "$GITHUB_WORKSPACE/benchmark-bin/all-services/supabase" \
+            --runtime '${{ matrix.runtime }}' \
+            --output "$GITHUB_WORKSPACE/benchmark-results/${{ matrix.runtime }}-baseline-vs-all-services.json" \
+            --samples 3 --isolated-variant-homes \
+            --candidate-realtime-archive "$GITHUB_WORKSPACE/candidate-assets/verified/realtime.tar.zst" \
+            --candidate-realtime-sha256 "$(cat candidate-assets/verified/candidate-archive.sha256)" \
+            --candidate-image-reference local/realtime:v2.134.5-linux-amd64 \
+            --candidate-image-id "$(cat candidate-image-id.txt 2>/dev/null || true)" \
+            --candidate-image-inspect "$GITHUB_WORKSPACE/candidate-image-inspect.json" \
+            --baseline-cli-commit "$(cat benchmark-bin/baseline/cli-commit.txt)" \
+            --baseline-cli-sha256 "$(awk '{print $1}' benchmark-bin/baseline/cli-sha256.txt)" \
+            --changed-cli-commit "$(cat benchmark-bin/all-services/cli-commit.txt)" \
+            --changed-cli-sha256 "$(awk '{print $1}' benchmark-bin/all-services/cli-sha256.txt)" \
+            --candidate-artifact-run-id "$SLIM_SERVICES_RUN_ID" \
+            --candidate-artifact-source-sha "$SLIM_SERVICES_HEAD_SHA" \
+            --candidate-artifact-run-conclusion "$SLIM_SERVICES_RUN_CONCLUSION" \
+            --candidate-initialized-services auth storage realtime
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: realtime-catalog-prepare-${{ matrix.runtime }}
+          path: |
+            benchmark-results/
+            benchmark-provenance.txt
+            candidate-assets/verified/
+            candidate-image-id.txt
+            candidate-image-inspect.json
+            benchmark-bin/*/*.txt
+          if-no-files-found: error
+          retention-days: 30

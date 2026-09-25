@@ -171,6 +171,7 @@ def lifecycle(
     *, cli: Path, api: Path, implementation: str, runtime: str, mode: str, label: str,
     root: Path, home: Path, base_env: dict[str, str], traced: bool,
     result_record: dict[str, Any], result_key: str, result_path: Path,
+    expected_temporary_services: frozenset[str] | None = frozenset({"auth", "storage", "realtime"}),
 ) -> dict[str, Any]:
     project, init = make_project(cli, root, label, base_env)
     trace_path = root / "traces" / f"{label}.jsonl"
@@ -312,7 +313,8 @@ def lifecycle(
                     and event.get("status") == "ok"
                 }
                 phase["cleanup_verification"]["temporary_service_destroyed"] = sorted(completed)
-                cleanup_checks.append({"auth", "storage", "realtime"}.issubset(completed))
+                if expected_temporary_services is not None:
+                    cleanup_checks.append(expected_temporary_services.issubset(completed))
             phase["cleanup_verified"] = all(cleanup_checks)
         phase["docker_events"] = docker_events(env, project, stack_id, phase["start"].get("started_epoch_ms") if phase.get("start") else None) if runtime == "docker" else None
         if traced and trace_path.exists():
@@ -327,6 +329,74 @@ def lifecycle(
     return phase
 
 
+def seed_realtime_cache(archive: Path, expected_sha256: str, cache_root: Path) -> dict[str, Any]:
+    key = "slim-services/realtime/v2.134.5/linux-amd64"
+    target = cache_root / key
+    digest = hashlib.sha256()
+    with archive.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual_sha256 = digest.hexdigest()
+    if actual_sha256.lower() != expected_sha256.lower():
+        raise ValueError(f"candidate realtime archive checksum mismatch: {actual_sha256}")
+    if target.exists():
+        raise ValueError(f"candidate realtime cache target already exists: {target}")
+    target.mkdir(parents=True, mode=0o700)
+    tar_path = target.parent / ".realtime-candidate.tar"
+    try:
+        with tar_path.open("wb") as tar_output:
+            subprocess.run(
+                ["zstd", "-d", "-c", str(archive)], check=True, stdout=tar_output,
+                stderr=subprocess.PIPE, text=True,
+            )
+        listing = subprocess.run(
+            ["tar", "-tf", str(tar_path)], check=True, capture_output=True, text=True,
+        ).stdout.splitlines()
+        for member in listing:
+            path = Path(member)
+            if path.is_absolute() or ".." in path.parts:
+                raise ValueError(f"candidate realtime archive contains unsafe path: {member}")
+        subprocess.run(
+            ["tar", "-xf", str(tar_path), "-C", str(target), "--no-same-owner"],
+            check=True, capture_output=True, text=True,
+        )
+        runtime_paths = ["bin/server", "bin/prepare"]
+        kinds: dict[str, str] = {}
+        for relative in runtime_paths:
+            path = target / relative
+            if path.is_symlink():
+                kinds[relative] = "symlink"
+            elif path.is_file():
+                kinds[relative] = "file"
+            elif path.is_dir():
+                kinds[relative] = "directory"
+            else:
+                raise ValueError(f"candidate realtime required path is not a file or directory: {relative}")
+            resolved = path.resolve(strict=True)
+            if target.resolve() not in resolved.parents:
+                raise ValueError(f"candidate realtime path escapes cache target: {relative}")
+        server, prepare = target / "bin/server", target / "bin/prepare"
+        if not server.is_file() or not prepare.is_file():
+            raise ValueError("candidate realtime artifact must contain bin/server and bin/prepare files")
+        server.chmod(server.stat().st_mode | 0o111)
+        prepare.chmod(prepare.stat().st_mode | 0o111)
+        metadata = {
+            "format": "supabase-stack-artifact-v3", "key": key, "sha256": actual_sha256,
+            "requiredRuntimePaths": runtime_paths, "requiredRuntimeKinds": kinds,
+            "executablePath": "bin/server",
+        }
+        metadata_path = target / ".artifact.json"
+        metadata_path.write_text(json.dumps(metadata) + "\n", encoding="utf-8")
+        return {
+            "key": key,
+            "archive_sha256": actual_sha256,
+            "metadata_path": str(metadata_path),
+            "metadata": metadata,
+        }
+    finally:
+        tar_path.unlink(missing_ok=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cli", required=True, type=Path, help="Compiled CLI executable")
@@ -336,6 +406,20 @@ def main() -> int:
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--baseline-cli", type=Path, help="Baseline compiled CLI for a paired CLI comparison")
     parser.add_argument("--changed-cli", type=Path, help="Changed compiled CLI for a paired CLI comparison")
+    parser.add_argument("--isolated-variant-homes", action="store_true", help="Give baseline and changed CLI independent artifact caches")
+    parser.add_argument("--candidate-realtime-archive", type=Path, help="Verified slim-services realtime tar.zst to seed for the changed CLI")
+    parser.add_argument("--candidate-realtime-sha256", help="SHA-256 of --candidate-realtime-archive")
+    parser.add_argument("--candidate-image-reference", help="Local Docker image reference used by the candidate build")
+    parser.add_argument("--candidate-image-id", help="Docker image config ID measured after loading the candidate")
+    parser.add_argument("--candidate-image-inspect", type=Path, help="JSON output from docker image inspect for the candidate")
+    parser.add_argument("--baseline-cli-commit")
+    parser.add_argument("--changed-cli-commit")
+    parser.add_argument("--baseline-cli-sha256")
+    parser.add_argument("--changed-cli-sha256")
+    parser.add_argument("--candidate-artifact-run-id")
+    parser.add_argument("--candidate-artifact-source-sha")
+    parser.add_argument("--candidate-artifact-run-conclusion")
+    parser.add_argument("--candidate-initialized-services", nargs="+", choices=sorted({"auth", "storage", "realtime"}), help="Services expected to use catalog initialize() in the changed CLI")
     args = parser.parse_args()
     cli, api = args.cli.resolve(), args.api.resolve()
     for label, executable in (("CLI", cli), ("API", api)):
@@ -345,6 +429,14 @@ def main() -> int:
         parser.error("--samples must be >= 1")
     if (args.baseline_cli is None) != (args.changed_cli is None):
         parser.error("--baseline-cli and --changed-cli must be supplied together")
+    if args.isolated_variant_homes and (args.baseline_cli is None or args.changed_cli is None):
+        parser.error("--isolated-variant-homes requires a paired CLI comparison")
+    if (args.candidate_realtime_archive is None) != (args.candidate_realtime_sha256 is None):
+        parser.error("--candidate-realtime-archive and --candidate-realtime-sha256 must be supplied together")
+    if args.candidate_realtime_archive is not None:
+        args.candidate_realtime_archive = args.candidate_realtime_archive.resolve()
+        if not args.candidate_realtime_archive.is_file():
+            parser.error(f"candidate realtime archive is missing: {args.candidate_realtime_archive}")
     if args.baseline_cli is not None and args.changed_cli is not None:
         args.baseline_cli = args.baseline_cli.resolve()
         args.changed_cli = args.changed_cli.resolve()
@@ -378,6 +470,22 @@ def main() -> int:
             "samples_requested_per_mode": args.samples,
             "baseline_cli": str(args.baseline_cli),
             "changed_cli": str(args.changed_cli),
+            "cli_provenance": {
+                "baseline": {"commit": args.baseline_cli_commit, "sha256": args.baseline_cli_sha256},
+                "changed": {"commit": args.changed_cli_commit, "sha256": args.changed_cli_sha256},
+            },
+            "candidate_artifact_provenance": {
+                "slim_services_run_id": args.candidate_artifact_run_id,
+                "slim_services_source_sha": args.candidate_artifact_source_sha,
+                "slim_services_run_conclusion": args.candidate_artifact_run_conclusion,
+            },
+            "candidate_docker_image": {
+                "reference": args.candidate_image_reference,
+                "image_id": args.candidate_image_id or None,
+                "inspect": json.loads(args.candidate_image_inspect.read_text(encoding="utf-8"))
+                if args.candidate_image_inspect is not None and args.candidate_image_inspect.is_file()
+                else None,
+            } if args.candidate_image_reference is not None else None,
             "host": runner_metadata(),
             "paths": {"root": str(root), "home": str(home)},
             "warmups": {},
@@ -386,8 +494,23 @@ def main() -> int:
         }
         persist(output, record)
 
+        seeded_homes: set[Path] = set()
+
         def run_cli(executable: Path, variant: str, mode: str, label: str) -> dict[str, Any]:
-            return lifecycle(
+            variant_home = home / variant if args.isolated_variant_homes else home
+            variant_env = base_env.copy()
+            variant_env["SUPABASE_HOME"] = str(variant_home)
+            if variant == "changed" and variant_home not in seeded_homes:
+                if args.candidate_realtime_archive is not None:
+                    record["candidate_realtime_cache"] = seed_realtime_cache(
+                        args.candidate_realtime_archive,
+                        args.candidate_realtime_sha256,
+                        variant_home / "cache" / "stack",
+                    )
+                    persist(output, record)
+                seeded_homes.add(variant_home)
+            initialized_services = set(args.candidate_initialized_services or ()) if variant == "changed" else set()
+            phase = lifecycle(
                 cli=executable,
                 api=executable,
                 implementation="cli",
@@ -395,13 +518,85 @@ def main() -> int:
                 mode=mode,
                 label=label,
                 root=root,
-                home=home,
-                base_env=base_env,
+                home=variant_home,
+                base_env=variant_env,
                 traced=True,
                 result_record=record,
                 result_key=f"active_{variant}",
                 result_path=output,
+                expected_temporary_services=frozenset({"auth", "storage", "realtime"}),
             )
+            if variant == "changed" and initialized_services and phase.get("start", {}).get("ok") is True:
+                events = phase.get("trace", {}).get("events", [])
+                initialized = {
+                    str(event.get("attributes", {}).get("service"))
+                    for event in events if isinstance(event, dict)
+                    and event.get("event") == "StackCatalogSetup.temporaryService.initialize"
+                    and event.get("status") == "ok"
+                }
+                started = {
+                    str(event.get("attributes", {}).get("service"))
+                    for event in events if isinstance(event, dict)
+                    and event.get("event") == "StackCatalogSetup.temporaryService.start"
+                    and event.get("status") == "ok"
+                }
+                readied = {
+                    str(event.get("attributes", {}).get("service"))
+                    for event in events if isinstance(event, dict)
+                    and event.get("event") == "StackCatalogSetup.temporaryService.ready"
+                    and event.get("status") == "ok"
+                }
+                destroyed = {
+                    str(event.get("attributes", {}).get("service"))
+                    for event in events if isinstance(event, dict)
+                    and event.get("event") == "StackCatalogSetup.temporaryService.destroy"
+                    and event.get("status") == "ok"
+                }
+                catalogs = [
+                    event for event in events if isinstance(event, dict)
+                    and event.get("event") == "StackCatalogSetup.apply" and event.get("status") == "ok"
+                ]
+                def inside_catalog(event: dict[str, Any]) -> bool:
+                    event_end = float(event.get("end_epoch_ms", 0))
+                    event_start = event_end - float(event.get("duration_ms", 0))
+                    return any(
+                        float(catalog.get("end_epoch_ms", 0)) - float(catalog.get("duration_ms", 0)) <= event_start
+                        and event_end <= float(catalog.get("end_epoch_ms", 0))
+                        for catalog in catalogs
+                    )
+                commands = [
+                    event for event in events if isinstance(event, dict)
+                    and event.get("event") == "ProcessRecipe.runStartupCommand"
+                    and event.get("status") == "ok" and inside_catalog(event)
+                ]
+                launches = [
+                    event for event in events if isinstance(event, dict)
+                    and event.get("event") == "ProcessRecipe.launch"
+                    and event.get("status") == "ok" and inside_catalog(event)
+                ]
+                expected_temporary = {"auth", "storage", "realtime"} - initialized_services
+                expected_destroyed = {"auth", "storage", "realtime"}
+                if (
+                    initialized != initialized_services or started != expected_temporary
+                    or readied != expected_temporary or destroyed != expected_destroyed
+                    or len(catalogs) != 1 or len(commands) < len(initialized_services)
+                    or len(launches) != len(expected_temporary)
+                ):
+                    phase["failure"] = (
+                        "catalog initialization trace mismatch: "
+                        f"initialized={sorted(initialized)}, started={sorted(started)}, "
+                        f"readied={sorted(readied)}, destroyed={sorted(destroyed)}, "
+                        f"expected_initialized={sorted(initialized_services)}, "
+                        f"expected_temporary={sorted(expected_temporary)}, "
+                        f"expected_destroyed={sorted(expected_destroyed)}, "
+                        f"catalog_spans={len(catalogs)}, one_shot_commands={len(commands)}, "
+                        f"catalog_process_launches={len(launches)}"
+                    )
+                    record["failures"].append({"phase": label, "reason": phase["failure"]})
+                persist(root / f"{label}.json", phase)
+                result_record[f"active_{variant}"] = phase
+                persist(result_path, result_record)
+            return phase
 
         variants = (("baseline", args.baseline_cli), ("changed", args.changed_cli))
         for variant, executable in variants:
@@ -423,7 +618,10 @@ def main() -> int:
                     "mode": mode,
                     "sample": sample,
                     "order": [variant for variant, _ in order],
-                    "cache_before": stack.cache_inventory(home / "cache" / "stack"),
+                    "cache_before": {
+                        variant: stack.cache_inventory((home / variant if args.isolated_variant_homes else home) / "cache" / "stack")
+                        for variant, _ in variants
+                    },
                     "results": {},
                 }
                 record["pairs"].append(pair)
@@ -433,7 +631,7 @@ def main() -> int:
                     phase = run_cli(executable, variant, mode, label)
                     record.pop(f"active_{variant}", None)
                     pair["results"][variant] = phase
-                    pair[f"cache_after_{variant}"] = stack.cache_inventory(home / "cache" / "stack")
+                    pair[f"cache_after_{variant}"] = stack.cache_inventory((home / variant if args.isolated_variant_homes else home) / "cache" / "stack")
                     if phase.get("failure") or phase.get("exception"):
                         record["failures"].append({"phase": label, "reason": phase.get("failure", phase.get("exception"))})
                     persist(output, record)
