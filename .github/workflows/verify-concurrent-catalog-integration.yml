@@ -1,0 +1,32 @@
+name: Verify concurrent catalog initialization
+
+on:
+  push:
+    branches: [bench/startup-concurrent-ci-20260925]
+    paths:
+      - apps/cli/src/command-internal/stack-catalog-setup.integration.test.ts
+  workflow_dispatch:
+    inputs:
+      test_ref:
+        description: Revision containing the catalog initialization integration test
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  catalog-integration:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.inputs.test_ref || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          dependency-cache: "false"
+      - name: Run catalog initialization integration coverage (native and Docker)
+        working-directory: apps/cli
+        run: pnpm --filter supabase run test:integration:run src/command-internal/stack-catalog-setup.integration.test.ts
