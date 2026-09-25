@@ -593,7 +593,6 @@ describe("functions serve runtime template (offline)", () => {
           {
             method: "POST",
             headers: { "x-reject-before-body": "true" },
-            // Larger than the socket buffers, so Kong is still uploading when the function answers.
             body: new Uint8Array(1024 * 1024),
             signal: AbortSignal.timeout(5_000),
           },

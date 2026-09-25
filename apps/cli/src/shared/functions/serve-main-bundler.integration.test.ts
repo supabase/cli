@@ -378,6 +378,40 @@ describe("CLI functions bootstrap bundle", () => {
       expect(await response.text()).toBe("rejected");
     });
 
+    it("settles an aborted request while the abandoned body read is pending", async () => {
+      const { promise: readPending, resolve: markReadPending } = Promise.withResolvers<void>();
+      const pendingRead = Promise.withResolvers<void>().promise;
+      let pulls = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull: (streamController) => {
+          pulls += 1;
+          if (pulls === 1) {
+            streamController.enqueue(new Uint8Array([1]));
+            return;
+          }
+          markReadPending();
+          return pendingRead;
+        },
+      });
+      const loaded = await load(await bundleServeMainTemplate(), baseEnv(functionConfig(false)), {
+        fetch: async () => new Response("worker should not run"),
+      });
+      const controller = new AbortController();
+      const pending = loaded.options.handler(
+        new Request("http://localhost/missing", {
+          method: "POST",
+          body,
+          duplex: "half",
+          signal: controller.signal,
+        }),
+      );
+
+      await readPending;
+      controller.abort();
+
+      await expect(pending).resolves.toMatchObject({ status: 499 });
+    });
+
     it.each([
       ["an invalid token", "/hello", 401],
       ["an unknown function", "/missing", 404],

@@ -436,7 +436,7 @@ Deno.serve({
         // worker abandoned.
         const body = yield* Effect.acquireRelease(
           Effect.sync(() => req.body?.getReader()),
-          drainRequestBody,
+          (body) => Effect.interruptible(drainRequestBody(body)),
         );
         const url = new URL(req.url);
         const { pathname } = url;

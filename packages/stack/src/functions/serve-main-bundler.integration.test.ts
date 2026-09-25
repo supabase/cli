@@ -567,6 +567,43 @@ describe("stack-owned functions bootstrap", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
+    it.live("settles an aborted request while the abandoned body read is pending", () => {
+      const { promise: readPending, resolve: markReadPending } = Promise.withResolvers<void>();
+      const pendingRead = Promise.withResolvers<void>().promise;
+      const controller = new AbortController();
+      return Effect.gen(function* () {
+        let pulls = 0;
+        const body = new ReadableStream<Uint8Array>({
+          pull: (streamController) => {
+            pulls += 1;
+            if (pulls === 1) {
+              streamController.enqueue(new Uint8Array([1]));
+              return;
+            }
+            markReadPending();
+            return pendingRead;
+          },
+        });
+        const handler = yield* serveSandboxed('{"hello":{"verifyJWT":false}}', () => ({
+          fetch: () => Promise.resolve(new Response("rejected", { status: 400 })),
+        }));
+        const pending = handler(
+          new Request("http://127.0.0.1/missing", {
+            method: "POST",
+            body,
+            duplex: "half",
+            signal: controller.signal,
+          }),
+        );
+
+        yield* Effect.tryPromise(() => readPending);
+        controller.abort();
+
+        const response = yield* Effect.tryPromise(() => pending);
+        expect(response.status).toBe(499);
+      }).pipe(Effect.provide(NodeServices.layer));
+    });
+
     it.live.each([
       ["an invalid token", "/hello", 401],
       ["an unknown function", "/missing", 404],

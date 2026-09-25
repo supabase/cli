@@ -401,7 +401,7 @@ Deno.serve({
         // worker abandoned.
         const body = yield* Effect.acquireRelease(
           Effect.sync(() => request.body?.getReader()),
-          drainRequestBody,
+          (body) => Effect.interruptible(drainRequestBody(body)),
         );
         const { pathname } = new URL(request.url);
         if (pathname === "/_internal/health") return getResponse({ message: "ok" }, STATUS_CODE.OK);
