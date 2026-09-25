@@ -1,9 +1,18 @@
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Fiber, Layer, Option } from "effect";
+import {
+  Cause,
+  Config,
+  ConfigProvider,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+} from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -126,6 +135,8 @@ interface SetupOpts {
   // Swaps in the stateful Docker model (real `stop`/`cp`/`start`), required by the
   // shadow baseline cache tests.
   readonly statefulDocker?: boolean;
+  readonly dirs?: ReadonlyArray<string>;
+  readonly files?: Readonly<Record<string, string>>;
 }
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -152,7 +163,7 @@ function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolea
       Effect.gen(function* () {
         connectedDatabases.push(cfg.database);
         if (opts.neverConnectableShadow === true && cfg.port === SHADOW_PORT) {
-          return yield* Effect.fail(new DbConnectError({ message: "connection refused" }));
+          return yield* new DbConnectError({ message: "connection refused" });
         }
         const session: DbSession = {
           exec: (sql) =>
@@ -382,6 +393,20 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
+  const workdirFiles = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      for (const dir of opts.dirs ?? []) {
+        yield* fs.makeDirectory(path.join(workdir, dir), { recursive: true });
+      }
+      for (const [file, content] of Object.entries(opts.files ?? {})) {
+        yield* fs.makeDirectory(path.dirname(path.join(workdir, file)), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, file), content);
+      }
+    }),
+  ).pipe(Layer.provide(BunServices.layer));
+
   const baseLayer = Layer.mergeAll(
     unusedStackServices,
     // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
@@ -414,6 +439,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(DebugFlag, false),
     Layer.succeed(CliArgs, { args: [] }),
     mockRuntimeInfo({ platform: opts.platform ?? "linux" }),
+    workdirFiles,
   );
   // Merged last so its `FileSystem` overrides everything above (last-wins).
   const failWriteLayer =
@@ -479,6 +505,12 @@ const stderr = (out: ReturnType<typeof mockOutput>) =>
       .join(""),
   );
 
+const readFileText = (file: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return new TextDecoder("utf-8", { ignoreBOM: true }).decode(yield* fs.readFile(file));
+  });
+
 const tmp = useTempWorkdir();
 useShadowCacheDisabled();
 
@@ -533,6 +565,37 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("forwards SUPABASE_SSL_DEBUG=TRUE to the migra script as true", () => {
+    const s = setup(tmp.current, { diffSql: "create table players ();\n" });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags()).pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnvRecord(
+            { SUPABASE_SSL_DEBUG: "TRUE" },
+            { preserveEmptyStrings: true },
+          ),
+        ),
+      );
+      expect(s.edgeCalls).toHaveLength(1);
+      expect(s.edgeCalls[0]?.env["SUPABASE_SSL_DEBUG"]).toBe("true");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("omits SUPABASE_SSL_DEBUG from the migra script when it is set empty", () => {
+    const s = setup(tmp.current, { diffSql: "create table players ();\n" });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags()).pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnvRecord({ SUPABASE_SSL_DEBUG: "" }, { preserveEmptyStrings: true }),
+        ),
+      );
+      expect(s.edgeCalls).toHaveLength(1);
+      expect(s.edgeCalls[0]?.env).not.toHaveProperty("SUPABASE_SSL_DEBUG");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("diffs local with pgdelta when --use-pg-delta is set", () => {
     const s = setup(tmp.current, { diffSql: "create table p ();\n" });
     return Effect.gen(function* () {
@@ -566,24 +629,19 @@ describe("db diff", () => {
   });
 
   it.effect("pg-delta local diff ignores schema_paths and declarative files", () => {
-    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[db.migrations]",
-        'schema_paths = ["configured.sql"]',
-        "",
-        "[experimental.pgdelta]",
-        "enabled = true",
-        "",
-      ].join("\n"),
-    );
-    writeFileSync(join(tmp.current, "supabase", "configured.sql"), "create table configured ();\n");
-    writeFileSync(
-      join(tmp.current, "supabase", "schemas", "ignored.sql"),
-      "create table ignored ();\n",
-    );
     const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": [
+          "[db.migrations]",
+          'schema_paths = ["configured.sql"]',
+          "",
+          "[experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+        "supabase/configured.sql": "create table configured ();\n",
+        "supabase/schemas/ignored.sql": "create table ignored ();\n",
+      },
       diffSql: "create table result ();\n",
     });
     return Effect.gen(function* () {
@@ -610,11 +668,10 @@ describe("db diff", () => {
 
   // Migra still routes declarative files through the `contrib_regression` override,
   // so schema_paths still shapes its output — only pg-delta prints this warning.
-  const writeSchemaPathsConfig = (pgDeltaEnabled: boolean) => {
-    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
+  const writeSchemaPathsConfig = (pgDeltaEnabled: boolean) => ({
+    dirs: ["supabase/database"],
+    files: {
+      "supabase/config.toml": [
         "[db.migrations]",
         'schema_paths = ["configured.sql"]',
         "",
@@ -622,13 +679,13 @@ describe("db diff", () => {
         `enabled = ${pgDeltaEnabled}`,
         "",
       ].join("\n"),
-    );
-    writeFileSync(join(tmp.current, "supabase", "configured.sql"), "create table configured ();\n");
-  };
+      "supabase/configured.sql": "create table configured ();\n",
+    },
+  });
 
   it.effect("migra local diff does not print the schema_paths transition warning", () => {
-    writeSchemaPathsConfig(false);
     const s = setup(tmp.current, {
+      ...writeSchemaPathsConfig(false),
       diffSql: "create table result ();\n",
     });
     return Effect.gen(function* () {
@@ -638,9 +695,12 @@ describe("db diff", () => {
   });
 
   it.effect("PG14: provisions a shadow via the SQL-exec init path (no PG15+ one-shot jobs)", () => {
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 14\n");
-    const s = setup(tmp.current, { diffSql: "create table pg14 ();\n" });
+    const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": "[db]\nmajor_version = 14\n",
+      },
+      diffSql: "create table pg14 ();\n",
+    });
     return Effect.gen(function* () {
       yield* dbDiff(flags());
       expect(stdout(s.out)).toBe("create table pg14 ();\n\n");
@@ -665,22 +725,20 @@ describe("db diff", () => {
   );
   it.effect("a linked [remotes.<ref>] block enabling pg-delta selects the pg-delta engine", () => {
     // Base config disables pg-delta; the remote override enables it.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[experimental.pgdelta]",
-        "enabled = false",
-        "",
-        "[remotes.staging]",
-        'project_id = "abcdefghijklmnopqrst"',
-        "",
-        "[remotes.staging.experimental.pgdelta]",
-        "enabled = true",
-        "",
-      ].join("\n"),
-    );
     const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": [
+          "[experimental.pgdelta]",
+          "enabled = false",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      },
       isLocal: false,
       linkedRef: "abcdefghijklmnopqrst",
       diffSql: "alter table x;\n",
@@ -698,22 +756,20 @@ describe("db diff", () => {
       // The remote's own container spec must reflect the `[remotes.<ref>]` override too, not
       // just the config read for pg-delta/schema_paths; `major_version` is used as a probe
       // since PG <= 14 is the only branch that emits `--tmpfs` on `docker create`.
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        [
-          "[db]",
-          "major_version = 17",
-          "",
-          "[remotes.staging]",
-          'project_id = "abcdefghijklmnopqrst"',
-          "",
-          "[remotes.staging.db]",
-          "major_version = 14",
-          "",
-        ].join("\n"),
-      );
       const s = setup(tmp.current, {
+        files: {
+          "supabase/config.toml": [
+            "[db]",
+            "major_version = 17",
+            "",
+            "[remotes.staging]",
+            'project_id = "abcdefghijklmnopqrst"',
+            "",
+            "[remotes.staging.db]",
+            "major_version = 14",
+            "",
+          ].join("\n"),
+        },
         isLocal: false,
         linkedRef: "abcdefghijklmnopqrst",
         diffSql: "alter table x;\n",
@@ -728,22 +784,22 @@ describe("db diff", () => {
   );
 
   it.effect("the base config (default local target) does not merge a remote block", () => {
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[experimental.pgdelta]",
-        "enabled = false",
-        "",
-        "[remotes.staging]",
-        'project_id = "abcdefghijklmnopqrst"',
-        "",
-        "[remotes.staging.experimental.pgdelta]",
-        "enabled = true",
-        "",
-      ].join("\n"),
-    );
-    const s = setup(tmp.current, { diffSql: "create table players ();\n" });
+    const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": [
+          "[experimental.pgdelta]",
+          "enabled = false",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      },
+      diffSql: "create table players ();\n",
+    });
     return Effect.gen(function* () {
       yield* dbDiff(flags());
       expect(s.edgeCalls[0]?.script).not.toContain("renderPlanFiles");
@@ -801,9 +857,12 @@ describe("db diff", () => {
         dbDiff(flags({ local: Option.some(true), projectRef: Option.some(FLAG_REF) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      );
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
       expect(s.resolverCalls).toEqual([]);
       expect(s.cache.cached).toBe(false);
     }).pipe(Effect.provide(s.layer));
@@ -814,22 +873,23 @@ describe("db diff", () => {
     () => {
       // `[remotes.staging]`'s `project_id` matches the flag ref, not `opts.linkedRef`
       // (left unset), so the override only applies if the flag resolved it.
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        [
-          "[db]",
-          "major_version = 17",
-          "",
-          "[remotes.staging]",
-          `project_id = "flagflagflagflagflag"`,
-          "",
-          "[remotes.staging.db]",
-          "major_version = 14",
-          "",
-        ].join("\n"),
-      );
-      const s = setup(tmp.current, { isLocal: false, diffSql: "create table m ();\n" });
+      const s = setup(tmp.current, {
+        files: {
+          "supabase/config.toml": [
+            "[db]",
+            "major_version = 17",
+            "",
+            "[remotes.staging]",
+            `project_id = "flagflagflagflagflag"`,
+            "",
+            "[remotes.staging.db]",
+            "major_version = 14",
+            "",
+          ].join("\n"),
+        },
+        isLocal: false,
+        diffSql: "create table m ();\n",
+      });
       return Effect.gen(function* () {
         yield* dbDiff(
           flags({
@@ -853,22 +913,23 @@ describe("db diff", () => {
     () => {
       // Same `[remotes.staging]` fixture as the `--from linked` case above, but here a
       // changed `--linked` (not a literal "linked" ref) resolves the flag ref instead.
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        [
-          "[db]",
-          "major_version = 17",
-          "",
-          "[remotes.staging]",
-          `project_id = "flagflagflagflagflag"`,
-          "",
-          "[remotes.staging.db]",
-          "major_version = 14",
-          "",
-        ].join("\n"),
-      );
-      const s = setup(tmp.current, { isLocal: false, diffSql: "create table m ();\n" });
+      const s = setup(tmp.current, {
+        files: {
+          "supabase/config.toml": [
+            "[db]",
+            "major_version = 17",
+            "",
+            "[remotes.staging]",
+            `project_id = "flagflagflagflagflag"`,
+            "",
+            "[remotes.staging.db]",
+            "major_version = 14",
+            "",
+          ].join("\n"),
+        },
+        isLocal: false,
+        diffSql: "create table m ();\n",
+      });
       return Effect.gen(function* () {
         yield* dbDiff(
           flags({
@@ -904,9 +965,12 @@ describe("db diff", () => {
           ),
         );
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked, or --from/--to linked, in explicit mode",
-        );
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain(
+            "--project-ref only applies when targeting the linked project; use it with --linked, or --from/--to linked, in explicit mode",
+          );
+        }
         expect(s.resolverCalls).toEqual([]);
       }).pipe(Effect.provide(s.layer));
     },
@@ -917,12 +981,10 @@ describe("db diff", () => {
     () => {
       // `db.migrations.enabled = "notabool"` fails config-load after the ref is
       // already cached.
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        ["[db.migrations]", 'enabled = "notabool"', ""].join("\n"),
-      );
       const s = setup(tmp.current, {
+        files: {
+          "supabase/config.toml": ["[db.migrations]", 'enabled = "notabool"', ""].join("\n"),
+        },
         isLocal: false,
         linkedRef: "abcdefghijklmnopqrst",
         diffSql: "alter table x;\n",
@@ -942,9 +1004,12 @@ describe("db diff", () => {
       // A declarative schema file makes `loadDeclaredSchemas` non-empty, redirecting
       // the diff target to a second (contrib_regression) database on the same shadow
       // container.
-      mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", "schemas", "public.sql"), "select 1;\n");
-      const s = setup(tmp.current, { diffSql: "create table o ();\n" });
+      const s = setup(tmp.current, {
+        files: {
+          "supabase/schemas/public.sql": "select 1;\n",
+        },
+        diffSql: "create table o ();\n",
+      });
       return Effect.gen(function* () {
         yield* dbDiff(flags());
         expect(stdout(s.out)).toBe("create table o ();\n\n");
@@ -990,7 +1055,10 @@ describe("db diff", () => {
         dbDiff(flags({ usePgSchema: Option.some(true), projectRef: Option.some(FLAG_REF) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("--project-ref is not supported with --use-pg-schema");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("--project-ref is not supported with --use-pg-schema");
+      }
       expect(s.proxyCalls).toEqual([]);
       expect(s.proxyCaptureCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
@@ -1023,22 +1091,20 @@ describe("db diff", () => {
     () => {
       // pgadmin shares the same target resolve as migra/pg-delta, so it validates the
       // remote-merged config and succeeds.
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        [
-          "[db]",
-          "major_version = 16",
-          "",
-          "[remotes.staging]",
-          'project_id = "abcdefghijklmnopqrst"',
-          "",
-          "[remotes.staging.db]",
-          "major_version = 15",
-          "",
-        ].join("\n"),
-      );
       const s = setup(tmp.current, {
+        files: {
+          "supabase/config.toml": [
+            "[db]",
+            "major_version = 16",
+            "",
+            "[remotes.staging]",
+            'project_id = "abcdefghijklmnopqrst"',
+            "",
+            "[remotes.staging.db]",
+            "major_version = 15",
+            "",
+          ].join("\n"),
+        },
         isLocal: false,
         linkedRef: "abcdefghijklmnopqrst",
         pgadminStdout: [JSON.stringify([pgadminEntry()])],
@@ -1057,18 +1123,16 @@ describe("db diff", () => {
     () => {
       // The preflight probe's project id comes from the config after the linked
       // remote merge, not the base config's own `project_id`.
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        [
-          'project_id = "test"',
-          "",
-          "[remotes.staging]",
-          'project_id = "abcdefghijklmnopqrst"',
-          "",
-        ].join("\n"),
-      );
       const s = setup(tmp.current, {
+        files: {
+          "supabase/config.toml": [
+            'project_id = "test"',
+            "",
+            "[remotes.staging]",
+            'project_id = "abcdefghijklmnopqrst"',
+            "",
+          ].join("\n"),
+        },
         isLocal: false,
         linkedRef: "abcdefghijklmnopqrst",
         pgadminStdout: [JSON.stringify([pgadminEntry()])],
@@ -1089,9 +1153,11 @@ describe("db diff", () => {
   it.effect(
     "--use-pgadmin fails on an invalid base config when no [remotes.<ref>] override exists (parity with the native local path)",
     () => {
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 16\n");
-      const s = setup(tmp.current);
+      const s = setup(tmp.current, {
+        files: {
+          "supabase/config.toml": "[db]\nmajor_version = 16\n",
+        },
+      });
       return Effect.gen(function* () {
         const exit = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -1102,9 +1168,12 @@ describe("db diff", () => {
   );
 
   it.effect("a native local diff still validates the base config", () => {
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 16\n");
-    const s = setup(tmp.current, { diffSql: "create table x ();\n" });
+    const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": "[db]\nmajor_version = 16\n",
+      },
+      diffSql: "create table x ();\n",
+    });
     return Effect.gen(function* () {
       const exit = yield* dbDiff(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -1117,20 +1186,20 @@ describe("db diff", () => {
       // `api.tls`'s cert/key files are only validated by `buildLocalDbContainerInputs`,
       // which must run strictly before `resolver.resolve()` — `resolverCalls` staying
       // empty here proves validation ran first, not just that the command failed.
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        [
-          "[api]",
-          "enabled = true",
-          "[api.tls]",
-          "enabled = true",
-          'cert_path = "missing-cert.pem"',
-          'key_path = "missing-key.pem"',
-          "",
-        ].join("\n"),
-      );
-      const s = setup(tmp.current, { diffSql: "create table x ();\n" });
+      const s = setup(tmp.current, {
+        files: {
+          "supabase/config.toml": [
+            "[api]",
+            "enabled = true",
+            "[api.tls]",
+            "enabled = true",
+            'cert_path = "missing-cert.pem"',
+            'key_path = "missing-key.pem"',
+            "",
+          ].join("\n"),
+        },
+        diffSql: "create table x ();\n",
+      });
       return Effect.gen(function* () {
         const error = yield* dbDiff(flags()).pipe(Effect.flip);
         expect(error).toBeInstanceOf(DbConfigLoadError);
@@ -1246,7 +1315,8 @@ describe("db diff", () => {
         const data = success?.data as { file: string; files: ReadonlyArray<string> };
         expect(data.file).toMatch(/\d{14}_pgadmin_diff\.sql$/);
         expect(data.files).toEqual([data.file]);
-        expect(existsSync(data.file)).toBe(true);
+        const fs = yield* FileSystem.FileSystem;
+        expect(yield* fs.exists(data.file)).toBe(true);
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -1279,23 +1349,18 @@ describe("db diff", () => {
   });
 
   it.effect("writes live-only SQL with --file even when declarative targets are configured", () => {
-    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[db.migrations]",
-        'schema_paths = ["schemas/*.sql"]',
-        "",
-        "[experimental.pgdelta]",
-        "enabled = true",
-        "",
-      ].join("\n"),
-    );
-    writeFileSync(
-      join(tmp.current, "supabase", "schemas", "declarative.sql"),
-      "create table declarative_only ();\n",
-    );
     const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": [
+          "[db.migrations]",
+          'schema_paths = ["schemas/*.sql"]',
+          "",
+          "[experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+        "supabase/schemas/declarative.sql": "create table declarative_only ();\n",
+      },
       diffSql: "create table live_only ();\n",
     });
     return Effect.gen(function* () {
@@ -1305,21 +1370,21 @@ describe("db diff", () => {
       expect(stderr(s.out)).toContain("db diff -f uses supabase/migrations as its baseline");
       expect(stderr(s.out)).toContain("-f names the migration; it does not filter objects");
       expect(stderr(s.out)).toContain("WARNING: The diff tool is not foolproof");
-      const dir = join(tmp.current, "supabase", "migrations");
-      const files = readdirSync(dir);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = path.join(tmp.current, "supabase", "migrations");
+      const files = yield* fs.readDirectory(dir);
       expect(files).toHaveLength(1);
       expect(files[0]).toMatch(/^\d{14}_my_diff\.sql$/);
-      expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("create table live_only ();\n");
+      expect(yield* readFileText(path.join(dir, files[0]!))).toBe("create table live_only ();\n");
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("includes the ignored declarative baseline advisory in JSON output", () => {
-    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "schemas", "items.sql"),
-      "create table items ();\n",
-    );
     const s = setup(tmp.current, {
+      files: {
+        "supabase/schemas/items.sql": "create table items ();\n",
+      },
       format: "json",
       diffSql: "create table dogfood_note ();\n",
     });
@@ -1346,18 +1411,16 @@ describe("db diff", () => {
   });
 
   it.effect("ignores declarative inspection errors without changing diff success", () => {
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[experimental.pgdelta]",
-        "enabled = true",
-        'declarative_schema_path = "not-a-directory.sql"',
-        "",
-      ].join("\n"),
-    );
-    writeFileSync(join(tmp.current, "supabase", "not-a-directory.sql"), "select 1;\n");
     const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": [
+          "[experimental.pgdelta]",
+          "enabled = true",
+          'declarative_schema_path = "not-a-directory.sql"',
+          "",
+        ].join("\n"),
+        "supabase/not-a-directory.sql": "select 1;\n",
+      },
       format: "json",
       diffSql: "create table dogfood_note ();\n",
     });
@@ -1381,12 +1444,16 @@ describe("db diff", () => {
     });
     return Effect.gen(function* () {
       yield* dbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
-      const dir = join(tmp.current, "supabase", "migrations");
-      const files = readdirSync(dir).sort();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = path.join(tmp.current, "supabase", "migrations");
+      const files = (yield* fs.readDirectory(dir)).sort();
       expect(files).toHaveLength(2);
       expect(files[0]).toBe("19700101000000_my_diff_1.sql");
       expect(files[1]).toBe("19700101000001_my_diff_2.sql");
-      expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("alter type mood add value 'ok';\n");
+      expect(yield* readFileText(path.join(dir, files[0]!))).toBe(
+        "alter type mood add value 'ok';\n",
+      );
       const success = s.out.messages.find((m) => m.type === "success");
       const data = success?.data as { file: string; files: ReadonlyArray<string> };
       expect(data.files).toHaveLength(2);
@@ -1398,11 +1465,13 @@ describe("db diff", () => {
     const s = setup(tmp.current, { diffSql: "create table g ();\n" });
     return Effect.gen(function* () {
       yield* dbDiff(flags({ file: Option.some("snapshots/remote") }));
-      const migrationsRoot = join(tmp.current, "supabase", "migrations");
-      const dirs = readdirSync(migrationsRoot);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const migrationsRoot = path.join(tmp.current, "supabase", "migrations");
+      const dirs = yield* fs.readDirectory(migrationsRoot);
       expect(dirs).toHaveLength(1);
       expect(dirs[0]).toMatch(/^\d{14}_snapshots$/);
-      expect(readdirSync(join(migrationsRoot, dirs[0]!))).toEqual(["remote.sql"]);
+      expect(yield* fs.readDirectory(path.join(migrationsRoot, dirs[0]!))).toEqual(["remote.sql"]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1486,7 +1555,9 @@ describe("db diff", () => {
           output: Option.some("out.sql"),
         }),
       );
-      expect(existsSync(join(tmp.current, "out.sql"))).toBe(true);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      expect(yield* fs.exists(path.join(tmp.current, "out.sql"))).toBe(true);
       expect(stdout(s.out)).toBe("");
     }).pipe(Effect.provide(s.layer));
   });
@@ -1513,8 +1584,12 @@ describe("db diff", () => {
       return Effect.gen(function* () {
         yield* dbDiff(flags({ file: Option.some("") }));
         expect(stdout(s.out)).toContain("create table y ();");
-        const migrationsDir = join(tmp.current, "supabase", "migrations");
-        expect(existsSync(migrationsDir) ? readdirSync(migrationsDir) : []).toEqual([]);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const migrationsDir = path.join(tmp.current, "supabase", "migrations");
+        expect(
+          (yield* fs.exists(migrationsDir)) ? yield* fs.readDirectory(migrationsDir) : [],
+        ).toEqual([]);
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -1545,22 +1620,20 @@ describe("db diff", () => {
 
   it.effect("explicit --from linked --to migrations passes the linked ref to the strategy", () => {
     // Linked resolves first, so the later migrations catalog uses the remote-merged config.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[db]",
-        "major_version = 17",
-        "",
-        "[remotes.staging]",
-        'project_id = "abcdefghijklmnopqrst"',
-        "",
-        "[remotes.staging.db]",
-        "major_version = 14",
-        "",
-      ].join("\n"),
-    );
     const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": [
+          "[db]",
+          "major_version = 17",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.db]",
+          "major_version = 14",
+          "",
+        ].join("\n"),
+      },
       isLocal: false,
       linkedRef: "abcdefghijklmnopqrst",
       diffSql: "create table m ();\n",
@@ -1580,27 +1653,25 @@ describe("db diff", () => {
   it.effect("explicit --from migrations --to linked passes base config to the strategy", () => {
     // Migrations resolves before linked here, so the catalog must use base config
     // (no ref forwarded yet).
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[db]",
-        "major_version = 17",
-        "",
-        "[remotes.staging]",
-        'project_id = "abcdefghijklmnopqrst"',
-        "",
-        "[remotes.staging.db]",
-        "major_version = 14",
-        "",
-        // Set only under the remote block, so it would flip to true if the
-        // linked-merged config leaked in.
-        "[remotes.staging.experimental.webhooks]",
-        "enabled = true",
-        "",
-      ].join("\n"),
-    );
     const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": [
+          "[db]",
+          "major_version = 17",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.db]",
+          "major_version = 14",
+          "",
+          // Set only under the remote block, so it would flip to true if the
+          // linked-merged config leaked in.
+          "[remotes.staging.experimental.webhooks]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      },
       isLocal: false,
       linkedRef: "abcdefghijklmnopqrst",
       diffSql: "create table m ();\n",
@@ -1616,22 +1687,20 @@ describe("db diff", () => {
   it.effect("explicit --from local --to migrations --linked seeds the merged config", () => {
     // A changed --linked remote-merges the config before the explicit refs resolve,
     // even though neither explicit ref is itself `linked`.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[db]",
-        "major_version = 17",
-        "",
-        "[remotes.staging]",
-        'project_id = "abcdefghijklmnopqrst"',
-        "",
-        "[remotes.staging.db]",
-        "major_version = 14",
-        "",
-      ].join("\n"),
-    );
     const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": [
+          "[db]",
+          "major_version = 17",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.db]",
+          "major_version = 14",
+          "",
+        ].join("\n"),
+      },
       isLocal: false,
       linkedRef: "abcdefghijklmnopqrst",
       diffSql: "create table m ();\n",
@@ -1654,22 +1723,20 @@ describe("db diff", () => {
   it.effect("explicit --from local --to migrations --linked validates the merged config", () => {
     // The base config read is deferred until after the linked preflight, so a base
     // config only valid after the remote merge doesn't fail early.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[db]",
-        "major_version = 16",
-        "",
-        "[remotes.staging]",
-        'project_id = "abcdefghijklmnopqrst"',
-        "",
-        "[remotes.staging.db]",
-        "major_version = 15",
-        "",
-      ].join("\n"),
-    );
     const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": [
+          "[db]",
+          "major_version = 16",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.db]",
+          "major_version = 15",
+          "",
+        ].join("\n"),
+      },
       isLocal: false,
       linkedRef: "abcdefghijklmnopqrst",
       diffSql: "create table m ();\n",
@@ -1907,8 +1974,12 @@ describe("db diff", () => {
           expect(stdout(s.out)).toBe(
             "Creating shadow database...\nDiffing local database with current migrations...\n",
           );
-          const migrationsDir = join(tmp.current, "supabase", "migrations");
-          expect(existsSync(migrationsDir) ? readdirSync(migrationsDir) : []).toEqual([]);
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const migrationsDir = path.join(tmp.current, "supabase", "migrations");
+          expect(
+            (yield* fs.exists(migrationsDir)) ? yield* fs.readDirectory(migrationsDir) : [],
+          ).toEqual([]);
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -1932,11 +2003,13 @@ describe("db diff", () => {
         yield* dbDiff(flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }));
         expect(stdout(s.out)).not.toContain("ALTER TABLE");
         expect(stderr(s.out)).toContain("WARNING: The diff tool is not foolproof");
-        const dir = join(tmp.current, "supabase", "migrations");
-        const files = readdirSync(dir);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = path.join(tmp.current, "supabase", "migrations");
+        const files = yield* fs.readDirectory(dir);
         expect(files).toHaveLength(1);
         expect(files[0]).toMatch(/^\d{14}_pgadmin_diff\.sql$/);
-        expect(readFileSync(join(dir, files[0]!), "utf8")).toBe(PGADMIN_DIFF_SQL);
+        expect(yield* readFileText(path.join(dir, files[0]!))).toBe(PGADMIN_DIFF_SQL);
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -1946,11 +2019,15 @@ describe("db diff", () => {
         yield* dbDiff(
           flags({ usePgAdmin: Option.some(true), file: Option.some("snapshots/remote") }),
         );
-        const migrationsRoot = join(tmp.current, "supabase", "migrations");
-        const dirs = readdirSync(migrationsRoot);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const migrationsRoot = path.join(tmp.current, "supabase", "migrations");
+        const dirs = yield* fs.readDirectory(migrationsRoot);
         expect(dirs).toHaveLength(1);
         expect(dirs[0]).toMatch(/^\d{14}_snapshots$/);
-        expect(readdirSync(join(migrationsRoot, dirs[0]!))).toEqual(["remote.sql"]);
+        expect(yield* fs.readDirectory(path.join(migrationsRoot, dirs[0]!))).toEqual([
+          "remote.sql",
+        ]);
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -1961,8 +2038,12 @@ describe("db diff", () => {
         return Effect.gen(function* () {
           yield* dbDiff(flags({ usePgAdmin: Option.some(true), file: Option.some("") }));
           expect(stdout(s.out)).toContain("ALTER TABLE test;");
-          const migrationsDir = join(tmp.current, "supabase", "migrations");
-          expect(existsSync(migrationsDir) ? readdirSync(migrationsDir) : []).toEqual([]);
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const migrationsDir = path.join(tmp.current, "supabase", "migrations");
+          expect(
+            (yield* fs.exists(migrationsDir)) ? yield* fs.readDirectory(migrationsDir) : [],
+          ).toEqual([]);
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -1986,11 +2067,12 @@ describe("db diff", () => {
       "invokes the differ with the exact argv, image, network, labels, and empty env/binds (no --schema)",
       () => {
         const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
-        // `CommandSettings.projectId` only feeds pg-delta's project id; the differ's
-        // network/labels come from `loadLocalProjectContext`'s own resolution, falling
-        // back to the workdir basename.
-        const projectId = basename(tmp.current);
         return Effect.gen(function* () {
+          const path = yield* Path.Path;
+          // `CommandSettings.projectId` only feeds pg-delta's project id; the differ's
+          // network/labels come from `loadLocalProjectContext`'s own resolution, falling
+          // back to the workdir basename.
+          const projectId = path.basename(tmp.current);
           yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
           expect(s.differCalls).toHaveLength(1);
           const call = s.differCalls[0] as DockerRunOpts;
@@ -2044,12 +2126,12 @@ describe("db diff", () => {
     it.effect(
       "hardcodes the shadow target's postgres:postgres credentials, ignoring a configured [db] password (Go pgadmin.go quirk)",
       () => {
-        mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-        writeFileSync(
-          join(tmp.current, "supabase", "config.toml"),
-          '[db]\npassword = "distinctive-pw"\n',
-        );
-        const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
+        const s = setup(tmp.current, {
+          files: {
+            "supabase/config.toml": '[db]\npassword = "distinctive-pw"\n',
+          },
+          pgadminStdout: [JSON.stringify([pgadminEntry()])],
+        });
         return Effect.gen(function* () {
           yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
           const call = s.differCalls[0] as DockerRunOpts;
@@ -2064,27 +2146,30 @@ describe("db diff", () => {
       () => {
         // The project environment is passed to the differ explicitly, so a dotenv-only
         // registry override reaches image resolution without mutating the ambient environment.
-        const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-        delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-        mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-        writeFileSync(
-          join(tmp.current, "supabase", ".env"),
-          "SUPABASE_INTERNAL_IMAGE_REGISTRY=registry.example.com\n",
-        );
-        const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
+        const s = setup(tmp.current, {
+          files: {
+            "supabase/.env": "SUPABASE_INTERNAL_IMAGE_REGISTRY=registry.example.com\n",
+          },
+          pgadminStdout: [JSON.stringify([pgadminEntry()])],
+        });
+        const ambientRegistry = () =>
+          Config.option(Config.string("SUPABASE_INTERNAL_IMAGE_REGISTRY")).pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
+            ),
+          );
         return Effect.gen(function* () {
-          yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
+          const ambientBefore = yield* ambientRegistry();
+          yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
+            ),
+          );
           expect(s.differRegistryEnvAtCall).toEqual(["registry.example.com"]);
-          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-              else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
-            }),
-          ),
-          Effect.provide(s.layer),
-        );
+          expect(yield* ambientRegistry()).toEqual(ambientBefore);
+        }).pipe(Effect.provide(s.layer));
       },
     );
 
@@ -2421,52 +2506,55 @@ describe("db diff", () => {
 
   describe("shadow baseline cache", () => {
     /** The `.tar` files published under the per-test `SUPABASE_HOME` this block pins. */
-    const publishedTars = () => {
-      const dir = join(tmp.current, "_supabase_home", "cache", "shadow-baseline");
-      return existsSync(dir) ? readdirSync(dir).filter((entry) => entry.endsWith(".tar")) : [];
-    };
+    const publishedTars = () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = path.join(tmp.current, "_supabase_home", "cache", "shadow-baseline");
+        return (yield* fs.exists(dir))
+          ? (yield* fs.readDirectory(dir)).filter((entry) => entry.endsWith(".tar"))
+          : [];
+      });
 
     /**
      * Runs `db diff` with the shadow baseline cache on and artifacts under the workdir,
      * against the stateful Docker model the export/restore round trip needs.
      */
-    const runCached = (engine: "migra" | "pg-delta") => {
-      const s = setup(tmp.current, {
-        statefulDocker: true,
-        diffSql: "create table t ();\n",
+    const runCached = (engine: "migra" | "pg-delta") =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const s = setup(tmp.current, {
+          files: { "supabase/config.toml": "[experimental.pgdelta]\nenabled = true\n" },
+          statefulDocker: true,
+          diffSql: "create table t ();\n",
+        });
+        return yield* withEnvVar(
+          "SUPABASE_HOME",
+          path.join(tmp.current, "_supabase_home"),
+          withEnvVar(
+            "SUPABASE_SHADOW_CACHE",
+            "1",
+            dbDiff(
+              flags(
+                engine === "pg-delta"
+                  ? { usePgDelta: Option.some(true) }
+                  : { useMigra: Option.some(true) },
+              ),
+            ).pipe(Effect.provide(s.layer)),
+          ),
+        ).pipe(Effect.as(s));
       });
-      return withEnvVar(
-        "SUPABASE_HOME",
-        join(tmp.current, "_supabase_home"),
-        withEnvVar(
-          "SUPABASE_SHADOW_CACHE",
-          "1",
-          dbDiff(
-            flags(
-              engine === "pg-delta"
-                ? { usePgDelta: Option.some(true) }
-                : { useMigra: Option.some(true) },
-            ),
-          ).pipe(Effect.provide(s.layer)),
-        ),
-      ).pipe(Effect.as(s));
-    };
 
     // A migra baseline and a pg-delta baseline must not key to the same cache tar and
     // silently restore each other's cluster; `shadow-cache.integration.test.ts` covers
     // the cache's own half, this covers the call site.
     it.live("a migra-engine baseline is never restored into a pg-delta run", () => {
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        "[experimental.pgdelta]\nenabled = true\n",
-      );
       return Effect.gen(function* () {
         // Migra's migrate path forces `pg_net` on regardless of config, and publishes
         // that baseline.
         const migraRun = yield* runCached("migra");
         expect(migraRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
-        const migraTars = publishedTars();
+        const migraTars = yield* publishedTars();
         expect(migraTars).toHaveLength(1);
 
         // pg-delta follows the config (webhooks are off here), so it must cold-provision
@@ -2474,9 +2562,9 @@ describe("db diff", () => {
         const pgDeltaRun = yield* runCached("pg-delta");
         expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
         expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
-        expect(publishedTars()).toHaveLength(2);
-        expect(publishedTars()).toEqual(expect.arrayContaining(migraTars));
-      });
+        expect(yield* publishedTars()).toHaveLength(2);
+        expect(yield* publishedTars()).toEqual(expect.arrayContaining(migraTars));
+      }).pipe(Effect.provide(BunServices.layer));
     });
   });
 });

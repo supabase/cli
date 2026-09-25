@@ -13,6 +13,7 @@
     "!apps/cli/src/commands/completion/**",
     "!apps/cli/src/commands/config/**",
     "!apps/cli/src/commands/db/advisors/**",
+    "!apps/cli/src/commands/db/diff/**",
     "!apps/cli/src/commands/db/dump/**",
     "!apps/cli/src/commands/db/lint/**",
     "!apps/cli/src/commands/db/push/**",
