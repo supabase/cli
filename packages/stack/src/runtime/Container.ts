@@ -9,6 +9,7 @@ import {
   Fiber,
   Option,
   Path,
+  PlatformError,
   Ref,
   Schedule,
   Schema,
@@ -87,9 +88,16 @@ const errorFor = (operation: string, cause: unknown) =>
 const rateLimited = (error: ContainerError) =>
   /toomanyrequests|too many requests|rate limit|rate exceeded/iu.test(error.message);
 
-/** Matches the engine CLIs' reports of a daemon that is not listening, not of one that rejects the caller. */
+/**
+ * Matches an engine CLI that is missing or reports a daemon that is not listening, not one that
+ * rejects the caller. On Windows only the daemon-down forms of `error during connect` match, so
+ * TLS and authentication failures behind that wrapper stay distinct.
+ */
 const engineUnreachable = (error: ContainerError) =>
-  /cannot connect to (?:the docker daemon|podman)|unable to connect to podman|connection refused/iu.test(
+  (error.cause instanceof PlatformError.PlatformError &&
+    error.cause.reason._tag === "NotFound" &&
+    error.cause.reason.method === "spawn") ||
+  /cannot connect to (?:the docker daemon|podman)|unable to connect to podman|connection refused|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)/iu.test(
     error.message,
   );
 

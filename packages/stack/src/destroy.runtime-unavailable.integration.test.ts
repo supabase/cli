@@ -72,6 +72,59 @@ it.live(
     }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
+it.live("removes a stack offline when Windows reports its Docker daemon pipe is missing", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-windows-" });
+    yield* shimDocker(
+      root,
+      `#!/bin/sh\necho 'error during connect: Get "http://%2F%2F.%2Fpipe%2FdockerDesktopLinuxEngine/v1.47/containers/json": open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified.' >&2\nexit 1\n`,
+    );
+    const stateRoot = `${root}/state`;
+    const stack = yield* create({
+      projectRoot: root,
+      stateRoot,
+      cacheRoot: `${root}/cache`,
+      runtime: "docker",
+    });
+
+    const result = yield* stack.destroy;
+
+    expect(result.runtimeCleanup).toBe("skipped");
+    expect(yield* discover({ stateRoot })).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("removes a stack offline when its engine CLI is not installed", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-no-cli-" });
+    const stateRoot = `${root}/state`;
+    const stack = yield* create({
+      projectRoot: root,
+      stateRoot,
+      cacheRoot: `${root}/cache`,
+      runtime: "docker",
+    });
+    yield* fs.makeDirectory(`${root}/empty-bin`);
+    // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
+    const originalPath = process.env.PATH;
+    // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
+    process.env.PATH = `${root}/empty-bin`;
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
+        process.env.PATH = originalPath;
+      }),
+    );
+
+    const result = yield* stack.destroy;
+
+    expect(result.runtimeCleanup).toBe("skipped");
+    expect(yield* discover({ stateRoot })).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 it.live("keeps a stack registered when its container engine rejects the listing", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

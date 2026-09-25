@@ -33,7 +33,7 @@ import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
-import { StackApi, StackTargetResolver } from "../stack.shared.ts";
+import { StackApi, stackApiLayer, StackTargetResolver } from "../stack.shared.ts";
 import { stackStart } from "./start.handler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 
@@ -796,31 +796,48 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("prints no stop diagnostic when creating a new stack fails", () =>
+  it.live("leaves no stack registered when a new stack's owner cannot reach Docker", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-create-failure-" });
       yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
       yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "create-failure"\n');
-      const fixture = fakeStack();
+      yield* fs.makeDirectory(`${root}/bin`);
+      yield* fs.writeFileString(
+        `${root}/bin/docker`,
+        "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///shim/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
+      );
+      yield* fs.chmod(`${root}/bin/docker`, 0o755);
+      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
+      const originalPath = process.env.PATH;
+      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
+      process.env.PATH = `${root}/bin:${originalPath ?? ""}`;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
+          process.env.PATH = originalPath;
+        }),
+      );
       const output = mockOutput();
-      const base = layers(root, fixture, output, false);
-      const api = Layer.succeed(StackApi, {
-        create: () =>
-          Effect.fail(new StackError({ operation: "create", message: "Docker is unavailable" })),
-        open: () => Effect.succeed(fixture.stack),
-        discover: () => Effect.succeed([]),
-        resolveIdentity: () => Effect.die("identity not used"),
+      const target = Layer.succeed(StackTargetResolver, {
+        resolve: () =>
+          Effect.succeed({ projectRoot: root, runtime: "docker" as const, hostRunning: false }),
       });
+      const api = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+
       const error = yield* stackStart(flags()).pipe(
         Effect.flip,
-        Effect.provide(Layer.merge(base, api)),
+        Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
       );
-      expect(error.message).toBe("Docker is unavailable");
+      expect(error.message).toContain("Cannot connect to the Docker daemon");
       expect(output.stderrText).not.toContain("Failed to stop");
-      expect(fixture.hostStopped).toBe(0);
-      expect(fixture.hostDestroyed).toBe(0);
-    }).pipe(Effect.provide(BunServices.layer)),
+
+      const stacks = yield* StackApi.pipe(
+        Effect.flatMap((stackApi) => stackApi.discover({ stateRoot: `${root}/.supabase/stacks` })),
+        Effect.provide(api),
+      );
+      expect(stacks).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   it.live(

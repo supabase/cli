@@ -13,7 +13,9 @@ import { stackDestroy } from "./destroy.handler.ts";
 
 const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
 
-const fixture = Effect.fn("StackDestroyRuntimeUnavailableTest.fixture")(function* () {
+const fixture = Effect.fn("StackDestroyRuntimeUnavailableTest.fixture")(function* (
+  format: "text" | "json",
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-runtime-" });
@@ -39,7 +41,7 @@ const fixture = Effect.fn("StackDestroyRuntimeUnavailableTest.fixture")(function
   const api = yield* StackApi;
   const locations = { stateRoot: path.join(root, "stacks"), cacheRoot: path.join(root, "cache") };
   const stack = yield* api.create({ ...locations, projectRoot: root, runtime: "docker" });
-  const output = mockOutput({ interactive: false });
+  const output = mockOutput({ interactive: false, format });
   const telemetry = mockTelemetryStateTracked();
   const settings = mockCommandSettings({ workdir: root, supabaseHome: root });
   const layer = Layer.mergeAll(
@@ -62,20 +64,48 @@ const fixture = Effect.fn("StackDestroyRuntimeUnavailableTest.fixture")(function
   };
 });
 
-it.live("destroys a stack and warns instead of failing when its engine is unreachable", () =>
-  Effect.gen(function* () {
-    const f = yield* fixture();
-    yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer));
-    expect(f.output.stdoutText).toContain(`Stack ${f.stack.id} destroyed.`);
-    expect(f.output.messages).toContainEqual({
-      type: "warn",
-      message: expect.stringMatching(
-        new RegExp(
-          `^Docker was unavailable, so Docker resources for stack ${f.stack.id} were not removed\\. Once it is running, remove them with:\\n  docker rm --force \\$\\(docker ps --all --quiet --no-trunc --filter 'label=com\\.supabase\\.stack=${f.stack.id}' --filter 'label=com\\.supabase\\.stack-root=[^']+/${f.stack.id}/data'\\)$`,
-          "u",
+const containerCleanup = (id: string) =>
+  `docker rm --force \\$\\(docker ps --all --quiet --no-trunc --filter 'label=com\\.supabase\\.stack=${id}' --filter 'label=com\\.supabase\\.stack-root=[^']+/${id}/data'\\)`;
+
+it.live(
+  "removes a stack locally and lists its cleanup commands when its engine is unreachable",
+  () =>
+    Effect.gen(function* () {
+      const f = yield* fixture("text");
+      yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer));
+      expect(f.output.stdoutText).toBe(
+        `Stack ${f.stack.id} was removed locally; its Docker resources remain until the commands above are run.\n`,
+      );
+      expect(f.output.messages).toContainEqual({
+        type: "warn",
+        message: expect.stringMatching(
+          new RegExp(
+            `^Docker was unavailable, so Docker resources for stack ${f.stack.id} were not removed\\. Once it is running, remove them with:\\n  ${containerCleanup(f.stack.id)}$`,
+            "u",
+          ),
         ),
-      ),
-    });
+      });
+      expect(yield* f.api.discover(f.locations)).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+);
+
+it.live("reports skipped engine cleanup and its commands in the JSON result", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture("json");
+    yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer));
+    expect(f.output.messages).toContainEqual(
+      expect.objectContaining({
+        data: {
+          destroyed: true,
+          id: f.stack.id,
+          runtimeCleanup: "skipped",
+          engine: "docker",
+          cleanupCommands: [
+            expect.stringMatching(new RegExp(`^${containerCleanup(f.stack.id)}$`, "u")),
+          ],
+        },
+      }),
+    );
     expect(yield* f.api.discover(f.locations)).toEqual([]);
   }).pipe(Effect.scoped, Effect.provide(live)),
 );

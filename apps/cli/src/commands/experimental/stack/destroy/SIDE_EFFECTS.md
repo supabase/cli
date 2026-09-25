@@ -40,8 +40,11 @@ routing/settings can read project configuration and profiles.
 
 ## Output, exit codes and telemetry
 
-Text prints `Stack <id> destroyed.`; JSON and stream-json success data contain
-`destroyed: true` and `id`. Exit 0 on destruction, 1 on invalid flags, missing
+Text prints `Stack <id> destroyed.`, or, when engine cleanup was skipped,
+`Stack <id> was removed locally; its <Engine> resources remain until the commands above are run.`
+JSON and stream-json success data contain `destroyed: true`, `id`, and
+`runtimeCleanup` (`complete` or `skipped`); a skipped cleanup also carries `engine` and
+`cleanupCommands`. Exit 0 on destruction, 1 on invalid flags, missing
 selection, rejected/cancelled confirmation or cleanup failure, and 130 on
 interruption. Standard command telemetry is unchanged, with no custom events.
 Telemetry flushes on success and failure to
