@@ -43,16 +43,57 @@ it.live(
         runtime: "docker",
       } satisfies Parameters<typeof create>[0];
       const stack = yield* create(options);
-      yield* fs.makeDirectory(`${options.stateRoot}/${stack.id}/data`, { recursive: true });
-      yield* fs.writeFileString(`${options.stateRoot}/${stack.id}/data/marker`, "owned data");
+      const dataRoot = `${options.stateRoot}/${stack.id}/data`;
+      yield* fs.makeDirectory(`${dataRoot}/db-instance`, { recursive: true });
+      yield* fs.writeFileString(
+        `${dataRoot}/db-instance/.supabase-database-storage.json`,
+        `{"backend":"docker","volume":"supabase-db-0123456789abcdef","namespace":"instance-${stack.id}-db-instance","cacheNamespace":"cache-${"0".repeat(32)}","daemonId":"daemon","initialized":true}`,
+      );
+      const resolvedDataRoot = yield* fs.realPath(dataRoot);
 
       const result = yield* stack.destroy;
-      expect(result).toEqual({ runtimeCleanup: "skipped", engine: "docker" });
+      expect(result).toEqual({
+        runtimeCleanup: "skipped",
+        engine: "docker",
+        cleanupCommands: [
+          `docker rm --force $(docker ps --all --quiet --no-trunc --filter 'label=com.supabase.stack=${stack.id}' --filter 'label=com.supabase.stack-root=${resolvedDataRoot}')`,
+          expect.stringMatching(
+            new RegExp(
+              `^docker run --rm --mount 'type=volume,src=supabase-db-0123456789abcdef,dst=/store' '[^']+' /bin/sh -c 'rm -rf /store/instance-${stack.id}-db-instance'$`,
+              "u",
+            ),
+          ),
+        ],
+      });
 
       expect(yield* discover({ stateRoot: options.stateRoot })).toEqual([]);
       const stackDirExit = yield* Effect.exit(fs.access(`${options.stateRoot}/${stack.id}`));
       expect(Exit.isFailure(stackDirExit)).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("keeps a stack registered when its container engine rejects the listing", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-permission-" });
+    yield* shimDocker(
+      root,
+      "#!/bin/sh\necho 'permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock' >&2\nexit 1\n",
+    );
+
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "docker",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* create(options);
+
+    const destroyFailure = yield* Effect.flip(stack.destroy);
+    expect(destroyFailure.message).toContain("permission denied");
+
+    expect(yield* discover({ stateRoot: options.stateRoot })).toHaveLength(1);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
 it.live("keeps a stack registered when its container engine is reachable but cleanup fails", () =>

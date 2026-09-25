@@ -87,6 +87,14 @@ const errorFor = (operation: string, cause: unknown) =>
 const rateLimited = (error: ContainerError) =>
   /toomanyrequests|too many requests|rate limit|rate exceeded/iu.test(error.message);
 
+/** Matches the engine CLIs' reports of a daemon that is not listening, not of one that rejects the caller. */
+const engineUnreachable = (error: ContainerError) =>
+  /cannot connect to (?:the docker daemon|podman)|unable to connect to podman|connection refused/iu.test(
+    error.message,
+  );
+
+const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+
 const PULL_MAX_RETRIES = 4;
 
 const pullBackoff = Schedule.exponential("2 seconds").pipe(Schedule.jittered);
@@ -556,17 +564,18 @@ export const removeStackContainers = Effect.fn("Container.removeStackContainers"
         `label=com.supabase.stack-root=${stackRoot}`,
       ];
       const list = () => run(["ps", "--all", "--quiet", "--no-trunc", ...filters]);
-      // Only the initial listing failing means the engine itself is unreachable; a later `rm` or
+      // Only the initial listing can show the engine itself is unreachable; a later `rm` or
       // leftover check failing is a per-container cleanup problem instead.
       const ids = (yield* list().pipe(
-        Effect.mapError(
-          (cause) =>
-            new ContainerError({
-              operation: cause.operation,
-              message: cause.message,
-              cause: cause.cause,
-              reason: "engine-unavailable",
-            }),
+        Effect.mapError((cause) =>
+          engineUnreachable(cause)
+            ? new ContainerError({
+                operation: cause.operation,
+                message: cause.message,
+                cause: cause.cause,
+                reason: "engine-unavailable",
+              })
+            : cause,
         ),
       ))
         .split("\n")
@@ -590,3 +599,18 @@ export const removeStackContainers = Effect.fn("Container.removeStackContainers"
         return yield* errorFor("cleanup", `Stack containers remain: ${remaining}`);
     }),
 );
+
+/** Shell command that removes the same containers as `removeStackContainers`. */
+export const removeStackContainersCommand = (options: {
+  readonly engine: "docker" | "podman";
+  readonly stackId: string;
+  readonly root: string;
+}): string => {
+  const filters = [
+    `label=com.supabase.stack=${options.stackId}`,
+    `label=com.supabase.stack-root=${options.root}`,
+  ]
+    .map((filter) => `--filter ${shellQuote(filter)}`)
+    .join(" ");
+  return `${options.engine} rm --force $(${options.engine} ps --all --quiet --no-trunc ${filters})`;
+};

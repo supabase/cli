@@ -21,10 +21,13 @@ Cleanup failures remain errors; the command does not claim success on failure.
 A failed destroy may leave its owner running; retry destruction or use
 `stack stop` to shut down that owner.
 
-When no owner is running and the stack's container engine is unreachable,
-destruction removes the local namespace and data anyway, warns on stderr that
-the engine's containers for the stack were not removed, and exits 0. Those
-containers are removed the next time the same stack starts with that engine.
+When no owner is running and the engine reports that its daemon cannot be
+reached, destruction removes the local namespace and host data anyway, warns on
+stderr that the stack's engine resources were not removed, and exits 0. The
+warning lists the commands that remove them once the engine is running: one for
+the stack's containers, and one per database whose data is kept in an engine
+volume. Any other engine failure, or an owner starting during destruction,
+fails the command and keeps the stack registered.
 
 ## Files and network
 

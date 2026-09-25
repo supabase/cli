@@ -69,8 +69,11 @@ it.live("destroys a stack and warns instead of failing when its engine is unreac
     expect(f.output.stdoutText).toContain(`Stack ${f.stack.id} destroyed.`);
     expect(f.output.messages).toContainEqual({
       type: "warn",
-      message: expect.stringContaining(
-        `docker rm --force $(docker ps --all --quiet --filter label=com.supabase.stack=${f.stack.id})`,
+      message: expect.stringMatching(
+        new RegExp(
+          `^Docker was unavailable, so Docker resources for stack ${f.stack.id} were not removed\\. Once it is running, remove them with:\\n  docker rm --force \\$\\(docker ps --all --quiet --no-trunc --filter 'label=com\\.supabase\\.stack=${f.stack.id}' --filter 'label=com\\.supabase\\.stack-root=[^']+/${f.stack.id}/data'\\)$`,
+          "u",
+        ),
       ),
     });
     expect(yield* f.api.discover(f.locations)).toEqual([]);

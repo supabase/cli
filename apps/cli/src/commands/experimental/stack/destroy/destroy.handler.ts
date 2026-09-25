@@ -102,10 +102,12 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       Effect.mapError(destroyError),
     );
     if (result.runtimeCleanup === "skipped") {
-      const engine = result.engine;
-      const engineName = engine === "docker" ? "Docker" : "Podman";
+      const engineName = result.engine === "docker" ? "Docker" : "Podman";
       yield* output.warn(
-        `${engineName} was unavailable, so containers for stack ${target.id} were not removed. Once it is running, remove them with: ${engine} rm --force $(${engine} ps --all --quiet --filter label=com.supabase.stack=${target.id})`,
+        [
+          `${engineName} was unavailable, so ${engineName} resources for stack ${target.id} were not removed. Once it is running, remove them with:`,
+          ...result.cleanupCommands.map((command) => `  ${command}`),
+        ].join("\n"),
       );
     }
     if (output.format === "text") yield* output.raw(`Stack ${target.id} destroyed.\n`);

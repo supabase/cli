@@ -76,9 +76,9 @@ When configured, initial Storage bucket seeding creates buckets and uploads thei
 files using the service-role JWT. Storage is started and made ready before those requests. A resumed
 stack is not re-seeded. Projects without configured buckets make no bucket-seeding requests.
 
-A new stack registers only after its owner launches; if the owner fails to launch (for example,
-Docker is unavailable), nothing is registered, and the CLI reports the single launch failure with no
-separate stop diagnostic. Any other failure or interruption during the first startup stops and
+A new stack is registered and then its owner is launched; if the owner fails to launch (for example,
+Docker is unavailable) or the launch is interrupted, the registration is removed, and the CLI reports
+the single launch failure with no separate stop diagnostic. Any other failure or interruption during the first startup stops and
 unconfigures that initial composition, then destroys only the service instances created by this
 invocation. When startup began without a running owner, failure cleanup stops any owner launched
 during startup and waits for its exit. A target with a running owner keeps it. Existing instances and
