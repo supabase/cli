@@ -14,7 +14,7 @@ export const destroyTestStacks = (
       ({ definition }) =>
         api
           .open({ id: definition.id, stateRoot, cacheRoot })
-          .pipe(Effect.flatMap(destroyTestStack), Effect.exit),
+          .pipe(Effect.flatMap(destroyTestStack), Effect.scoped, Effect.exit),
       { concurrency: "unbounded" },
     );
     const failures = exits.filter(Exit.isFailure);

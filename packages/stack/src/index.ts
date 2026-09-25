@@ -1,5 +1,5 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
-import { Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Schema, Scope, Stream } from "effect";
 import * as StackEffect from "./effect.ts";
 import { StackError } from "./Rpc.ts";
 import {
@@ -106,7 +106,7 @@ export interface ToolOptions extends CallOptions {
   readonly stderr: (bytes: Uint8Array) => void | Promise<void>;
 }
 
-const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
+const adapt = (handle: StackEffect.Stack, runtime: Runtime, scope: Scope.Closeable) => {
   const run = <A, E>(effect: Effect.Effect<A, E>, options?: CallOptions) =>
     runtime.runPromise(effect, options);
   const activeIterators = new Set<() => Promise<void>>();
@@ -292,9 +292,9 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
     destroy: (options?: CallOptions) => run(handle.destroy, options),
     close: () => {
       if (clientClosePromise !== undefined) return clientClosePromise;
-      clientClosePromise = Promise.allSettled(
-        [...activeIterators].map((dispose) => dispose()),
-      ).then(() => runtime.dispose());
+      clientClosePromise = Promise.allSettled([...activeIterators].map((dispose) => dispose()))
+        .then(() => runtime.runPromise(Scope.close(scope, Exit.void)))
+        .then(() => runtime.dispose());
       return clientClosePromise;
     },
     tools: {
@@ -323,7 +323,7 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
     },
   };
 };
-/** A Promise client whose close operation leaves the detached owner running. */
+/** A Promise client; closing the creating client of a session stack destroys the stack. */
 export type Stack = ReturnType<typeof adapt>;
 
 const acquire = (
@@ -331,9 +331,14 @@ const acquire = (
   options?: CallOptions,
 ): Promise<Stack> => {
   const runtime = makeRuntime();
-  return runtime.runPromise(effect, options).then(
-    (handle) => adapt(handle, runtime),
-    (error: unknown) => runtime.dispose().then(() => Promise.reject(error)),
+  const scope = runtime.runSync(Scope.make());
+  return runtime.runPromise(effect.pipe(Scope.provide(scope)), options).then(
+    (handle) => adapt(handle, runtime, scope),
+    (error: unknown) =>
+      runtime
+        .runPromise(Scope.close(scope, Exit.void))
+        .then(() => runtime.dispose())
+        .then(() => Promise.reject(error)),
   );
 };
 /** Registers a new stack identity. */

@@ -2,26 +2,15 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Deferred, Effect, FileSystem, Layer, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { StackRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
-import { acquireHost } from "./HostProcess.ts";
 import * as Owner from "./Owner.ts";
 import * as ToolRunner from "./host/ToolRunner.ts";
-import { makeRuntime } from "./StackHost.ts";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import { bindControl, makeRuntime } from "./StackHost.ts";
+import { shutdownOwner } from "../tests/owner.ts";
 
 const stateFor = (root: string) =>
   Layer.build(State.layer({ root })).pipe(
     Effect.map((context) => Context.get(context, State.Service)),
-  );
-
-const clientFor = (port: number) =>
-  RpcClient.make(StackRpc).pipe(
-    Effect.provide(
-      RpcClient.layerProtocolHttp({ url: `http://127.0.0.1:${port}/rpc` }).pipe(
-        Layer.provide(RpcSerialization.layerNdjson),
-      ),
-    ),
   );
 
 it.live("retains saved state when destroy sweep fails and retries after engine recovery", () =>
@@ -35,6 +24,7 @@ it.live("retains saved state when destroy sweep fails and retries after engine r
         runtime: "docker" as const,
         identity: { projectRoot: root, branchContext: "main", stackName: "sweep-retry" },
         instances: [],
+        lifetime: "detached" as const,
         composition: { members: [], dependencies: [] },
         ports: [],
       };
@@ -82,7 +72,7 @@ it.live("retains saved state when destroy sweep fails and retries after engine r
         Effect.map((context) => Context.get(context, Owner.Service)),
       );
       const owner = baseOwner;
-      const acquired = yield* acquireHost(state, saved.id);
+      const acquired = yield* bindControl();
       const runnerLayer = yield* Layer.build(
         ToolRunner.layer({
           stackId: saved.id,
@@ -94,10 +84,14 @@ it.live("retains saved state when destroy sweep fails and retries after engine r
       const runtime = yield* makeRuntime(
         owner,
         {
-          stackId: saved.id,
-          identity: saved.identity,
-          pid: process.pid,
-          port: acquired.port,
+          endpoint: {
+            stackId: saved.id,
+            identity: saved.identity,
+            pid: process.pid,
+            port: acquired.port,
+            release: "test",
+          },
+          secret: "test-secret",
         },
         acquired.server,
         acquired.closeConnections,
@@ -105,9 +99,7 @@ it.live("retains saved state when destroy sweep fails and retries after engine r
         Effect.provideService(ToolRunner.Service, Context.get(runnerLayer, ToolRunner.Service)),
       );
       yield* runtime.serve;
-      const client = yield* clientFor(runtime.endpoint.port);
-      const failure = yield* client.shutdown({ destroy: true }).pipe(Effect.flip);
-      expect("operation" in failure ? failure.operation : undefined).toBe("shutdown");
+      const failure = yield* shutdownOwner(runtime.access, true).pipe(Effect.flip);
       expect(listCalls, failure.message).toBe(3);
       expect(yield* (yield* stateFor(`${root}/state`)).read(saved.id)).toBeDefined();
       yield* Deferred.await(runtime.exit).pipe(Effect.timeout("10 seconds"));

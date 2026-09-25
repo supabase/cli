@@ -274,6 +274,7 @@ export function buildStorageStackApi(
       ...(storageEnabled ? [{ id: storage.id, creation: storageCreation }] : []),
     ],
     composition: { members, dependencies: [] },
+    lifetime: "detached" as const,
     ports: [],
   };
   const findStackCalls: Array<{ readonly projectRoot: string }> = [];

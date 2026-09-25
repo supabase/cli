@@ -1,8 +1,15 @@
-import { NodeHttpServerRequest, NodeHttpClient, NodeServices } from "@effect/platform-node";
+import {
+  NodeHttpClient,
+  NodeHttpServer,
+  NodeHttpServerRequest,
+  NodeServices,
+} from "@effect/platform-node";
 import {
   Context,
   Cause,
+  Crypto,
   Data,
+  DateTime,
   Deferred,
   Effect,
   Exit,
@@ -21,10 +28,20 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as RpcServer from "effect/unstable/rpc/RpcServer";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
-import { acquireHost, HostEndpoint } from "./HostProcess.ts";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- NodeHttpServer.make requires a native server factory.
+import * as Http from "node:http";
+import {
+  currentRelease,
+  authorizes,
+  ShutdownRequest,
+  type HostAccess,
+  type HostEndpoint,
+  type ShutdownFailure,
+} from "./HostProcess.ts";
 import * as Owner from "./Owner.ts";
 import { StackError, stackError, StackRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
+import { sweepOrphans } from "./Sweep.ts";
 import { makeToolAttachments, type ToolAttachmentPayload } from "./host/ToolAttachments.ts";
 import * as ToolRunner from "./host/ToolRunner.ts";
 
@@ -32,14 +49,17 @@ export interface StackHostOptions {
   readonly stateRoot: string;
   readonly cacheRoot: string;
   readonly stackId: string;
-  readonly onReady?: (endpoint: HostEndpoint) => Effect.Effect<void, StackHostError>;
+  /** Registers this definition once the owner holds the lease; the stack must not exist. */
+  readonly register?: State.SavedStack;
+  readonly release?: string;
+  readonly onReady?: (access: HostAccess) => Effect.Effect<void, StackHostError>;
 }
 
 export class StackHostError extends Data.TaggedError("StackHostError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
-  readonly reason?: "runtime-unavailable";
+  readonly reason?: "lease-held" | "exists" | "runtime-unavailable";
 }> {}
 
 const hostError = (operation: string, cause: unknown, reason?: "runtime-unavailable") =>
@@ -49,6 +69,50 @@ const hostError = (operation: string, cause: unknown, reason?: "runtime-unavaila
     cause,
     ...(reason === undefined ? {} : { reason }),
   });
+
+/** Binds the owner's loopback control listener on an OS-assigned port. */
+export const bindControl = Effect.fn("StackHost.bindControl")(function* () {
+  let rawServer: Http.Server | undefined;
+  const server = yield* NodeHttpServer.make(
+    () => {
+      rawServer = Http.createServer();
+      return rawServer;
+    },
+    { host: "127.0.0.1", port: 0 },
+  ).pipe(Effect.mapError((cause) => hostError("control", cause)));
+  if (server.address._tag !== "TcpAddress")
+    return yield* hostError("control", "Control listener has no TCP address");
+  return {
+    port: server.address.port,
+    server,
+    closeConnections: Effect.sync(() => {
+      rawServer?.closeAllConnections();
+      rawServer?.closeIdleConnections();
+    }),
+  };
+});
+
+const shutdownFailure = (cause: unknown): ShutdownFailure => {
+  const failure = stackError("shutdown", cause);
+  return {
+    message: failure.message,
+    ...(failure.outcomes === undefined ? {} : { outcomes: failure.outcomes }),
+  };
+};
+
+const creatorGone = Effect.callback<void>((resume) => {
+  const done = () => resume(Effect.void);
+  process.stdin.once("end", done);
+  process.stdin.once("close", done);
+  process.stdin.once("error", done);
+  process.stdin.resume();
+  return Effect.sync(() => {
+    process.stdin.off("end", done);
+    process.stdin.off("close", done);
+    process.stdin.off("error", done);
+    process.stdin.pause();
+  });
+});
 
 const isOpen = (value: boolean): Effect.Effect<void, StackError> =>
   value
@@ -84,6 +148,7 @@ const responseClosed = (response: ReturnType<typeof NodeHttpServerRequest.toServ
 
 export interface StackHostRuntime {
   readonly endpoint: HostEndpoint;
+  readonly access: HostAccess;
   readonly serve: Effect.Effect<void, never, Scope.Scope>;
   readonly closeConnections: Effect.Effect<void>;
   readonly shutdown: (
@@ -96,7 +161,7 @@ export interface StackHostRuntime {
 export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
   (
     owner: Owner.Interface,
-    endpoint: HostEndpoint,
+    access: HostAccess,
     server: HttpServer.HttpServer["Service"],
     closeConnections: Effect.Effect<void>,
   ): Effect.Effect<StackHostRuntime, never, Scope.Scope | ToolRunner.Service> =>
@@ -241,17 +306,6 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
       );
       const handlers = StackRpc.of({
         ...owner.handlers,
-        shutdown: ({ destroy }: { readonly destroy: boolean }) =>
-          Effect.gen(function* () {
-            const request = yield* Effect.serviceOption(HttpServerRequest.HttpServerRequest);
-            yield* Option.match(request, {
-              onNone: () =>
-                Effect.fail(
-                  new StackError({ operation: "shutdown", message: "Request context is missing" }),
-                ),
-              onSome: (value) => shutdown(destroy, NodeHttpServerRequest.toServerResponse(value)),
-            });
-          }).pipe(Effect.mapError((cause) => stackError("shutdown", cause))),
         runTool: (input: ToolAttachmentPayload) => attachments.run(input),
         toolInput: ({
           attachmentId,
@@ -270,8 +324,28 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
         HttpServerRequest.HttpServerRequest | Scope.Scope
       > = Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
+        if (!authorizes(request.headers.authorization, access.secret))
+          return HttpServerResponse.empty({ status: 401 });
         if (request.method === "GET" && request.url === "/identity") {
-          return HttpServerResponse.jsonUnsafe(endpoint);
+          return HttpServerResponse.jsonUnsafe(access.endpoint);
+        }
+        if (request.method === "POST" && request.url === "/shutdown") {
+          const body = yield* HttpServerRequest.schemaBodyJson(ShutdownRequest).pipe(Effect.option);
+          if (Option.isNone(body)) return HttpServerResponse.empty({ status: 400 });
+          const result = yield* shutdown(
+            body.value.destroy,
+            NodeHttpServerRequest.toServerResponse(request),
+          ).pipe(Effect.exit);
+          return Exit.isSuccess(result)
+            ? HttpServerResponse.empty({ status: 204 })
+            : HttpServerResponse.jsonUnsafe(
+                shutdownFailure(
+                  Option.getOrElse(Cause.findErrorOption(result.cause), () =>
+                    Cause.pretty(result.cause),
+                  ),
+                ),
+                { status: 500 },
+              );
         }
         if (request.method === "POST" && request.url.startsWith("/rpc"))
           return yield* rpc.pipe(Effect.interruptible);
@@ -279,30 +353,55 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
       });
       const serve: Effect.Effect<void, never, Scope.Scope> = server.serve(application);
 
-      return { endpoint, serve, shutdown, closeConnections, exit };
+      return { endpoint: access.endpoint, access, serve, shutdown, closeConnections, exit };
     }),
 );
+
+type HostEvent = "SIGTERM" | "SIGINT" | "creator-gone";
 
 export const runStackHost = Effect.fn("StackHost.run")(
   (options: StackHostOptions): Effect.Effect<void, StackHostError, never> =>
     Effect.scoped(
       Effect.gen(function* () {
-        const signals = yield* Queue.bounded<"SIGTERM" | "SIGINT">(8);
+        const events = yield* Queue.bounded<HostEvent>(8);
         yield* Effect.forkScoped(
           Effect.forever(
             requestSignal().pipe(
-              Effect.flatMap((signal) => Queue.offer(signals, signal).pipe(Effect.asVoid)),
+              Effect.flatMap((signal) => Queue.offer(events, signal).pipe(Effect.asVoid)),
             ),
           ),
         );
+        const stateContext = yield* Layer.build(State.layer({ root: options.stateRoot }));
+        const state = Context.get(stateContext, State.Service);
+        const id = options.stackId;
+        // The lease is released last, after every owned process and listener has closed.
+        if (!(yield* state.lease(id)))
+          return yield* new StackHostError({
+            operation: "lease",
+            message: `Another owner holds the lease of stack ${id}`,
+            reason: "lease-held",
+          });
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.truncate(state.ownerLog(id)).pipe(Effect.ignore);
+        yield* state.retractHolder(id);
+        const register = options.register;
+        if (register !== undefined)
+          yield* state.withLock(
+            Effect.gen(function* () {
+              if ((yield* state.read(id)) !== undefined)
+                return yield* new StackHostError({
+                  operation: "register",
+                  message: "Stack already exists; use open",
+                  reason: "exists",
+                });
+              yield* state.save(register);
+            }),
+          );
         const started = yield* Effect.gen(function* () {
-          const stateContext = yield* Layer.build(State.layer({ root: options.stateRoot }));
-          const state = Context.get(stateContext, State.Service);
-          const path = yield* Path.Path;
-          const fs = yield* FileSystem.FileSystem;
-          const saved = yield* state.read(options.stackId);
+          const saved = yield* state.read(id);
           if (saved === undefined) return yield* hostError("startup", "Stack is not registered");
-          const acquired = yield* acquireHost(state, options.stackId);
+          const control = yield* bindControl();
           const dataRootPath = path.join(options.stateRoot, saved.id, "data");
           yield* fs.makeDirectory(dataRootPath, { recursive: true });
           const dataRoot = yield* fs.realPath(dataRootPath);
@@ -335,32 +434,78 @@ export const runStackHost = Effect.fn("StackHost.run")(
             stackId: saved.id,
             identity: saved.identity,
             pid: process.pid,
-            port: acquired.port,
+            port: control.port,
+            release: options.release ?? (yield* currentRelease),
           };
+          const crypto = yield* Crypto.Crypto;
+          const secret = Array.from(yield* crypto.randomBytes(32), (byte) =>
+            byte.toString(16).padStart(2, "0"),
+          ).join("");
+          const access: HostAccess = { endpoint, secret };
           const runtime = yield* makeRuntime(
             owner,
-            endpoint,
-            acquired.server,
-            acquired.closeConnections,
+            access,
+            control.server,
+            control.closeConnections,
           ).pipe(
             Effect.provideService(ToolRunner.Service, Context.get(services, ToolRunner.Service)),
           );
           yield* runtime.serve;
-          yield* options.onReady?.(endpoint) ?? Effect.void;
+          yield* Effect.addFinalizer(() => state.retractHolder(id).pipe(Effect.ignore));
+          yield* state.publishHolder(id, {
+            role: "owner",
+            secret,
+            port: endpoint.port,
+            pid: endpoint.pid,
+            release: endpoint.release,
+            lifetime: saved.lifetime,
+            startedAt: DateTime.formatIso(yield* DateTime.now),
+          });
+          if (saved.lifetime === "session")
+            yield* Effect.forkScoped(
+              creatorGone.pipe(Effect.andThen(Queue.offer(events, "creator-gone"))),
+            );
+          yield* options.onReady?.(access) ?? Effect.void;
+          yield* Effect.forkScoped(
+            sweepOrphans({
+              state,
+              stateRoot: options.stateRoot,
+              cacheRoot: options.cacheRoot,
+              ownerId: id,
+            }),
+          );
           return runtime;
         }).pipe(
           Effect.raceFirst(
-            Queue.take(signals).pipe(
-              Effect.flatMap((signal) => hostError("startup", `Received ${signal} during startup`)),
+            Queue.take(events).pipe(
+              Effect.flatMap((event) =>
+                hostError(
+                  "startup",
+                  event === "creator-gone"
+                    ? "The session stack's creator exited during startup"
+                    : `Received ${event} during startup`,
+                ),
+              ),
             ),
+          ),
+          // A stack registered by this owner must not outlive a failed start.
+          Effect.onError(() =>
+            register === undefined ? Effect.void : state.remove(id).pipe(Effect.ignore),
           ),
         );
         while (true) {
           const event = yield* Deferred.await(started.exit).pipe(
             Effect.map(() => "done" as const),
-            Effect.raceFirst(Queue.take(signals).pipe(Effect.map(() => "signal" as const))),
+            Effect.raceFirst(Queue.take(events)),
           );
           if (event === "done") break;
+          if (event === "creator-gone") {
+            yield* started.shutdown(true).pipe(
+              Effect.tapCause((cause) => Effect.logError("Session stack destroy failed", cause)),
+              Effect.ignore,
+            );
+            break;
+          }
           const shutdownSucceeded = yield* started.shutdown(false).pipe(
             Effect.tapCause((cause) => Effect.logError("Stack shutdown failed", cause)),
             Effect.matchCause({ onSuccess: () => true, onFailure: () => false }),

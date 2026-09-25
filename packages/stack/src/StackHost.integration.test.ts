@@ -14,16 +14,15 @@ import {
   Ref,
   Stream,
 } from "effect";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration observes exact listener closure.
 import * as Net from "node:net";
-import { acquireHost, launchHost } from "./HostProcess.ts";
+import { launchHost, ownerAuthorization, ownerClient } from "./HostProcess.ts";
 import * as Owner from "./Owner.ts";
 import { OrchestratorError } from "./Orchestrator.ts";
-import { StackRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
-import { makeRuntime } from "./StackHost.ts";
+import { bindControl, makeRuntime } from "./StackHost.ts";
+import { shutdownOwner } from "../tests/owner.ts";
 import { postgres } from "./Tools.ts";
 import * as ToolRunner from "./host/ToolRunner.ts";
 
@@ -52,15 +51,6 @@ const ownerFor = (options: {
     return Context.get(context, Owner.Service);
   });
 };
-
-const clientFor = (port: number) =>
-  RpcClient.make(StackRpc).pipe(
-    Effect.provide(
-      RpcClient.layerProtocolHttp({ url: `http://127.0.0.1:${port}/rpc` }).pipe(
-        Layer.provide(RpcSerialization.layerNdjson),
-      ),
-    ),
-  );
 
 const openIdleSocket = (port: number) =>
   Effect.callback<Net.Socket, HostTestError>((resume) => {
@@ -112,7 +102,7 @@ const inProcessRuntime = (
   root: string,
 ) =>
   Effect.gen(function* () {
-    const acquired = yield* acquireHost(state, "stack");
+    const acquired = yield* bindControl();
     const toolContext = yield* Layer.build(
       ToolRunner.layer({
         stackId: "stack",
@@ -124,10 +114,14 @@ const inProcessRuntime = (
     const runtime = yield* makeRuntime(
       owner,
       {
-        stackId: "stack",
-        identity: { projectRoot: root, branchContext: "main", stackName: "host" },
-        pid: process.pid,
-        port: acquired.port,
+        endpoint: {
+          stackId: "stack",
+          identity: { projectRoot: root, branchContext: "main", stackName: "host" },
+          pid: process.pid,
+          port: acquired.port,
+          release: "test",
+        },
+        secret: "test-secret",
       },
       acquired.server,
       acquired.closeConnections,
@@ -190,6 +184,7 @@ it.live("preserves composition outcomes over RPC", () =>
         runtime: "native" as const,
         identity: { projectRoot: root, branchContext: "main", stackName: "host-outcomes" },
         instances: [],
+        lifetime: "detached" as const,
         composition: { members: [], dependencies: [] },
         ports: [],
       };
@@ -201,7 +196,7 @@ it.live("preserves composition outcomes over RPC", () =>
         cacheRoot: "/tmp/supabase-stack-artifacts",
       });
       const { runtime } = yield* inProcessRuntime(owner, state, root);
-      const client = yield* clientFor(runtime.endpoint.port);
+      const client = yield* ownerClient(runtime.access);
       const port = yield* occupiedPort;
       const lazy = yield* client.createService({
         service: "mail",
@@ -229,7 +224,7 @@ it.live("preserves composition outcomes over RPC", () =>
         { id: lazy.id, succeeded: true },
         { id: blocked.id, succeeded: false, error: expect.stringContaining(String(port)) },
       ]);
-      yield* client.shutdown({ destroy: true });
+      yield* shutdownOwner(runtime.access, true);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
@@ -245,6 +240,7 @@ it.live("keeps serving when namespace shutdown fails", () =>
         runtime: "native" as const,
         identity: { projectRoot: root, branchContext: "main", stackName: "host-drain-failure" },
         instances: [],
+        lifetime: "detached" as const,
         composition: { members: [], dependencies: [] },
         ports: [],
       };
@@ -265,9 +261,9 @@ it.live("keeps serving when namespace shutdown fails", () =>
         },
       };
       const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
-      const client = yield* clientFor(runtime.endpoint.port);
-      const failure = yield* client.shutdown({ destroy: false }).pipe(Effect.flip);
-      expect("operation" in failure).toBe(true);
+      const client = yield* ownerClient(runtime.access);
+      const failure = yield* shutdownOwner(runtime.access, false).pipe(Effect.flip);
+      expect(failure.message).toContain("cleanup failed");
       yield* client.configureComposition({ members: [], dependencies: [] });
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
@@ -284,6 +280,7 @@ it.live("reports destroy and fallback stop failures together", () =>
         runtime: "native" as const,
         identity: { projectRoot: root, branchContext: "main", stackName: "host-destroy-failure" },
         instances: [],
+        lifetime: "detached" as const,
         composition: { members: [], dependencies: [] },
         ports: [],
       };
@@ -333,8 +330,7 @@ it.live("reports destroy and fallback stop failures together", () =>
         },
       };
       const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
-      const client = yield* clientFor(runtime.endpoint.port);
-      const failure = yield* client.shutdown({ destroy: true }).pipe(Effect.flip);
+      const failure = yield* shutdownOwner(runtime.access, true).pipe(Effect.flip);
       expect(failure.message).toContain("Namespace destroy had failures");
       expect(failure.message).toContain("database-destroy:");
       expect(failure.message).toContain("data removal refused");
@@ -374,6 +370,7 @@ it.live("rejects destroy while stop is in flight", () =>
         runtime: "native" as const,
         identity: { projectRoot: root, branchContext: "main", stackName: "host-stop-join" },
         instances: [],
+        lifetime: "detached" as const,
         composition: { members: [], dependencies: [] },
         ports: [],
       };
@@ -419,6 +416,7 @@ it.live("retains ownership when namespace shutdown defects and retries cleanup",
         runtime: "native" as const,
         identity: { projectRoot: root, branchContext: "main", stackName: "host-drain-defect" },
         instances: [],
+        lifetime: "detached" as const,
         composition: { members: [], dependencies: [] },
         ports: [],
       };
@@ -441,14 +439,15 @@ it.live("retains ownership when namespace shutdown defects and retries cleanup",
         },
       };
       const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
-      const client = yield* clientFor(runtime.endpoint.port);
+      const client = yield* ownerClient(runtime.access);
       const failure = yield* runtime.shutdown(false).pipe(Effect.exit);
       expect(Exit.isFailure(failure)).toBe(true);
       if (Exit.isFailure(failure)) expect(Cause.pretty(failure.cause)).toContain("cleanup failed");
       const http = yield* HttpClient.HttpClient;
-      expect((yield* http.get(`http://127.0.0.1:${runtime.endpoint.port}/identity`)).status).toBe(
-        200,
-      );
+      const identity = yield* http.get(`http://127.0.0.1:${runtime.endpoint.port}/identity`, {
+        headers: { authorization: ownerAuthorization(runtime.access.secret) },
+      });
+      expect(identity.status).toBe(200);
       expect(yield* owner.getServing).toBe(true);
       yield* client.configureComposition({ members: [], dependencies: [] });
       yield* runtime.shutdown(false);
@@ -469,23 +468,29 @@ it.live(
           runtime: "native",
           identity: { projectRoot: root, branchContext: "main", stackName: "host" },
           instances: [],
+          lifetime: "detached",
           composition: { members: [], dependencies: [] },
           ports: [],
         });
-        const endpoint = yield* launchHost(state, {
+        const access = yield* launchHost(state, {
           stateRoot: `${root}/state`,
           cacheRoot: "/tmp/supabase-stack-artifacts",
           stackId: "stack",
         });
+        const { endpoint } = access;
         const http = yield* HttpClient.HttpClient;
-        const identity = yield* http.get(`http://127.0.0.1:${endpoint.port}/identity`);
+        const identityUrl = `http://127.0.0.1:${endpoint.port}/identity`;
+        expect((yield* http.get(identityUrl)).status, "the secret is required").toBe(401);
+        const identity = yield* http.get(identityUrl, {
+          headers: { authorization: ownerAuthorization(access.secret) },
+        });
         expect(identity.status).toBe(200);
-        const client = yield* clientFor(endpoint.port);
+        const client = yield* ownerClient(access);
         const stopped = yield* Ref.make(false);
         yield* Effect.addFinalizer(() =>
           Ref.get(stopped).pipe(
             Effect.flatMap((value) =>
-              value ? Effect.void : client.shutdown({ destroy: true }).pipe(Effect.ignore),
+              value ? Effect.void : shutdownOwner(access, true).pipe(Effect.ignore),
             ),
           ),
         );
@@ -575,7 +580,7 @@ it.live(
         );
         yield* Deferred.await(ready);
         expect(idleSocket.destroyed).toBe(false);
-        yield* client.shutdown({ destroy: false });
+        yield* shutdownOwner(access, false);
         yield* awaitClosed(idleSocket).pipe(
           Effect.timeoutOrElse({
             duration: "5 seconds",
@@ -617,6 +622,7 @@ it.live("finishes detached shutdown after the caller disconnects", () =>
         runtime: "native",
         identity: { projectRoot: root, branchContext: "main", stackName: "host-abort" },
         instances: [],
+        lifetime: "detached",
         composition: { members: [], dependencies: [] },
         ports: [],
       });
@@ -626,6 +632,7 @@ it.live("finishes detached shutdown after the caller disconnects", () =>
           runtime: "native",
           identity: { projectRoot: root, branchContext: "main", stackName: "host" },
           instances: [],
+          lifetime: "detached",
           composition: { members: [], dependencies: [] },
           ports: [],
         },
@@ -647,8 +654,7 @@ it.live("finishes detached shutdown after the caller disconnects", () =>
       };
       const { runtime } = yield* inProcessRuntime(delayedOwner, state, root);
       yield* Effect.addFinalizer(() => Deferred.succeed(allow, undefined));
-      const client = yield* clientFor(runtime.endpoint.port);
-      const shutdown = yield* Effect.forkScoped(client.shutdown({ destroy: false }));
+      const shutdown = yield* Effect.forkScoped(shutdownOwner(runtime.access, false));
       yield* Deferred.await(entered);
       yield* Fiber.interrupt(shutdown);
       yield* Deferred.succeed(allow, undefined);
@@ -668,6 +674,7 @@ it.live("withdraws a command waiting for its prerequisite", () =>
         runtime: "native" as const,
         identity: { projectRoot: root, branchContext: "main", stackName: "host-command-abort" },
         instances: [],
+        lifetime: "detached" as const,
         composition: { members: [], dependencies: [] },
         ports: [],
       };
@@ -699,7 +706,7 @@ it.live("withdraws a command waiting for its prerequisite", () =>
           Effect.andThen(runtime.shutdown(false).pipe(Effect.ignore)),
         ),
       );
-      const client = yield* clientFor(runtime.endpoint.port);
+      const client = yield* ownerClient(runtime.access);
       const mail = yield* client.createService({
         service: "mail",
         config: {},
@@ -711,7 +718,7 @@ it.live("withdraws a command waiting for its prerequisite", () =>
       yield* Deferred.await(cancelled).pipe(Effect.timeout("5 seconds"));
       yield* Deferred.succeed(allow, undefined);
       expect((yield* client.status({ id: mail.id })).lifecycle).toBe("stopped");
-      yield* client.shutdown({ destroy: false });
+      yield* shutdownOwner(runtime.access, false);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
@@ -726,6 +733,7 @@ const disconnectFixture = (prefix: string) =>
       runtime: "native",
       identity: { projectRoot: root, branchContext: "main", stackName: prefix },
       instances: [],
+      lifetime: "detached",
       composition: { members: [], dependencies: [] },
       ports: [],
     };
@@ -775,7 +783,7 @@ it.live("finishes a service creation after its caller disconnects", () =>
         state,
         root,
       );
-      const client = yield* clientFor(runtime.endpoint.port);
+      const client = yield* ownerClient(runtime.access);
       const creation = yield* Effect.forkScoped(
         client.createService({
           service: "mail",
@@ -795,7 +803,7 @@ it.live("finishes a service creation after its caller disconnects", () =>
       expect(others).toEqual([]);
       expect((yield* client.status({ id: instance.id })).lifecycle).toBe("stopped");
       yield* client.destroyService({ id: instance.id });
-      yield* client.shutdown({ destroy: true });
+      yield* shutdownOwner(runtime.access, true);
       yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
       expect(yield* state.read(saved.id)).toBeUndefined();
     }),
@@ -839,7 +847,7 @@ it.live("persists a composition change after its caller disconnects", () =>
         state,
         root,
       );
-      const client = yield* clientFor(runtime.endpoint.port);
+      const client = yield* ownerClient(runtime.access);
       const mail = yield* client.createService({
         service: "mail",
         config: {},
@@ -856,7 +864,7 @@ it.live("persists a composition change after its caller disconnects", () =>
       yield* client.createService({ service: "mail", config: {}, endpoints: {} });
 
       expect((yield* state.read(saved.id))?.composition).toEqual({ members, dependencies: [] });
-      yield* client.shutdown({ destroy: true });
+      yield* shutdownOwner(runtime.access, true);
       yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
@@ -908,7 +916,7 @@ const abandonedComposition = (prefix: string, destroy: boolean) =>
       state,
       root,
     );
-    const client = yield* clientFor(runtime.endpoint.port);
+    const client = yield* ownerClient(runtime.access);
     const composition = yield* Effect.forkScoped(
       client.supabaseComposition({
         services: [
@@ -928,7 +936,7 @@ const abandonedComposition = (prefix: string, destroy: boolean) =>
     yield* Deferred.await(persisted);
     yield* Fiber.interrupt(composition);
     yield* Deferred.await(interrupted);
-    const shutdown = yield* Effect.forkScoped(client.shutdown({ destroy }));
+    const shutdown = yield* Effect.forkScoped(shutdownOwner(runtime.access, destroy));
     yield* Deferred.await(draining);
     yield* Deferred.succeed(allow, undefined);
     yield* Fiber.join(shutdown);

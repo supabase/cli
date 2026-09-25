@@ -184,6 +184,7 @@ const runStatus = (input: {
         creation: service === "database" ? database : rest,
       })),
       composition: { members: input.members ?? [], dependencies: [] },
+      lifetime: "detached" as const,
       ports: [],
     };
     const api = Layer.succeed(StackApi, {
@@ -201,6 +202,7 @@ const runStatus = (input: {
                     identity: definition.identity,
                     pid: 123,
                     port: 4567,
+                    release: "test",
                   },
           },
         ]),

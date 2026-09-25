@@ -17,6 +17,11 @@ export class StackError extends Schema.TaggedError<StackError>()("StackError", {
   operation: Schema.String,
   message: Schema.String,
   outcomes: Schema.optionalKey(Schema.Array(Outcome)),
+  /**
+   * Why the client could not use an owner: none serves the stack (`owner-unavailable`), or one of
+   * another release does (`release-mismatch`).
+   */
+  reason: Schema.optionalKey(Schema.Literals(["owner-unavailable", "release-mismatch"])),
 }) {}
 
 /** Maps an owner failure to the RPC error, preserving per-member composition outcomes. */
@@ -138,7 +143,6 @@ export const OwnerRpc = RpcGroup.make(
 
 /** The private transport contract; lifecycle admission remains in the owner. */
 export const StackRpc = OwnerRpc.add(
-  Rpc.make("shutdown", { payload: { destroy: Schema.Boolean }, error: StackError }),
   Rpc.make("runTool", {
     payload: {
       attachmentId: Schema.String,

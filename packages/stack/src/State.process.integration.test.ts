@@ -70,6 +70,7 @@ for (const compiled of [false, true]) {
             identity: { projectRoot: root, branchContext: "test", stackName: "lock" },
             runtime: "native",
             instances: [],
+            lifetime: "detached",
             composition: { members: [], dependencies: [] },
             ports: [],
           };

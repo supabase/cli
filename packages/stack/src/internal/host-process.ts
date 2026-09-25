@@ -1,14 +1,8 @@
-import { Cause, Effect, Option, Schema } from "effect";
+import { Cause, Effect, Exit, Option, Schema } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor.
 import { closeSync, writeSync } from "node:fs";
+import { SavedStack } from "../State.ts";
 import { runStackHost, StackHostError, type StackHostOptions } from "../StackHost.ts";
-
-const causeCode = (cause: unknown): string | undefined => {
-  if (typeof cause !== "object" || cause === null) return undefined;
-  if ("code" in cause && typeof cause.code === "string") return cause.code;
-  if ("cause" in cause) return causeCode(cause.cause);
-  return undefined;
-};
 
 const writeLine = (value: unknown) =>
   Effect.gen(function* () {
@@ -38,30 +32,37 @@ const writeLine = (value: unknown) =>
 const options = (
   args: ReadonlyArray<string>,
   report: (value: unknown) => Effect.Effect<void, StackHostError>,
-): Effect.Effect<StackHostOptions, StackHostError> => {
-  if (args.length !== 3)
-    return Effect.fail(
-      new StackHostError({
+): Effect.Effect<StackHostOptions, StackHostError> =>
+  Effect.gen(function* () {
+    const [stateRoot, cacheRoot, stackId, register, ...rest] = args;
+    if (
+      stateRoot === undefined ||
+      cacheRoot === undefined ||
+      stackId === undefined ||
+      rest.length > 0
+    )
+      return yield* new StackHostError({
         operation: "startup",
-        message: "Expected stateRoot, cacheRoot and stackId",
-      }),
-    );
-  const stateRoot = args[0];
-  const cacheRoot = args[1];
-  const stackId = args[2];
-  if (stateRoot === undefined || cacheRoot === undefined || stackId === undefined)
-    return Effect.fail(
-      new StackHostError({ operation: "startup", message: "Missing host argument" }),
-    );
-  return Effect.succeed({
-    stateRoot,
-    cacheRoot,
-    stackId,
-    onReady: (endpoint) => report({ type: "ready", endpoint }),
+        message: "Expected stateRoot, cacheRoot, stackId and an optional stack to register",
+      });
+    const registered =
+      register === undefined
+        ? undefined
+        : yield* Schema.decodeEffect(Schema.fromJsonString(SavedStack))(register).pipe(
+            Effect.mapError(
+              (cause) => new StackHostError({ operation: "startup", message: cause.message }),
+            ),
+          );
+    return {
+      stateRoot,
+      cacheRoot,
+      stackId,
+      ...(registered === undefined ? {} : { register: registered }),
+      onReady: ({ endpoint, secret }) => report({ type: "ready", endpoint, secret }),
+    };
   });
-};
 
-const program = (args: ReadonlyArray<string>) =>
+const program = (args: ReadonlyArray<string>, overrides: Pick<StackHostOptions, "release">) =>
   Effect.gen(function* () {
     let reported = false;
     const report = (value: unknown) =>
@@ -71,30 +72,43 @@ const program = (args: ReadonlyArray<string>) =>
         return writeLine(value);
       });
     const host = yield* options(args, report);
-    yield* runStackHost(host).pipe(
+    yield* runStackHost({ ...host, ...overrides }).pipe(
       Effect.catchCause((cause) => {
         const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
-        const reason =
-          causeCode(failure?.cause) === "EADDRINUSE"
-            ? "bind-conflict"
-            : failure?.reason === "runtime-unavailable"
-              ? "runtime-unavailable"
-              : undefined;
         return report({
           type: "error",
           message: failure?.message ?? Cause.pretty(cause),
-          ...(reason === undefined ? {} : { reason }),
+          ...(failure?.reason === undefined ? {} : { reason: failure.reason }),
         }).pipe(Effect.exit, Effect.andThen(Effect.failCause(cause)));
       }),
     );
   });
 
-/** Runs the owner process with its state root, artifact cache and stack identity. */
-export const runHostProcess = (args: ReadonlyArray<string>): Promise<void> =>
-  Effect.runPromise(program(args));
+const flushed = (stream: NodeJS.WriteStream) =>
+  Effect.callback<void>((resume) => {
+    stream.write("", () => resume(Effect.void));
+  }).pipe(Effect.timeoutOption("1 second"));
 
-if (import.meta.main) {
-  void runHostProcess(process.argv.slice(2)).catch(() => {
-    process.exitCode = 1;
-  });
-}
+/**
+ * Runs the owner process with its state root, artifact cache and stack identity, then exits the
+ * process once shutdown cleanup completes and the owner log is flushed, so no leftover handle
+ * delays the exit clients wait for.
+ */
+export const runHostProcess = (
+  args: ReadonlyArray<string>,
+  overrides: Pick<StackHostOptions, "release"> = {},
+): Promise<never> =>
+  Effect.runPromise(
+    program(args, overrides).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Exit.isFailure(exit)
+          ? Effect.sync(() => process.stderr.write(`${Cause.pretty(exit.cause)}\n`))
+          : Effect.void,
+      ),
+      Effect.tap(() => Effect.all([flushed(process.stdout), flushed(process.stderr)])),
+      Effect.flatMap((exit) => Effect.sync(() => process.exit(Exit.isSuccess(exit) ? 0 : 1))),
+    ),
+  );
+
+if (import.meta.main) void runHostProcess(process.argv.slice(2));

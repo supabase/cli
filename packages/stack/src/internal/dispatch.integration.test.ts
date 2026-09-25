@@ -64,6 +64,7 @@ it.live("dispatches compiled owner and native launchers through the production b
         runtime: "native",
         identity: { projectRoot: root, branchContext: "main", stackName: "compiled" },
         instances: [],
+        lifetime: "detached",
         composition: { members: [], dependencies: [] },
         ports: [],
       });

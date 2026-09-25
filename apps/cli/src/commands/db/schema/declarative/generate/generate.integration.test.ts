@@ -179,6 +179,7 @@ function generateStackApi(workdir: string) {
             runtime: "native",
             instances: [],
             composition,
+            lifetime: "detached" as const,
             ports: [],
           },
           host: undefined,

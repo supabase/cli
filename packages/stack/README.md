@@ -61,11 +61,15 @@ On Linux, native Functions project files must be outside `/tmp`: Edge Runtime us
 
 `open({ id, stateRoot, cacheRoot })` reconnects to a saved stack. The package stores the stack document at `<stateRoot>/<id>/state.json` and service data at `<stateRoot>/<id>/data/<instance-id>`. `discover({ stateRoot })` lists saved definitions and port assignments separately from live-owner availability, skipping malformed or vanished entries while persistent read failures fail discovery; pass `onInvalidState(id, error)` to observe them. Offline definitions are not live lifecycle observations.
 
-Pass `startOwner: true` to `open` when live status and other owner-backed operations are needed; this starts only the detached owner and does not start services.
+Pass `startOwner: true` to `open` when live status and other owner-backed operations are needed; this starts only the detached owner and does not start services. The owner writes its output to `<stateRoot>/<id>/owner.log`, which each owner start truncates; owner start and connection failures name that file. A client drives only an owner of its own release; other operations fail and ask you to stop or destroy the stack, which work across releases.
 
-`create({ ..., startOwner: true })` registers the stack and then starts its owner immediately; if the owner fails to launch or the launch is interrupted, `create` removes the registration it just saved, unless an owner already holds the stack, and fails with the launch error.
+### Lifetimes
 
-`destroy` normally returns `{ runtimeCleanup: "complete" }`. When no owner is running and the stack's container engine reports that its daemon cannot be reached, `destroy` removes the local registration and host data anyway and returns `{ runtimeCleanup: "skipped", engine, cleanupCommands }`; its containers and any database data in engine volumes remain, and `cleanupCommands` are the shell commands that remove them once the engine is running. If some host data cannot be deleted by the current user, `destroy` fails before removing anything so it can be retried with the engine running.
+`create` defaults to `lifetime: "detached"`: the stack and its owner outlive the creating client. `create({ ..., lifetime: "session" })` starts the owner immediately and ties the stack to the creating client. Closing that client, or its process exiting for any reason, destroys the stack: instances stop, data and registrations are removed, and port claims are released. Other clients may attach to a running session stack but cannot start its owner. A session stack whose owner has stopped is disposable: the next owner start in the state root removes it, and creating a stack with the same identity replaces it.
+
+`create({ ..., startOwner: true })` starts a detached stack's owner immediately and lets it register the stack under its lease, as a session stack always does. If the owner fails to start or the launch is interrupted before it reports ready, the owner removes that registration and `create` fails with the launch error, so a failed launch leaves no stack behind.
+
+`destroy` normally returns `{ runtimeCleanup: "complete" }`. When no owner is running and a new owner cannot start because the stack's container engine reports that its daemon cannot be reached, `destroy` takes the stack's lease, so no owner can start meanwhile, and removes the local registration, port claims and host data anyway and returns `{ runtimeCleanup: "skipped", engine, cleanupCommands }`; its containers and any database data in engine volumes remain, and `cleanupCommands` are the shell commands that remove them once the engine is running. If some host data cannot be deleted by the current user, `destroy` fails before removing anything so it can be retried with the engine running.
 
 The stack owns database, Functions bootstrap, and tool-job directories below its data directory. Storage uploads remain at the caller-supplied Storage `filePath` and are preserved when the stack is destroyed; the caller owns that directory. Host metadata remains under `stateRoot`; native database data uses host files. Docker database data normally uses a managed volume, while existing host data is retained through the host-backed fallback. A host marker records the selected Docker storage and detects a missing or mismatched volume; deleting that volume loses the associated database data. Native snapshot entries live below `cacheRoot`. Docker snapshots share the managed data volume in a separate namespace derived from `cacheRoot`, so they survive source destruction and can use filesystem cloning. A Docker cache hit requires the same daemon, `stateRoot`, and `cacheRoot`. There is no portable tar snapshot API.
 
@@ -135,13 +139,13 @@ Bindings supply ordinary configuration values; a URL alone never creates a depen
 
 - Instance methods affect that instance, subject to dependency checks.
 - Composition methods affect selected members; startup also includes declared prerequisites.
-- `stack.stop()` stops every owned instance and attached tool and returns after confirming owner exit. It requires a live owner; an unavailable owner cannot confirm cleanup.
+- `stack.stop()` stops every owned instance and attached tool and returns after confirming owner exit. Without a live owner nothing runs, so it returns without starting one; an instance's `stop()` behaves the same way.
 - `stack.destroy()` additionally removes owned data and registrations, and also waits for owner exit.
-- `stack.close()` disposes the client and invalidates its active observation iterators. Stopping the last instance leaves the owner available.
+- `stack.close()` disposes the client and invalidates its active observation iterators. Closing the creating client of a session stack destroys the stack. Stopping the last instance leaves the owner available.
 
 Exit confirmation is bounded. If cleanup is acknowledged but owner exit cannot be confirmed, the operation fails with `operation: "shutdown-exit"` and the owner PID in the message. A failed or cancelled call does not guarantee that teardown has completed. Do not start or restart the same stack concurrently with whole-stack shutdown; separate stacks remain independent.
 
-Disposable test stacks need explicit teardown; closing a client does not own their lifetime:
+A session stack is destroyed when its creating client closes. A detached test stack needs explicit teardown, because closing a client does not own its lifetime:
 
 ```ts
 try {
@@ -159,7 +163,7 @@ Each service exposes `status`, `followStatus`, `logs`, and `credentials`. Observ
 
 ## Effect consumers
 
-The Effect entrypoint exposes the same operations as Effects and Streams. Database secrets use `Redacted` in the Effect configuration:
+The Effect entrypoint exposes the same operations as Effects and Streams. `create` and `open` return a handle that lasts until the enclosing `Scope` closes; closing the creating scope of a session stack destroys it. Database secrets use `Redacted` in the Effect configuration:
 
 ```ts
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
@@ -175,7 +179,10 @@ const program = Effect.gen(function* () {
 });
 
 await Effect.runPromise(
-  program.pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  program.pipe(
+    Effect.scoped,
+    Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+  ),
 );
 ```
 
@@ -191,4 +198,4 @@ const test = Effect.acquireUseRelease(
 );
 ```
 
-The owner supports normal stop/start persistence. Unexpected owner death does not trigger resource adoption, orphan removal, or interrupted-operation recovery. CLI integration is maintained separately from this package.
+The owner supports normal stop/start persistence. When an owner dies unexpectedly, its native processes die with it. Its containers remain until the next owner start in the same `stateRoot` removes them; that start also destroys session stacks whose owner is gone. Unexpected owner death does not trigger resource adoption or interrupted-operation recovery. CLI integration is maintained separately from this package.
