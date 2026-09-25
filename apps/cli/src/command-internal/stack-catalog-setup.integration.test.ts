@@ -129,7 +129,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                   });
                   expect(query.exitCode, errors.join("")).toBe(0);
                   expect(rows.join("").trim()).toBe(
-                    "users|sessions|storage.objects|s3_multipart_uploads|realtime.messages|realtime.subscription|catalog_overlay",
+                    "users|sessions|storage.objects|storage.s3_multipart_uploads|realtime.messages|realtime.subscription|catalog_overlay",
                   );
 
                   const realtime = members.find((member) => member.service === "realtime");
