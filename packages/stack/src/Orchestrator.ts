@@ -3,6 +3,7 @@ import {
   Clock,
   Context,
   Data,
+  Deferred,
   Effect,
   Exit,
   FiberMap,
@@ -589,13 +590,17 @@ const makeOrchestrator = Effect.gen(function* () {
     operation: "start" | "stop" | "destroy",
     ids: ReadonlyArray<string>,
     action: (id: string) => Effect.Effect<void, OrchestratorError | LifecycleError>,
+    concurrency: 1 | "unbounded" = 1,
   ): Effect.fn.Return<ReadonlyArray<CoreObservation>, OrchestratorError | LifecycleError> {
     return yield* Effect.gen(function* () {
-      const outcomes = yield* Effect.forEach(ids, (id) =>
-        action(id).pipe(
-          Effect.exit,
-          Effect.map((result) => ({ id, result })),
-        ),
+      const outcomes = yield* Effect.forEach(
+        ids,
+        (id) =>
+          action(id).pipe(
+            Effect.exit,
+            Effect.map((result) => ({ id, result })),
+          ),
+        { concurrency },
       );
       if (outcomes.some(({ result }) => Exit.isFailure(result)))
         return yield* new OrchestratorError({
@@ -633,7 +638,16 @@ const makeOrchestrator = Effect.gen(function* () {
       );
       const plans = new Map<string, StartPlan>();
       const bound = new Map<string, Exit.Exit<void, OrchestratorError | LifecycleError>>();
+      const completions = new Map<
+        string,
+        Deferred.Deferred<Exit.Exit<void, OrchestratorError | LifecycleError>>
+      >();
       for (const id of order) plans.set(id, yield* snapshotPlan(id));
+      for (const id of order)
+        completions.set(
+          id,
+          yield* Deferred.make<Exit.Exit<void, OrchestratorError | LifecycleError>>(),
+        );
       for (const id of order)
         bound.set(
           id,
@@ -642,28 +656,57 @@ const makeOrchestrator = Effect.gen(function* () {
             Effect.exit,
           ),
         );
-      return yield* settle("start", order, (id) =>
-        Effect.gen(function* () {
-          const binding = bound.get(id);
-          if (binding !== undefined) yield* binding;
-          const instance = yield* node(id);
-          const plan = plans.get(id);
-          const revision = plan?.revisions.get(id);
-          if (plan === undefined || revision === undefined)
-            return yield* graphError("start", `Missing plan for ${id}`);
-          const policy = structure.members.get(id);
-          if (
-            policy?.activation === "lazy" ||
-            (policy?.idleMillis !== undefined && instance.hasEndpoint)
-          )
-            yield* instance.core.armAt(revision, prerequisiteGuard(plan, id));
-          if (eager.has(id)) {
-            const inputs = yield* resolveInputs(id, configured);
-            yield* instance.startAt(revision, inputs, false, prerequisiteGuard(plan, id));
-            yield* instance.bind;
-            yield* instance.core.ready;
-          }
-        }),
+      return yield* settle(
+        "start",
+        order,
+        (id) => {
+          const completion = completions.get(id);
+          if (completion === undefined)
+            return Effect.fail(graphError("start", `Missing completion for ${id}`));
+          const action = Effect.gen(function* () {
+            const prerequisites = structure.prerequisites.get(id) ?? [];
+            const prerequisiteOutcomes = yield* Effect.forEach(prerequisites, (prerequisite) => {
+              const dependency = completions.get(prerequisite);
+              return dependency === undefined
+                ? Effect.fail(graphError("start", `Missing completion for ${prerequisite}`))
+                : Deferred.await(dependency).pipe(
+                    Effect.map((result) => ({ id: prerequisite, result })),
+                  );
+            });
+            const binding = bound.get(id);
+            if (binding !== undefined) yield* binding;
+            const instance = yield* node(id);
+            const plan = plans.get(id);
+            const revision = plan?.revisions.get(id);
+            if (plan === undefined || revision === undefined)
+              return yield* graphError("start", `Missing plan for ${id}`);
+            const policy = structure.members.get(id);
+            if (
+              policy?.activation === "lazy" ||
+              (policy?.idleMillis !== undefined && instance.hasEndpoint)
+            )
+              yield* instance.core.armAt(revision, prerequisiteGuard(plan, id));
+            if (eager.has(id)) {
+              const failedPrerequisites = prerequisiteOutcomes
+                .filter(({ result }) => Exit.isFailure(result))
+                .map(({ id: prerequisite }) => prerequisite)
+                .toSorted((left, right) => order.indexOf(left) - order.indexOf(right));
+              if (failedPrerequisites.length > 0)
+                return yield* graphError(
+                  "start",
+                  `Blocked by prerequisites: ${failedPrerequisites.join(", ")}`,
+                );
+              const inputs = yield* resolveInputs(id, configured);
+              yield* instance.startAt(revision, inputs, false, prerequisiteGuard(plan, id));
+              yield* instance.bind;
+              yield* instance.core.ready;
+            }
+          });
+          return action.pipe(
+            Effect.onExit((result) => Deferred.succeed(completion, result).pipe(Effect.asVoid)),
+          );
+        },
+        "unbounded",
       );
     },
   );
