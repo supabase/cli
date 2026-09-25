@@ -55,6 +55,11 @@ packageExtensions:
       # imports pg and debug without shipping their @types packages.
       "@types/debug": "^4.1.12"
       "@types/pg": "^8.23.1"
+  plpgsql-deparser:
+    dependencies:
+      # esm/hydrate.js imports it without declaring it; the range is the one
+      # plpgsql-parser, its only dependent here, declares for the same package.
+      "@libpg-query/parser": "^17.6.3"
   # vitest lists vite as both a dependency and a peer, so pnpm resolves it as a
   # peer only. These consumers reach vitest through their own `vitest` peer inside a
   # peer cycle, which leaves them a vitest variant with no vite at all — fatal
