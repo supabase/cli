@@ -185,31 +185,52 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                                             Ref.update(destroyedIds, (ids) => [...ids, target.id]),
                                           ),
                                         );
-                                      if (target.service === "storage" && property === "ready")
+                                      if (
+                                        target.service === "storage" &&
+                                        property === "initialize"
+                                      ) {
+                                        const initialize = target.initialize;
+                                        if (initialize === undefined)
+                                          return Effect.fail(
+                                            new StackError({
+                                              operation: "initialize",
+                                              message: "Storage initialization is unavailable",
+                                            }),
+                                          );
                                         return Deferred.succeed(storageReady, undefined).pipe(
                                           Effect.andThen(Deferred.await(releaseStorage)),
-                                          Effect.andThen(target.ready),
+                                          Effect.andThen(initialize),
                                         );
+                                      }
                                       if (
                                         mode === "interruption" &&
                                         target.service === "auth" &&
-                                        property === "ready"
-                                      )
+                                        property === "initialize"
+                                      ) {
+                                        const initialize = target.initialize;
+                                        if (initialize === undefined)
+                                          return Effect.fail(
+                                            new StackError({
+                                              operation: "initialize",
+                                              message: "Auth initialization is unavailable",
+                                            }),
+                                          );
                                         return Deferred.succeed(authReady, undefined).pipe(
                                           Effect.andThen(Deferred.await(releaseAuth)),
-                                          Effect.andThen(target.ready),
+                                          Effect.andThen(initialize),
                                         );
+                                      }
                                       if (
                                         mode === "failure" &&
                                         target.service === "auth" &&
-                                        property === "start"
+                                        property === "initialize"
                                       )
                                         return Deferred.await(storageReady).pipe(
                                           Effect.andThen(
                                             Effect.fail(
                                               new StackError({
-                                                operation: "start",
-                                                message: "controlled Auth start failure",
+                                                operation: "initialize",
+                                                message: "controlled Auth initialization failure",
                                               }),
                                             ),
                                           ),
@@ -244,7 +265,9 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                         const result = yield* Effect.result(run);
                         expect(Result.isFailure(result)).toBe(true);
                         if (Result.isFailure(result))
-                          expect(result.failure.message).toContain("controlled Auth start failure");
+                          expect(result.failure.message).toContain(
+                            "controlled Auth initialization failure",
+                          );
                       } else {
                         const fiber = yield* Effect.forkScoped(run);
                         yield* Deferred.await(storageReady);

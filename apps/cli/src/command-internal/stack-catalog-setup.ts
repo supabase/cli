@@ -1,4 +1,4 @@
-import { Context, Data, Deferred, Effect, FileSystem, Layer, Path, Ref } from "effect";
+import { Context, Data, Effect, FileSystem, Layer, Path } from "effect";
 import {
   type DatabaseInstance,
   type ServiceCreationInput,
@@ -79,7 +79,7 @@ type StackCatalogSetupFailure =
   | DbConnectError;
 
 const temporaryServiceError = (
-  operation: "start" | "initialize" | "destroy",
+  operation: "initialize" | "destroy",
   instance: TemporaryServiceInstance,
   cause: unknown,
 ): StackCatalogSetupError =>
@@ -131,24 +131,6 @@ const serviceDefinition = (
       };
   }
 };
-
-const startTemporaryService = (
-  instance: TemporaryServiceInstance,
-): Effect.Effect<void, StackCatalogSetupError> =>
-  Effect.gen(function* () {
-    yield* instance.start.pipe(
-      Effect.mapError((cause) => temporaryServiceError("start", instance, cause)),
-      Effect.withSpan("StackCatalogSetup.temporaryService.start", {
-        attributes: { service: instance.service, member_id: instance.id, operation: "start" },
-      }),
-    );
-    yield* instance.ready.pipe(
-      Effect.mapError((cause) => temporaryServiceError("start", instance, cause)),
-      Effect.withSpan("StackCatalogSetup.temporaryService.ready", {
-        attributes: { service: instance.service, member_id: instance.id, operation: "ready" },
-      }),
-    );
-  });
 
 const initializeTemporaryService = (
   instance: TemporaryServiceInstance,
@@ -205,8 +187,6 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         .makeTempDirectoryScoped({ prefix: "supabase-stack-catalog-storage-" })
         .pipe(Effect.mapError(catalogError));
 
-      const allServicesReady = yield* Deferred.make<void>();
-      const readyServices = yield* Ref.make(0);
       yield* Effect.forEach(
         input.target.databaseServices,
         (service) =>
@@ -219,30 +199,7 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
                   attributes: { service, operation: "create" },
                 }),
               ),
-            (instance) =>
-              (service === "realtime"
-                ? initializeTemporaryService(instance)
-                : startTemporaryService(instance)
-              ).pipe(
-                Effect.andThen(Ref.updateAndGet(readyServices, (count) => count + 1)),
-                Effect.flatMap((count) =>
-                  count === input.target.databaseServices.length
-                    ? Deferred.succeed(allServicesReady, undefined).pipe(Effect.asVoid)
-                    : Effect.void,
-                ),
-                // Unregistering a ready sibling invalidates other services' pending admission plans.
-                Effect.andThen(
-                  Deferred.await(allServicesReady).pipe(
-                    Effect.withSpan("StackCatalogSetup.temporaryService.siblingBarrier", {
-                      attributes: {
-                        service: instance.service,
-                        member_id: instance.id,
-                        operation: "barrier",
-                      },
-                    }),
-                  ),
-                ),
-              ),
+            initializeTemporaryService,
             (instance) => destroyTemporaryService(instance),
           ),
         { concurrency: "unbounded", discard: true },

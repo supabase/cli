@@ -109,7 +109,7 @@ export interface ServiceInstance<K extends Kind = Kind> {
   readonly destroy: Effect.Effect<void, StackError>;
   /** Ensures the service artifact or image is available without starting the service. */
   readonly prepare: Effect.Effect<void, StackError>;
-  /** Runs one-shot service initialization while stopped, without starting its long-lived process. */
+  /** Runs the one-shot service initialization command while stopped with wake disabled. */
   readonly initialize?: Effect.Effect<void, StackError>;
   readonly status: Effect.Effect<Observation, StackError>;
   readonly followStatus: Stream.Stream<Observation, StackError>;

@@ -75,7 +75,7 @@ export interface ServiceInstance<K extends Kind = Kind> {
   readonly destroy: (options?: CallOptions) => Promise<void>;
   /** Ensures the service artifact or image is available without starting the service. */
   readonly prepare: (options?: CallOptions) => Promise<void>;
-  /** Runs one-shot service initialization while stopped, without starting its long-lived process. */
+  /** Runs the one-shot service initialization command while stopped with wake disabled. */
   readonly initialize?: (options?: CallOptions) => Promise<void>;
   readonly status: (options?: CallOptions) => Promise<StackEffect.Observation>;
   readonly followStatus: () => AsyncIterable<StackEffect.Observation>;
