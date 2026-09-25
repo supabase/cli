@@ -49,7 +49,20 @@ const config = {
   ),
 } as const;
 
-const flagsConfig = { ...config, ...genTypesLanguageFlags };
+/** Long flag names (and the `-s` alias) `gen types` defines itself; registry flags may not reuse them. */
+export const GEN_TYPES_CORE_FLAG_NAMES: ReadonlyArray<string> = [
+  "local",
+  "linked",
+  "db-url",
+  "project-id",
+  "lang",
+  "schema",
+  "s",
+  "postgrest-v9-compat",
+  "query-timeout",
+];
+
+const flagsConfig = { ...config, ...genTypesLanguageFlags(GEN_TYPES_CORE_FLAG_NAMES) };
 
 const commandConfig = {
   ...flagsConfig,

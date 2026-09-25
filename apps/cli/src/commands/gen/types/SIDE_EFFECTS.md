@@ -105,7 +105,7 @@ through `DbConfigResolver` the same way `--db-url` does.
 | `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` holds no project config on a schema-selecting path (`GenTypesMissingProjectConfigError`) — a DEFAULTED workdir keeps the embedded-default fallback instead |
 | `1`  | a resolved preview branch config has no `db_user`/`db_pass` (`GenTypesBranchCredentialsUnavailableError`)                                                                                             |
 | `1`  | API error or database connection/introspection/generation failure (`GenTypesGenerationError`)                                                                                                         |
-| `1`  | an out-of-process language's toolchain or package is missing from the working directory; the message carries the registry's install hint (`GenTypesToolNotInstalledError`)                            |
+| `1`  | an out-of-process language's toolchain or package is missing from the working directory; `suggestion` carries the registry's install hint (`GenTypesToolNotInstalledError`)                           |
 | `1`  | an out-of-process language's tool exited unsuccessfully or rejected the metadata document; the message carries its stderr (`GenTypesToolFailedError`)                                                 |
 
 ## Output
@@ -191,10 +191,14 @@ go`/`--lang swift`/`--lang python` — the defaults-only claim above holds only 
   one-to-one relationship detection off (the registry's `detect-one-to-one-relationships`
   consumer option), must be used together with `--db-url` (error:
   `--postgrest-v9-compat must used together with --db-url` — note the typo, preserved
-  intentionally), and prints `Flag --postgrest-v9-compat has been deprecated, PostgREST 9
-reached end of life; the flag still disables one-to-one relationship detection.` on
-  stderr when passed. `--local` still forces detection off when the local PostgREST
-  image tag contains `v9`.
+  intentionally), and prints this line on stderr when passed:
+
+  ```
+  Flag --postgrest-v9-compat has been deprecated, PostgREST 9 reached end of life; the flag still disables one-to-one relationship detection.
+  ```
+
+  `--local` still forces detection off when the local PostgREST image tag contains `v9`.
+
 - `--query-timeout` sets the maximum time allowed for introspection (default 15s),
   applied both as the connection's server-side `statement_timeout` and as a connect
   timeout. It is mutually exclusive with an _explicit_ `--linked`/`--project-id`; on

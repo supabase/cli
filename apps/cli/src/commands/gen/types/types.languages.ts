@@ -50,9 +50,26 @@ const languageFlag = (spec: OptionSpec): Flag.Flag<GenTypesLanguageFlagValue> =>
   }
 };
 
-/** One flag per user-facing language option, keyed by the flag name. */
-export const genTypesLanguageFlags: Readonly<Record<string, Flag.Flag<GenTypesLanguageFlagValue>>> =
-  Object.fromEntries(GEN_TYPES_LANGUAGE_OPTIONS.map((spec) => [spec.name, languageFlag(spec)]));
+/**
+ * One flag per user-facing language option, keyed by the flag name. Throws when a registry
+ * option reuses one of the command's own flag names, since Effect would otherwise register the
+ * flag twice or the spread would silently replace the core flag.
+ */
+export const genTypesLanguageFlags = (
+  reservedFlagNames: ReadonlyArray<string>,
+): Readonly<Record<string, Flag.Flag<GenTypesLanguageFlagValue>>> => {
+  const collisions = GEN_TYPES_LANGUAGE_FLAG_NAMES.filter((name) =>
+    reservedFlagNames.includes(name),
+  );
+  if (collisions.length > 0) {
+    throw new Error(
+      `@supabase/typegen declares language flags that collide with gen types flags: ${collisions.join(", ")}`,
+    );
+  }
+  return Object.fromEntries(
+    GEN_TYPES_LANGUAGE_OPTIONS.map((spec) => [spec.name, languageFlag(spec)]),
+  );
+};
 
 /** Documented defaults of the language flags, keyed the way `DOCS_DEFAULT_OVERRIDES` expects. */
 export const genTypesLanguageFlagDefaults = (): Readonly<Record<string, string>> =>

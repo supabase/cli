@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import type { SpawnRequest } from "@supabase/typegen";
 import { Effect, PlatformError, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { makeTypegenHost } from "./types.typegen-host.ts";
+import { makeTypegenHost, quoteForCmd } from "./types.typegen-host.ts";
 
 interface SpawnCall {
   readonly command: string;
@@ -99,6 +99,26 @@ const host = (
     spawner,
     runPromise: (effect, options) => Effect.runPromise(effect, options),
   });
+
+describe("quoteForCmd", () => {
+  it("leaves plain tokens alone", () => {
+    expect(quoteForCmd("run")).toBe("run");
+    expect(quoteForCmd("--output")).toBe("--output");
+    expect(quoteForCmd("C:\\flutter\\bin\\dart.bat")).toBe("C:\\flutter\\bin\\dart.bat");
+  });
+
+  it("quotes whitespace and cmd.exe metacharacters", () => {
+    expect(quoteForCmd("C:\\Users\\Jane Doe\\dart.bat")).toBe('"C:\\Users\\Jane Doe\\dart.bat"');
+    expect(quoteForCmd("C:\\tools & more\\dart.bat")).toBe('"C:\\tools & more\\dart.bat"');
+    expect(quoteForCmd("a|b")).toBe('"a|b"');
+    expect(quoteForCmd("(x)")).toBe('"(x)"');
+  });
+
+  it("doubles embedded quotes and percent signs", () => {
+    expect(quoteForCmd('say "hi"')).toBe('"say ""hi"""');
+    expect(quoteForCmd("%PATH%")).toBe('"%%PATH%%"');
+  });
+});
 
 describe("makeTypegenHost", () => {
   it("runs the tool in the project directory with the document on stdin and returns its output", async () => {

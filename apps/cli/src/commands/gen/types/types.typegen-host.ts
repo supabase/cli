@@ -39,9 +39,13 @@ const WINDOWS_SCRIPT = /\.(bat|cmd)$/i;
 
 /**
  * In shell mode the spawner joins the command and its arguments with spaces into one `cmd.exe /c`
- * line without quoting, so a token holding whitespace must be quoted here.
+ * line without quoting. A token holding whitespace or a cmd.exe metacharacter is wrapped in
+ * double quotes, inside which cmd.exe treats everything but `%` and `"` literally; embedded
+ * quotes and percent signs are doubled.
  */
-const quoteForCmd = (token: string): string => (/\s/.test(token) ? `"${token}"` : token);
+const CMD_UNSAFE = /[\s&|<>^()!"%]/;
+export const quoteForCmd = (token: string): string =>
+  CMD_UNSAFE.test(token) ? `"${token.replaceAll('"', '""').replaceAll("%", "%%")}"` : token;
 
 const isNotFound = (error: unknown): boolean =>
   Predicate.hasProperty(error, "reason") && Predicate.isTagged(error.reason, "NotFound");

@@ -2789,18 +2789,25 @@ describe("gen types", () => {
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("allows --postgrest-v9-compat together with --db-url", () =>
-      Effect.gen(function* () {
-        const { layer, generator } = yield* setup();
-        yield* genTypes(
-          defaultFlags({
-            dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:5432/postgres"),
-            postgrestV9Compat: true,
-          }),
-        ).pipe(Effect.provide(layer));
+    it.live(
+      "allows --postgrest-v9-compat together with --db-url and prints its deprecation line",
+      () =>
+        Effect.gen(function* () {
+          const { layer, generator, out } = yield* setup({
+            args: ["gen", "types", "--db-url", "postgresql://x", "--postgrest-v9-compat"],
+          });
+          yield* genTypes(
+            defaultFlags({
+              dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:5432/postgres"),
+              postgrestV9Compat: true,
+            }),
+          ).pipe(Effect.provide(layer));
 
-        expect(generator.calls[0]?.options["detect-one-to-one-relationships"]).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+          expect(generator.calls[0]?.options["detect-one-to-one-relationships"]).toBe(false);
+          expect(out.stderrText).toContain(
+            "Flag --postgrest-v9-compat has been deprecated, PostgREST 9 reached end of life; the flag still disables one-to-one relationship detection.",
+          );
+        }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.live("allows legacy positional non-typescript when --lang is explicitly set", () =>
