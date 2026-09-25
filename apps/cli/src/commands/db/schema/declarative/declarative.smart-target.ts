@@ -126,7 +126,7 @@ export const resolveSmartTargetEndpoint = Effect.fnUntraced(function* (
   if (!hasMigrations) {
     // No migrations: generate from local, starting a stopped stack first.
     yield* beforeLocalTarget;
-    yield* (yield* DeclarativeSeam).ensureLocalDatabaseStarted();
+    yield* (yield* DeclarativeSeam).ensureLocalDatabaseStarted;
     return yield* resolveLocalTargetEndpoint(local, yield* DnsResolverFlag);
   }
 
@@ -185,7 +185,7 @@ export const resolveSmartTargetEndpoint = Effect.fnUntraced(function* (
 
   // "Local database" choice: starts a stopped stack before the reset prompt.
   yield* beforeLocalTarget;
-  yield* (yield* DeclarativeSeam).ensureLocalDatabaseStarted();
+  yield* (yield* DeclarativeSeam).ensureLocalDatabaseStarted;
 
   let shouldReset = flags.reset;
   if (!shouldReset) {

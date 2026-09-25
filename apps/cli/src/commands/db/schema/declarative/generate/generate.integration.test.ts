@@ -218,24 +218,22 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
   const seam = Layer.succeed(DeclarativeSeam, {
-    ensureLocalDatabaseStarted: () =>
-      Effect.sync(() => {
-        ensureStartedCalls += 1;
-      }),
-    ensureLocalPostgresImageCurrent: () =>
-      Effect.sync(() => {
-        localPostgresImageChecks.push(true);
-      }).pipe(
-        Effect.flatMap(() =>
-          opts.staleLocalImage === true
-            ? Effect.fail(
-                new DeclarativeShadowDbError({
-                  message: "local Postgres container image is stale",
-                }),
-              )
-            : Effect.void,
-        ),
+    ensureLocalDatabaseStarted: Effect.sync(() => {
+      ensureStartedCalls += 1;
+    }),
+    ensureLocalPostgresImageCurrent: Effect.sync(() => {
+      localPostgresImageChecks.push(true);
+    }).pipe(
+      Effect.flatMap(() =>
+        opts.staleLocalImage === true
+          ? Effect.fail(
+              new DeclarativeShadowDbError({
+                message: "local Postgres container image is stale",
+              }),
+            )
+          : Effect.void,
       ),
+    ),
   });
   const engineExportCalls: EngineExportCall[] = [];
   const engine = Layer.succeed(

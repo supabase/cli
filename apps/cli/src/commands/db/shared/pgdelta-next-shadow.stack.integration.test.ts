@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { FetchHttpClient } from "effect/unstable/http";
 import { Effect, FileSystem, Layer, Option } from "effect";
 
-import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
+import { mockCommandSettings, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
@@ -78,14 +78,6 @@ describe("pg-delta next stack shadow provisioning", () => {
     "keeps migrations on the migration shadow and destroys both shadows with the caller scope",
     () =>
       Effect.gen(function* () {
-        const previousShadowCache = process.env["SUPABASE_SHADOW_CACHE"];
-        process.env["SUPABASE_SHADOW_CACHE"] = "1";
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            if (previousShadowCache === undefined) delete process.env["SUPABASE_SHADOW_CACHE"];
-            else process.env["SUPABASE_SHADOW_CACHE"] = previousShadowCache;
-          }),
-        );
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "pgdelta-next-stack-" });
         yield* fs.makeDirectory(`${root}/supabase/migrations`, { recursive: true });
@@ -169,7 +161,11 @@ describe("pg-delta next stack shadow provisioning", () => {
           return yield* api.discover({ stateRoot });
         }).pipe(Effect.provide(services));
         expect(api).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(
+        Effect.scoped,
+        (body) => withEnvVar("SUPABASE_SHADOW_CACHE", "1", body),
+        Effect.provide(BunServices.layer),
+      ),
     180_000,
   );
 });

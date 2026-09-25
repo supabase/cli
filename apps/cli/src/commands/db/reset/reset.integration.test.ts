@@ -1,9 +1,19 @@
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream, Redacted } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Sink,
+  Stream,
+  Redacted,
+  Schema,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -266,14 +276,12 @@ function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => RouteRe
         spawned.push({ args });
 
         if (command._tag !== "StandardCommand") {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "spawn failed",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "spawn failed",
+          });
         }
 
         const result = route(args);
@@ -875,15 +883,21 @@ function setup(
     httpClient?: Layer.Layer<HttpClient.HttpClient>;
   },
 ) {
-  if (opts.toml !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), opts.toml);
-  }
-  for (const [rel, content] of Object.entries(opts.files ?? {})) {
-    const abs = join(workdir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content);
-  }
+  const workdirLayer = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      if (opts.toml !== undefined) {
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), opts.toml);
+      }
+      for (const [rel, content] of Object.entries(opts.files ?? {})) {
+        const abs = path.join(workdir, rel);
+        yield* fs.makeDirectory(path.dirname(abs), { recursive: true });
+        yield* fs.writeFileString(abs, content);
+      }
+    }),
+  ).pipe(Layer.provide(BunServices.layer));
 
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const conn = mockConnection(opts);
@@ -992,7 +1006,7 @@ function setup(
     ...(opts.stackBackend === true && catalog !== undefined
       ? [stackBackendLayer("stack"), stackApi.layer, catalog.layer]
       : []),
-  );
+  ).pipe(Layer.provide(workdirLayer));
   return {
     layer,
     out,
@@ -1140,7 +1154,7 @@ describe("db reset", () => {
         return Effect.gen(function* () {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("is not running.");
+          if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("is not running.");
           expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
             false,
           );
@@ -1160,15 +1174,17 @@ describe("db reset", () => {
         return Effect.gen(function* () {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(
             Effect.provide(
-              Layer.succeed(LocalDockerEngine, {
-                containerExists: () => Effect.succeed(Option.some(false)),
-              }),
+              Layer.merge(
+                layer,
+                Layer.succeed(LocalDockerEngine, {
+                  containerExists: () => Effect.succeed(Option.some(false)),
+                }),
+              ),
             ),
-            Effect.provide(layer),
             Effect.exit,
           );
           expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("is not running.");
+          if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("is not running.");
           expect(
             child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "inspect"),
           ).toBe(false);
@@ -1335,7 +1351,7 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("is not running.");
+        if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("is not running.");
         expect(stackApi.resetCalls).toBe(0);
       });
     });
@@ -1626,7 +1642,7 @@ describe("db reset", () => {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+            expect(Cause.pretty(exit.cause)).toContain("failed to load config");
           }
           expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
             false,
@@ -1766,13 +1782,11 @@ describe("db reset", () => {
           yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           expect(out.stderrText).toContain("Do you want to prune it? [y/N] y");
           expect(out.stderrText).toContain("Pruning vector bucket: stale-vec");
-          expect(
-            requests.some(
-              (r) =>
-                r.url.includes("DeleteVectorBucket") &&
-                JSON.stringify(r.body ?? "").includes("stale-vec"),
-            ),
-          ).toBe(true);
+          const deleteBodies = yield* Effect.forEach(
+            requests.filter((r) => r.url.includes("DeleteVectorBucket")),
+            (r) => Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(r.body ?? ""),
+          );
+          expect(deleteBodies.some((body) => body.includes("stale-vec"))).toBe(true);
         }),
       );
     });
@@ -1817,19 +1831,14 @@ describe("db reset", () => {
         args: ["db", "reset", "--local"],
         isLocal: true,
       });
-      const previous = process.env["GITHUB_HEAD_REF"];
-      process.env["GITHUB_HEAD_REF"] = "feature-x";
-      return Effect.gen(function* () {
-        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain("on branch ");
-        expect(out.stderrText).toContain("feature-x");
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["GITHUB_HEAD_REF"];
-            else process.env["GITHUB_HEAD_REF"] = previous;
-          }),
-        ),
+      return withEnvVar(
+        "GITHUB_HEAD_REF",
+        "feature-x",
+        Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("on branch ");
+          expect(out.stderrText).toContain("feature-x");
+        }),
       );
     });
 
@@ -1863,7 +1872,7 @@ describe("db reset", () => {
         const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("failed to remove container");
+          expect(Cause.pretty(exit.cause)).toContain("failed to remove container");
         }
         expect(telemetry.flushed).toBe(true);
       });
@@ -1932,7 +1941,7 @@ describe("db reset", () => {
         const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("failed to restart supabase_storage_test");
+          expect(Cause.pretty(exit.cause)).toContain("failed to restart supabase_storage_test");
         }
       });
     });
@@ -1999,10 +2008,10 @@ describe("db reset", () => {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
-            expect(cause).toContain("permission denied to create database");
-            expect(cause).toContain("At statement: 1");
-            expect(cause).toContain("CREATE DATABASE postgres WITH OWNER postgres");
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("permission denied to create database");
+            expect(causeText).toContain("At statement: 1");
+            expect(causeText).toContain("CREATE DATABASE postgres WITH OWNER postgres");
           }
         });
       },
@@ -2042,7 +2051,7 @@ describe("db reset", () => {
         const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("failed to disconnect clients");
+          expect(Cause.pretty(exit.cause)).toContain("failed to disconnect clients");
         }
       });
     });
@@ -2119,7 +2128,7 @@ describe("db reset", () => {
         const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("failed to count replication slots");
+          expect(Cause.pretty(exit.cause)).toContain("failed to count replication slots");
         }
         // A single attempt — the permanent failure never retries.
         const countCalls = conn.queries.filter((q) => q.sql === COUNT_REPLICATION_SLOTS);
@@ -2140,7 +2149,7 @@ describe("db reset", () => {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("replication slots still active");
+            expect(Cause.pretty(exit.cause)).toContain("replication slots still active");
           }
         });
       },
@@ -2320,7 +2329,7 @@ describe("db reset", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+          expect(Cause.pretty(exit.cause)).toContain("failed to load config");
         }
       });
     });
@@ -2329,23 +2338,18 @@ describe("db reset", () => {
       // Regression: `enabled = "env(VAR)"` must load via env-expansion + boolean
       // parsing (`checkDbToml`) instead of the strict @supabase/config
       // loader rejecting it.
-      const previous = process.env["MIGRATIONS_ENABLED"];
-      process.env["MIGRATIONS_ENABLED"] = "true";
       const { layer, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n\n[db.migrations]\nenabled = "env(MIGRATIONS_ENABLED)"\n',
         files: migrationFile("20240101000000"),
         confirm: [true],
       });
-      return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["MIGRATIONS_ENABLED"];
-            else process.env["MIGRATIONS_ENABLED"] = previous;
-          }),
-        ),
+      return withEnvVar(
+        "MIGRATIONS_ENABLED",
+        "true",
+        Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
+        }),
       );
     });
 
@@ -2370,7 +2374,7 @@ describe("db reset", () => {
           last: Option.some(1),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("[last version]");
+        if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("[last version]");
       });
     });
 
@@ -2401,7 +2405,7 @@ describe("db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(Cause.pretty(exit.cause)).toContain(
             "glob supabase/migrations/20240101000000_*.sql: file does not exist",
           );
         }
@@ -2452,7 +2456,7 @@ describe("db reset", () => {
           Effect.exit,
         );
         expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("context canceled");
+        if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("context canceled");
         expect(conn.execs).toHaveLength(0);
       });
     });
@@ -2491,9 +2495,7 @@ describe("db reset", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
-            "failed to parse config: missing private key",
-          );
+          expect(Cause.pretty(exit.cause)).toContain("failed to parse config: missing private key");
         }
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(false);
       });
@@ -2511,7 +2513,7 @@ describe("db reset", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(Cause.pretty(exit.cause)).toContain(
             "Missing required field in config: project_id",
           );
         }
@@ -2598,7 +2600,7 @@ describe("db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(Cause.pretty(exit.cause)).toContain(
             "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
           );
         }
@@ -2832,9 +2834,14 @@ describe("db reset", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
-            expect(cause).toContain("no files matched pattern: supabase/nomatch/*.sql");
-            expect(cause).not.toContain("See schema file");
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("no files matched pattern: supabase/nomatch/*.sql");
+            expect(causeText).not.toContain("See schema file");
+            expect(Cause.findErrorOption(exit.cause)).not.toEqual(
+              Option.some(
+                expect.objectContaining({ suggestion: expect.stringContaining("See schema file") }),
+              ),
+            );
           }
           expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
         });
@@ -2877,10 +2884,14 @@ describe("db reset", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
-            expect(cause).toContain("syntax error at or near");
-            expect(cause).toContain("See schema file:");
-            expect(cause).toContain("supabase/schemas/01_users.sql");
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("syntax error at or near");
+            expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+              suggestion: expect.stringContaining("See schema file:"),
+            });
+            expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+              suggestion: expect.stringContaining("supabase/schemas/01_users.sql"),
+            });
           }
         });
       },
@@ -2891,62 +2902,95 @@ describe("db reset", () => {
     it.live.skipIf(isRoot)(
       "does not attach the schema-file suggestion when a schema file cannot be READ on an experimental remote reset",
       () => {
-        const schemaFile = join(tmp.current, "supabase", "schemas", "01_users.sql");
         const { layer, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
-          files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
           experimental: true,
           confirm: [true],
         });
-        chmodSync(schemaFile, 0o000);
         return Effect.gen(function* () {
-          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
-            Effect.provide(layer),
-            Effect.exit,
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const schemaFile = path.join(tmp.current, "supabase", "schemas", "01_users.sql");
+          yield* fs.makeDirectory(path.dirname(schemaFile), { recursive: true });
+          yield* fs.writeFileString(schemaFile, "create table schema_users ();");
+          yield* Effect.acquireUseRelease(
+            fs.chmod(schemaFile, 0o000),
+            () =>
+              Effect.gen(function* () {
+                const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+                  Effect.provide(layer),
+                  Effect.exit,
+                );
+                expect(Exit.isFailure(exit)).toBe(true);
+                if (Exit.isFailure(exit)) {
+                  const causeText = Cause.pretty(exit.cause);
+                  expect(causeText).not.toContain("See schema file");
+                  expect(Cause.findErrorOption(exit.cause)).not.toEqual(
+                    Option.some(
+                      expect.objectContaining({
+                        suggestion: expect.stringContaining("See schema file"),
+                      }),
+                    ),
+                  );
+                }
+                expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+              }),
+            () => fs.chmod(schemaFile, 0o644),
           );
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
-            expect(cause).not.toContain("See schema file");
-          }
-          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
-        }).pipe(Effect.ensuring(Effect.sync(() => chmodSync(schemaFile, 0o644))));
+        }).pipe(Effect.provide(BunServices.layer));
       },
     );
 
     it.live.skipIf(isRoot)(
       "fails an experimental remote reset (without silently succeeding) when a matched schema_paths directory cannot be walked",
       () => {
-        const schemasDir = join(tmp.current, "supabase", "schemas");
         const { layer, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas"]\n',
-          files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
           experimental: true,
           confirm: [true],
         });
-        chmodSync(schemasDir, 0o000);
         return Effect.gen(function* () {
-          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
-            Effect.provide(layer),
-            Effect.exit,
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const schemasDir = path.join(tmp.current, "supabase", "schemas");
+          yield* fs.makeDirectory(schemasDir, { recursive: true });
+          yield* fs.writeFileString(
+            path.join(schemasDir, "01_users.sql"),
+            "create table schema_users ();",
           );
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
-            expect(cause).toContain("failed to walk matched directory");
-            expect(cause).not.toContain("See schema file");
-          }
-          expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
-          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
-        }).pipe(Effect.ensuring(Effect.sync(() => chmodSync(schemasDir, 0o755))));
+          yield* Effect.acquireUseRelease(
+            fs.chmod(schemasDir, 0o000),
+            () =>
+              Effect.gen(function* () {
+                const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+                  Effect.provide(layer),
+                  Effect.exit,
+                );
+                expect(Exit.isFailure(exit)).toBe(true);
+                if (Exit.isFailure(exit)) {
+                  const causeText = Cause.pretty(exit.cause);
+                  expect(causeText).toContain("failed to walk matched directory");
+                  expect(causeText).not.toContain("See schema file");
+                  expect(Cause.findErrorOption(exit.cause)).not.toEqual(
+                    Option.some(
+                      expect.objectContaining({
+                        suggestion: expect.stringContaining("See schema file"),
+                      }),
+                    ),
+                  );
+                }
+                expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+                expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+              }),
+            () => fs.chmod(schemasDir, 0o755),
+          );
+        }).pipe(Effect.provide(BunServices.layer));
       },
     );
 
     it.live(
       "takes the native experimental schema-files path via SUPABASE_EXPERIMENTAL in the project .env",
       () => {
-        const previous = process.env["SUPABASE_EXPERIMENTAL"];
-        delete process.env["SUPABASE_EXPERIMENTAL"];
         const { layer, out, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
           files: {
@@ -2957,18 +3001,15 @@ describe("db reset", () => {
           confirm: [true],
           // No experimental flag / shell env — only the project .env sets it.
         });
-        return Effect.gen(function* () {
-          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
-          expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
-          expect(out.stderrText).not.toContain("Applying migration");
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
-              else process.env["SUPABASE_EXPERIMENTAL"] = previous;
-            }),
-          ),
+        return withEnvVar(
+          "SUPABASE_EXPERIMENTAL",
+          undefined,
+          Effect.gen(function* () {
+            yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+            expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
+            expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
+            expect(out.stderrText).not.toContain("Applying migration");
+          }),
         );
       },
     );
@@ -2983,8 +3024,10 @@ describe("db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
-          expect(JSON.stringify(exit.cause)).toContain("Use either");
+          expect(Cause.pretty(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
+          expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+            suggestion: expect.stringContaining("Use either"),
+          });
         }
       });
     });
@@ -3120,7 +3163,7 @@ describe("db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
+          expect(Cause.pretty(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
         }
       });
     });
@@ -3135,7 +3178,7 @@ describe("db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(Cause.pretty(exit.cause)).toContain(
             "--sql-paths requires a non-empty path or glob pattern",
           );
         }
@@ -3152,29 +3195,31 @@ describe("db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const cause = JSON.stringify(exit.cause);
-          expect(cause).toContain("invalid argument");
-          expect(cause).toContain("strconv.ParseUint");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("invalid argument");
+          expect(causeText).toContain("strconv.ParseUint");
         }
       });
     });
 
     it.live("seeds an absolute --sql-paths file on a remote reset", () => {
-      const absSeed = join(tmp.current, "external-seed.sql");
-      writeFileSync(absSeed, "insert into t values (3);");
       const { layer, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         files: migrationFile("20240101000000"),
         confirm: [true],
       });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const absSeed = path.join(tmp.current, "external-seed.sql");
+        yield* fs.writeFileString(absSeed, "insert into t values (3);");
         yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           sqlPaths: [absSeed],
         }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain(`Seeding data from ${absSeed}...`);
-      });
+      }).pipe(Effect.provide(BunServices.layer));
     });
 
     it.live("warns and seeds from --sql-paths overriding config on a remote reset", () => {

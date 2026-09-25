@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Config, Effect, Option } from "effect";
 
 import { NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -89,9 +89,11 @@ where pd.deptype is null
   and pn.nspowner::regrole::text != 'supabase_admin'
 order by pn.nspname`;
 
-function isSslDebugEnabled(): boolean {
-  return (process.env["SUPABASE_SSL_DEBUG"] ?? "").toLowerCase() === "true";
-}
+const isSslDebugEnabled = Config.string("SUPABASE_SSL_DEBUG").pipe(
+  Config.withDefault(""),
+  Effect.map((value) => value.toLowerCase() === "true"),
+  Effect.orElseSucceed(() => false),
+);
 
 function shouldFallbackToBashMigra(message: string): boolean {
   return (
@@ -111,7 +113,7 @@ const buildMigraEnv = Effect.fnUntraced(function* (params: {
     SOURCE: params.source,
     TARGET: params.target,
   };
-  if (isSslDebugEnabled()) env["SUPABASE_SSL_DEBUG"] = "true";
+  if (yield* isSslDebugEnabled) env["SUPABASE_SSL_DEBUG"] = "true";
   // Probe the target for TLS; if it speaks TLS, inject the embedded CA bundle as SSL_CA.
   const requireSsl = yield* probe.requireSsl(params.target);
   if (requireSsl) env["SSL_CA"] = PG_DELTA_CA_BUNDLE;
@@ -134,32 +136,23 @@ const loadTargetUserSchemas = Effect.fnUntraced(function* (
   const connection = yield* DbConnection;
   const input = parseConnectionString(target);
   if (input === undefined) {
-    return yield* Effect.fail(
-      new MigraSchemaLoadError({
-        message: "failed to list schemas: invalid target connection string",
-      }),
-    );
+    return yield* new MigraSchemaLoadError({
+      message: "failed to list schemas: invalid target connection string",
+    });
   }
   return yield* Effect.scoped(
     Effect.gen(function* () {
-      const session = yield* connection.connect(input, connectOptions).pipe(
-        Effect.mapError(
-          (cause) =>
-            new MigraSchemaLoadError({
-              message: `failed to list schemas: ${cause.message}`,
-            }),
-        ),
-      );
-      const rows = yield* session.query(listSchemasSql, [LIST_SCHEMAS_EXCLUDE]).pipe(
-        Effect.mapError(
-          (cause) =>
-            new MigraSchemaLoadError({
-              message: `failed to list schemas: ${cause.message}`,
-            }),
-        ),
-      );
+      const session = yield* connection.connect(input, connectOptions);
+      const rows = yield* session.query(listSchemasSql, [LIST_SCHEMAS_EXCLUDE]);
       return rows.map((row) => String(row["nspname"]));
-    }),
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new MigraSchemaLoadError({
+            message: `failed to list schemas: ${cause.message}`,
+          }),
+      ),
+    ),
   );
 });
 
@@ -183,7 +176,7 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
       ? params.schema
       : yield* loadTargetUserSchemas(params.target, params.connectOptions);
   const env: Record<string, string> = { SOURCE: params.source, TARGET: params.target };
-  if (isSslDebugEnabled()) env["SUPABASE_SSL_DEBUG"] = "true";
+  if (yield* isSslDebugEnabled) env["SUPABASE_SSL_DEBUG"] = "true";
   // The script runs as a string, so command-line args must be set manually via `set --`
   // for migra.sh's `"$@"` loop to see the schema list.
   const args = `set -- ${schema.join(" ")};`;
@@ -219,11 +212,9 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
       ),
     );
   if (result.exitCode !== 0) {
-    return yield* Effect.fail(
-      new MigraDiffError({
-        message: `error diffing schema:\n${result.stderr}`,
-      }),
-    );
+    return yield* new MigraDiffError({
+      message: `error diffing schema:\n${result.stderr}`,
+    });
   }
   return new TextDecoder().decode(result.stdout);
 });

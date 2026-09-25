@@ -46,11 +46,9 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
     // Mutually-exclusive db-url/linked/local group, keyed off the
     // explicitly-set flags, not the `--linked` default value.
     if (target.setFlags.length > 1) {
-      return yield* Effect.fail(
-        new DbPushTargetFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-        }),
-      );
+      return yield* new DbPushTargetFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+      });
     }
     // push defaults `--linked` to true, so no target flag → linked.
     const connType = target.connType ?? "linked";
@@ -60,12 +58,10 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
     // unconditionally but simply goes unused on `--local`/`--db-url` — an explicitly
     // typed flag doing nothing silently would be a footgun the env var doesn't share.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new DbPushTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new DbPushTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // The linked path resolves the project ref before loading config so a

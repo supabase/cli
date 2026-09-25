@@ -177,14 +177,12 @@ export const pgDeltaNextShadowLayer = Layer.effect(
           const candidate = yield* allocateFreeHostPort;
           if (Option.isSome(candidate) && candidate.value !== excluded) return candidate.value;
         }
-        return yield* Effect.fail(
-          new DeclarativeShadowDbError({
-            message:
-              excluded === undefined
-                ? "failed to allocate a host port for pg-delta shadow database"
-                : `failed to allocate a host port distinct from ${excluded}`,
-          }),
-        );
+        return yield* new DeclarativeShadowDbError({
+          message:
+            excluded === undefined
+              ? "failed to allocate a host port for pg-delta shadow database"
+              : `failed to allocate a host port distinct from ${excluded}`,
+        });
       });
 
     const buildNativeBase = (request: PgDeltaNextShadowInput) =>
