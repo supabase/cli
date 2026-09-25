@@ -49,7 +49,10 @@ export const genTypesRuntimeLayer = (() => {
     Layer.provide(debugLoggerLayer),
     Layer.provide(identityStitchLayer),
   );
-  const generator = genTypesGeneratorLayer.pipe(Layer.provide(dbConnectionLayer));
+  const generator = genTypesGeneratorLayer.pipe(
+    Layer.provide(dbConnectionLayer),
+    Layer.provide(cliSettings),
+  );
 
   const built = Layer.mergeAll(
     dbConfig,

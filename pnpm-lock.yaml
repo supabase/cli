@@ -335,15 +335,15 @@ importers:
       '@supabase/pg-topo':
         specifier: 1.0.0-alpha.6
         version: 1.0.0-alpha.6(supports-color@7.2.0)
-      '@supabase/postgrest-typegen':
-        specifier: 0.2.2
-        version: 0.2.2
       '@supabase/stack':
         specifier: workspace:*
         version: link:../../packages/stack
       '@supabase/supabase-js':
         specifier: 'catalog:'
         version: 2.112.4
+      '@supabase/typegen':
+        specifier: 0.1.2
+        version: 0.1.2(oxfmt@0.66.0)
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
@@ -2908,9 +2908,14 @@ packages:
     resolution: {integrity: sha512-uaubtPSeg2TR4wrtfQoQWgkTAe+a0qWX2KhmwvTfNl5mGN9+U7owiJt6abk3o/V6O899PSRD1yzxs5RlF4xTug==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/postgrest-typegen@0.2.2':
-    resolution: {integrity: sha512-TKh+GgakrkMlLahWtvwa6WWzbRzlK4tBExNfgZbnB0V5yMl51RIOvrgITQOacoJR3S/ZZCNbpvkRgHrhxSWsBg==}
-    engines: {node: '>=20.0.0'}
+  '@supabase/postgrest-typegen@0.3.0':
+    resolution: {integrity: sha512-naUOAECYWyGt/Esul6TFsp3KCRpvG1R4Y1BYYGFGS5+cw9mZLVGLbLsg82+opJHRZfLHzfpGM7v4FDjiYYGoyg==}
+    engines: {node: '>=22.12.0'}
+    peerDependencies:
+      oxfmt: 0.66.0
+    peerDependenciesMeta:
+      oxfmt:
+        optional: true
 
   '@supabase/realtime-js@2.112.4':
     resolution: {integrity: sha512-vZ+j079SKrM0Xiq7MJCvQKLDpaH2kfKfLY68xuQE1sqsCsMmx1CyrDBJHsxZ3cX01VOs5SI9igmoZAF3BmdZxw==}
@@ -2927,6 +2932,15 @@ packages:
       '@opentelemetry/api': '>=1.0.0'
     peerDependenciesMeta:
       '@opentelemetry/api':
+        optional: true
+
+  '@supabase/typegen@0.1.2':
+    resolution: {integrity: sha512-5S9VNDm8jnAcRbHVbqigLAcLUGof1ytddztxOKwjzPGmVqyQdQoRfqUs9g4Q/odieU9PCNrjJrHL1Ru5WVj5eA==}
+    engines: {node: '>=22.12.0'}
+    peerDependencies:
+      oxfmt: 0.66.0
+    peerDependenciesMeta:
+      oxfmt:
         optional: true
 
   '@swc/helpers@0.5.23':
@@ -8679,13 +8693,11 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/postgrest-typegen@0.2.2':
+  '@supabase/postgrest-typegen@0.3.0(oxfmt@0.66.0)':
     dependencies:
       arktype: 2.2.3
+    optionalDependencies:
       oxfmt: 0.66.0
-    transitivePeerDependencies:
-      - svelte
-      - vite-plus
 
   '@supabase/realtime-js@2.112.4':
     dependencies:
@@ -8704,6 +8716,12 @@ snapshots:
       '@supabase/postgrest-js': 2.112.4
       '@supabase/realtime-js': 2.112.4
       '@supabase/storage-js': 2.112.4
+
+  '@supabase/typegen@0.1.2(oxfmt@0.66.0)':
+    dependencies:
+      '@supabase/postgrest-typegen': 0.3.0(oxfmt@0.66.0)
+    optionalDependencies:
+      oxfmt: 0.66.0
 
   '@swc/helpers@0.5.23':
     dependencies:
@@ -11567,6 +11585,7 @@ snapshots:
       '@oxfmt/binding-win32-arm64-msvc': 0.66.0
       '@oxfmt/binding-win32-ia32-msvc': 0.66.0
       '@oxfmt/binding-win32-x64-msvc': 0.66.0
+    optional: true
 
   oxlint-tsgolint@7.0.2001:
     optionalDependencies:

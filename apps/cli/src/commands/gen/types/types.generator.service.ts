@@ -1,3 +1,4 @@
+import type { OptionValues } from "@supabase/typegen";
 import { Context, Data, type Effect, type Scope } from "effect";
 import {
   actionability,
@@ -10,30 +11,27 @@ import type {
   PgConnInput,
 } from "../../../command-internal/db-connection.service.ts";
 
-/** Output language `gen types` can produce, mirroring the `@supabase/postgrest-typegen` generators. */
-type GenTypesLanguage = "typescript" | "go" | "python" | "swift";
-
-/**
- * Swift access-control levels `gen types` exposes. The underlying generator also accepts
- * `"private"`/`"package"`, which this command does not surface.
- */
-type GenTypesSwiftAccessControl = "internal" | "public";
-
 export interface GenTypesGenerateInput {
   readonly conn: PgConnInput;
   readonly isLocal: boolean;
   readonly dnsResolver: DbConnectOptions["dnsResolver"];
-  readonly lang: GenTypesLanguage;
+  /** A `--lang` value: the name of one of the registry's `languages`. */
+  readonly lang: string;
   readonly includedSchemas: ReadonlyArray<string>;
-  readonly detectOneToOneRelationships: boolean;
-  readonly swiftAccessControl: GenTypesSwiftAccessControl;
+  /** Registry option values by name; ones the language does not declare are dropped. */
+  readonly options: OptionValues;
 }
+
+export type GenTypesGenerateError =
+  | GenTypesGenerationError
+  | GenTypesToolNotInstalledError
+  | GenTypesToolFailedError;
 
 interface GenTypesGeneratorShape {
   /** Connects to `input.conn`, introspects it, and generates `input.lang` source. */
   readonly generate: (
     input: GenTypesGenerateInput,
-  ) => Effect.Effect<string, GenTypesGenerationError | DbConnectError, Scope.Scope>;
+  ) => Effect.Effect<string, GenTypesGenerateError | DbConnectError, Scope.Scope>;
 }
 
 /** Introspection or code generation failed against the target database's schema. */
@@ -46,10 +44,29 @@ export class GenTypesGenerationError extends Data.TaggedError("GenTypesGeneratio
   }
 }
 
-/**
- * Generates PostgREST client types in-process via `@supabase/postgrest-typegen`, replacing the
- * pg-meta Docker container `gen types` previously shelled out to.
- */
+/** An out-of-process language's toolchain is missing; `suggestion` carries the install hint. */
+export class GenTypesToolNotInstalledError extends Data.TaggedError(
+  "GenTypesToolNotInstalledError",
+)<{
+  readonly message: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.toolNotInstalled;
+  }
+}
+
+/** An out-of-process language's tool failed; the message carries its stderr. */
+export class GenTypesToolFailedError extends Data.TaggedError("GenTypesToolFailedError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.toolFailed;
+  }
+}
+
+/** Introspects the target database and generates `lang` through the `@supabase/typegen` registry. */
 export class GenTypesGenerator extends Context.Service<GenTypesGenerator, GenTypesGeneratorShape>()(
   "supabase/cli/GenTypesGenerator",
 ) {}

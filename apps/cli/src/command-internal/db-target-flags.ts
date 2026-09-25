@@ -9,6 +9,8 @@
  * skipped during the scan, so e.g. `--schema --linked` does not misdetect `--linked` as changed.
  */
 
+import { GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES } from "../commands/gen/types/types.languages.ts";
+
 export type DbConnType = "db-url" | "linked" | "local";
 
 export interface DbTargetSelection {
@@ -108,7 +110,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "source",
   "status",
   "sub",
-  "swift-access-control",
+  ...GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
   "tail",
   "template",
   "timestamp",

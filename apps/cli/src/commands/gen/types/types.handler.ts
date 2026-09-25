@@ -45,6 +45,11 @@ import {
 } from "../../../command-internal/pooler-fallback.ts";
 import type { GenTypesFlags } from "./types.command.ts";
 import {
+  GEN_TYPES_LANGUAGE_FLAG_NAMES,
+  GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
+  languageOptionValues,
+} from "./types.languages.ts";
+import {
   GenTypesBranchCredentialsUnavailableError,
   GenTypesFlagUsageError,
   GenTypesLocalDbInspectError,
@@ -56,7 +61,7 @@ import {
   GenTypesUnexpectedStatusError,
   GenTypesWorkdirError,
 } from "./types.errors.ts";
-import { type GenTypesGenerationError, GenTypesGenerator } from "./types.generator.service.ts";
+import { type GenTypesGenerateError, GenTypesGenerator } from "./types.generator.service.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import {
@@ -109,24 +114,18 @@ function isPoolerHost(host: string, poolerHost: string): boolean {
 
 const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
 
-type GenTypesMutexFlag =
-  | "local"
-  | "linked"
-  | "project-id"
-  | "db-url"
-  | "postgrest-v9-compat"
-  | "swift-access-control"
-  | "query-timeout";
-
 // Validation reports only the first violated group, in this listed order — e.g. `--db-url X
 // --postgrest-v9-compat --project-id Y` reports the postgrest group, not the
 // local/linked/project-id/db-url group.
-const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<GenTypesMutexFlag>> = [
+const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
   ["linked", "project-id", "postgrest-v9-compat"],
   ["linked", "project-id", "query-timeout"],
-  ["linked", "project-id", "swift-access-control"],
+  ...GEN_TYPES_LANGUAGE_FLAG_NAMES.map((name) => ["linked", "project-id", name]),
   ["local", "linked", "project-id", "db-url"],
 ];
+
+const POSTGREST_V9_COMPAT_DEPRECATION_LINE =
+  "Flag --postgrest-v9-compat has been deprecated, PostgREST 9 reached end of life; the flag still disables one-to-one relationship detection.";
 
 /**
  * Every value-taking flag `gen types` parses, telling `pflagArgvScan` which bare tokens
@@ -139,7 +138,7 @@ const GEN_TYPES_SCAN_SPEC = {
     "project-id",
     "lang",
     "schema",
-    "swift-access-control",
+    ...GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
     "query-timeout",
     ...PERSISTENT_VALUE_FLAG_NAMES,
   ]),
@@ -163,7 +162,7 @@ const LONG_FLAGS_WITH_VALUES = new Set([
   "project-id",
   "lang",
   "schema",
-  "swift-access-control",
+  ...GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
   "query-timeout",
   "profile",
   "workdir",
@@ -248,7 +247,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
   const schemas = flags.schema;
   const lang = flags.lang;
-  const swiftAccessControl = flags.swiftAccessControl;
+  const languageOptions = languageOptionValues(flags);
 
   const toRelativeConfigPath = (path: string) => relativeConfigPath(cliSettings.workdir, path);
 
@@ -312,7 +311,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
    * exposes it via `DbConnectError.ipv6Unreachable`, so a `DbConnectError` no longer carries the
    * raw driver cause `isIPv6ConnectivityErrorCause` needs; fall back to it for any other error.
    */
-  const classifyGenerateError = (error: DbConnectError | GenTypesGenerationError): boolean =>
+  const classifyGenerateError = (error: DbConnectError | GenTypesGenerateError): boolean =>
     Predicate.isTagged(error, "DbConnectError")
       ? (error.ipv6Unreachable ?? false)
       : isIPv6ConnectivityErrorCause(error);
@@ -340,8 +339,10 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
               dnsResolver,
               lang,
               includedSchemas: input.includedSchemas,
-              detectOneToOneRelationships: input.detectOneToOneRelationships,
-              swiftAccessControl,
+              options: {
+                ...languageOptions,
+                "detect-one-to-one-relationships": input.detectOneToOneRelationships,
+              },
             });
           }),
         );
@@ -535,6 +536,10 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       });
     }
 
+    if (occurrences.has("postgrest-v9-compat")) {
+      yield* output.raw(`${POSTGREST_V9_COMPAT_DEPRECATION_LINE}\n`, "stderr");
+    }
+
     // This guard runs before flag-group validation, so its error wins when both apply. Both
     // run after the telemetry context is installed, so every return here must stay inside the
     // `Effect.ensuring(telemetryState.flush)` below.
@@ -559,14 +564,16 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     // A flag counts as set once passed explicitly, regardless of value (`--linked=false`
     // still trips its group). `project-id`/`db-url` are read straight off parsed flags since
     // they have no boolean-vs-default ambiguity.
-    const changedMutexFlags: Record<GenTypesMutexFlag, boolean> = {
+    const changedMutexFlags: Record<string, boolean> = {
       local: occurrences.has("local"),
       linked: occurrences.has("linked"),
       "project-id": Option.isSome(flags.projectId),
       "db-url": Option.isSome(flags.dbUrl),
       "postgrest-v9-compat": occurrences.has("postgrest-v9-compat"),
-      "swift-access-control": occurrences.has("swift-access-control"),
       "query-timeout": occurrences.has("query-timeout"),
+      ...Object.fromEntries(
+        GEN_TYPES_LANGUAGE_FLAG_NAMES.map((name) => [name, occurrences.has(name)]),
+      ),
     };
     for (const group of GEN_TYPES_MUTEX_GROUPS) {
       const set = group.filter((flagName) => changedMutexFlags[flagName]);

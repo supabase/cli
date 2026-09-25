@@ -4,10 +4,8 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import { genTypes } from "./types.handler.ts";
+import { GEN_TYPES_LANGUAGES, genTypesLanguageFlags } from "./types.languages.ts";
 import { genTypesRuntimeLayer } from "./types.layers.ts";
-
-const LANG_VALUES = ["typescript", "go", "swift", "python"] as const;
-const SWIFT_ACCESS_CONTROL_VALUES = ["internal", "public"] as const;
 
 const config = {
   local: Flag.boolean("local").pipe(
@@ -26,7 +24,7 @@ const config = {
     Flag.withDescription("Generate types from a project ID."),
     Flag.optional,
   ),
-  lang: Flag.choice("lang", LANG_VALUES).pipe(
+  lang: Flag.choice("lang", GEN_TYPES_LANGUAGES).pipe(
     Flag.withDescription("Output language of the generated types. (default typescript)"),
     Flag.withDefault("typescript"),
   ),
@@ -39,12 +37,10 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  swiftAccessControl: Flag.choice("swift-access-control", SWIFT_ACCESS_CONTROL_VALUES).pipe(
-    Flag.withDescription("Access control for Swift generated types. (default internal)"),
-    Flag.withDefault("internal"),
-  ),
+  // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints cobra's deprecation line.
   postgrestV9Compat: Flag.boolean("postgrest-v9-compat").pipe(
     Flag.withDescription("Generate types compatible with PostgREST v9 and below."),
+    Flag.withHidden,
     Flag.withDefault(false),
   ),
   queryTimeout: Flag.string("query-timeout").pipe(
@@ -53,12 +49,29 @@ const config = {
   ),
 } as const;
 
+/** Long flag names (and the `-s` alias) `gen types` defines itself; registry flags may not reuse them. */
+export const GEN_TYPES_CORE_FLAG_NAMES: ReadonlyArray<string> = [
+  "local",
+  "linked",
+  "db-url",
+  "project-id",
+  "lang",
+  "schema",
+  "s",
+  "postgrest-v9-compat",
+  "query-timeout",
+];
+
+const flagsConfig = { ...config, ...genTypesLanguageFlags(GEN_TYPES_CORE_FLAG_NAMES) };
+
 const commandConfig = {
-  ...config,
+  ...flagsConfig,
   language: Argument.string("language").pipe(Argument.optional, Param.withHidden),
 } as const;
 
-export type GenTypesFlags = CliCommand.Command.Config.Infer<typeof config>;
+/** The registry's language flags are only known at runtime; read them through `languageOptionValues`. */
+export type GenTypesFlags = CliCommand.Command.Config.Infer<typeof flagsConfig> &
+  Readonly<Record<string, unknown>>;
 
 export const genTypesCommand = Command.make("types", commandConfig).pipe(
   Command.withDescription("Generate types from Postgres schema."),
@@ -83,7 +96,7 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
   ]),
   Command.withHandler((flags) =>
     genTypes(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: ["project-id"], config }),
+      withCommandTelemetry({ flags, safeFlags: ["project-id"], config: flagsConfig }),
       withJsonErrorHandling,
     ),
   ),

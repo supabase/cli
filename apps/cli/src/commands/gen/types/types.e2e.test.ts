@@ -1,3 +1,4 @@
+import { languages } from "@supabase/typegen";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Clock, Config, Data, Effect, FileSystem, Option, Path, Schedule } from "effect";
@@ -309,6 +310,14 @@ function expectLocalSmokeTable(lang: TypegenLang, stdout: string) {
 }
 
 describe("gen types e2e", () => {
+  it("covers every in-process language the registry offers", () => {
+    const inProcess = languages
+      .filter((language) => language.inProcess)
+      .map((language) => language.name)
+      .sort();
+    expect(inProcess).toEqual([...TYPEGEN_LANGS].sort());
+  });
+
   it.live(
     "generates all supported languages from a tokenless local stack",
     () =>

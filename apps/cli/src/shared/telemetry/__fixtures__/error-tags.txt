@@ -292,6 +292,8 @@ GenTypesMissingProjectConfigError
 GenTypesNetworkError
 GenTypesNetworkIdUnsupportedError
 GenTypesParseConfigError
+GenTypesToolFailedError
+GenTypesToolNotInstalledError
 GenTypesUnexpectedStatusError
 GenTypesWorkdirError
 GoChildExitError
