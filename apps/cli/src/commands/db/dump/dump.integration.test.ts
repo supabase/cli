@@ -1,10 +1,8 @@
-import { spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -13,6 +11,7 @@ import {
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -293,13 +292,11 @@ function mockDockerRun(opts: {
       Effect.gen(function* () {
         allOpts.push(runOpts);
         if (opts.runFails === true) {
-          return yield* Effect.fail(
-            new DockerRunError({
-              message: "failed to run docker: not found",
-              reason: "spawn",
-              daemonDown: false,
-            }),
-          );
+          return yield* new DockerRunError({
+            message: "failed to run docker: not found",
+            reason: "spawn",
+            daemonDown: false,
+          });
         }
         const next = queue.shift();
         const r = next ?? { exitCode: opts.exitCode, stdout: opts.stdout, stderr: opts.stderr };
@@ -333,13 +330,11 @@ function mockBundledPostgresClient(opts: {
       Effect.gen(function* () {
         allOpts.push(runOpts);
         if (opts.runFails === true) {
-          return yield* Effect.fail(
-            new DockerRunError({
-              message: "failed to run docker: not found",
-              reason: "spawn",
-              daemonDown: false,
-            }),
-          );
+          return yield* new DockerRunError({
+            message: "failed to run docker: not found",
+            reason: "spawn",
+            daemonDown: false,
+          });
         }
         const next = queue.shift();
         const r = next ?? { exitCode: opts.exitCode, stdout: opts.stdout, stderr: opts.stderr };
@@ -453,6 +448,13 @@ const flags = (over: Partial<DbDumpFlags> = {}): DbDumpFlags => ({
   password: over.password ?? Option.none(),
   schema: over.schema ?? [],
 });
+
+const readUtf8 = (file: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const bytes = yield* fs.readFile(file);
+    return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+  });
 
 const failMessage = (exit: Exit.Exit<unknown, { readonly message: string }>): string | undefined =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.message : undefined;
@@ -598,15 +600,17 @@ describe("db dump integration", () => {
   });
 
   it.live("prints the post-run Dumped-schema message on --dry-run --file without writing", () => {
-    const filePath = join(tmp.current, "dry.sql");
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const filePath = path.join(tmp.current, "dry.sql");
       yield* dbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some(filePath) }));
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);
       expect(docker.lastOpts).toBeUndefined();
-      expect(existsSync(filePath)).toBe(false);
+      expect(yield* fs.exists(filePath)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -621,13 +625,15 @@ describe("db dump integration", () => {
   });
 
   it.live("validates the merged config before the --dry-run print (Go root PreRun order)", () => {
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      ["[remotes.staging]", 'project_id = "staging"', ""].join("\n"),
-    );
     const { layer, out } = setup({ isLocal: true, workdir: tmp.current });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        ["[remotes.staging]", 'project_id = "staging"', ""].join("\n"),
+      );
       const exit = yield* dbDump(flags({ dryRun: true, local: Option.some(true) })).pipe(
         Effect.exit,
       );
@@ -711,7 +717,8 @@ describe("db dump integration", () => {
     });
     return Effect.gen(function* () {
       yield* dbDump(flags({ local: Option.some(true), file: Option.some("out.sql") }));
-      expect(readFileSync(join(tmp.current, "out.sql"), "utf8")).toBe("CREATE SCHEMA public;\n");
+      const path = yield* Path.Path;
+      expect(yield* readUtf8(path.join(tmp.current, "out.sql"))).toBe("CREATE SCHEMA public;\n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -728,23 +735,18 @@ describe("db dump integration", () => {
     () => {
       // A `SUPABASE_NETWORK_ID` sourced only from `supabase/.env` still overrides host
       // networking.
-      const prev = process.env["SUPABASE_NETWORK_ID"];
-      delete process.env["SUPABASE_NETWORK_ID"];
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_NETWORK_ID=dotenv-net\n");
       const { layer, docker } = setup({ isLocal: true, workdir: tmp.current });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(tmp.current, "supabase", ".env"),
+          "SUPABASE_NETWORK_ID=dotenv-net\n",
+        );
         yield* dbDump(flags({ local: Option.some(true) }));
         expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "dotenv-net" });
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_NETWORK_ID"];
-            else process.env["SUPABASE_NETWORK_ID"] = prev;
-          }),
-        ),
-        Effect.provide(layer),
-      );
+      }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", undefined, body), Effect.provide(layer));
     },
   );
 
@@ -916,11 +918,12 @@ describe("db dump integration", () => {
   });
 
   it.live("writes the dump to --file and reports the absolute path on stderr", () => {
-    const filePath = join(tmp.current, "out.sql");
     const { layer, out } = setup({ isLocal: true, stdout: "CREATE SCHEMA public;\n" });
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const filePath = path.join(tmp.current, "out.sql");
       yield* dbDump(flags({ local: Option.some(true), file: Option.some(filePath) }));
-      expect(readFileSync(filePath, "utf8")).toBe("CREATE SCHEMA public;\n");
+      expect(yield* readUtf8(filePath)).toBe("CREATE SCHEMA public;\n");
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);
       // Nothing written to stdout in --file mode.
@@ -1083,27 +1086,42 @@ describe("db dump integration", () => {
   // "pipe" stdio is a socketpair, which fstats as a socket instead.
   const PROBE = 'process.stdout.write(String(require("node:fs").fstatSync(1).isFIFO()));';
 
-  it.skipIf(process.platform === "win32")("classifies a real piped stdout as a pipe", () => {
-    const result = spawnSync("/bin/sh", ["-c", `"${process.execPath}" -e '${PROBE}' | cat`], {
-      encoding: "utf8",
-    });
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe("true");
-  });
+  it.live.skipIf(process.platform === "win32")("classifies a real piped stdout as a pipe", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make("/bin/sh", ["-c", `"${process.execPath}" -e '${PROBE}' | cat`], {
+          stdin: "ignore",
+          stderr: "ignore",
+        }),
+      );
+      const [exitCode, stdout] = yield* Effect.all(
+        [child.exitCode, Stream.mkString(Stream.decodeText(child.stdout))],
+        { concurrency: "unbounded" },
+      );
+      expect(exitCode).toBe(0);
+      expect(stdout).toBe("true");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it.skipIf(process.platform === "win32")("classifies a file-backed stdout as not a pipe", () => {
-    const file = join(tmp.current, "pipe-probe.txt");
-    const fd = openSync(file, "w");
-    try {
-      const result = spawnSync(process.execPath, ["-e", PROBE], {
-        stdio: ["ignore", fd, "inherit"],
-      });
-      expect(result.status).toBe(0);
-    } finally {
-      closeSync(fd);
-    }
-    expect(readFileSync(file, "utf8")).toBe("false");
-  });
+  it.live.skipIf(process.platform === "win32")(
+    "classifies a file-backed stdout as not a pipe",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const file = path.join(tmp.current, "pipe-probe.txt");
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const exitCode = yield* spawner.exitCode(
+          ChildProcess.make("/bin/sh", ["-c", `"${process.execPath}" -e '${PROBE}' > "${file}"`], {
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "inherit",
+          }),
+        );
+        expect(exitCode).toBe(0);
+        expect(yield* readUtf8(file)).toBe("false");
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live("windows: warns when a piped stdout dump contains non-ASCII text", () => {
     const { layer, out } = setup({
@@ -1130,7 +1148,8 @@ describe("db dump integration", () => {
     });
     return Effect.gen(function* () {
       yield* dbDump(flags({ local: Option.some(true), file: Option.some("out.sql") }));
-      expect(readFileSync(join(tmp.current, "out.sql"), "utf8")).toBe(UNICODE_SQL);
+      const path = yield* Path.Path;
+      expect(yield* readUtf8(path.join(tmp.current, "out.sql"))).toBe(UNICODE_SQL);
       expect(out.stderrText).not.toContain(NON_ASCII_WARNING);
     }).pipe(Effect.provide(layer));
   });
