@@ -812,6 +812,8 @@ export const makeDatabase = (
             },
           ],
           ports: [5432],
+          // SIGTERM is PostgreSQL's smart shutdown, which waits for every client to disconnect.
+          stopSignal: "SIGINT",
           ...(config.stopGraceSeconds === undefined
             ? {}
             : { stopGraceSeconds: config.stopGraceSeconds }),
