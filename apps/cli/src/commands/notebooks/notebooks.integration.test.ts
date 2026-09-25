@@ -1,18 +1,9 @@
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Fiber, FileSystem, Option } from "effect";
+import { Deferred, Effect, Exit, Fiber, FileSystem, Option, Path, Schema } from "effect";
 import {
   notebookListPage,
   notebookResource,
+  notebooksProject,
   notebooksRoute,
   NOTEBOOKS_PROJECT_REF,
   setupNotebooks,
@@ -67,14 +58,22 @@ function setup(command: Command, options: Omit<NotebooksSetupOptions, "workdir" 
 }
 
 function write(name: string, contents = LOCAL) {
-  const dir = join(temp.current, "supabase", "notebooks");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${name}.json`), contents);
+  return notebooksProject(temp.current).write(name, contents);
 }
 
 function read(name: string) {
-  return readFileSync(join(temp.current, "supabase", "notebooks", `${name}.json`), "utf8");
+  return notebooksProject(temp.current).read(name);
 }
+
+const requestAttributes = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ data: Schema.Struct({ attributes: Schema.Unknown }) })),
+);
+
+const notebookCells = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ content: Schema.Struct({ cells: Schema.Array(Schema.Unknown) }) }),
+  ),
+);
 
 function remote(name: string, id = ID) {
   return { id, name };
@@ -145,7 +144,7 @@ describe("notebook file preservation", () => {
       yield* run("pull").pipe(Effect.provide(pulling.layer));
       yield* run("push", "sales").pipe(Effect.provide(pushing.layer));
       const request = pushing.http.requests.find((entry) => entry.method === "PATCH");
-      expect(JSON.parse(request?.body ?? "{}").data.attributes).toEqual({
+      expect((yield* requestAttributes(request?.body ?? "{}")).data.attributes).toEqual({
         name: "sales",
         description: "Shared report",
         favorite: true,
@@ -160,14 +159,14 @@ describe("notebook file preservation", () => {
     // A case-insensitive filesystem stores final and medial sigma as one name.
     { local: "ς", name: "σ" },
   ])("refuses local filename aliases $local / $name before downloading", ({ local, name }) => {
-    write(local);
     const { layer, http } = setup("pull", {
       routes: { [`GET ${notebooksRoute()}`]: list([remote(name)]) },
     });
     return Effect.gen(function* () {
+      yield* write(local);
       const error = yield* run("pull").pipe(Effect.flip);
       expect(error).toBeInstanceOf(NotebookNameConflictError);
-      expect(read(local)).toBe(LOCAL);
+      expect(yield* read(local)).toBe(LOCAL);
       expect(http.requests).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   });
@@ -175,9 +174,6 @@ describe("notebook file preservation", () => {
   it.live.each(commands)(
     "%s refuses a notebooks directory symlinked outside the project root",
     (command) => {
-      const outside = mkdtempSync(join(tmpdir(), "supabase-notebooks-outside-"));
-      mkdirSync(join(temp.current, "supabase"), { recursive: true });
-      symlinkSync(outside, join(temp.current, "supabase", "notebooks"));
       const { layer, http } = setup(command, {
         routes: {
           [`GET ${notebooksRoute()}`]: list([remote("sales")]),
@@ -185,11 +181,18 @@ describe("notebook file preservation", () => {
         },
       });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const outside = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-notebooks-outside-",
+        });
+        yield* fs.makeDirectory(path.join(temp.current, "supabase"), { recursive: true });
+        yield* fs.symlink(outside, path.join(temp.current, "supabase", "notebooks"));
         const error = yield* run(command).pipe(Effect.flip);
         expect(error).toBeInstanceOf(NotebookFileError);
-        expect(readdirSync(outside)).toEqual([]);
+        expect(yield* fs.readDirectory(outside)).toEqual([]);
         expect(http.requests.filter((entry) => entry.method !== "GET")).toEqual([]);
-      }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(layer));
     },
   );
 
@@ -213,9 +216,13 @@ describe("notebook file preservation", () => {
         },
       });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         yield* run("pull");
-        expect(JSON.parse(read(name)).content.cells).toHaveLength(1);
-        expect(readdirSync(join(temp.current, "supabase", "notebooks"))).toEqual([`${name}.json`]);
+        expect((yield* notebookCells(yield* read(name))).content.cells).toHaveLength(1);
+        expect(yield* fs.readDirectory(path.join(temp.current, "supabase", "notebooks"))).toEqual([
+          `${name}.json`,
+        ]);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -260,6 +267,7 @@ describe("notebook file preservation", () => {
     });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const error = yield* run("pull").pipe(
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
@@ -271,8 +279,10 @@ describe("notebook file preservation", () => {
         Effect.flip,
       );
       expect(error).toBeInstanceOf(NotebookFileError);
-      expect(read("sales")).toBe(LOCAL);
-      expect(readdirSync(join(temp.current, "supabase", "notebooks"))).toEqual(["sales.json"]);
+      expect(yield* read("sales")).toBe(LOCAL);
+      expect(yield* fs.readDirectory(path.join(temp.current, "supabase", "notebooks"))).toEqual([
+        "sales.json",
+      ]);
       expect(cache.cacheCount).toBe(1);
       expect(telemetry.flushCount).toBe(1);
     }).pipe(Effect.provide(layer));
@@ -287,6 +297,7 @@ describe("notebook file preservation", () => {
     });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const publishing = yield* Deferred.make<void>();
       const fiber = yield* run("pull").pipe(
         Effect.provideService(FileSystem.FileSystem, {
@@ -297,7 +308,7 @@ describe("notebook file preservation", () => {
       );
       yield* Deferred.await(publishing);
       yield* Fiber.interrupt(fiber);
-      expect(readdirSync(join(temp.current, "supabase", "notebooks"))).toEqual([]);
+      expect(yield* fs.readDirectory(path.join(temp.current, "supabase", "notebooks"))).toEqual([]);
       expect(cache.cacheCount).toBe(1);
       expect(telemetry.flushCount).toBe(1);
     }).pipe(Effect.provide(layer));
@@ -306,9 +317,9 @@ describe("notebook file preservation", () => {
 
 describe("notebook reconciliation preflight", () => {
   it.live("reports a local read failure without uploading notebooks", () => {
-    write("sales");
     const { layer, http } = setup("push");
     return Effect.gen(function* () {
+      yield* write("sales");
       const fs = yield* FileSystem.FileSystem;
       const error = yield* run("push").pipe(
         Effect.provideService(FileSystem.FileSystem, {
@@ -318,25 +329,26 @@ describe("notebook reconciliation preflight", () => {
         Effect.flip,
       );
       expect(error).toBeInstanceOf(NotebookFileError);
-      expect(read("sales")).toBe(LOCAL);
+      expect(yield* read("sales")).toBe(LOCAL);
       expect(http.requests).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("reports a failed local deletion without losing the notebook", () => {
-    write("sales");
     const { layer, cache, telemetry } = setup("pull", { promptSelectResponses: ["delete"] });
     return Effect.gen(function* () {
+      yield* write("sales");
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const error = yield* run("pull").pipe(
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
-          remove: (path) => fs.remove(join(path, "not-a-directory")),
+          remove: (file) => fs.remove(path.join(file, "not-a-directory")),
         }),
         Effect.flip,
       );
       expect(error).toBeInstanceOf(NotebookFileError);
-      expect(read("sales")).toBe(LOCAL);
+      expect(yield* read("sales")).toBe(LOCAL);
       expect(cache.cacheCount).toBe(1);
       expect(telemetry.flushCount).toBe(1);
     }).pipe(Effect.provide(layer));
@@ -345,7 +357,6 @@ describe("notebook reconciliation preflight", () => {
   it.live.each(["keep", "delete"])(
     "can %s remote notebooks with unsupported filenames",
     (choice) => {
-      write("sales");
       const { layer, http } = setup("push", {
         promptSelectResponses: [choice],
         routes: {
@@ -355,6 +366,7 @@ describe("notebook reconciliation preflight", () => {
         },
       });
       return Effect.gen(function* () {
+        yield* write("sales");
         yield* run("push");
         expect(http.requests.filter((request) => request.method === "PATCH")).toHaveLength(1);
         expect(http.requests.filter((request) => request.method === "DELETE")).toHaveLength(
@@ -367,21 +379,20 @@ describe("notebook reconciliation preflight", () => {
   it.live.each(["reports/weekly", "Sales"])(
     "validates copying %s before uploading local edits",
     (name) => {
-      write("sales");
       const { layer, http } = setup("push", {
         promptSelectResponses: ["copy"],
         routes: { [`GET ${notebooksRoute()}`]: list([remote("sales"), remote(name, OTHER_ID)]) },
       });
       return Effect.gen(function* () {
+        yield* write("sales");
         expect(Exit.isFailure(yield* run("push").pipe(Effect.exit))).toBe(true);
-        expect(read("sales")).toBe(LOCAL);
+        expect(yield* read("sales")).toBe(LOCAL);
         expect(http.requests).toHaveLength(1);
       }).pipe(Effect.provide(layer));
     },
   );
 
   it.live("pushes a selected notebook despite unrelated duplicate names", () => {
-    write("sales");
     const { layer, http } = setup("push", {
       routes: {
         [`GET ${notebooksRoute()}`]: list([
@@ -393,6 +404,7 @@ describe("notebook reconciliation preflight", () => {
       },
     });
     return Effect.gen(function* () {
+      yield* write("sales");
       yield* run("push", "sales");
       expect(http.routeKeys).toEqual([
         `GET ${notebooksRoute()}`,
@@ -402,21 +414,21 @@ describe("notebook reconciliation preflight", () => {
   });
 
   it.live("validates all local files before creating any during pull reconciliation", () => {
-    write("a-good");
-    write("z-broken", "{}");
     const { layer, http } = setup("pull", { promptSelectResponses: ["copy"] });
     return Effect.gen(function* () {
+      yield* write("a-good");
+      yield* write("z-broken", "{}");
       expect(yield* run("pull").pipe(Effect.flip)).toBeInstanceOf(NotebookFileError);
       expect(http.requests).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   });
 
   it.live.each(commands)("leaves divergence alone when the %s prompt is cancelled", (command) => {
-    if (command === "pull") write("local");
     const { layer, http, cache, telemetry } = setup(command, {
       routes: { [`GET ${notebooksRoute()}`]: list(command === "push" ? [remote("remote")] : []) },
     });
     return Effect.gen(function* () {
+      if (command === "pull") yield* write("local");
       const output = yield* Output;
       yield* run(command).pipe(
         Effect.provideService(Output, {
@@ -473,7 +485,6 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
   it.live.each([{ interactive: false }, { goOutput: "json" as const }])(
     "keeps divergence without prompting in unattended text output (%j)",
     (options) => {
-      if (command === "pull") write("local");
       const { layer, out, http } = setup(command, {
         ...options,
         routes: {
@@ -481,6 +492,7 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
         },
       });
       return Effect.gen(function* () {
+        if (command === "pull") yield* write("local");
         yield* run(command);
         expect(out.promptSelectCalls).toEqual([]);
         expect(http.requests).toHaveLength(1);
