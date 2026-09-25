@@ -1,9 +1,18 @@
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import {
+  Cause,
+  Config,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schema,
+} from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -125,6 +134,8 @@ interface SetupOpts {
   // Swaps in the stateful Docker model (real `stop`/`cp`/`start`), required by the
   // shadow baseline cache tests.
   readonly statefulDocker?: boolean;
+  readonly migrations?: ReadonlyArray<string>;
+  readonly files?: Readonly<Record<string, string>>;
   // Fails the target session's own history upsert (the write `updateMigrationHistory`
   // issues after the migration file is already on disk); the shadow's own internal
   // migration replay is unaffected. Exercises `DbPullWriteError`'s `writtenSoFar`.
@@ -175,19 +186,26 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         }
         const stdout = opts.edgeStdout ?? "";
         if (stdout.trim().length === 0) {
-          return Effect.succeed({
-            changes: false,
-            sql: "",
-            files: [],
-            ...(process.env["PGDELTA_DEBUG"] !== undefined
-              ? {
-                  debug:
-                    opts.nextDebugDirectory !== undefined
-                      ? { directory: opts.nextDebugDirectory }
-                      : {},
-                }
-              : {}),
-          });
+          return Config.option(Config.string("PGDELTA_DEBUG")).pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
+            ),
+            Effect.mapError((cause) => new PgDeltaEngineError({ message: cause.message, cause })),
+            Effect.map((pgDeltaDebug) => ({
+              changes: false,
+              sql: "",
+              files: [],
+              ...(Option.isSome(pgDeltaDebug)
+                ? {
+                    debug:
+                      opts.nextDebugDirectory !== undefined
+                        ? { directory: opts.nextDebugDirectory }
+                        : {},
+                  }
+                : {}),
+            })),
+          );
         }
         try {
           const parsed: unknown = JSON.parse(stdout);
@@ -421,6 +439,20 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     promptProjectRef: () => Effect.succeed(opts.resolvedRef ?? VALID_REF),
   });
 
+  const workdirFiles = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      for (const version of opts.migrations ?? []) {
+        yield* seedMigration(workdir, version);
+      }
+      for (const [file, content] of Object.entries(opts.files ?? {})) {
+        yield* fs.makeDirectory(path.dirname(path.join(workdir, file)), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, file), content);
+      }
+    }),
+  ).pipe(Layer.provide(BunServices.layer));
+
   const baseLayer = Layer.mergeAll(
     unusedStackServices,
     // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
@@ -458,6 +490,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     mockRuntimeInfo(),
+    workdirFiles,
   );
   return {
     layer: baseLayer,
@@ -511,19 +544,28 @@ const streamText = (out: ReturnType<typeof mockOutput>, stream: "stdout" | "stde
       .join(""),
   );
 
-const seedMigration = (workdir: string, version: string) => {
-  const dir = join(workdir, "supabase", "migrations");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${version}_local.sql`), "create table local ();\n");
-};
+const seedMigration = (workdir: string, version: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = path.join(workdir, "supabase", "migrations");
+    yield* fs.makeDirectory(dir, { recursive: true });
+    yield* fs.writeFileString(path.join(dir, `${version}_local.sql`), "create table local ();\n");
+  });
+
+const readFileText = (file: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return new TextDecoder("utf-8", { ignoreBOM: true }).decode(yield* fs.readFile(file));
+  });
 
 const tmp = useTempWorkdir();
 useShadowCacheDisabled();
 
 describe("db pull", () => {
   it.effect("pulls a migration (pgdelta engine) and updates remote history under --yes", () => {
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeStdout: pgDeltaDiffEnvelope([
         {
@@ -535,15 +577,19 @@ describe("db pull", () => {
     });
     return Effect.gen(function* () {
       yield* dbPull(flags({ diffEngine: Option.some("pg-delta"), strictCoverage: true }));
-      const dir = join(tmp.current, "supabase", "migrations");
-      expect(existsSync(join(dir, `${"20240101000000"}_local.sql`))).toBe(true);
-      const written = readdirSync(dir).filter((f) => f.endsWith("_remote_schema.sql"));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = path.join(tmp.current, "supabase", "migrations");
+      expect(yield* fs.exists(path.join(dir, `${"20240101000000"}_local.sql`))).toBe(true);
+      const written = (yield* fs.readDirectory(dir)).filter((f) =>
+        f.endsWith("_remote_schema.sql"),
+      );
       expect(written).toHaveLength(1);
-      expect(readFileSync(join(dir, written[0] ?? ""), "utf8")).toContain(
+      expect(yield* readFileText(path.join(dir, written[0] ?? ""))).toContain(
         "create table remote ();",
       );
       expect(streamText(s.out, "stderr")).toContain(
-        `Schema written to ${join("supabase", "migrations", written[0] ?? "")}\n`,
+        `Schema written to ${path.join("supabase", "migrations", written[0] ?? "")}\n`,
       );
       expect(streamText(s.out, "stderr")).not.toContain(tmp.current);
       expect(s.historyUpserts.length).toBe(1);
@@ -562,8 +608,8 @@ describe("db pull", () => {
   it.effect("pulls from the project given via --project-ref without a linked workdir", () => {
     // `linkedFails: true` simulates an unlinked workdir; only the flag can resolve a ref.
     const FLAG_REF = "flagflagflagflagflag";
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
       yes: true,
@@ -581,8 +627,8 @@ describe("db pull", () => {
 
   it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
       yes: true,
@@ -607,9 +653,12 @@ describe("db pull", () => {
         flags({ local: Option.some(true), projectRef: Option.some(FLAG_REF) }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      );
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
       expect(s.resolveCalls).toEqual([]);
       expect(s.cache.cached).toBe(false);
     }).pipe(Effect.provide(s.layer));
@@ -630,8 +679,8 @@ describe("db pull", () => {
     "a pg-delta plan with transaction boundaries writes one ordered migration file per unit",
     () => {
       // e.g. ALTER TYPE ... ADD VALUE followed by a statement using the new value.
-      seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
         remoteVersions: ["20240101000000"],
         edgeStdout: pgDeltaDiffEnvelope([
           { name: "schema_changes", sql: "-- unit 1\n\nalter type mood add value 'ok';" },
@@ -646,8 +695,10 @@ describe("db pull", () => {
       });
       return Effect.gen(function* () {
         yield* dbPull(flags({ diffEngine: Option.some("pg-delta") }));
-        const dir = join(tmp.current, "supabase", "migrations");
-        const written = readdirSync(dir)
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = path.join(tmp.current, "supabase", "migrations");
+        const written = (yield* fs.readDirectory(dir))
           .filter((f) => f !== "20240101000000_local.sql")
           .sort();
         expect(written).toHaveLength(3);
@@ -657,13 +708,13 @@ describe("db pull", () => {
         const versions = written.map((f) => f.slice(0, 14));
         expect((versions[0] ?? "") < (versions[1] ?? "")).toBe(true);
         expect((versions[1] ?? "") < (versions[2] ?? "")).toBe(true);
-        const nonTransactional = readFileSync(join(dir, written[2] ?? ""), "utf8");
+        const nonTransactional = yield* readFileText(path.join(dir, written[2] ?? ""));
         expect(nonTransactional.startsWith("-- pg-delta: transaction=false\n")).toBe(true);
         expect(nonTransactional).toContain("create index concurrently i on t (c);");
         const err = streamText(s.out, "stderr");
         expect(err.match(/Schema written to/gu)).toHaveLength(3);
         for (const file of written) {
-          expect(err).toContain(`Schema written to ${join("supabase", "migrations", file)}\n`);
+          expect(err).toContain(`Schema written to ${path.join("supabase", "migrations", file)}\n`);
         }
         expect(s.historyUpserts.length).toBe(3);
         expect(streamText(s.out, "stderr")).toContain(
@@ -677,8 +728,8 @@ describe("db pull", () => {
     "a multi-unit pg-delta pull reports every written migration path in the json payload",
     () => {
       // Lists every written path, not just the first (`schemaWritten`).
-      seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
         format: "json",
         remoteVersions: ["20240101000000"],
         edgeStdout: pgDeltaDiffEnvelope([
@@ -707,8 +758,8 @@ describe("db pull", () => {
   );
 
   it.effect("a malformed pg-delta diff envelope surfaces a parse error, not 'in sync'", () => {
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeStdout: "not a valid envelope{",
       yes: true,
@@ -724,19 +775,18 @@ describe("db pull", () => {
   // `contrib_regression` target locally, so schema_paths still shapes their output —
   // only the next engine's pull prints this warning.
   it.effect("pulls with the next engine and warns that schema_paths no longer applies", () => {
-    seedMigration(tmp.current, "20240101000000");
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[db.migrations]",
-        'schema_paths = ["database/*.sql"]',
-        "",
-        "[experimental.pgdelta]",
-        "enabled = true",
-        "",
-      ].join("\n"),
-    );
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      files: {
+        "supabase/config.toml": [
+          "[db.migrations]",
+          'schema_paths = ["database/*.sql"]',
+          "",
+          "[experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      },
       remoteVersions: ["20240101000000"],
       // The next engine's mock parses `edgeStdout` as a rendered-file envelope.
       edgeStdout: JSON.stringify({
@@ -759,12 +809,13 @@ describe("db pull", () => {
   });
 
   it.effect("pulls with migra and does not warn about schema_paths", () => {
-    seedMigration(tmp.current, "20240101000000");
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      ["[db.migrations]", 'schema_paths = ["database/*.sql"]', ""].join("\n"),
-    );
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      files: {
+        "supabase/config.toml": ["[db.migrations]", 'schema_paths = ["database/*.sql"]', ""].join(
+          "\n",
+        ),
+      },
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       yes: true,
@@ -781,9 +832,13 @@ describe("db pull", () => {
       expect(err.indexOf("Connecting to remote database...")).toBeLessThan(
         err.indexOf("Creating shadow database..."),
       );
-      const dir = join(tmp.current, "supabase", "migrations");
-      const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
-      expect(err).toContain(`Schema written to ${join("supabase", "migrations", file ?? "")}\n`);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = path.join(tmp.current, "supabase", "migrations");
+      const file = (yield* fs.readDirectory(dir)).find((f) => f.endsWith("_remote_schema.sql"));
+      expect(err).toContain(
+        `Schema written to ${path.join("supabase", "migrations", file ?? "")}\n`,
+      );
       expect(err).not.toContain(tmp.current);
     }).pipe(Effect.provide(s.layer));
   });
@@ -794,20 +849,21 @@ describe("db pull", () => {
       // `api.tls`'s cert/key files are only validated by `buildLocalDbContainerInputs`,
       // which must run strictly before `resolver.resolve()` — `resolveCalls` staying
       // empty here proves validation ran first, not just that the command failed.
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        [
-          "[api]",
-          "enabled = true",
-          "[api.tls]",
-          "enabled = true",
-          'cert_path = "missing-cert.pem"',
-          'key_path = "missing-key.pem"',
-          "",
-        ].join("\n"),
-      );
-      const s = setup(tmp.current, { remoteVersions: [], edgeStdout: "" });
+      const s = setup(tmp.current, {
+        files: {
+          "supabase/config.toml": [
+            "[api]",
+            "enabled = true",
+            "[api.tls]",
+            "enabled = true",
+            'cert_path = "missing-cert.pem"',
+            'key_path = "missing-key.pem"',
+            "",
+          ].join("\n"),
+        },
+        remoteVersions: [],
+        edgeStdout: "",
+      });
       return Effect.gen(function* () {
         const error = yield* dbPull(flags()).pipe(Effect.flip);
         expect(error.message).toContain("failed to read TLS cert");
@@ -829,14 +885,20 @@ describe("db pull", () => {
       expect(err.indexOf("Connecting to remote database...")).toBeLessThan(
         err.indexOf("Preparing declarative schema export"),
       );
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       // Prints the relative default, not the resolved absolute directory
       // (established output contract).
-      expect(err).toContain(`Declarative schema written to ${join("supabase", "schemas")}\n`);
+      expect(err).toContain(`Declarative schema written to ${path.join("supabase", "schemas")}\n`);
       expect(err).not.toContain(tmp.current);
-      expect(existsSync(join(tmp.current, "supabase", "schemas", "public", "t.sql"))).toBe(true);
       expect(
-        JSON.parse(
-          readFileSync(join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"), "utf8"),
+        yield* fs.exists(path.join(tmp.current, "supabase", "schemas", "public", "t.sql")),
+      ).toBe(true);
+      expect(
+        yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          yield* readFileText(
+            path.join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"),
+          ),
         ),
       ).toMatchObject({
         formatVersion: 1,
@@ -865,12 +927,16 @@ describe("db pull", () => {
     () => {
       // Points schema_paths at the declarative dir so later db reset/db diff read the
       // pulled files (pg-delta stays disabled).
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\n");
-      const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
+      const s = setup(tmp.current, {
+        files: {
+          "supabase/config.toml": "[db]\n",
+        },
+        edgeStdout: EXPORT_JSON,
+      });
       return Effect.gen(function* () {
         yield* dbPull(flags({ declarative: Option.some(true) }));
-        const config = readFileSync(join(tmp.current, "supabase", "config.toml"), "utf8");
+        const path = yield* Path.Path;
+        const config = yield* readFileText(path.join(tmp.current, "supabase", "config.toml"));
         expect(config).toContain("[db.migrations]");
         expect(config).toContain('schema_paths = [\n  "schemas",\n]');
       }).pipe(Effect.provide(s.layer));
@@ -880,13 +946,17 @@ describe("db pull", () => {
   it.effect("pull --declarative leaves schema_paths untouched when pg-delta is enabled", () => {
     // An enabled config already treats the declarative dir as source of truth, so the
     // rewrite is skipped.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     const original = "[experimental.pgdelta]\nenabled = true\n";
-    writeFileSync(join(tmp.current, "supabase", "config.toml"), original);
-    const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
+    const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": original,
+      },
+      edgeStdout: EXPORT_JSON,
+    });
     return Effect.gen(function* () {
       yield* dbPull(flags({ declarative: Option.some(true) }));
-      const config = readFileSync(join(tmp.current, "supabase", "config.toml"), "utf8");
+      const path = yield* Path.Path;
+      const config = yield* readFileText(path.join(tmp.current, "supabase", "config.toml"));
       expect(config).toBe(original);
     }).pipe(Effect.provide(s.layer));
   });
@@ -894,15 +964,16 @@ describe("db pull", () => {
   it.effect("pull --declarative replaces an existing schema_paths block in place", () => {
     // A regex replace-or-append rewrites a present schema_paths block rather than
     // appending a duplicate.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      '[db.migrations]\nschema_paths = [\n  "schemas/*.sql",\n]\n',
-    );
-    const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
+    const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": '[db.migrations]\nschema_paths = [\n  "schemas/*.sql",\n]\n',
+      },
+      edgeStdout: EXPORT_JSON,
+    });
     return Effect.gen(function* () {
       yield* dbPull(flags({ declarative: Option.some(true) }));
-      const config = readFileSync(join(tmp.current, "supabase", "config.toml"), "utf8");
+      const path = yield* Path.Path;
+      const config = yield* readFileText(path.join(tmp.current, "supabase", "config.toml"));
       expect(config).toContain('schema_paths = [\n  "schemas",\n]');
       expect(config).not.toContain("schemas/*.sql");
     }).pipe(Effect.provide(s.layer));
@@ -915,8 +986,9 @@ describe("db pull", () => {
       return Effect.gen(function* () {
         yield* dbPull(flags({ usePgDelta: Option.some(true) }));
         expect(streamText(s.out, "stderr")).toContain("Flag --use-pg-delta has been deprecated");
+        const path = yield* Path.Path;
         expect(streamText(s.out, "stderr")).toContain(
-          `Declarative schema written to ${join("supabase", "schemas")}\n`,
+          `Declarative schema written to ${path.join("supabase", "schemas")}\n`,
         );
       }).pipe(Effect.provide(s.layer));
     },
@@ -928,8 +1000,9 @@ describe("db pull", () => {
     // local shadow diff starts) — not an empty string from `CommandSettings.projectId`
     // alone.
     const s = setup(tmp.current, { edgeStdout: EXPORT_JSON, projectId: Option.none() });
-    const expectedProjectId = basename(tmp.current);
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const expectedProjectId = path.basename(tmp.current);
       yield* dbPull(flags({ declarative: Option.some(true) }));
       expect(s.engineCalls[0]?.projectId).toBe(expectedProjectId);
     }).pipe(Effect.provide(s.layer));
@@ -941,12 +1014,14 @@ describe("db pull", () => {
       // `readDbToml` gates `toml.projectId` behind `remoteOverrideKeys` for the matched
       // remote, but `resolveLocalProjectId` tries the raw ambient env first — an ambient
       // `SUPABASE_PROJECT_ID` for an unrelated project must not win back over it.
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        ["[remotes.staging]", 'project_id = "abcdefghijklmnopqrst"', ""].join("\n"),
-      );
       const s = setup(tmp.current, {
+        files: {
+          "supabase/config.toml": [
+            "[remotes.staging]",
+            'project_id = "abcdefghijklmnopqrst"',
+            "",
+          ].join("\n"),
+        },
         edgeStdout: EXPORT_JSON,
         resolvedRef: "abcdefghijklmnopqrst",
         projectId: Option.some("unrelated-env-project"),
@@ -963,8 +1038,8 @@ describe("db pull", () => {
     () => {
       // Both flags bind to one variable, so the last occurrence wins — ORing the two
       // parsed flags would wrongly take the declarative path instead.
-      seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
         remoteVersions: ["20240101000000"],
         edgeStdout: "create table remote ();\n",
         yes: true,
@@ -980,8 +1055,8 @@ describe("db pull", () => {
   it.effect(
     "--use-pg-delta --declarative=false stays in migration mode (Go last-occurrence-wins)",
     () => {
-      seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
         remoteVersions: ["20240101000000"],
         edgeStdout: "create table remote ();\n",
         yes: true,
@@ -1002,14 +1077,20 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       yield* dbPull(flags({ declarative: Option.some(true), usePgDelta: Option.some(true) }));
       expect(s.engineCalls[0]?.operation).toBe("export");
-      expect(existsSync(join(tmp.current, "supabase", "schemas", "public", "t.sql"))).toBe(true);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      expect(
+        yield* fs.exists(path.join(tmp.current, "supabase", "schemas", "public", "t.sql")),
+      ).toBe(true);
       expect(s.historyUpserts.length).toBe(0);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("a migration-history conflict fails with the repair suggestion", () => {
-    seedMigration(tmp.current, "20240102000000");
-    const s = setup(tmp.current, { remoteVersions: ["20240101000000"] });
+    const s = setup(tmp.current, {
+      migrations: ["20240102000000"],
+      remoteVersions: ["20240101000000"],
+    });
     return Effect.gen(function* () {
       const exit = yield* dbPull(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -1034,11 +1115,13 @@ describe("db pull", () => {
         expect(s.dumpCalls[0]?.env["EXTRA_SED"]).toBe("/^--/d");
         expect(s.dumpCalls[0]?.env["EXCLUDED_SCHEMAS"]).toContain("auth");
         expect(s.shadowSpawned.filter((call) => call.args[0] === "create")).toHaveLength(1);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         // The migration file holds the dump output followed by the appended diff.
-        const dir = join(tmp.current, "supabase", "migrations");
-        const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
+        const dir = path.join(tmp.current, "supabase", "migrations");
+        const file = (yield* fs.readDirectory(dir)).find((f) => f.endsWith("_remote_schema.sql"));
         expect(file).toBeDefined();
-        const content = readFileSync(join(dir, file ?? ""), "utf8");
+        const content = yield* readFileText(path.join(dir, file ?? ""));
         expect(content).toContain("create table dumped ();");
         expect(content).toContain("create table diffed ();");
         expect(content.indexOf("dumped")).toBeLessThan(content.indexOf("diffed"));
@@ -1048,7 +1131,9 @@ describe("db pull", () => {
         expect(err).toContain("Connecting to remote database...\n");
         expect(err).toContain("Dumping schema from remote database...");
         expect(err).toContain("Creating shadow database...");
-        expect(err).toContain(`Schema written to ${join("supabase", "migrations", file ?? "")}\n`);
+        expect(err).toContain(
+          `Schema written to ${path.join("supabase", "migrations", file ?? "")}\n`,
+        );
         expect(err.indexOf("Connecting to remote database")).toBeLessThan(
           err.indexOf("Dumping schema"),
         );
@@ -1097,12 +1182,14 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       const exit = yield* dbPull(flags()).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      const dir = join(tmp.current, "supabase", "migrations");
-      const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = path.join(tmp.current, "supabase", "migrations");
+      const file = (yield* fs.readDirectory(dir)).find((f) => f.endsWith("_remote_schema.sql"));
       expect(file).toBeDefined();
-      expect(readFileSync(join(dir, file ?? ""), "utf8")).toContain("create table dumped ();");
+      expect(yield* readFileText(path.join(dir, file ?? ""))).toContain("create table dumped ();");
       expect(streamText(s.out, "stderr")).toContain(
-        `Schema written to ${join("supabase", "migrations", file ?? "")}\n`,
+        `Schema written to ${path.join("supabase", "migrations", file ?? "")}\n`,
       );
     }).pipe(Effect.provide(s.layer));
   });
@@ -1138,8 +1225,10 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       const error = yield* dbPull(flags()).pipe(Effect.flip);
       expect(error.message).toBe("No schema changes found");
-      const dir = join(tmp.current, "supabase", "migrations");
-      expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = path.join(tmp.current, "supabase", "migrations");
+      expect((yield* fs.exists(dir)) ? yield* fs.readDirectory(dir) : []).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1147,11 +1236,13 @@ describe("db pull", () => {
     "two consecutive initial pulls against an empty remote history both report 'No schema changes found' with no leftover seed file",
     () => {
       const s = setup(tmp.current, { remoteVersions: [], dumpStdout: "", edgeStdout: "" });
-      const dir = join(tmp.current, "supabase", "migrations");
       return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const dir = path.join(tmp.current, "supabase", "migrations");
         const first = yield* dbPull(flags()).pipe(Effect.flip);
         expect(first.message).toBe("No schema changes found");
-        expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
+        const fs = yield* FileSystem.FileSystem;
+        expect((yield* fs.exists(dir)) ? yield* fs.readDirectory(dir) : []).toEqual([]);
 
         // Without the cleanup, the leftover seed file would desync this second run's
         // reconciliation: an empty remote history plus a local-only version is a
@@ -1161,7 +1252,7 @@ describe("db pull", () => {
           _tag: "DbPullInSyncError",
           message: "No schema changes found",
         });
-        expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
+        expect((yield* fs.exists(dir)) ? yield* fs.readDirectory(dir) : []).toEqual([]);
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -1243,8 +1334,11 @@ describe("db pull", () => {
   });
 
   it.effect("an in-sync pull (empty diff) fails with 'No schema changes found'", () => {
-    seedMigration(tmp.current, "20240101000000");
-    const s = setup(tmp.current, { remoteVersions: ["20240101000000"], edgeStdout: "" });
+    const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "",
+    });
     return Effect.gen(function* () {
       // The message and non-zero exit are the contract; the generic --debug footer is
       // replaced with this explanation instead (docs/go-cli-divergences.md).
@@ -1259,52 +1353,57 @@ describe("db pull", () => {
   });
 
   it.effect("an empty pg-delta diff without PGDELTA_DEBUG writes no debug bundle", () => {
-    seedMigration(tmp.current, "20240101000000");
-    const s = setup(tmp.current, { remoteVersions: ["20240101000000"], edgeStdout: "", yes: true });
+    const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "",
+      yes: true,
+    });
     return Effect.gen(function* () {
       const error = yield* dbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(Effect.flip);
       expect(error.message).toBe("No schema changes found");
-      const debugRoot = join(tmp.current, "supabase", ".temp", "pgdelta", "debug");
-      expect(existsSync(debugRoot) ? readdirSync(debugRoot) : []).toEqual([]);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const debugRoot = path.join(tmp.current, "supabase", ".temp", "pgdelta", "debug");
+      expect((yield* fs.exists(debugRoot)) ? yield* fs.readDirectory(debugRoot) : []).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("reports the next-generation debug directory for an empty pg-delta diff", () => {
-    seedMigration(tmp.current, "20240101000000");
-    const debugDir = join(
-      tmp.current,
-      "supabase",
-      ".temp",
-      "pgdelta",
-      "v2",
-      "debug",
-      "20240102-030405-678-diff",
-    );
-    const s = setup(tmp.current, {
-      remoteVersions: ["20240101000000"],
-      edgeStdout: "",
-      nextDebugDirectory: debugDir,
-    });
-    return Effect.gen(function* () {
-      const previous = process.env["PGDELTA_DEBUG"];
-      process.env["PGDELTA_DEBUG"] = "1";
-      try {
-        const error = yield* dbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(
+  it.effect("reports the next-generation debug directory for an empty pg-delta diff", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const debugDir = path.join(
+        tmp.current,
+        "supabase",
+        ".temp",
+        "pgdelta",
+        "v2",
+        "debug",
+        "20240102-030405-678-diff",
+      );
+      const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "",
+        nextDebugDirectory: debugDir,
+      });
+      const error = yield* withEnvVar(
+        "PGDELTA_DEBUG",
+        "1",
+        dbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(
           Effect.flip,
-        );
-        expect(error.message).toBe(`No schema changes found (debug bundle: ${debugDir})`);
-        expect(streamText(s.out, "stderr")).toContain(`Debug information saved to`);
-        expect(streamText(s.out, "stderr")).toContain(debugDir);
-      } finally {
-        if (previous === undefined) delete process.env["PGDELTA_DEBUG"];
-        else process.env["PGDELTA_DEBUG"] = previous;
-      }
-    }).pipe(Effect.provide(s.layer));
-  });
+          Effect.provide(s.layer),
+        ),
+      );
+      expect(error.message).toBe(`No schema changes found (debug bundle: ${debugDir})`);
+      expect(streamText(s.out, "stderr")).toContain(`Debug information saved to`);
+      expect(streamText(s.out, "stderr")).toContain(debugDir);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.effect("prompts to update history and inserts on yes (tty)", () => {
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       stdinIsTty: true,
@@ -1317,8 +1416,8 @@ describe("db pull", () => {
   });
 
   it.effect("declining the history prompt does not insert (tty)", () => {
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       stdinIsTty: true,
@@ -1346,12 +1445,14 @@ describe("db pull", () => {
       return Effect.gen(function* () {
         const error = yield* dbPull(flags()).pipe(Effect.flip);
         expect(error).toMatchObject({ _tag: "DbPullWriteError" });
-        const dir = join(tmp.current, "supabase", "migrations");
-        const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = path.join(tmp.current, "supabase", "migrations");
+        const file = (yield* fs.readDirectory(dir)).find((f) => f.endsWith("_remote_schema.sql"));
         expect(file).toBeDefined();
-        const writtenPath = join(dir, file ?? "");
+        const writtenPath = path.join(dir, file ?? "");
         // Confirms the failure happened after the write, not instead of it.
-        expect(existsSync(writtenPath)).toBe(true);
+        expect(yield* fs.exists(writtenPath)).toBe(true);
         expect((error as { writtenSoFar?: ReadonlyArray<string> }).writtenSoFar).toEqual([
           writtenPath,
         ]);
@@ -1364,8 +1465,8 @@ describe("db pull", () => {
     // Only falls back to the default (`true`) when the piped scan is empty/exhausted;
     // a non-interactive pull without piped input therefore updates history. (The clack
     // prompt would hang on a non-TTY; see `pull.live.test.ts` for that end-to-end proof.)
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       stdinIsTty: false,
@@ -1379,8 +1480,8 @@ describe("db pull", () => {
   it.effect("declines the history update on a piped 'n' (non-tty)", () => {
     // Piped stdin is scanned before defaulting, so a piped `n` cancels even on a
     // non-terminal.
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       stdinIsTty: false,
@@ -1396,8 +1497,8 @@ describe("db pull", () => {
   });
 
   it.effect("emits a json envelope and suppresses 'Finished' in machine mode", () => {
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       format: "json",
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
@@ -1414,8 +1515,8 @@ describe("db pull", () => {
   });
 
   it.effect("auto-accepts the history update in non-tty mode without --yes", () => {
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       stdinIsTty: false,
@@ -1430,10 +1531,8 @@ describe("db pull", () => {
   it.effect("honors SUPABASE_YES for the initial-pull history update", () => {
     // `SUPABASE_YES` auto-confirms even on a TTY with no piped answer, via the native
     // path's `resolveYesWithProjectEnv`.
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       // A TTY with no scripted prompt response: only SUPABASE_YES makes this pass.
@@ -1445,25 +1544,17 @@ describe("db pull", () => {
       expect(streamText(s.out, "stderr")).toContain(
         "Update remote migration history table? [Y/n] y",
       );
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(s.layer),
-    );
+    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
   });
 
   it.effect("honors SUPABASE_YES from supabase/.env for the initial-pull history update", () => {
     // The project .env is loaded before the history prompt, so `SUPABASE_YES` there
     // auto-confirms with no shell env or --yes (`resolveYesWithProjectEnv`).
-    const prev = process.env["SUPABASE_YES"];
-    delete process.env["SUPABASE_YES"]; // only the project .env value must apply
-    seedMigration(tmp.current, "20240101000000");
-    writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      files: {
+        "supabase/.env": "SUPABASE_YES=true\n",
+      },
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       // Pipe `n` on a non-TTY: only honoring the .env SUPABASE_YES (which is read
@@ -1474,14 +1565,9 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       yield* dbPull(flags());
       expect(s.historyUpserts.length).toBe(1);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(s.layer),
+    }).pipe(Effect.provide(s.layer), (body) =>
+      // only the project .env value must apply
+      withEnvVar("SUPABASE_YES", undefined, body),
     );
   });
 
@@ -1490,14 +1576,10 @@ describe("db pull", () => {
     () => {
       // Passed explicitly to the native pg_dump seed, so a mirror set only in
       // supabase/.env is used without mutating process.env.
-      const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-      delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", ".env"),
-        "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\n",
-      );
       const s = setup(tmp.current, {
+        files: {
+          "supabase/.env": "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\n",
+        },
         remoteVersions: [], // no remote history → initial-migra pg_dump path
         dumpStdout: "create table dumped ();\n",
         edgeStdout: "",
@@ -1509,11 +1591,9 @@ describe("db pull", () => {
         // The pg_dump container image is rewritten to the configured mirror.
         expect(s.dumpCalls[0]?.image).toMatch(/^my-mirror\.example\.com\/supabase\//u);
       }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-            else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
-          }),
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
         ),
         Effect.provide(s.layer),
       );
@@ -1525,11 +1605,10 @@ describe("db pull", () => {
     () => {
       // A `SUPABASE_NETWORK_ID` sourced only from `supabase/.env` still overrides host
       // networking.
-      const prev = process.env["SUPABASE_NETWORK_ID"];
-      delete process.env["SUPABASE_NETWORK_ID"];
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_NETWORK_ID=dotenv-net\n");
       const s = setup(tmp.current, {
+        files: {
+          "supabase/.env": "SUPABASE_NETWORK_ID=dotenv-net\n",
+        },
         remoteVersions: [], // no remote history → initial-migra pg_dump path
         dumpStdout: "create table dumped ();\n",
         edgeStdout: "",
@@ -1539,14 +1618,8 @@ describe("db pull", () => {
         yield* dbPull(flags());
         expect(s.dumpCalls.length).toBeGreaterThanOrEqual(1);
         expect(s.dumpCalls[0]?.network).toEqual({ _tag: "named", name: "dotenv-net" });
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_NETWORK_ID"];
-            else process.env["SUPABASE_NETWORK_ID"] = prev;
-          }),
-        ),
-        Effect.provide(s.layer),
+      }).pipe(Effect.provide(s.layer), (body) =>
+        withEnvVar("SUPABASE_NETWORK_ID", undefined, body),
       );
     },
   );
@@ -1554,10 +1627,8 @@ describe("db pull", () => {
   it.effect("an explicit --yes=false overrides SUPABASE_YES and honors the piped answer", () => {
     // An explicit `--yes=false` wins over the SUPABASE_YES env — a piped `n` still
     // declines the history update rather than auto-confirming.
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       stdinIsTty: false,
@@ -1567,15 +1638,7 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       yield* dbPull(flags());
       expect(s.historyUpserts.length).toBe(0);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(s.layer),
-    );
+    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
   });
 
   it.effect(
@@ -1584,10 +1647,8 @@ describe("db pull", () => {
       // `--password --yes=false` parses as `--password`'s value being the literal string
       // "--yes=false" — `--yes` itself was never set — so SUPABASE_YES=1 must still
       // auto-confirm rather than the scanner misreading an explicit `--yes=false`.
-      const prev = process.env["SUPABASE_YES"];
-      process.env["SUPABASE_YES"] = "1";
-      seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
         remoteVersions: ["20240101000000"],
         edgeStdout: "create table remote ();\n",
         // A TTY with no scripted prompt response: only SUPABASE_YES makes this pass.
@@ -1600,15 +1661,7 @@ describe("db pull", () => {
         expect(streamText(s.out, "stderr")).toContain(
           "Update remote migration history table? [Y/n] y",
         );
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_YES"];
-            else process.env["SUPABASE_YES"] = prev;
-          }),
-        ),
-        Effect.provide(s.layer),
-      );
+      }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
     },
   );
 
@@ -1617,14 +1670,7 @@ describe("db pull", () => {
     () => {
       const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
       return Effect.gen(function* () {
-        const prev = process.env["SUPABASE_EXPERIMENTAL"];
-        process.env["SUPABASE_EXPERIMENTAL"] = "true";
-        try {
-          yield* dbPull(flags());
-        } finally {
-          if (prev === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
-          else process.env["SUPABASE_EXPERIMENTAL"] = prev;
-        }
+        yield* withEnvVar("SUPABASE_EXPERIMENTAL", "true", dbPull(flags()));
         expect(s.proxyCalls).toHaveLength(0);
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
@@ -1639,18 +1685,18 @@ describe("db pull", () => {
   it.effect(
     "forceMigrationMode overrides SUPABASE_EXPERIMENTAL to keep runDbPull in migration mode; unset preserves the existing declarative-export resolution",
     () => {
-      seedMigration(tmp.current, "20240101000000");
       const forced = setup(tmp.current, {
+        migrations: ["20240101000000"],
         remoteVersions: ["20240101000000"],
         edgeStdout: pgDeltaDiffEnvelope([
           { name: "schema_changes", sql: "create table remote ();" },
         ]),
       });
       const unforced = setup(tmp.current, { edgeStdout: EXPORT_JSON });
-      return Effect.gen(function* () {
-        const prev = process.env["SUPABASE_EXPERIMENTAL"];
-        process.env["SUPABASE_EXPERIMENTAL"] = "true";
-        try {
+      return withEnvVar(
+        "SUPABASE_EXPERIMENTAL",
+        "true",
+        Effect.gen(function* () {
           // `forceMigrationMode: true` keeps an in-process caller in migration mode
           // even though the ambient `SUPABASE_EXPERIMENTAL` gate would otherwise select
           // the deprecated declarative export.
@@ -1669,11 +1715,8 @@ describe("db pull", () => {
           expect(streamText(unforced.out, "stderr")).toContain(
             "Preparing declarative schema export",
           );
-        } finally {
-          if (prev === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
-          else process.env["SUPABASE_EXPERIMENTAL"] = prev;
-        }
-      });
+        }),
+      );
     },
   );
 
@@ -1761,10 +1804,8 @@ describe("db pull", () => {
     () => {
       // A set flag value wins over env regardless of true/false, so `--experimental=false`
       // isn't overridden by a truthy `SUPABASE_EXPERIMENTAL`.
-      const prev = process.env["SUPABASE_EXPERIMENTAL"];
-      process.env["SUPABASE_EXPERIMENTAL"] = "true";
-      seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
         remoteVersions: ["20240101000000"],
         edgeStdout: "create table remote ();\n",
         yes: true,
@@ -1773,15 +1814,7 @@ describe("db pull", () => {
       return Effect.gen(function* () {
         yield* dbPull(flags());
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...\n");
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
-            else process.env["SUPABASE_EXPERIMENTAL"] = prev;
-          }),
-        ),
-        Effect.provide(s.layer),
-      );
+      }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_EXPERIMENTAL", "true", body));
     },
   );
 
@@ -1792,8 +1825,6 @@ describe("db pull", () => {
       // `--`, so `db pull -- --experimental=false` passes it as the positional
       // migration-name argument, not a flag occurrence — unlike the unterminated case
       // above, this must still take the experimental export.
-      const prev = process.env["SUPABASE_EXPERIMENTAL"];
-      process.env["SUPABASE_EXPERIMENTAL"] = "true";
       const s = setup(tmp.current, {
         args: ["db", "pull", "--", "--experimental=false"],
         edgeStdout: EXPORT_JSON,
@@ -1802,15 +1833,7 @@ describe("db pull", () => {
         yield* dbPull(flags({ name: Option.some("--experimental=false") }));
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(s.proxyCalls).toHaveLength(0);
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
-            else process.env["SUPABASE_EXPERIMENTAL"] = prev;
-          }),
-        ),
-        Effect.provide(s.layer),
-      );
+      }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_EXPERIMENTAL", "true", body));
     },
   );
 
@@ -1838,8 +1861,6 @@ describe("db pull", () => {
       // `--password --experimental=false` parses as `--password`'s value being the
       // literal string "--experimental=false" — `--experimental` itself was never
       // Changed, so the pull must still fall back to `SUPABASE_EXPERIMENTAL=true`.
-      const prev = process.env["SUPABASE_EXPERIMENTAL"];
-      process.env["SUPABASE_EXPERIMENTAL"] = "true";
       const s = setup(tmp.current, {
         args: ["db", "pull", "--password", "--experimental=false"],
         edgeStdout: EXPORT_JSON,
@@ -1848,25 +1869,18 @@ describe("db pull", () => {
         yield* dbPull(flags());
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(s.proxyCalls).toHaveLength(0);
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
-            else process.env["SUPABASE_EXPERIMENTAL"] = prev;
-          }),
-        ),
-        Effect.provide(s.layer),
-      );
+      }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_EXPERIMENTAL", "true", body));
     },
   );
 
   it.effect("a project supabase/.env enabling pg-delta selects the pg-delta engine", () => {
     // A project .env must select pg-delta even when the shell env doesn't set it.
     // The handler reads it via toml.envLookup, not process.env.
-    seedMigration(tmp.current, "20240101000000");
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      files: {
+        "supabase/.env": "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n",
+      },
       remoteVersions: ["20240101000000"],
       edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
       yes: true,
@@ -1878,10 +1892,11 @@ describe("db pull", () => {
   });
 
   it.effect("db pull --local with pg-delta-next diffs against the live local database", () => {
-    seedMigration(tmp.current, "20240101000000");
-    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "schemas", "public.sql"), "select 1;\n");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      files: {
+        "supabase/schemas/public.sql": "select 1;\n",
+      },
       remoteVersions: ["20240101000000"],
       edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
       yes: true,
@@ -1897,10 +1912,11 @@ describe("db pull", () => {
     // A real declarative schema file makes the native `loadDeclaredSchemas` branch
     // non-empty, so `prepareShadowSource` redirects the diff target to the shadow's
     // own `contrib_regression` override database.
-    seedMigration(tmp.current, "20240101000000");
-    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "schemas", "public.sql"), "select 1;\n");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      files: {
+        "supabase/schemas/public.sql": "select 1;\n",
+      },
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       yes: true,
@@ -1914,12 +1930,22 @@ describe("db pull", () => {
   });
 
   it.effect("db pull --local keeps migration repair suggestions local", () => {
-    seedMigration(tmp.current, "20240102000000");
-    const s = setup(tmp.current, { remoteVersions: ["20240101000000"] });
+    const s = setup(tmp.current, {
+      migrations: ["20240102000000"],
+      remoteVersions: ["20240101000000"],
+    });
     return Effect.gen(function* () {
       const exit = yield* dbPull(flags({ local: Option.some(true) })).pipe(Effect.exit);
-      expect(JSON.stringify(exit)).toContain("migration repair --local --status reverted");
-      expect(JSON.stringify(exit)).toContain("migration repair --local --status applied");
+      expect(Exit.isFailure(exit)).toBe(true);
+      const failure = Exit.isFailure(exit)
+        ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+        : undefined;
+      expect(failure).toMatchObject({
+        suggestion: expect.stringContaining("migration repair --local --status reverted"),
+      });
+      expect(failure).toMatchObject({
+        suggestion: expect.stringContaining("migration repair --local --status applied"),
+      });
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1928,8 +1954,8 @@ describe("db pull", () => {
     () => {
       // The repair globs `<timestamp>_*.sql`, which fails when the name has a path
       // separator, so the native path must not silently upsert an empty-version row.
-      seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
         remoteVersions: ["20240101000000"],
         edgeStdout: "create table remote ();\n",
         yes: true,
@@ -1948,8 +1974,8 @@ describe("db pull", () => {
       // The basename (`20250101000000_backfill.sql`) matches the migration regex, but the
       // repair glob `<generated>_*.sql` never crosses the `/`, so it misses — anchoring
       // on the generated timestamp must reject this rather than upserting the nested one.
-      seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
         remoteVersions: ["20240101000000"],
         edgeStdout: "create table remote ();\n",
         yes: true,
@@ -1968,8 +1994,8 @@ describe("db pull", () => {
     // json/stream-json layers fail every prompt as non-interactive, so the
     // history-update prompt must be skipped (default = yes) instead of failing before
     // the payload emits.
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       format: "json",
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
@@ -1989,23 +2015,21 @@ describe("db pull", () => {
     // experimental.pgdelta.enabled is read. Base config disables pg-delta; the
     // remote override enables it, so the migration-style pull must pick the
     // pg-delta engine.
-    seedMigration(tmp.current, "20240101000000");
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[experimental.pgdelta]",
-        "enabled = false",
-        "",
-        "[remotes.staging]",
-        'project_id = "abcdefghijklmnopqrst"',
-        "",
-        "[remotes.staging.experimental.pgdelta]",
-        "enabled = true",
-        "",
-      ].join("\n"),
-    );
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      files: {
+        "supabase/config.toml": [
+          "[experimental.pgdelta]",
+          "enabled = false",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      },
       remoteVersions: ["20240101000000"],
       edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
       yes: true,
@@ -2025,12 +2049,10 @@ describe("db pull", () => {
     () => {
       // `db.migrations.enabled = "notabool"` fails config-load after the ref is
       // already cached.
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        ["[db.migrations]", 'enabled = "notabool"', ""].join("\n"),
-      );
       const s = setup(tmp.current, {
+        files: {
+          "supabase/config.toml": ["[db.migrations]", 'enabled = "notabool"', ""].join("\n"),
+        },
         remoteVersions: ["20240101000000"],
         yes: true,
         resolvedRef: "abcdefghijklmnopqrst",
@@ -2050,23 +2072,21 @@ describe("db pull", () => {
       // The remote's own container spec must reflect the `[remotes.<ref>]` override too,
       // not just the config read for pg-delta/schema_paths; `major_version` is used as a
       // probe since PG <= 14 is the only branch that emits `--tmpfs` on `docker create`.
-      seedMigration(tmp.current, "20240101000000");
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        [
-          "[db]",
-          "major_version = 17",
-          "",
-          "[remotes.staging]",
-          'project_id = "abcdefghijklmnopqrst"',
-          "",
-          "[remotes.staging.db]",
-          "major_version = 14",
-          "",
-        ].join("\n"),
-      );
       const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
+        files: {
+          "supabase/config.toml": [
+            "[db]",
+            "major_version = 17",
+            "",
+            "[remotes.staging]",
+            'project_id = "abcdefghijklmnopqrst"',
+            "",
+            "[remotes.staging.db]",
+            "major_version = 14",
+            "",
+          ].join("\n"),
+        },
         remoteVersions: ["20240101000000"],
         edgeStdout: "alter table x;\n",
         yes: true,
@@ -2084,8 +2104,8 @@ describe("db pull", () => {
     // Retries the whole shadow-provisioning + diff operation, not just the diff engine —
     // the pooler retry re-provisions and tears down a fresh shadow and re-prints both
     // banners, rather than reusing the first attempt's shadow.
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeFailFirstWith: "error diffing schema:\nfailed to connect: network is unreachable",
       edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
@@ -2121,16 +2141,17 @@ describe("db pull", () => {
       yield* dbPull(flags({ linked: Option.some(true), declarative: Option.some(true) }));
       expect(streamText(s.out, "stderr")).toContain("Retrying via the IPv4 connection pooler");
       expect(s.engineCalls.filter((call) => call.operation === "export")).toHaveLength(2);
+      const path = yield* Path.Path;
       expect(streamText(s.out, "stderr")).toContain(
-        `Declarative schema written to ${join("supabase", "schemas")}\n`,
+        `Declarative schema written to ${path.join("supabase", "schemas")}\n`,
       );
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(0);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("an IPv6 diff error with no pooler available surfaces the original error", () => {
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeFailFirstWith: "error diffing schema:\nnetwork is unreachable",
       yes: true,
@@ -2147,8 +2168,8 @@ describe("db pull", () => {
   });
 
   it.effect("a non-IPv6 diff error is not retried through the pooler", () => {
-    seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeFailFirstWith: 'error diffing schema:\nsyntax error at or near "foo"',
       yes: true,
@@ -2176,10 +2197,15 @@ describe("db pull", () => {
 
   describe("shadow baseline cache", () => {
     /** The `.tar` files published under the per-test `SUPABASE_HOME` this block pins. */
-    const publishedTars = () => {
-      const dir = join(tmp.current, "_supabase_home", "cache", "shadow-baseline");
-      return existsSync(dir) ? readdirSync(dir).filter((entry) => entry.endsWith(".tar")) : [];
-    };
+    const publishedTars = () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = path.join(tmp.current, "_supabase_home", "cache", "shadow-baseline");
+        return (yield* fs.exists(dir))
+          ? (yield* fs.readDirectory(dir)).filter((entry) => entry.endsWith(".tar"))
+          : [];
+      });
 
     /**
      * Runs `db pull` with the shadow baseline cache on and artifacts under the temp root,
@@ -2189,34 +2215,33 @@ describe("db pull", () => {
      * shift the second run's behavior — the cache key is global and workdir-independent,
      * so two worktrees with identical settings still collide on the same tar.
      */
-    const runCached = (engine: "migra" | "pg-delta") => {
-      const workdir = join(tmp.current, `${engine}-worktree`);
-      seedMigration(workdir, "20240101000000");
-      writeFileSync(
-        join(workdir, "supabase", "config.toml"),
-        "[experimental.pgdelta]\nenabled = true\n",
-      );
-      const s = setup(workdir, {
-        statefulDocker: true,
-        remoteVersions: ["20240101000000"],
-        edgeStdout:
-          engine === "pg-delta"
-            ? pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table t ();" }])
-            : "create table t ();\n",
-        yes: true,
-      });
-      return withEnvVar(
-        "SUPABASE_HOME",
-        join(tmp.current, "_supabase_home"),
-        withEnvVar(
-          "SUPABASE_SHADOW_CACHE",
-          "1",
-          dbPull(flags(engine === "migra" ? { diffEngine: Option.some("migra") } : {})).pipe(
-            Effect.provide(s.layer),
+    const runCached = (engine: "migra" | "pg-delta") =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const workdir = path.join(tmp.current, `${engine}-worktree`);
+        const s = setup(workdir, {
+          migrations: ["20240101000000"],
+          files: { "supabase/config.toml": "[experimental.pgdelta]\nenabled = true\n" },
+          statefulDocker: true,
+          remoteVersions: ["20240101000000"],
+          edgeStdout:
+            engine === "pg-delta"
+              ? pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table t ();" }])
+              : "create table t ();\n",
+          yes: true,
+        });
+        return yield* withEnvVar(
+          "SUPABASE_HOME",
+          path.join(tmp.current, "_supabase_home"),
+          withEnvVar(
+            "SUPABASE_SHADOW_CACHE",
+            "1",
+            dbPull(flags(engine === "migra" ? { diffEngine: Option.some("migra") } : {})).pipe(
+              Effect.provide(s.layer),
+            ),
           ),
-        ),
-      ).pipe(Effect.as(s));
-    };
+        ).pipe(Effect.as(s));
+      });
 
     // A migra baseline and a pg-delta baseline must not key to the same cache tar and
     // silently restore each other's cluster; `shadow-cache.integration.test.ts` covers
@@ -2227,7 +2252,7 @@ describe("db pull", () => {
         // that baseline.
         const migraRun = yield* runCached("migra");
         expect(migraRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
-        const migraTars = publishedTars();
+        const migraTars = yield* publishedTars();
         expect(migraTars).toHaveLength(1);
 
         // pg-delta follows the config (webhooks are off here), so it must cold-provision
@@ -2235,22 +2260,20 @@ describe("db pull", () => {
         const pgDeltaRun = yield* runCached("pg-delta");
         expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
         expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
-        expect(publishedTars()).toHaveLength(2);
-        expect(publishedTars()).toEqual(expect.arrayContaining(migraTars));
-      });
+        expect(yield* publishedTars()).toHaveLength(2);
+        expect(yield* publishedTars()).toEqual(expect.arrayContaining(migraTars));
+      }).pipe(Effect.provide(BunServices.layer));
     });
   });
 });
 
 describe("db remote commit", () => {
   it.effect("writes a remote_commit migration in-process and skips the pull PostRun line", () => {
-    seedMigration(tmp.current, "20240101000000");
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      "[experimental.pgdelta]\nenabled = true\n",
-    );
     const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      files: {
+        "supabase/config.toml": "[experimental.pgdelta]\nenabled = true\n",
+      },
       remoteVersions: ["20240101000000"],
       edgeStdout: pgDeltaDiffEnvelope([
         {
@@ -2263,17 +2286,21 @@ describe("db remote commit", () => {
     });
     return Effect.gen(function* () {
       yield* dbRemoteCommit(commitFlags());
-      const dir = join(tmp.current, "supabase", "migrations");
-      const written = readdirSync(dir).filter((f) => f.endsWith("_remote_commit.sql"));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = path.join(tmp.current, "supabase", "migrations");
+      const written = (yield* fs.readDirectory(dir)).filter((f) =>
+        f.endsWith("_remote_commit.sql"),
+      );
       expect(written).toHaveLength(1);
-      expect(readFileSync(join(dir, written[0] ?? ""), "utf8")).toContain(
+      expect(yield* readFileText(path.join(dir, written[0] ?? ""))).toContain(
         "create table remote ();",
       );
       expect(streamText(s.out, "stderr")).toContain(
         `Command "commit" is deprecated, use "db pull" instead.\n`,
       );
       expect(streamText(s.out, "stderr")).toContain(
-        `Schema written to ${join("supabase", "migrations", written[0] ?? "")}\n`,
+        `Schema written to ${path.join("supabase", "migrations", written[0] ?? "")}\n`,
       );
       expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
       expect(s.engineCalls).toHaveLength(1);
@@ -2293,7 +2320,11 @@ describe("db remote commit", () => {
       const err = streamText(s.out, "stderr");
       expect(err).toContain(`Command "commit" is deprecated, use "db pull" instead.\n`);
       expect(err).toContain("The --experimental structured-dump mode for `db pull` is deprecated");
-      expect(existsSync(join(tmp.current, "supabase", "schemas", "public", "t.sql"))).toBe(true);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      expect(
+        yield* fs.exists(path.join(tmp.current, "supabase", "schemas", "public", "t.sql")),
+      ).toBe(true);
       expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
     }).pipe(Effect.provide(s.layer));
   });
@@ -2305,9 +2336,12 @@ describe("db remote commit", () => {
         commitFlags({ linked: true, dbUrl: Option.some("postgresql://u:p@h/db") }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
-        "if any flags in the group [db-url linked local] are set none of the others can be",
-      );
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain(
+          "if any flags in the group [db-url linked local] are set none of the others can be",
+        );
+      }
       expect(streamText(s.out, "stderr")).toContain(
         `Command "commit" is deprecated, use "db pull" instead.\n`,
       );
