@@ -49,6 +49,15 @@ const LOCAL_CONN: PgConnInput = {
 
 const [SETUP_SQL, QUERY_SQL] = splitLintsSql();
 
+function jsonParseErrorText(raw: string): string {
+  try {
+    JSON.parse(raw);
+    return "";
+  } catch (cause) {
+    return String(cause);
+  }
+}
+
 /** A local lint row keyed by the column names the `lints.sql` query aliases. */
 function lintRow(over: Partial<Record<string, unknown>> = {}) {
   return {
@@ -73,12 +82,10 @@ function mockResolver(opts: { ipv6Error?: boolean } = {}) {
       Effect.gen(function* () {
         resolveFlags.push(flags);
         if (opts.ipv6Error === true) {
-          return yield* Effect.fail(
-            new DbConfigIpv6Error({
-              message: "IPv6 is not supported on your current network",
-              suggestion: "Run supabase link --project-ref abc to setup IPv4 connection.",
-            }),
-          );
+          return yield* new DbConfigIpv6Error({
+            message: "IPv6 is not supported on your current network",
+            suggestion: "Run supabase link --project-ref abc to setup IPv4 connection.",
+          });
         }
         return {
           conn: LOCAL_CONN,
@@ -218,6 +225,7 @@ interface SetupOpts {
   ipv6Error?: boolean;
   securityStatus?: number;
   securityNonJson?: boolean;
+  securityJsonBody?: string;
   securityLints?: ReadonlyArray<Record<string, unknown>>;
   performanceLints?: ReadonlyArray<Record<string, unknown>>;
   /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
@@ -253,6 +261,17 @@ function setup(opts: SetupOpts = {}) {
               new Response(JSON.stringify({ lints: [] }), {
                 status: 200,
                 headers: { "content-type": "text/plain" },
+              }),
+            ),
+          );
+        }
+        if (opts.securityJsonBody !== undefined) {
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(opts.securityJsonBody, {
+                status: 200,
+                headers: { "content-type": "application/json" },
               }),
             ),
           );
@@ -355,7 +374,8 @@ describe("db advisors — local", () => {
       const exit = yield* Effect.exit(dbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to prepare lint session");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("failed to prepare lint session");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -366,7 +386,8 @@ describe("db advisors — local", () => {
       const exit = yield* Effect.exit(dbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to query lints");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("failed to query lints");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -416,7 +437,8 @@ describe("db advisors — local", () => {
       const exit = yield* Effect.exit(dbAdvisors(flags({ dbUrl: Option.some("postgres://x") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain(
           "if any flags in the group [db-url linked local] are set none of the others can be",
         );
       }
@@ -489,7 +511,8 @@ describe("db advisors — local", () => {
       const exit = yield* Effect.exit(dbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain(
           "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
         );
       }
@@ -573,7 +596,8 @@ describe("db advisors — linked", () => {
       const exit = yield* Effect.exit(dbAdvisors(flags({ projectRef: Option.some(FLAG_REF) })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
@@ -608,7 +632,8 @@ describe("db advisors — linked", () => {
       const exit = yield* Effect.exit(dbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("IPv6 is not supported");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("IPv6 is not supported");
       }
       expect(api.requests).toHaveLength(0);
       expect(cache.cached).toBe(true);
@@ -706,7 +731,22 @@ describe("db advisors — linked", () => {
       const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("unexpected security advisors status 200");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("unexpected security advisors status 200");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails with the JSON parse error when a JSON advisors body is malformed", () => {
+    const { layer } = setup({ securityJsonBody: "{ not json", args: ["--linked"] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+          message: `failed to fetch security advisors: ${jsonParseErrorText("{ not json")}`,
+          decode: true,
+        });
       }
     }).pipe(Effect.provide(layer));
   });
@@ -717,7 +757,8 @@ describe("db advisors — linked", () => {
       const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("unexpected security advisors status 500");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("unexpected security advisors status 500");
       }
     }).pipe(Effect.provide(layer));
   });
