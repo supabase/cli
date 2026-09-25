@@ -277,6 +277,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             stateRoot,
             cacheRoot,
             runtime: selectedRuntime,
+            startOwner: true,
             ...(target.name === undefined ? {} : { name: target.name }),
           })
         : stackApi.open({ id: target.id, stateRoot, cacheRoot, startOwner: true }),

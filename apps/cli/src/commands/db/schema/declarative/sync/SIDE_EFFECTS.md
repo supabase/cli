@@ -6,7 +6,9 @@ as a new timestamped migration.
 When `[experimental].stack` is on, each shadow uses a fresh, invocation-owned stack namespace
 with an automatically assigned port. State and data live under `$SUPABASE_HOME/stacks`, and
 native artifacts are shared through `$SUPABASE_HOME/cache/stack`. The command destroys its
-shadow namespaces when its Effect scope closes. An abrupt process exit can leave a namespace
+shadow namespaces when its Effect scope closes; if their container engine is unreachable then, the
+namespaces are still removed and stderr lists the commands that remove their engine resources.
+An abrupt process exit can leave a namespace
 visible to `stack list` for manual `stack destroy` cleanup. Stack shadows use the stack baseline
 cache described below; `--no-cache` bypasses it as well as the legacy backend cache.
 

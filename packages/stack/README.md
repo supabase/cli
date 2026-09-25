@@ -63,6 +63,10 @@ On Linux, native Functions project files must be outside `/tmp`: Edge Runtime us
 
 Pass `startOwner: true` to `open` when live status and other owner-backed operations are needed; this starts only the detached owner and does not start services.
 
+`create({ ..., startOwner: true })` registers the stack and then starts its owner immediately; if the owner fails to launch or the launch is interrupted, `create` removes the registration it just saved, unless an owner already holds the stack, and fails with the launch error.
+
+`destroy` normally returns `{ runtimeCleanup: "complete" }`. When no owner is running and the stack's container engine reports that its daemon cannot be reached, `destroy` removes the local registration and host data anyway and returns `{ runtimeCleanup: "skipped", engine, cleanupCommands }`; its containers and any database data in engine volumes remain, and `cleanupCommands` are the shell commands that remove them once the engine is running. If some host data cannot be deleted by the current user, `destroy` fails before removing anything so it can be retried with the engine running.
+
 The stack owns database, Functions bootstrap, and tool-job directories below its data directory. Storage uploads remain at the caller-supplied Storage `filePath` and are preserved when the stack is destroyed; the caller owns that directory. Host metadata remains under `stateRoot`; native database data uses host files. Docker database data normally uses a managed volume, while existing host data is retained through the host-backed fallback. A host marker records the selected Docker storage and detects a missing or mismatched volume; deleting that volume loses the associated database data. Native snapshot entries live below `cacheRoot`. Docker snapshots share the managed data volume in a separate namespace derived from `cacheRoot`, so they survive source destruction and can use filesystem cloning. A Docker cache hit requires the same daemon, `stateRoot`, and `cacheRoot`. There is no portable tar snapshot API.
 
 Omitted database `jwtSecret` and `rootKey` inputs use the shared local-development values exported

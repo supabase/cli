@@ -20,7 +20,7 @@ import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration verifies exact-port reopening.
 import * as Net from "node:net";
 import { fileURLToPath } from "node:url";
-import { HostEndpoint, connectHost, launchHost } from "./HostProcess.ts";
+import { HostEndpoint, connectHost, controlPortHeld, launchHost } from "./HostProcess.ts";
 import * as State from "./State.ts";
 
 class ProcessTestError extends Data.TaggedError("ProcessTestError")<{ readonly message: string }> {}
@@ -356,4 +356,29 @@ it.live("terminates a detached child when readiness is interrupted", () =>
       expect(() => process.kill(pid, 0)).toThrow();
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("reports a stack's control port as held while a listener binds it", () =>
+  Effect.gen(function* () {
+    const listener = yield* Effect.acquireRelease(bindExact(0), closeServer);
+    const address = listener.address();
+    if (address === null || typeof address === "string")
+      return yield* new ProcessTestError({ message: "listener has no TCP address" });
+    const saved: State.SavedStack = {
+      id: "stack",
+      runtime: "docker",
+      identity: { projectRoot: "/project", branchContext: "main", stackName: "local" },
+      instances: [],
+      composition: { members: [], dependencies: [] },
+      ports: [],
+    };
+
+    expect(yield* controlPortHeld(saved)).toBe(false);
+    expect(
+      yield* controlPortHeld({
+        ...saved,
+        ports: [{ key: "control", host: "127.0.0.1", port: address.port }],
+      }),
+    ).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

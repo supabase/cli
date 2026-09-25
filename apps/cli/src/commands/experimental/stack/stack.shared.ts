@@ -6,9 +6,13 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
-import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
+import {
+  skippedRuntimeCleanupWarning,
+  StackApi,
+  stackApiLayer,
+} from "../../../command-internal/stack-api.ts";
 
-export { StackApi, stackApiLayer };
+export { skippedRuntimeCleanupWarning, StackApi, stackApiLayer };
 
 type StackId = string;
 const isStackId = (id: string): boolean => /^[0-9a-f]{64}$/u.test(id);

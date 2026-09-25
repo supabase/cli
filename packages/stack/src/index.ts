@@ -50,7 +50,7 @@ export type { CompositionConfig } from "./Orchestrator.ts";
 export type { Observation } from "./Rpc.ts";
 export type { PgProveOptions } from "./effect.ts";
 export type { SupabaseCompositionOptions } from "./effect.ts";
-export type { CreateOptions, OpenOptions, StackLocations } from "./effect.ts";
+export type { CreateOptions, DestroyResult, OpenOptions, StackLocations } from "./effect.ts";
 
 const clientLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 type Runtime = ReturnType<typeof makeRuntime>;

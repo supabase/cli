@@ -1,5 +1,5 @@
 import { NodeHttpServer } from "@effect/platform-node";
-import { Data, Effect, Duration, Option, Schedule, Schema, Scope, Stream } from "effect";
+import { Data, Effect, Duration, Exit, Option, Schedule, Schema, Scope, Stream } from "effect";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -22,6 +22,7 @@ type HostFailureReason =
   | "missing-control-listener"
   | "connection-failure"
   | "bind-conflict"
+  | "runtime-unavailable"
   | "invalid-owner-pid"
   | "owner-exit-pending"
   | "owner-exit-probe";
@@ -83,6 +84,22 @@ export const acquireHost = Effect.fn("HostProcess.acquireHost")(function* (
       rawServer?.closeIdleConnections();
     }),
   };
+});
+
+/**
+ * Reports whether another process holds the stack's saved control port. An owner binds it under
+ * the state lock before it runs startup, so a caller holding that lock sees every owner that can
+ * still act on the stack.
+ */
+export const controlPortHeld = Effect.fn("HostProcess.controlPortHeld")(function* (
+  stack: State.SavedStack,
+) {
+  const claim = stack.ports.find((entry) => entry.key === "control");
+  if (claim === undefined) return false;
+  const probe = yield* Effect.scoped(
+    NodeHttpServer.make(() => Http.createServer(), { host: claim.host, port: claim.port }),
+  ).pipe(Effect.exit);
+  return Exit.isFailure(probe);
 });
 
 const endpointFromResponse = Effect.fn("HostProcess.endpointFromResponse")(function* (
@@ -151,7 +168,7 @@ const readyLine = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("error"),
     message: Schema.String,
-    reason: Schema.optionalKey(Schema.Literal("bind-conflict")),
+    reason: Schema.optionalKey(Schema.Literals(["bind-conflict", "runtime-unavailable"])),
   }),
 ]);
 const spawnDetached = Effect.fn("HostProcess.spawnDetached")(function* (
