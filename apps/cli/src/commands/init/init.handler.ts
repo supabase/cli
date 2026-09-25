@@ -6,22 +6,15 @@ import {
   experimentalFeatureEnv,
   resolveExperimentalFeature,
 } from "../../command-internal/experimental-feature.ts";
-import { ExperimentalFlag, WorkdirFlag, resolveYes } from "../../command-internal/global-flags.ts";
-import { InitConfigExistsError, InitExperimentalRequiredError } from "./init.errors.ts";
+import { WorkdirFlag, resolveYes } from "../../command-internal/global-flags.ts";
+import { InitConfigExistsError } from "./init.errors.ts";
 import type { InitFlags } from "./init.command.ts";
 
 export const init = Effect.fn("init")(function* (flags: InitFlags) {
   const output = yield* Output;
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
-  const experimental = yield* ExperimentalFlag;
   const workdir = yield* WorkdirFlag;
-
-  if (flags.useOrioledb && !experimental) {
-    return yield* new InitExperimentalRequiredError({
-      message: `required flag(s) "experimental" not set`,
-    });
-  }
 
   const experimentalStack = yield* resolveExperimentalFeature({
     feature: "stack",

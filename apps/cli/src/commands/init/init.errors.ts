@@ -18,18 +18,3 @@ export class InitConfigExistsError extends Data.TaggedError("InitConfigExistsErr
     return actionability.provideFlags;
   }
 }
-
-/**
- * `--use-orioledb` without `--experimental`. Reproduces the established required-flag error
- * text verbatim: `required flag(s) "experimental" not set`. No suggestion — the text output
- * layer's `fail` already appends the generic `--debug` hint when unset.
- */
-export class InitExperimentalRequiredError extends Data.TaggedError(
-  "InitExperimentalRequiredError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}

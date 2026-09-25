@@ -73,13 +73,6 @@ failed to create config file: open supabase\config.toml: The file exists.
 Run supabase init --force to overwrite existing config file.
 ```
 
-When `--use-orioledb` is passed without `--experimental` (stderr; the second line is the generic debug hint appended on error):
-
-```
-required flag(s) "experimental" not set
-Try rerunning the command with --debug to troubleshoot the error.
-```
-
 When `SUPABASE_EXPERIMENTAL_STACK` is a non-empty value other than `0` or `1` (stderr; the second line is the generic debug hint appended on error):
 
 ```
@@ -91,7 +84,7 @@ Try rerunning the command with --debug to troubleshoot the error.
 
 - Uses the invocation cwd directly and does not recurse upward looking for an existing project.
 - The `--force` flag overwrites an existing `supabase/config.toml`.
-- The `--use-orioledb` flag sets `UseOrioleDB` in init params; requires `--experimental` flag.
+- The `--use-orioledb` flag writes the OrioleDB version to `experimental.orioledb_version`; it does not require `--experimental`.
 - `SUPABASE_EXPERIMENTAL_STACK=1` opts the new project into the experimental stack backend: the
   written config includes `[experimental] stack = true` and omits the Docker-era default ports
   (API, database, shadow, pooler, Studio, mail UI, Functions inspector, and Analytics).

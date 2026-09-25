@@ -7,6 +7,10 @@ supabase-init:
     name: Initialize from an existing directory
     code: supabase init --workdir .
     response: Finished supabase init.
+  - id: with-orioledb
+    name: Initialize with OrioleDB
+    code: supabase init --use-orioledb
+    response: Finished supabase init.
 supabase-login:
   - id: basic-usage
     name: Basic usage
