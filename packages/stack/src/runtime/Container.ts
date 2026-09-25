@@ -141,6 +141,10 @@ export const makeContainerRuntime = (options: {
       args: ReadonlyArray<string>,
       commandOptions: { readonly timeout?: Duration.Input } = { timeout: "30 seconds" },
     ) {
+      yield* Effect.annotateCurrentSpan({
+        engine: options.engine,
+        operation: args.slice(0, 2).join(" "),
+      });
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const child = yield* spawner.spawn(command(args));

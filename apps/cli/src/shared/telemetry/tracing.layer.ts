@@ -6,10 +6,11 @@ import { exportSpanToNdjson, initNdjsonExporter } from "./exporters/ndjson.ts";
 import { telemetryRuntimeLayer } from "./runtime.layer.ts";
 import { TelemetryRuntime } from "./runtime.service.ts";
 import { Tracing } from "./tracing.service.ts";
+import { StartupTraceSpan } from "@supabase/stack/internal/startup-tracing";
 
 const EXPORT_DRAIN_TIMEOUT = Duration.millis(2_000);
 
-class ExportableSpan extends Tracer.NativeSpan {
+class ExportableSpan extends StartupTraceSpan {
   constructor(
     options: ConstructorParameters<typeof Tracer.NativeSpan>[0],
     private readonly queue: Queue.Queue<Tracer.Span, Cause.Done>,
