@@ -14,6 +14,9 @@ export interface NativeProcessSpec {
   readonly args?: ReadonlyArray<string>;
   readonly env?: Readonly<Record<string, string>>;
   readonly cwd?: string;
+  /** Numeric identity the workload runs as; omitted keeps the launcher's identity. */
+  readonly uid?: number;
+  readonly gid?: number;
   /** Signal used for an explicit graceful stop before the forced kill fallback. */
   readonly gracefulStopSignal?: "SIGTERM" | "SIGINT";
   /** Graceful-stop budget for this workload. */
@@ -81,6 +84,8 @@ const encodeSpec = (spec: NativeProcessSpec): Uint8Array => {
       args: spec.args ?? [],
       env: spec.env,
       cwd: spec.cwd,
+      uid: spec.uid,
+      gid: spec.gid,
       ...(Option.isSome(timeout)
         ? {
             gracefulStopSignal: spec.gracefulStopSignal,
