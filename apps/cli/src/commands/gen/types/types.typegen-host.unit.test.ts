@@ -210,7 +210,7 @@ describe("makeTypegenHost", () => {
 
   // The registry's lookup joins Windows paths, which only exist on a Windows filesystem.
   describe.skipIf(process.platform !== "win32")("on a Windows filesystem", () => {
-    it.scoped("runs a .bat found through PATH and PATHEXT through the command interpreter", () =>
+    it.effect("runs a .bat found through PATH and PATHEXT through the command interpreter", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
