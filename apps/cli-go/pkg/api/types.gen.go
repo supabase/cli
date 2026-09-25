@@ -7483,6 +7483,9 @@ type ReadOnlyStatusResponseOutput struct {
 
 // RealtimeConfigResponseOutput defines model for RealtimeConfigResponse_Output.
 type RealtimeConfigResponseOutput struct {
+	// AdminSuspendedAt If set, the Realtime service has been suspended by an admin.
+	AdminSuspendedAt nullable.Nullable[time.Time] `json:"admin_suspended_at"`
+
 	// ConnectionPool Sets connection pool size for Realtime Authorization
 	ConnectionPool nullable.Nullable[int] `json:"connection_pool"`
 
