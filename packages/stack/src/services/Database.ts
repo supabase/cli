@@ -85,6 +85,9 @@ const DatabaseReadyMarker = Schema.Struct({
   profile: Schema.Literal("supabase"),
 });
 
+// Health reconciles role passwords as supabase_admin, including after a configured password change.
+const NATIVE_HBA_RULES = "local all supabase_admin trust\nlocal all all scram-sha-256\n";
+
 export interface DatabaseConfig extends Schema.Schema.Type<typeof DatabaseConfig> {}
 
 export const DatabaseEndpoints = Schema.Struct({ sql: Schema.optionalKey(EndpointIntent) });
@@ -890,11 +893,7 @@ export const makeDatabase = (
             );
             const hbaPath = path.join(socketPath, "pg_hba.conf");
             yield* fs
-              .writeFileString(
-                hbaPath,
-                "local all supabase_admin trust\nlocal all all scram-sha-256\n",
-                { mode: 0o600 },
-              )
+              .writeFileString(hbaPath, NATIVE_HBA_RULES, { mode: 0o600 })
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
             const artifact = (yield* Ref.get(prepared)).get(config.version);
             if (artifact === undefined)

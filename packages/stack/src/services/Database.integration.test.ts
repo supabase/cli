@@ -172,6 +172,13 @@ describe("database component", { timeout: 180_000 }, () => {
         yield* service.start;
         yield* service.ready;
         const endpoint = yield* database.endpoint;
+        expect(
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            "SELECT rolsuper FROM pg_roles WHERE rolname = 'postgres'",
+          ),
+        ).toEqual([{ rolsuper: false }]);
         const rejected = yield* query(
           endpoint,
           Redacted.make("wrong-password"),
