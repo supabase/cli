@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import { tmpdir } from "node:os";
 
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
@@ -8,6 +8,8 @@ import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
 const COMMAND_TIMEOUT_MS = 8 * 60_000;
 const AUX_TIMEOUT_MS = 3 * 60_000;
 const TEST_TIMEOUT_MS = COMMAND_TIMEOUT_MS + AUX_TIMEOUT_MS * 5 + 2 * 60_000;
+
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 describe("supabase db start (e2e, role alignment)", () => {
   it.live(
@@ -114,7 +116,7 @@ enabled = false
             { cwd: root, home, exitTimeoutMs: AUX_TIMEOUT_MS },
           );
           expect(historyOwner.exitCode, historyOwner.stderr).toBe(0);
-          expect(JSON.parse(historyOwner.stdout)).toEqual([{ tableowner: "postgres" }]);
+          expect(yield* decodeJson(historyOwner.stdout)).toEqual([{ tableowner: "postgres" }]);
 
           const alter = yield* runSupabaseEffect(
             ["db", "query", "alter table public.role_story add column note text", "--local"],
@@ -149,7 +151,7 @@ enabled = false
             { cwd: root, home, exitTimeoutMs: AUX_TIMEOUT_MS },
           );
           expect(localRow.exitCode, localRow.stderr).toBe(0);
-          expect(JSON.parse(localRow.stdout)).toEqual([{ id: 1, note: "kept" }]);
+          expect(yield* decodeJson(localRow.stdout)).toEqual([{ id: 1, note: "kept" }]);
 
           const generate = yield* runSupabaseEffect(
             [
