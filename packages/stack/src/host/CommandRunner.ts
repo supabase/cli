@@ -209,14 +209,13 @@ const makeCommandRunner = (options: {
                 cleanup: Effect.void,
               };
             }
-            const artifact = yield* resolveArtifact({
-              service: initialization?.service ?? "database",
-              version,
-            });
-            yield* container.prepare(initialization?.image ?? artifact.image);
+            const image =
+              initialization?.image ??
+              (yield* resolveArtifact({ service: "database", version })).image;
+            yield* container.prepare(image);
             const child = yield* container
               .launchCommand({
-                image: initialization?.image ?? artifact.image,
+                image,
                 stackId: options.stackId,
                 instanceId: jobId,
                 env: postgresCommand?.env ?? initialization?.env ?? {},

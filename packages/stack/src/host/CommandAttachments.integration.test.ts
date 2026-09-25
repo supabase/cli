@@ -4,7 +4,7 @@ import { StackError } from "../Rpc.ts";
 import { postgres } from "../Commands.ts";
 import { makeCommandAttachments } from "./CommandAttachments.ts";
 
-it.live("stopAll waits for an admitted tool to register and interrupt its runner", () =>
+it.live("stopAll waits for an admitted command to register and interrupt its runner", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const admissionStarted = yield* Deferred.make<void>();

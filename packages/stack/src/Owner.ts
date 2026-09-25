@@ -394,7 +394,15 @@ const makeOwnerWithDependencies = (
       return credentials;
     });
 
-    const getStackCredentials = resolveStackCredentials({}).pipe(
+    const getStackCredentials = options.state.read(options.saved.id).pipe(
+      Effect.mapError((cause) => errorFor("credentials", cause)),
+      Effect.flatMap((current) =>
+        current === undefined
+          ? errorFor("credentials", "Saved stack is missing")
+          : current.credentials === undefined
+            ? errorFor("credentials", "Stack credentials have not been established")
+            : Effect.succeed(current.credentials),
+      ),
       Effect.withSpan("Owner.getStackCredentials"),
     );
 

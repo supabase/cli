@@ -58,6 +58,42 @@ const query = (url: string, statement: string) =>
     }),
   );
 
+it.effect("credential lookup leaves a fresh stack untouched for custom database credentials", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-credentials-" });
+      const stack = initial("owner-credentials");
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({
+        saved: stack,
+        state,
+        root: `${root}/data`,
+        cacheRoot,
+      });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+
+      const failure = yield* owner.getStackCredentials.pipe(Effect.flip);
+      expect(failure.message).toContain("have not been established");
+      expect((yield* state.read(stack.id))?.credentials).toBeUndefined();
+
+      const jwtSecret = "custom-owner-credentials-jwt-secret-long-enough";
+      yield* owner.services.create({
+        service: "database",
+        config: {
+          version: "17",
+          databasePassword: Redacted.make("owner-credentials-database-password"),
+          jwtSecret: Redacted.make(jwtSecret),
+          jwtExpiry: 3600,
+        },
+        endpoints: { sql: { port: "auto" } },
+      });
+      expect((yield* state.read(stack.id))?.credentials?.jwtSecret).toBe(jwtSecret);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
 it.live("forwards and rotates saved identity across composed services in one owner", () =>
   Effect.scoped(
     Effect.gen(function* () {
