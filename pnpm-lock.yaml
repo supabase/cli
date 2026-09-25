@@ -335,9 +335,6 @@ importers:
       '@supabase/pg-topo':
         specifier: 1.0.0-alpha.6
         version: 1.0.0-alpha.6(supports-color@7.2.0)
-      '@supabase/postgrest-typegen':
-        specifier: 0.2.4
-        version: 0.2.4
       '@supabase/stack':
         specifier: workspace:*
         version: link:../../packages/stack
@@ -345,8 +342,8 @@ importers:
         specifier: 'catalog:'
         version: 2.112.4
       '@supabase/typegen':
-        specifier: github:supabase/sdk#de4806ee13ecd8808c083b7d88b0236d1d885961&path:packages/typegen
-        version: https://codeload.github.com/supabase/sdk/tar.gz/de4806ee13ecd8808c083b7d88b0236d1d885961#path:packages/typegen
+        specifier: 0.1.1
+        version: 0.1.1
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
@@ -2911,8 +2908,8 @@ packages:
     resolution: {integrity: sha512-uaubtPSeg2TR4wrtfQoQWgkTAe+a0qWX2KhmwvTfNl5mGN9+U7owiJt6abk3o/V6O899PSRD1yzxs5RlF4xTug==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/postgrest-typegen@0.2.4':
-    resolution: {integrity: sha512-q/DLgaNLSVSYo2/9W1tgpsNVNquj4uNU1wrDDfLAG9xhE5H2LCzc281m7H9gyfDj+5/7Gka1iTbmEUQEwZhDZw==}
+  '@supabase/postgrest-typegen@0.2.5':
+    resolution: {integrity: sha512-nbcNcekZT3pcrqJkpM8dVpJE1r19/pRcwtJq1cgwP9aEqW33qcXnk+R4BtpuB2Kw9/V8YSdrlzDJrnZxoWqfKA==}
     engines: {node: '>=22.12.0'}
 
   '@supabase/realtime-js@2.112.4':
@@ -2932,9 +2929,8 @@ packages:
       '@opentelemetry/api':
         optional: true
 
-  '@supabase/typegen@https://codeload.github.com/supabase/sdk/tar.gz/de4806ee13ecd8808c083b7d88b0236d1d885961#path:packages/typegen':
-    resolution: {gitHosted: true, integrity: sha512-PLRy6zEsDsijhZg2ApV/SiDnY6Ak84PPbKca8ISMvtwlkwEZjRWywJvOKaO6rRrQwZV4I7J3xlO0SZIVAaL7Fg==, path: packages/typegen, tarball: https://codeload.github.com/supabase/sdk/tar.gz/de4806ee13ecd8808c083b7d88b0236d1d885961}
-    version: 0.0.0
+  '@supabase/typegen@0.1.1':
+    resolution: {integrity: sha512-L8Mfr4MfhHI4hHt+JHaYrLanxknAKbjDFSHsQc8yOGpOOtl5wP/q6p6/oe71qZhfGCv/p0QuO5HnOGQq7IYP4g==}
     engines: {node: '>=22.12.0'}
 
   '@swc/helpers@0.5.23':
@@ -8687,7 +8683,7 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/postgrest-typegen@0.2.4':
+  '@supabase/postgrest-typegen@0.2.5':
     dependencies:
       arktype: 2.2.3
       oxfmt: 0.66.0
@@ -8713,9 +8709,9 @@ snapshots:
       '@supabase/realtime-js': 2.112.4
       '@supabase/storage-js': 2.112.4
 
-  '@supabase/typegen@https://codeload.github.com/supabase/sdk/tar.gz/de4806ee13ecd8808c083b7d88b0236d1d885961#path:packages/typegen':
+  '@supabase/typegen@0.1.1':
     dependencies:
-      '@supabase/postgrest-typegen': 0.2.4
+      '@supabase/postgrest-typegen': 0.2.5
     transitivePeerDependencies:
       - svelte
       - vite-plus

@@ -45,14 +45,8 @@
         // The CLI under test in apps/cli/tests/smoke-test-{macos,windows}.ts.
         "supabase",
       ],
-      "ignoreDependencies": [
-        // TODO(CLI-2424): spawned through a node_modules/.bin path in scripts/publish-docs-spec.ts.
-        "prettier",
-        // Reached only through `@supabase/typegen` at runtime; declared directly so
-        // tsconfig.types.json can pin its types to dist/*.d.ts (see that file). The version must
-        // equal the one @supabase/typegen pins; types.generator.unit.test.ts enforces that.
-        "@supabase/postgrest-typegen",
-      ],
+      // TODO(CLI-2424): spawned through a node_modules/.bin path in scripts/publish-docs-spec.ts.
+      "ignoreDependencies": ["prettier"],
     },
     "apps/docs": {
       // Next.js convention file that knip's Next.js plugin does not list.
