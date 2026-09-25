@@ -12,6 +12,8 @@ interface LaunchSpec {
   readonly args: ReadonlyArray<string>;
   readonly env?: Readonly<Record<string, string>>;
   readonly cwd?: string;
+  readonly uid?: number;
+  readonly gid?: number;
   readonly gracefulStopSignal?: "SIGTERM" | "SIGINT";
   readonly gracefulStopTimeoutMs?: number;
 }
@@ -21,6 +23,8 @@ const LaunchSpecSchema = Schema.Struct({
   args: Schema.optionalKey(Schema.Array(Schema.String)),
   env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   cwd: Schema.optionalKey(Schema.String),
+  uid: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
+  gid: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
   gracefulStopSignal: Schema.optionalKey(Schema.Literals(["SIGTERM", "SIGINT"])),
   gracefulStopTimeoutMs: Schema.optionalKey(
     Schema.Finite.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
@@ -42,6 +46,8 @@ const decodeSpec = (bytes: Buffer): LaunchSpec | undefined => {
       args: value.args ?? [],
       cwd: value.cwd,
       env: value.env,
+      uid: value.uid,
+      gid: value.gid,
       ...(value.gracefulStopSignal === undefined
         ? {}
         : { gracefulStopSignal: value.gracefulStopSignal }),
@@ -201,6 +207,8 @@ export const runNativeLauncher = (): void => {
     child = spawn(spec.executable, [...spec.args], {
       cwd: spec.cwd,
       env: { ...Effect.runSync(inheritedEnvironment), ...spec.env },
+      uid: spec.uid,
+      gid: spec.gid,
       detached: true,
       stdio: ["inherit", "inherit", "inherit"],
     });
@@ -210,7 +218,10 @@ export const runNativeLauncher = (): void => {
       terminateWorkloadGroup("SIGKILL");
       process.exit(127);
     }
-    child.on("error", () => process.exit(127));
+    child.on("error", (error) => {
+      writeSync(2, `Native workload failed to start: ${error.message}\n`);
+      process.exit(127);
+    });
     child.on("exit", (code, signal) => {
       childExited = true;
       terminateWorkloadGroup("SIGKILL");

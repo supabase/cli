@@ -14,6 +14,7 @@ import {
 import { rmdir } from "node:fs/promises";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no OS-owned cross-process lock primitive.
 import { DatabaseSync } from "node:sqlite";
+import { restrictDirectoryToOwner } from "./runtime/postgres-user.ts";
 
 const SafeId = Schema.String.pipe(
   Schema.refine((value): value is string => /^[a-zA-Z0-9_-]+$/u.test(value), {
@@ -143,7 +144,9 @@ const makeState = (
     yield* fs
       .makeDirectory(root, { recursive: true })
       .pipe(Effect.mapError((cause) => stateError("root", cause)));
-    yield* fs.chmod(root, 0o700).pipe(Effect.mapError((cause) => stateError("root", cause)));
+    yield* restrictDirectoryToOwner(fs, root).pipe(
+      Effect.mapError((cause) => stateError("root", cause)),
+    );
 
     const stackRoot = (id: string) => path.join(root, id);
     const statePath = (id: string) => path.join(stackRoot(id), "state.json");

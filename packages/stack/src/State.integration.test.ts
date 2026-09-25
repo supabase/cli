@@ -381,6 +381,20 @@ describe("durable stack state", () => {
     ),
   );
 
+  it.live.skipIf(process.platform === "win32")(
+    "restricts the state root to its owner while keeping a traverse-only grant",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-traverse-" });
+          yield* fs.chmod(root, 0o755);
+          yield* makeTestState(root);
+          expect((yield* fs.stat(root)).mode & 0o777).toBe(0o701);
+        }),
+      ),
+  );
+
   it.effect("keeps a lock owner protected when a waiting fiber is cancelled", () =>
     run(
       Effect.gen(function* () {

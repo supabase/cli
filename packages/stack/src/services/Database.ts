@@ -50,6 +50,12 @@ import {
   type NativeProcess,
 } from "../runtime/NativeProcess.ts";
 import type { StackId } from "../identity/StackId.ts";
+import {
+  handOverNativePostgresFiles,
+  openNativePostgresInstance,
+  resolveNativePostgresUser,
+  type PasswdEntry,
+} from "../runtime/postgres-user.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeDatabaseSnapshots } from "./DatabaseSnapshot.ts";
@@ -129,13 +135,6 @@ export interface DatabaseComponent {
   readonly endpoint: Effect.Effect<BackendEndpoint, DatabaseError>;
   readonly logs: Stream.Stream<DatabaseLog, DatabaseError>;
 }
-
-/** initdb and the server both refuse uid 0, so native startup fails before any process is spawned. */
-export const nativePostgresRootError = (
-  runtime: string,
-  uid: number | undefined,
-): string | undefined =>
-  runtime === "native" && uid === 0 ? "PostgreSQL cannot be run as root" : undefined;
 
 const errorFor = (operation: string, cause: unknown): ServiceError =>
   cause instanceof ServiceError
@@ -488,10 +487,12 @@ const nativeProcess = (
   stackId: string,
   instanceId: string,
   spawner: ChildProcessSpawnerService["Service"],
+  user: PasswdEntry | undefined,
 ): Effect.Effect<NativeProcess, ServiceError> =>
   spawnNativeProcess(
     {
       executable: artifact.executable,
+      ...(user === undefined ? {} : { uid: user.uid, gid: user.gid, cwd: "/" }),
       args: [
         "-D",
         dataPath,
@@ -504,6 +505,7 @@ const nativeProcess = (
         ...settings,
       ],
       env: {
+        ...(user === undefined ? {} : { HOME: user.home }),
         PGDATA: dataPath,
         PGSODIUM_KEY_FILE: rootKeyPath,
         POSTGRES_USER: "supabase_admin",
@@ -709,8 +711,6 @@ export const makeDatabase = (
 
     const prepare = Effect.fn("Database.prepare")(
       function* (input: DatabaseConfig) {
-        const rootError = nativePostgresRootError(options.runtime, process.getuid?.());
-        if (rootError !== undefined) return yield* errorFor("prepare", rootError);
         const markerPath = path.join(instanceRoot, ".supabase-database-ready.json");
         const hasMarker = yield* fs.exists(markerPath);
         if (hasMarker) {
@@ -829,8 +829,25 @@ export const makeDatabase = (
         context: ServiceInstanceContext<DatabaseConfig>,
       ): Effect.Effect<RuntimeSession, ServiceError | ServiceLaunchError> =>
         Effect.gen(function* () {
-          const rootError = nativePostgresRootError(options.runtime, process.getuid?.());
-          if (rootError !== undefined) return yield* errorFor("launch", rootError);
+          const postgresUser = yield* resolveNativePostgresUser(options.runtime).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+          );
+          if (postgresUser._tag === "Unavailable")
+            return yield* errorFor("launch", `${postgresUser.message}. ${postgresUser.suggestion}`);
+          const stepDownUser = postgresUser._tag === "StepDown" ? postgresUser.user : undefined;
+          const asRoot = <A, E>(
+            effect: Effect.Effect<
+              A,
+              E,
+              FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+            >,
+          ) =>
+            effect.pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              Effect.mapError((cause) => errorFor("launch", cause)),
+            );
           const config = {
             ...context.config,
             version: postgresVersion(context.config.version),
@@ -840,13 +857,18 @@ export const makeDatabase = (
             yield* storage
               .prepare(config.version)
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
-          const dataPath = path.join(instanceRoot, "data");
           const settings = postgresArguments(config);
           if (options.runtime === "native") {
+            if (postgresUser._tag === "StepDown") yield* Effect.logInfo(postgresUser.message);
+            const nativeRoot =
+              stepDownUser === undefined
+                ? instanceRoot
+                : yield* asRoot(openNativePostgresInstance(stepDownUser, instanceRoot));
+            const dataPath = path.join(nativeRoot, "data");
             yield* fs
               .makeDirectory(dataPath, { recursive: true, mode: 0o700 })
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
-            const rootKeyPath = path.join(instanceRoot, "pgsodium_root.key");
+            const rootKeyPath = path.join(nativeRoot, "pgsodium_root.key");
             yield* fs
               .writeFileString(rootKeyPath, Redacted.value(config.rootKey), { mode: 0o600 })
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
@@ -864,6 +886,16 @@ export const makeDatabase = (
             const artifact = (yield* Ref.get(prepared)).get(config.version);
             if (artifact === undefined)
               return yield* errorFor("launch", `Artifact ${config.version} was not prepared`);
+            if (stepDownUser !== undefined)
+              yield* asRoot(
+                handOverNativePostgresFiles(stepDownUser, {
+                  dataPath,
+                  rootKeyPath,
+                  socketPath,
+                  bundleRoot: artifact.root,
+                  executable: artifact.executable,
+                }),
+              );
             const process = yield* nativeProcess(
               artifact,
               config,
@@ -875,6 +907,7 @@ export const makeDatabase = (
               String(options.stackId),
               options.instanceId,
               spawner,
+              stepDownUser,
             );
             const selectedEndpoint: BackendEndpoint = {
               kind: "unix",
