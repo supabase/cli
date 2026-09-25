@@ -41,7 +41,7 @@ interface CommandInputCommon<E, R> {
   readonly stdout: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
   readonly stderr: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
 }
-export type CommandInput<E, R> =
+type CommandInput<E, R> =
   | (CommandInputCommon<E, R> & {
       readonly command: Extract<CommandInvocationType, { type: "postgres" }>;
       readonly stdin: Stream.Stream<Uint8Array, E, R> | undefined;

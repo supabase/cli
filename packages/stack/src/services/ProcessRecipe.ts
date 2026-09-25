@@ -41,7 +41,7 @@ import {
   type ServiceEndpoint,
 } from "./Recipe.ts";
 
-export interface RecipeMount {
+interface RecipeMount {
   readonly source: string;
   readonly target: string;
   readonly readOnly: boolean;

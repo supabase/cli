@@ -479,7 +479,17 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         const inputFailure = yield* Deferred.make<never, E | StackError>();
         const result = yield* Ref.make<{ jobId: string; exitCode: number } | undefined>(undefined);
         const sender = yield* Ref.make<Fiber.Fiber<void, E | StackError> | undefined>(undefined);
-        yield* rpc.runCommand({ attachmentId, command }).pipe(
+        const encodedCommand =
+          command.type === "postgres" && command.pgProve !== undefined
+            ? {
+                ...command,
+                pgProve: {
+                  ...command.pgProve,
+                  mounts: command.pgProve.mounts.map(({ source, target }) => ({ source, target })),
+                },
+              }
+            : command;
+        yield* rpc.runCommand({ attachmentId, command: encodedCommand }).pipe(
           Stream.mapError((cause) => failure("command", cause)),
           Stream.runForEach((event): Effect.Effect<void, E | StackError, R> =>
             Match.valueTags(event, {

@@ -14,7 +14,7 @@ interface AttachedCommandOutput {
   readonly stdout: (bytes: Uint8Array) => Effect.Effect<void>;
   readonly stderr: (bytes: Uint8Array) => Effect.Effect<void>;
 }
-export type AttachedCommandInput =
+type AttachedCommandInput =
   | (AttachedCommandOutput & {
       readonly command: Extract<CommandInvocation, { type: "postgres" }>;
       readonly stdin: Stream.Stream<Uint8Array> | undefined;
