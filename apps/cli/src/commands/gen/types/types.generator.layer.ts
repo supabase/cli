@@ -106,7 +106,11 @@ export const genTypesGeneratorLayer = Layer.effect(
             catch: (cause) => {
               if (cause instanceof ToolNotInstalledError) {
                 return new GenTypesToolNotInstalledError({
-                  message: cause.message,
+                  message: cause.message
+                    .replace(cause.installHint, "")
+                    .replace(/ +\n/g, "\n")
+                    .replace(/ {2,}/g, " ")
+                    .trim(),
                   suggestion: cause.installHint,
                 });
               }
