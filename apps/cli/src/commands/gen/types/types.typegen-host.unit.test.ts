@@ -1,9 +1,7 @@
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
-import type { SpawnRequest } from "@supabase/typegen";
-import { Effect, PlatformError, Sink, Stream } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import type { SpawnRequest, SpawnResult } from "@supabase/typegen";
+import { Data, Effect, FileSystem, Path, PlatformError, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { makeTypegenHost, quoteForCmd } from "./types.typegen-host.ts";
 
@@ -121,76 +119,114 @@ describe("quoteForCmd", () => {
 });
 
 describe("makeTypegenHost", () => {
-  it("runs the tool in the project directory with the document on stdin and returns its output", async () => {
-    const { spawner, calls } = fakeSpawner({ stdout: "class Tickets {}\n", stderr: "summary\n" });
-    const spawn = host(spawner).spawn;
-    expect(spawn).toBeDefined();
-    const result = await spawn!(request());
+  const spawnOf = (
+    spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+    platform: NodeJS.Platform = "darwin",
+    env: Readonly<Record<string, string | undefined>> = { PATH: "/usr/bin" },
+  ) => {
+    const { spawn } = host(spawner, platform, env);
+    if (spawn === undefined) throw new Error("the typegen host must supply spawn");
+    return (req: SpawnRequest) => Effect.promise(() => spawn(req));
+  };
 
-    expect(result).toEqual({ exitCode: 0, stdout: "class Tickets {}\n", stderr: "summary\n" });
-    expect(calls).toEqual([
-      {
-        command: "dart",
-        args: ["run", "supabase_typegen", "--output", "-"],
-        cwd: "/projects/app",
-        env: { PATH: "/usr/bin" },
-        extendEnv: true,
-        shell: false,
-        stdin: '{"version":1}',
-      },
-    ]);
-  });
+  class SpawnRejected extends Data.TaggedError("SpawnRejected")<{ readonly reason: unknown }> {}
 
-  it("reports a non-zero exit as a result rather than a failure", async () => {
-    const { spawner } = fakeSpawner({ exitCode: 65, stderr: "Could not parse the document\n" });
-    const result = await host(spawner).spawn!(request());
-    expect(result.exitCode).toBe(65);
-    expect(result.stderr).toBe("Could not parse the document\n");
-  });
+  /** The rejection of a spawn, for the contract cases where the promise must fail. */
+  const rejectionOf = (
+    spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+    platform: NodeJS.Platform,
+    env: Readonly<Record<string, string | undefined>>,
+    req: SpawnRequest,
+  ) => {
+    const { spawn } = host(spawner, platform, env);
+    if (spawn === undefined) throw new Error("the typegen host must supply spawn");
+    return Effect.tryPromise({
+      try: () => spawn(req),
+      catch: (reason) => new SpawnRejected({ reason }),
+    }).pipe(Effect.flip);
+  };
 
-  it("rejects a missing executable with ENOENT, as the registry's Host contract asks", async () => {
-    const { spawner } = fakeSpawner({ notFound: true });
-    await expect(host(spawner).spawn!(request())).rejects.toMatchObject({ code: "ENOENT" });
-  });
+  it.effect(
+    "runs the tool in the project directory with the document on stdin and returns its output",
+    () =>
+      Effect.gen(function* () {
+        const { spawner, calls } = fakeSpawner({
+          stdout: "class Tickets {}\n",
+          stderr: "summary\n",
+        });
+        const result: SpawnResult = yield* spawnOf(spawner)(request());
 
-  it("hands TypeScript back unformatted", async () => {
-    const { spawner } = fakeSpawner();
-    const code = "export type Database = {}";
-    expect(await host(spawner).format!(code, "output.ts")).toBe(code);
-  });
+        expect(result).toEqual({ exitCode: 0, stdout: "class Tickets {}\n", stderr: "summary\n" });
+        expect(calls).toEqual([
+          {
+            command: "dart",
+            args: ["run", "supabase_typegen", "--output", "-"],
+            cwd: "/projects/app",
+            env: { PATH: "/usr/bin" },
+            extendEnv: true,
+            shell: false,
+            stdin: '{"version":1}',
+          },
+        ]);
+      }),
+  );
 
-  describe("on Windows", () => {
-    let dir: string;
-    beforeEach(() => {
-      dir = realpathSync(mkdtempSync(join(tmpdir(), "typegen-host-")));
-      mkdirSync(join(dir, "flutter"));
-      writeFileSync(join(dir, "flutter", "dart.BAT"), "@echo off\r\n");
-      chmodSync(join(dir, "flutter", "dart.BAT"), 0o755);
-    });
-    afterEach(() => {
-      rmSync(dir, { recursive: true, force: true });
-    });
+  it.effect("reports a non-zero exit as a result rather than a failure", () =>
+    Effect.gen(function* () {
+      const { spawner } = fakeSpawner({ exitCode: 65, stderr: "Could not parse the document\n" });
+      const result = yield* spawnOf(spawner)(request());
+      expect(result.exitCode).toBe(65);
+      expect(result.stderr).toBe("Could not parse the document\n");
+    }),
+  );
 
-    // The registry's lookup joins Windows paths, which only exist on a Windows filesystem.
-    it.skipIf(process.platform !== "win32")(
-      "runs a .bat found through PATH and PATHEXT through the command interpreter",
-      async () => {
-        const { spawner, calls } = fakeSpawner({ stdout: "ok" });
-        const env = { PATH: join(dir, "flutter"), PATHEXT: ".EXE;.BAT" };
-        const windowsHost = host(spawner, "win32", env);
-        await windowsHost.spawn!(request({ env }));
-        expect(calls[0]?.command).toBe(join(dir, "flutter", "dart.BAT"));
-        expect(calls[0]?.shell).toBe(true);
-      },
-    );
+  it.effect("rejects a missing executable with ENOENT, as the registry's Host contract asks", () =>
+    Effect.gen(function* () {
+      const { spawner } = fakeSpawner({ notFound: true });
+      const error = yield* rejectionOf(spawner, "darwin", { PATH: "/usr/bin" }, request());
+      expect(error.reason).toMatchObject({ code: "ENOENT" });
+    }),
+  );
 
-    it("rejects with ENOENT without spawning when PATH holds no candidate", async () => {
+  it.effect("hands TypeScript back unformatted", () =>
+    Effect.gen(function* () {
+      const { spawner } = fakeSpawner();
+      const { format } = host(spawner);
+      if (format === undefined) throw new Error("the typegen host must supply format");
+      const code = "export type Database = {}";
+      expect(yield* Effect.promise(() => format(code, "output.ts"))).toBe(code);
+    }),
+  );
+
+  it.effect("on Windows, rejects with ENOENT without spawning when PATH holds no candidate", () =>
+    Effect.gen(function* () {
       const { spawner, calls } = fakeSpawner();
-      const env = { PATH: join(dir, "empty"), PATHEXT: ".EXE;.BAT" };
-      await expect(host(spawner, "win32", env).spawn!(request({ env }))).rejects.toMatchObject({
-        code: "ENOENT",
-      });
+      const env = { PATH: "C:\\nowhere", PATHEXT: ".EXE;.BAT" };
+      const error = yield* rejectionOf(spawner, "win32", env, request({ env }));
+      expect(error.reason).toMatchObject({ code: "ENOENT" });
       expect(calls).toEqual([]);
-    });
+    }),
+  );
+
+  // The registry's lookup joins Windows paths, which only exist on a Windows filesystem.
+  describe.skipIf(process.platform !== "win32")("on a Windows filesystem", () => {
+    it.scoped("runs a .bat found through PATH and PATHEXT through the command interpreter", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "typegen-host-" }),
+        );
+        const flutter = path.join(dir, "flutter");
+        yield* fs.makeDirectory(flutter);
+        yield* fs.writeFileString(path.join(flutter, "dart.BAT"), "@echo off\r\n");
+
+        const { spawner, calls } = fakeSpawner({ stdout: "ok" });
+        const env = { PATH: flutter, PATHEXT: ".EXE;.BAT" };
+        yield* spawnOf(spawner, "win32", env)(request({ env }));
+        expect(calls[0]?.command).toBe(path.join(flutter, "dart.BAT"));
+        expect(calls[0]?.shell).toBe(true);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
   });
 });

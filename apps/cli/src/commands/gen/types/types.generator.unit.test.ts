@@ -70,7 +70,7 @@ describe("registry error mapping", () => {
     );
     expect(mapped).toBeInstanceOf(GenTypesToolNotInstalledError);
     expect(mapped.message).toBe("Generating dart types needs `dart`, which was not found on PATH.");
-    expect((mapped as GenTypesToolNotInstalledError).suggestion).toBe(hint);
+    expect(mapped).toMatchObject({ suggestion: hint });
   });
 
   it("keeps the tool's stderr when it fails", () => {
