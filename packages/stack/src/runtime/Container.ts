@@ -71,7 +71,7 @@ export interface ContainerRuntime {
   readonly launch: (
     spec: ContainerSpec,
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
-  readonly launchTool: (
+  readonly launchCommand: (
     spec: Omit<ContainerSpec, "ports">,
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
 }
@@ -504,7 +504,7 @@ export const makeContainerRuntime = (options: {
         }),
       );
     });
-    return { prepare, prepareImage, launch, launchTool: (spec) => launch(spec, true) };
+    return { prepare, prepareImage, launch, launchCommand: (spec) => launch(spec, true) };
   });
 
 export const removeStackContainers = Effect.fn("Container.removeStackContainers")(

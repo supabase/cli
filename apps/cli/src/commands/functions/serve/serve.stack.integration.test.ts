@@ -185,7 +185,6 @@ const fixture = (
       destroy: Effect.sync(() => {
         destroyed = true;
       }),
-      initialize: Effect.void,
       prepare: Effect.void,
       followStatus: Stream.never,
       logs: Stream.never,
@@ -201,7 +200,6 @@ const fixture = (
       stop: Effect.void,
       restart: () => Effect.void,
       destroy: Effect.void,
-      initialize: Effect.void,
       prepare: Effect.void,
       resetData: Effect.void,
       saveSnapshot: () => Effect.die("unused"),
@@ -244,7 +242,6 @@ const fixture = (
       destroy: Effect.sync(() => {
         destroyed = true;
       }),
-      initialize: Effect.void,
       prepare: Effect.void,
       followStatus: Stream.never,
       logs: Stream.never,
@@ -287,7 +284,7 @@ const fixture = (
       },
       stop: Effect.die("unused"),
       destroy: Effect.die("unused"),
-      tools: { run: () => Effect.die("unused") },
+      commands: { run: () => Effect.die("unused") },
     } satisfies Stack;
     const identity = { projectRoot: "/project", branchContext: "main", stackName: "default" };
     const apiService = {

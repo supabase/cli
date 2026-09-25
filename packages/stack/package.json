@@ -7,7 +7,7 @@
     ".": "./src/index.ts",
     "./effect": "./src/effect.ts",
     "./defaults": "./src/Defaults.ts",
-    "./tools": "./src/Tools.ts",
+    "./commands": "./src/Commands.ts",
     "./internal/dispatch": "./src/internal/dispatch.ts",
     "./internal/identity": "./src/identity/Identity.ts",
     "./internal/functions/serve-main": "./src/functions/serve.main.ts",

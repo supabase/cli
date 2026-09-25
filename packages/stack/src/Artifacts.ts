@@ -85,7 +85,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   realtime: definition(
     "realtime",
     "v2.134.5",
-    "ghcr.io/supabase/cli/realtime:v2.134.5@sha256:7fb53cc6987085d739c7d161608505ed138d1895df884c3bdc2147cef444138a",
+    "ghcr.io/supabase/cli/realtime:v2.134.5@sha256:ee672ffd06ca0a1712a06aea1307c134c366ec082a51b051a8d59a8ad0c72755",
     "bin/server",
     ["bin/server", "bin/prepare"],
   ),

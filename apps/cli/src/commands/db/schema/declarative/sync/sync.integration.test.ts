@@ -109,7 +109,6 @@ function syncStackApi(workdir: string, port: number) {
     stop: unusedSync,
     restart: unusedSyncFn,
     destroy: unusedSync,
-    initialize: unusedSync,
     prepare: unusedSync,
     credentials: unusedSyncFn,
     saveSnapshot: unusedSyncFn,
@@ -166,7 +165,7 @@ function syncStackApi(workdir: string, port: number) {
     },
     stop: unusedSync,
     destroy: unusedSync,
-    tools: { run: unusedSyncFn },
+    commands: { run: unusedSyncFn },
   };
   const identity = { projectRoot: workdir, branchContext: "main", stackName: "default" };
   return Layer.succeed(StackApi, {

@@ -602,7 +602,7 @@ export const makeDatabase = (
         });
         return yield* Effect.scoped(
           Effect.gen(function* () {
-            const child = yield* container.launchTool({
+            const child = yield* container.launchCommand({
               image: artifact.image,
               stackId: String(options.stackId),
               instanceId: options.instanceId,

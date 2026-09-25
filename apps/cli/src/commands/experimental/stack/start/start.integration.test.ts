@@ -92,7 +92,6 @@ const instance = (
     stop: Effect.void,
     restart: () => Effect.void,
     destroy: Effect.void,
-    initialize: Effect.void,
     prepare: Effect.void,
     status: Effect.sync(() => status(creation)),
     followStatus: Stream.empty,
@@ -283,7 +282,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     },
     stop: Effect.void,
     destroy: Effect.void,
-    tools: { run: () => Effect.die("tool not used") },
+    commands: { run: () => Effect.die("tool not used") },
   };
   return {
     stack,

@@ -1607,7 +1607,6 @@ describe("db start stack backend", () => {
       state.destroyed = true;
       onDestroy();
     }),
-    initialize: Effect.void,
     prepare: Effect.void,
     status: Effect.sync(() => ({
       id: "database-primary",
@@ -1707,7 +1706,7 @@ describe("db start stack backend", () => {
       },
       stop: Effect.void,
       destroy: Effect.void,
-      tools: { run: () => Effect.die("unused") },
+      commands: { run: () => Effect.die("unused") },
     };
     return { stack, state };
   };

@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { databaseConnection, localJwtSecret, serviceJwt } from "./ServiceConfig.ts";
-import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
+import { type ProcessRecipeSpec, type StartupCommand } from "./ProcessRecipe.ts";
 
 export const Config = Schema.Struct({
   databaseUrl: Schema.String,
@@ -26,6 +26,11 @@ export interface Endpoints extends Schema.Schema.Type<typeof Endpoints> {}
 export const Creation = serviceCreation("storage", Config, Endpoints);
 
 export interface Creation extends Schema.Schema.Type<typeof Creation> {}
+
+export const initializationCommand = {
+  args: [],
+  containerEntrypoint: "/slim-runtime/bin/prepare",
+} satisfies StartupCommand & { readonly containerEntrypoint: string };
 
 export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   service: "storage",
@@ -92,5 +97,5 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   args: () => Effect.succeed([]),
   mounts: (creation, _context) =>
     Effect.succeed([{ source: creation.config.filePath, target: "/mnt", readOnly: false }]),
-  startup: [{ args: [], containerEntrypoint: "/slim-runtime/bin/prepare" }],
+  startupCommands: [initializationCommand],
 });

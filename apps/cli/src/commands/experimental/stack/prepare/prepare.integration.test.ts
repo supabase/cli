@@ -53,7 +53,6 @@ const makeFixture = (root: string, failPreparation = false) => {
     destroy: Effect.sync(() => {
       destroyCount += 1;
     }),
-    initialize: Effect.void,
     prepare: Effect.sync(() => {
       prepareCount += 1;
     }).pipe(
@@ -132,7 +131,7 @@ const makeFixture = (root: string, failPreparation = false) => {
     },
     stop: Effect.void,
     destroy: Effect.void,
-    tools: { run: () => Effect.die("unused") },
+    commands: { run: () => Effect.die("unused") },
   };
   const output = mockOutput();
   const telemetry = mockTelemetryStateTracked();

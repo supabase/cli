@@ -34,5 +34,5 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         ? []
         : [{ source: creation.config.filePath, target: "/mnt", readOnly: true }],
     ),
-  startup: [],
+  startupCommands: [],
 });

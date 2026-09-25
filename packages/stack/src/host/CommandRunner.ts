@@ -7,7 +7,6 @@ import {
   FileSystem,
   Layer,
   Path,
-  Schema,
   Sink,
   Stream,
   Ref,
@@ -24,42 +23,53 @@ import {
 } from "../Artifacts.ts";
 import { makeContainerRuntime } from "../runtime/Container.ts";
 import { spawnNativeProcess } from "../runtime/NativeProcess.ts";
-import { PostgresTool, type PgProveOptions } from "../Tools.ts";
+import { awaitCommandOutput, type CommandOutputResult } from "../runtime/CommandOutput.ts";
+import type { CommandInvocation as CommandInvocationType } from "../Commands.ts";
+import type { StackCredentials } from "../State.ts";
+import { resolveInitializationCommand } from "../services/Initialization.ts";
 
-class ToolError extends Data.TaggedError("ToolError")<{
+export class CommandError extends Data.TaggedError("CommandError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
 
-class StdinWriteError extends Data.TaggedError("StdinWriteError")<{ readonly cause: ToolError }> {}
+class StdinWriteError extends Data.TaggedError("StdinWriteError")<{
+  readonly cause: CommandError;
+}> {}
 
-export interface ToolInput<E, R> {
-  readonly tool: PostgresTool;
-  readonly args: ReadonlyArray<string>;
-  readonly env: Readonly<Record<string, string>>;
-  readonly pgProve?: PgProveOptions;
-  readonly stdin?: Stream.Stream<Uint8Array, E, R>;
+interface CommandInputCommon<E, R> {
   readonly stdout: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
   readonly stderr: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
 }
+export type CommandInput<E, R> =
+  | (CommandInputCommon<E, R> & {
+      readonly command: Extract<CommandInvocationType, { type: "postgres" }>;
+      readonly stdin: Stream.Stream<Uint8Array, E, R> | undefined;
+    })
+  | (CommandInputCommon<E, R> & {
+      readonly command: Exclude<CommandInvocationType, { type: "postgres" }>;
+      readonly credentials: StackCredentials;
+    });
 
 export interface Interface {
   readonly run: <E, R>(
-    input: ToolInput<E, R>,
-  ) => Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E | ToolError, R>;
-  readonly cleanup: Effect.Effect<void, ToolError>;
+    input: CommandInput<E, R>,
+  ) => Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E | CommandError, R>;
+  readonly cleanup: Effect.Effect<void, CommandError>;
 }
 
-export class Service extends Context.Service<Service, Interface>()("@supabase/stack/ToolRunner") {}
+export class Service extends Context.Service<Service, Interface>()(
+  "@supabase/stack/CommandRunner",
+) {}
 
 const failure = (cause: unknown) =>
-  new ToolError({
+  new CommandError({
     message: cause instanceof Error ? cause.message : String(cause),
     cause,
   });
 
 /** Creates an attached byte-stream runner whose invocation scope owns each finite process. */
-const makeToolRunner = (options: {
+const makeCommandRunner = (options: {
   readonly stackId: string;
   readonly root: string;
   readonly cacheRoot: string;
@@ -85,7 +95,7 @@ const makeToolRunner = (options: {
       .makeDirectory(jobsRoot, { recursive: true, mode: 0o700 })
       .pipe(Effect.mapError(failure));
 
-    const nativeCleanup = yield* Ref.make(new Map<string, Effect.Effect<void, ToolError>>());
+    const nativeCleanup = yield* Ref.make(new Map<string, Effect.Effect<void, CommandError>>());
     const cleanupNative = (jobId: string) =>
       Ref.get(nativeCleanup).pipe(
         Effect.flatMap((entries) => {
@@ -125,26 +135,38 @@ const makeToolRunner = (options: {
       );
     });
 
-    const run = Effect.fn("ToolRunner.run")(function* <E, R>(input: ToolInput<E, R>) {
+    const run = Effect.fn("CommandRunner.run")(function* <E, R>(input: CommandInput<E, R>) {
       yield* fs
         .makeDirectory(jobsRoot, { recursive: true, mode: 0o700 })
         .pipe(Effect.mapError(failure));
       const jobId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(failure));
       return yield* Effect.scoped(
         Effect.gen(function* () {
-          const tool = yield* Schema.decodeEffect(PostgresTool)(input.tool).pipe(
-            Effect.mapError(failure),
-          );
-          if (tool.command !== "pg_prove" && input.pgProve !== undefined)
-            return yield* failure("pgProve options require the pg_prove tool");
-          const version = postgresVersion(String(tool.major));
+          const command = input.command;
           const directory = yield* fs
             .makeTempDirectoryScoped({ directory: jobsRoot, prefix: `${jobId}-` })
             .pipe(Effect.mapError(failure));
+          const initialization =
+            "credentials" in input
+              ? yield* resolveInitializationCommand(input.command, {
+                  runtime: options.runtime,
+                  credentials: input.credentials,
+                }).pipe(Effect.mapError(failure))
+              : undefined;
+          const postgresCommand = "stdin" in input ? input.command : undefined;
+          const inputStream = "stdin" in input ? (input.stdin ?? Stream.empty) : Stream.empty;
+          if (
+            postgresCommand !== undefined &&
+            postgresCommand.command.command !== "pg_prove" &&
+            postgresCommand.pgProve !== undefined
+          )
+            return yield* failure("pgProve options require the pg_prove command");
+          const version =
+            initialization?.version ?? postgresVersion(String(postgresCommand?.command.major));
           const process = yield* Effect.gen(function* () {
             if (container === undefined) {
               const artifact = yield* prepareNativeArtifact(
-                { service: "database", version },
+                { service: initialization?.service ?? "database", version },
                 options.cacheRoot,
               ).pipe(
                 Effect.provideService(FileSystem.FileSystem, fs),
@@ -155,10 +177,17 @@ const makeToolRunner = (options: {
               );
               const child = yield* spawnNativeProcess(
                 {
-                  executable: path.join(artifact.root, "bin", tool.command),
-                  args: input.args,
-                  env: input.env,
-                  cwd: input.pgProve?.cwd ?? directory,
+                  executable: path.join(
+                    artifact.root,
+                    "bin",
+                    postgresCommand?.command.command ?? initialization?.nativeExecutable ?? "",
+                  ),
+                  args: postgresCommand?.args ?? initialization?.args ?? [],
+                  env: postgresCommand?.env ?? initialization?.env ?? {},
+                  cwd:
+                    postgresCommand?.pgProve?.cwd ??
+                    initialization?.cwd ??
+                    (initialization === undefined ? directory : artifact.root),
                   stdin: "pipe",
                 },
                 undefined,
@@ -180,18 +209,26 @@ const makeToolRunner = (options: {
                 cleanup: Effect.void,
               };
             }
-            const artifact = yield* resolveArtifact({ service: "database", version });
-            yield* container.prepare(artifact.image);
+            const artifact = yield* resolveArtifact({
+              service: initialization?.service ?? "database",
+              version,
+            });
+            yield* container.prepare(initialization?.image ?? artifact.image);
             const child = yield* container
-              .launchTool({
-                image: artifact.image,
+              .launchCommand({
+                image: initialization?.image ?? artifact.image,
                 stackId: options.stackId,
                 instanceId: jobId,
-                env: input.env,
-                args: input.args,
-                entrypoint: tool.command,
-                workingDir: input.pgProve?.workingDir,
-                mounts: input.pgProve?.mounts.map((mount) => ({ ...mount, readOnly: true })),
+                env: postgresCommand?.env ?? initialization?.env ?? {},
+                args: postgresCommand?.args ?? initialization?.args ?? [],
+                entrypoint:
+                  postgresCommand?.command.command ?? initialization?.containerEntrypoint ?? "",
+                workingDir: postgresCommand?.pgProve?.workingDir ?? initialization?.workingDir,
+                mounts:
+                  postgresCommand?.pgProve?.mounts.map((mount) => ({
+                    ...mount,
+                    readOnly: true,
+                  })) ?? initialization?.mounts,
               })
               .pipe(Effect.catchTag("ContainerLaunchError", (error) => Effect.fail(error.failure)));
             return {
@@ -202,12 +239,12 @@ const makeToolRunner = (options: {
               cleanup: child.stop.pipe(Effect.andThen(child.remove), Effect.mapError(failure)),
             };
           }).pipe(Effect.mapError(failure));
-          const [, , , exitCode] = yield* Effect.acquireUseRelease(
+          const [, result] = yield* Effect.acquireUseRelease(
             Effect.succeed(process),
             (process) =>
               Effect.all(
                 [
-                  (input.stdin ?? Stream.empty).pipe(
+                  inputStream.pipe(
                     Stream.run(
                       process.stdin.pipe(Sink.mapError((cause) => new StdinWriteError({ cause }))),
                     ),
@@ -217,15 +254,40 @@ const makeToolRunner = (options: {
                     ),
                     Effect.raceFirst(process.exitCode.pipe(Effect.asVoid)),
                   ),
-                  process.stdout.pipe(Stream.runForEach(input.stdout)),
-                  process.stderr.pipe(Stream.runForEach(input.stderr)),
-                  process.exitCode,
+                  command.type === "postgres"
+                    ? Effect.all(
+                        [
+                          process.stdout.pipe(Stream.runForEach(input.stdout)),
+                          process.stderr.pipe(Stream.runForEach(input.stderr)),
+                          process.exitCode,
+                        ],
+                        { concurrency: "unbounded" },
+                      ).pipe(
+                        Effect.map(([, , exitCode]): CommandOutputResult => ({
+                          timedOut: false,
+                          exitCode: Number(exitCode),
+                          output: { stdout: [], stderr: [] },
+                        })),
+                      )
+                    : awaitCommandOutput(process, {
+                        timeout: "60 seconds",
+                        onOutput: (stream, bytes) =>
+                          stream === "stdout" ? input.stdout(bytes) : input.stderr(bytes),
+                      }),
                 ],
                 { concurrency: "unbounded" },
               ),
             (process) => process.cleanup,
           );
-          return { jobId, exitCode };
+          if (result.timedOut)
+            return yield* failure(
+              `${command.type} timed out after 60 seconds\nstdout:\n${result.output.stdout.join("\n")}\nstderr:\n${result.output.stderr.join("\n")}`,
+            );
+          if (command.type !== "postgres" && result.exitCode !== 0)
+            return yield* failure(
+              `${command.type} exited with code ${result.exitCode}\nstdout:\n${result.output.stdout.join("\n")}\nstderr:\n${result.output.stderr.join("\n")}`,
+            );
+          return { jobId, exitCode: result.exitCode };
         }),
       ).pipe(
         Effect.onExit((exit) =>
@@ -241,4 +303,4 @@ export const layer = (options: {
   readonly root: string;
   readonly cacheRoot: string;
   readonly runtime: "native" | "docker" | "podman";
-}) => Layer.effect(Service, makeToolRunner(options).pipe(Effect.map(Service.of)));
+}) => Layer.effect(Service, makeCommandRunner(options).pipe(Effect.map(Service.of)));

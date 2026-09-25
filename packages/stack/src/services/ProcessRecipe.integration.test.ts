@@ -25,7 +25,6 @@ import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
 import { prepareNativeArtifact } from "../Artifacts.ts";
-import * as Analytics from "./Analytics.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -75,7 +74,7 @@ const spec: ProcessRecipeSpec<TestCreation> = {
   args: () => Effect.succeed([]),
   env: () => Effect.succeed({}),
   mounts: () => Effect.succeed([]),
-  startup: [{ args: [] }],
+  startupCommands: [{ args: [] }],
 };
 
 const isPortOccupied = (port: number): Effect.Effect<boolean> =>
@@ -136,7 +135,7 @@ describe("ProcessRecipe launch cleanup", () => {
           const container: ContainerRuntime = {
             prepare: () => Effect.void,
             prepareImage: (image) => Effect.succeed(image),
-            launchTool: () =>
+            launchCommand: () =>
               Effect.gen(function* () {
                 const launch = yield* Ref.updateAndGet(startupLaunches, (value) => value + 1);
                 if (launch === 1) {
@@ -255,7 +254,7 @@ describe("ProcessRecipe launch cleanup", () => {
         };
         const nativeSpec: ProcessRecipeSpec<TestCreation> = {
           ...spec,
-          startup: [{ nativeExecutable: "postgrest", args: ["--version"] }],
+          startupCommands: [{ nativeExecutable: "postgrest", args: ["--version"] }],
         };
         const dependencies = {
           fs,
@@ -366,7 +365,7 @@ describe("ProcessRecipe launch cleanup", () => {
               }
               return { PORT: String(port) };
             }),
-          startup: [
+          startupCommands: [
             {
               nativeExecutable: path.relative(path.join(artifact.root, "bin"), process.execPath),
               args: [
@@ -420,7 +419,7 @@ const startupContainer = (tool: {
   prepare: () => Effect.void,
   prepareImage: (image) => Effect.succeed(image),
   launch: () => Effect.die("the main process must not launch after a failed startup"),
-  launchTool: () =>
+  launchCommand: () =>
     Effect.succeed({
       id: "startup-tool",
       ports: {},
@@ -463,33 +462,6 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
 });
 
 const platform = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
-
-it.effect(
-  "does not expose a one-shot initializer when every startup command is skipped in containers",
-  () =>
-    Effect.gen(function* () {
-      const creation: Analytics.Creation = {
-        service: "analytics",
-        config: { databaseUrl: "postgresql://postgres:postgres@localhost:54322/postgres" },
-      };
-      const dependencies = {
-        fs: yield* FileSystem.FileSystem,
-        path: yield* Path.Path,
-        crypto: yield* Crypto.Crypto,
-        client: yield* HttpClient.HttpClient,
-        spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-        container: undefined,
-      } satisfies ProcessDependencies;
-      const recipe = yield* makeProcessRecipe(
-        creation,
-        { ...options, runtime: "docker" },
-        dependencies,
-        Analytics.makeSpec(),
-      );
-
-      expect(recipe.definition.initialize).toBeUndefined();
-    }).pipe(Effect.provide(platform)),
-);
 
 const nativePoolerArtifact = Effect.fn(function* (cacheRoot: string) {
   const platformName = `${process.platform}-${process.arch}`;
@@ -608,131 +580,6 @@ const countingSpawner = (
 });
 
 describe("process recipe startup", () => {
-  it.effect("runs Realtime preparation without launching its server", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const launched: Array<{
-          readonly entrypoint?: string;
-          readonly args?: ReadonlyArray<string>;
-        }> = [];
-        const removed = yield* Ref.make(false);
-        const container: ContainerRuntime = {
-          prepare: () => Effect.void,
-          prepareImage: (image) => Effect.succeed(image),
-          launch: () => Effect.die("one-shot initialization must not launch the service"),
-          launchTool: (input) =>
-            Effect.sync(() => {
-              launched.push({ entrypoint: input.entrypoint, args: input.args });
-              return {
-                id: "realtime-prepare",
-                ports: {},
-                stdout: Stream.empty,
-                stderr: Stream.empty,
-                exitCode: Effect.succeed(0),
-                stdin: Sink.drain,
-                stop: Effect.void,
-                discard: Effect.void,
-                kill: Effect.void,
-                remove: Ref.set(removed, true),
-              } satisfies ContainerProcess;
-            }),
-        };
-        const realtime = yield* realtimeService(container);
-
-        yield* realtime.initialize;
-
-        expect(launched).toEqual([{ entrypoint: "/app/bin/prepare", args: [] }]);
-        expect(yield* Ref.get(removed)).toBe(true);
-        expect((yield* realtime.get).lifecycle).toBe("stopped");
-      }),
-    ).pipe(Effect.provide(platform)),
-  );
-
-  it.effect("reports preparation output after cleaning up a failed one-shot process", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const stopped = yield* Ref.make(false);
-        const removed = yield* Ref.make(false);
-        const container: ContainerRuntime = {
-          prepare: () => Effect.void,
-          prepareImage: (image) => Effect.succeed(image),
-          launch: () => Effect.die("one-shot initialization must not launch the service"),
-          launchTool: () => {
-            const process = {
-              id: "realtime-prepare",
-              ports: {},
-              stdout: Stream.make(encode("controlled migration failure\n")),
-              stderr: Stream.empty,
-              exitCode: Effect.succeed(1),
-              stdin: Sink.drain,
-              stop: Ref.set(stopped, true),
-              discard: Effect.void,
-              kill: Effect.void,
-              remove: Ref.set(removed, true),
-            } satisfies ContainerProcess;
-            return Effect.gen(function* () {
-              const scope = yield* Scope.Scope;
-              yield* Scope.addFinalizer(scope, process.stop.pipe(Effect.andThen(process.remove)));
-              return process;
-            });
-          },
-        };
-        const realtime = yield* realtimeService(container);
-
-        const error = yield* Effect.flip(realtime.initialize);
-
-        expect(error.message).toContain("realtime startup exited with 1");
-        expect(error.message).toContain("controlled migration failure");
-        expect(yield* Ref.get(stopped)).toBe(true);
-        expect(yield* Ref.get(removed)).toBe(true);
-        expect((yield* realtime.get).lifecycle).toBe("stopped");
-      }),
-    ).pipe(Effect.provide(platform)),
-  );
-
-  it.effect("interrupts and removes the one-shot initialization process before returning", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const started = yield* Deferred.make<void>();
-        const stopped = yield* Ref.make(false);
-        const removed = yield* Ref.make(false);
-        const container: ContainerRuntime = {
-          prepare: () => Effect.void,
-          prepareImage: (image) => Effect.succeed(image),
-          launch: () => Effect.die("one-shot initialization must not launch the service"),
-          launchTool: () =>
-            Effect.gen(function* () {
-              const process = {
-                id: "realtime-prepare",
-                ports: {},
-                stdout: Stream.empty,
-                stderr: Stream.empty,
-                exitCode: Effect.never,
-                stdin: Sink.drain,
-                stop: Ref.set(stopped, true),
-                discard: Effect.void,
-                kill: Effect.void,
-                remove: Ref.set(removed, true),
-              } satisfies ContainerProcess;
-              const scope = yield* Scope.Scope;
-              yield* Scope.addFinalizer(scope, process.stop.pipe(Effect.andThen(process.remove)));
-              yield* Deferred.succeed(started, undefined);
-              return process;
-            }),
-        };
-        const realtime = yield* realtimeService(container);
-        const initialization = yield* realtime.initialize.pipe(Effect.forkScoped);
-        yield* Deferred.await(started);
-
-        yield* Fiber.interrupt(initialization);
-
-        expect(yield* Ref.get(stopped)).toBe(true);
-        expect(yield* Ref.get(removed)).toBe(true);
-        expect((yield* realtime.get).lifecycle).toBe("stopped");
-      }),
-    ).pipe(Effect.provide(platform)),
-  );
-
   it.effect("reports the startup process's recent stdout and stderr when it exits non-zero", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -750,6 +597,7 @@ describe("process recipe startup", () => {
 
         const error = yield* Effect.flip(realtime.start);
 
+        expect(error).toMatchObject({ operation: "launch" });
         expect(error.message).toContain("realtime startup exited with 1");
         expect(error.message).toContain(postgrexFailure);
         expect(error.message).toContain(poolTimeout);

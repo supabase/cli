@@ -178,7 +178,6 @@ const instance = <K extends ServiceCreation["service"]>(
   stop: Effect.void,
   restart: () => Effect.void,
   destroy: Effect.void,
-  initialize: Effect.void,
   prepare: Effect.void,
   status,
   followStatus: Stream.empty,
@@ -264,7 +263,7 @@ export function buildStorageStackApi(
     },
     stop: Effect.die("unused"),
     destroy: Effect.die("unused"),
-    tools: { run: () => Effect.die("unused") },
+    commands: { run: () => Effect.die("unused") },
   };
   const definition = {
     id: STORAGE_STACK_ID,

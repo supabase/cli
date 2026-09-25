@@ -15,14 +15,10 @@ import {
 } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { tmpdir } from "node:os";
-import {
-  create,
-  postgres,
-  StackError,
-  type ServiceCreationInput,
-  type Stack,
-} from "@supabase/stack/effect";
+import { create, StackError, type Stack } from "@supabase/stack/effect";
+import { postgres } from "@supabase/stack/commands";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
+import type { Command } from "@supabase/stack/commands";
 import { stackCatalogSetupLayer, StackCatalogSetup } from "./stack-catalog-setup.ts";
 import { destroyTestStack } from "../../../../packages/stack/tests/stack-cleanup.ts";
 
@@ -32,7 +28,7 @@ const jwtSecret = "stack-catalog-setup-integration-secret";
 describe("stack catalog setup", { timeout: 180_000 }, () => {
   for (const runtime of ["native", "docker"] as const) {
     it.live(
-      `initializes service schemas and cleans up temporary services on a stopped ${runtime} composition`,
+      `initializes service schemas without temporary services on a stopped ${runtime} composition`,
       () => {
         const buildOutput = mockOutput();
         const callOutput = mockOutput();
@@ -115,7 +111,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                   expect(callOutput.stderrText).toContain("Seeding globals from roles.sql...");
                   const rows: Array<string> = [];
                   const errors: Array<string> = [];
-                  const query = yield* stack.tools.run(postgres.psql({ major: 17 }), {
+                  const query = yield* stack.commands.run(postgres.psql({ major: 17 }), {
                     args: ["--dbname", databaseUrl, "-At"],
                     stdin: Stream.make(
                       new TextEncoder().encode(
@@ -130,6 +126,27 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                   expect(query.exitCode, errors.join("")).toBe(0);
                   expect(rows.join("").trim()).toBe(
                     "users|sessions|storage.objects|storage.s3_multipart_uploads|realtime.messages|realtime.subscription|catalog_overlay",
+                  );
+
+                  const credentials = yield* stack.credentials.get;
+                  if (credentials === undefined)
+                    return yield* Effect.die("stack credentials missing");
+                  const tenantJwks: Array<string> = [];
+                  const tenantJwksQuery = yield* stack.commands.run(postgres.psql({ major: 17 }), {
+                    args: ["--dbname", databaseUrl, "-At"],
+                    stdin: Stream.make(
+                      new TextEncoder().encode(
+                        "SELECT jwt_jwks::text FROM _realtime.tenants WHERE external_id = 'realtime-dev';",
+                      ),
+                    ),
+                    stdout: (bytes) =>
+                      Effect.sync(() => tenantJwks.push(new TextDecoder().decode(bytes))),
+                    stderr: (bytes) =>
+                      Effect.sync(() => errors.push(new TextDecoder().decode(bytes))),
+                  });
+                  expect(tenantJwksQuery.exitCode, errors.join("")).toBe(0);
+                  expect(JSON.parse(tenantJwks.join("").trim())).toEqual(
+                    JSON.parse(credentials.jwks),
                   );
 
                   const realtime = members.find((member) => member.service === "realtime");
@@ -153,77 +170,36 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                       const authReady = yield* Deferred.make<void>();
                       const releaseStorage = yield* Deferred.make<void>();
                       const releaseAuth = yield* Deferred.make<void>();
-                      const created = yield* Ref.make<
-                        ReadonlyArray<{ id: string; service: string }>
-                      >([]);
-                      const destroyedIds = yield* Ref.make<ReadonlyArray<string>>([]);
                       const temporaryDirectory = yield* Ref.make<string | undefined>(undefined);
                       const controlledStack: Stack = {
                         ...stack,
-                        services: {
-                          ...stack.services,
-                          create: <Input extends ServiceCreationInput>(creation: Input) =>
-                            stack.services.create(creation).pipe(
-                              Effect.tap(() =>
-                                creation.service === "storage"
-                                  ? Ref.set(temporaryDirectory, creation.config.filePath)
-                                  : Effect.void,
-                              ),
-                              Effect.tap((instance) =>
-                                Ref.update(created, (entries) => [
-                                  ...entries,
-                                  { id: instance.id, service: instance.service },
-                                ]),
-                              ),
-                              Effect.map(
-                                (instance) =>
-                                  new Proxy(instance, {
-                                    get(target, property, receiver) {
-                                      if (property === "destroy")
-                                        return target.destroy.pipe(
-                                          Effect.tap(() =>
-                                            Ref.update(destroyedIds, (ids) => [...ids, target.id]),
-                                          ),
-                                        );
-                                      if (
-                                        target.service === "storage" &&
-                                        property === "initialize"
-                                      ) {
-                                        return Deferred.succeed(storageReady, undefined).pipe(
-                                          Effect.andThen(Deferred.await(releaseStorage)),
-                                          Effect.andThen(target.initialize),
-                                        );
-                                      }
-                                      if (
-                                        mode === "interruption" &&
-                                        target.service === "auth" &&
-                                        property === "initialize"
-                                      ) {
-                                        return Deferred.succeed(authReady, undefined).pipe(
-                                          Effect.andThen(Deferred.await(releaseAuth)),
-                                          Effect.andThen(target.initialize),
-                                        );
-                                      }
-                                      if (
-                                        mode === "failure" &&
-                                        target.service === "auth" &&
-                                        property === "initialize"
-                                      )
-                                        return Deferred.await(storageReady).pipe(
-                                          Effect.andThen(
-                                            Effect.fail(
-                                              new StackError({
-                                                operation: "initialize",
-                                                message: "controlled Auth initialization failure",
-                                              }),
-                                            ),
-                                          ),
-                                        );
-                                      return Reflect.get(target, property, receiver);
-                                    },
+                        commands: {
+                          ...stack.commands,
+                          run: (invocation: Command) => {
+                            if (!("type" in invocation))
+                              return Effect.die("postgres command is not used in this fixture");
+                            if (invocation.type === "storage.initialize")
+                              return Ref.set(temporaryDirectory, invocation.filePath).pipe(
+                                Effect.andThen(Deferred.succeed(storageReady, undefined)),
+                                Effect.andThen(Deferred.await(releaseStorage)),
+                                Effect.as({ jobId: "controlled-storage", exitCode: 0 as const }),
+                              );
+                            if (mode === "interruption")
+                              return Deferred.succeed(authReady, undefined).pipe(
+                                Effect.andThen(Deferred.await(releaseAuth)),
+                                Effect.as({ jobId: "controlled-auth", exitCode: 0 as const }),
+                              );
+                            return Deferred.await(storageReady).pipe(
+                              Effect.andThen(
+                                Effect.fail(
+                                  new StackError({
+                                    operation: "initialize",
+                                    message: "controlled Auth initialization failure",
                                   }),
+                                ),
                               ),
-                            ),
+                            );
+                          },
                         },
                       };
                       const beforeOutput = callOutput.stderrText;
@@ -261,15 +237,6 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                         expect(Exit.hasInterrupts(exit)).toBe(true);
                       }
 
-                      const createdEntries = yield* Ref.get(created);
-                      const destroyed = yield* Ref.get(destroyedIds);
-                      expect(createdEntries.map((entry) => entry.service).toSorted()).toEqual([
-                        "auth",
-                        "storage",
-                      ]);
-                      expect(destroyed.toSorted()).toEqual(
-                        createdEntries.map((entry) => entry.id).toSorted(),
-                      );
                       expect(callOutput.stderrText).toBe(beforeOutput);
                       const temporaryPath = yield* Ref.get(temporaryDirectory);
                       if (temporaryPath === undefined)

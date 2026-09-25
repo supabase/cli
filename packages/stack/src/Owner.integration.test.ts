@@ -139,6 +139,7 @@ it.live("forwards and rotates saved identity across composed services in one own
         .pipe(Effect.map((saved) => saved?.credentials));
       if (firstCredentials === undefined) return yield* Effect.die("identity was not persisted");
       expect(firstCredentials.jwtSecret).toBe(customJwtSecret);
+      expect(yield* owner.getStackCredentials).toEqual(firstCredentials);
       const firstRest = creationFor(first, "rest");
       const firstStorage = creationFor(first, "storage");
       const firstRealtime = creationFor(first, "realtime");

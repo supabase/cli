@@ -36,7 +36,12 @@ import {
   type ServiceCreationInput as CatalogServiceCreationInput,
 } from "./services/Catalog.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import type { PgProveOptions, PostgresTool } from "./Tools.ts";
+import type {
+  InitializationCommand,
+  PgProveOptions,
+  PostgresCommand,
+  CommandInvocation,
+} from "./Commands.ts";
 export {
   DEFAULT_LOCAL_DATABASE_PASSWORD,
   DEFAULT_LOCAL_JWT_SECRET,
@@ -52,7 +57,7 @@ export {
   DEFAULT_SIGNING_KEY,
 } from "./Defaults.ts";
 
-export { postgres } from "./Tools.ts";
+export { initialization, postgres } from "./Commands.ts";
 export { resolveNativePostgresUser } from "./runtime/postgres-user.ts";
 export { StackError } from "./Rpc.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
@@ -61,7 +66,12 @@ export type { CompositionConfig } from "./Orchestrator.ts";
 export type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
 export type { StackCredentials, StackIdentityInput };
 export type { Observation } from "./Rpc.ts";
-export type { PgProveOptions } from "./Tools.ts";
+export type {
+  Command,
+  InitializationCommand,
+  PgProveOptions,
+  PostgresCommand,
+} from "./Commands.ts";
 
 const stateFor = (root: string) => State.Service.pipe(Effect.provide(State.layer({ root })));
 
@@ -109,8 +119,6 @@ export interface ServiceInstance<K extends Kind = Kind> {
   readonly destroy: Effect.Effect<void, StackError>;
   /** Ensures the service artifact or image is available without starting the service. */
   readonly prepare: Effect.Effect<void, StackError>;
-  /** Runs the one-shot service initialization command while stopped with wake disabled. */
-  readonly initialize: Effect.Effect<void, StackError>;
   readonly status: Effect.Effect<Observation, StackError>;
   readonly followStatus: Stream.Stream<Observation, StackError>;
   readonly logs: Stream.Stream<
@@ -133,14 +141,38 @@ export type ServiceInstances = {
   [K in Kind]: K extends "database" ? DatabaseInstance : ServiceInstance<K>;
 };
 type AnyInstance = ServiceInstances[Kind];
-/** An attached finite command with backpressured byte streams. */
-export interface ToolOptions<E, R> {
+/** Options for streaming PostgreSQL command input and output. */
+export interface PostgresCommandOptions<E, R> {
   readonly args?: ReadonlyArray<string>;
   readonly env?: Readonly<Record<string, string>>;
   readonly pgProve?: PgProveOptions;
   readonly stdin?: Stream.Stream<Uint8Array, E, R>;
   readonly stdout: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
   readonly stderr: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
+}
+/** Output handlers for a finite service initialization command. */
+export interface InitializationCommandOptions<E, R> {
+  readonly stdout?: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
+  readonly stderr?: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
+}
+interface InternalCommandOptions<E, R> {
+  readonly args?: ReadonlyArray<string>;
+  readonly env?: Readonly<Record<string, string>>;
+  readonly pgProve?: PgProveOptions;
+  readonly stdin?: Stream.Stream<Uint8Array, E, R>;
+  readonly stdout?: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
+  readonly stderr?: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
+}
+/** Runs a finite PostgreSQL or service initialization command. */
+export interface CommandRunner {
+  <E, R>(
+    command: PostgresCommand,
+    options: PostgresCommandOptions<E, R>,
+  ): Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E | StackError, R>;
+  <E = never, R = never>(
+    command: InitializationCommand,
+    options?: InitializationCommandOptions<E, R>,
+  ): Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E | StackError, R>;
 }
 /** A client handle; its lifetime does not own service processes. */
 export interface Stack {
@@ -168,11 +200,8 @@ export interface Stack {
   };
   readonly stop: Effect.Effect<void, StackError>;
   readonly destroy: Effect.Effect<void, StackError>;
-  readonly tools: {
-    readonly run: <E, R>(
-      tool: PostgresTool,
-      options: ToolOptions<E, R>,
-    ) => Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E | StackError, R>;
+  readonly commands: {
+    readonly run: CommandRunner;
   };
 }
 
@@ -282,7 +311,6 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           ),
     destroy: call("destroy", (rpc) => rpc.destroyService({ id })),
     prepare: call("prepare", (rpc) => rpc.prepareService({ id })),
-    initialize: call("initialize", (rpc) => rpc.initializeService({ id })),
     status: call("status", (rpc) => rpc.status({ id }), false),
     followStatus: stream("followStatus", (rpc) => rpc.followStatus({ id })),
     logs: stream("logs", (rpc) => rpc.logs({ id })),
@@ -336,81 +364,107 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   function create(creation: ServiceCreationInput): Effect.Effect<AnyInstance, StackError> {
     return call("createService", (rpc) => rpc.createService(creation)).pipe(Effect.map(instance));
   }
-  const run = Effect.fn("Stack.runTool")(function* <E, R>(
-    tool: PostgresTool,
-    options: ToolOptions<E, R>,
+  const runInvocation = Effect.fn("Stack.runCommand")(function* <E, R>(
+    command: CommandInvocation,
+    stdin: Stream.Stream<Uint8Array, E, R> | undefined,
+    stdout: (bytes: Uint8Array) => Effect.Effect<void, E, R>,
+    stderr: (bytes: Uint8Array) => Effect.Effect<void, E, R>,
   ) {
     return yield* Effect.scoped(
       Effect.gen(function* () {
-        const rpc = yield* client(true).pipe(Effect.mapError((cause) => failure("tool", cause)));
+        const rpc = yield* client(true).pipe(Effect.mapError((cause) => failure("command", cause)));
         const attachmentId = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => failure("tool", cause)),
+          Effect.mapError((cause) => failure("command", cause)),
         );
         const scope = yield* Scope.Scope;
         const inputFailure = yield* Deferred.make<never, E | StackError>();
         const result = yield* Ref.make<{ jobId: string; exitCode: number } | undefined>(undefined);
         const sender = yield* Ref.make<Fiber.Fiber<void, E | StackError> | undefined>(undefined);
-        yield* rpc
-          .runTool({
-            attachmentId,
-            tool,
-            args: options.args ?? [],
-            env: options.env ?? {},
-            ...(options.pgProve === undefined ? {} : { pgProve: options.pgProve }),
-            stdin: options.stdin !== undefined,
-          })
-          .pipe(
-            Stream.mapError((cause) => failure("tool", cause)),
-            Stream.runForEach((event): Effect.Effect<void, E | StackError, R> =>
-              Match.valueTags(event, {
-                Attached: () =>
-                  options.stdin === undefined
-                    ? Effect.void
-                    : options.stdin.pipe(
-                        Stream.runForEach((bytes) =>
-                          Effect.forEach(
-                            Array.from({ length: Math.ceil(bytes.length / 65536) }, (_, index) =>
-                              bytes.subarray(index * 65536, (index + 1) * 65536),
-                            ),
-                            (chunk) =>
-                              rpc
-                                .toolInput({ attachmentId, bytes: chunk })
-                                .pipe(Effect.mapError((cause) => failure("stdin", cause))),
-                            { discard: true },
+        yield* rpc.runCommand({ attachmentId, command }).pipe(
+          Stream.mapError((cause) => failure("command", cause)),
+          Stream.runForEach((event): Effect.Effect<void, E | StackError, R> =>
+            Match.valueTags(event, {
+              Attached: () =>
+                stdin === undefined
+                  ? Effect.void
+                  : stdin.pipe(
+                      Stream.runForEach((bytes) =>
+                        Effect.forEach(
+                          Array.from({ length: Math.ceil(bytes.length / 65536) }, (_, index) =>
+                            bytes.subarray(index * 65536, (index + 1) * 65536),
                           ),
+                          (chunk) =>
+                            rpc
+                              .commandInput({ attachmentId, bytes: chunk })
+                              .pipe(Effect.mapError((cause) => failure("stdin", cause))),
+                          { discard: true },
                         ),
-                        Effect.andThen(
-                          rpc
-                            .toolInput({ attachmentId, bytes: null })
-                            .pipe(Effect.mapError((cause) => failure("stdin", cause))),
-                        ),
-                        Effect.catchIf(
-                          (cause) =>
-                            Schema.is(StackErrorSchema)(cause) &&
-                            cause.operation === "tool-input-closed",
-                          () => Effect.void,
-                        ),
-                        Effect.tapCause((cause) => Deferred.failCause(inputFailure, cause)),
-                        Effect.forkIn(scope),
-                        Effect.flatMap((fiber) => Ref.set(sender, fiber)),
                       ),
-                Stdout: (output) => options.stdout(output.bytes),
-                Stderr: (output) => options.stderr(output.bytes),
-                Completed: (completed) =>
-                  Ref.set(result, { jobId: completed.jobId, exitCode: completed.exitCode }),
-              }),
-            ),
-            Effect.raceFirst(Deferred.await(inputFailure)),
-          );
+                      Effect.andThen(
+                        rpc
+                          .commandInput({ attachmentId, bytes: null })
+                          .pipe(Effect.mapError((cause) => failure("stdin", cause))),
+                      ),
+                      Effect.catchIf(
+                        (cause) =>
+                          Schema.is(StackErrorSchema)(cause) &&
+                          cause.operation === "command-input-closed",
+                        () => Effect.void,
+                      ),
+                      Effect.tapCause((cause) => Deferred.failCause(inputFailure, cause)),
+                      Effect.forkIn(scope),
+                      Effect.flatMap((fiber) => Ref.set(sender, fiber)),
+                    ),
+              Stdout: (output) => stdout(output.bytes),
+              Stderr: (output) => stderr(output.bytes),
+              Completed: (completed) =>
+                Ref.set(result, { jobId: completed.jobId, exitCode: completed.exitCode }),
+            }),
+          ),
+          Effect.raceFirst(Deferred.await(inputFailure)),
+        );
         const input = yield* Ref.get(sender);
         if (input !== undefined) yield* Fiber.interrupt(input);
         const completed = yield* Ref.get(result);
         if (completed === undefined)
-          return yield* failure("tool", "Tool attachment ended without an exit result");
+          return yield* failure("command", "Command attachment ended without an exit result");
         return completed;
       }),
     );
   });
+  function run<E, R>(
+    command: PostgresCommand,
+    options: PostgresCommandOptions<E, R>,
+  ): Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E | StackError, R>;
+  function run<E = never, R = never>(
+    command: InitializationCommand,
+    options?: InitializationCommandOptions<E, R>,
+  ): Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E | StackError, R>;
+  function run<E, R>(
+    command: PostgresCommand | InitializationCommand,
+    options?: InternalCommandOptions<E, R>,
+  ) {
+    if ("type" in command)
+      return runInvocation(
+        command,
+        undefined,
+        options?.stdout ?? (() => Effect.void),
+        options?.stderr ?? (() => Effect.void),
+      );
+    return runInvocation(
+      {
+        type: "postgres",
+        command,
+        args: options?.args ?? [],
+        env: options?.env ?? {},
+        ...(options?.pgProve === undefined ? {} : { pgProve: options.pgProve }),
+        stdin: options?.stdin !== undefined,
+      },
+      options?.stdin,
+      options?.stdout ?? (() => Effect.void),
+      options?.stderr ?? (() => Effect.void),
+    );
+  }
   const savedDefinition = Effect.gen(function* () {
     const current = yield* state.read(saved.id);
     if (current === undefined) return yield* failure("definition", "Stack does not exist");
@@ -473,7 +527,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     },
     stop: shutdown(false),
     destroy: shutdown(true),
-    tools: { run },
+    commands: { run },
   } satisfies Stack;
 });
 

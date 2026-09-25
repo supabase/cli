@@ -6,7 +6,7 @@ import {
   ServiceCreationInput as CreationSchema,
   type ServiceCreation as EffectCreation,
 } from "./services/Catalog.ts";
-import type { PostgresTool } from "./Tools.ts";
+import type { InitializationCommand, PostgresCommand } from "./Commands.ts";
 
 export {
   DEFAULT_LOCAL_DATABASE_PASSWORD,
@@ -24,7 +24,7 @@ export {
 } from "./Defaults.ts";
 export type { StackCredentials, StackIdentityInput } from "./State.ts";
 
-export { postgres } from "./Tools.ts";
+export { initialization, postgres } from "./Commands.ts";
 export { StackError } from "./Rpc.ts";
 type DatabaseCreation = Extract<EffectCreation, { service: "database" }>;
 /** Plain service configuration accepted by non-Effect callers. */
@@ -56,7 +56,7 @@ const clientLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp
 type Runtime = ReturnType<typeof makeRuntime>;
 const makeRuntime = () => ManagedRuntime.make(clientLayer);
 type Kind = ServiceCreation["service"];
-/** Optional cancellation ends the caller's wait, or its attached tool job. */
+/** Optional cancellation ends the caller's wait, or its attached command job. */
 export interface CallOptions {
   readonly signal?: AbortSignal;
 }
@@ -75,8 +75,6 @@ export interface ServiceInstance<K extends Kind = Kind> {
   readonly destroy: (options?: CallOptions) => Promise<void>;
   /** Ensures the service artifact or image is available without starting the service. */
   readonly prepare: (options?: CallOptions) => Promise<void>;
-  /** Runs the one-shot service initialization command while stopped with wake disabled. */
-  readonly initialize: (options?: CallOptions) => Promise<void>;
   readonly status: (options?: CallOptions) => Promise<StackEffect.Observation>;
   readonly followStatus: () => AsyncIterable<StackEffect.Observation>;
   readonly logs: () => AsyncIterable<{
@@ -99,14 +97,27 @@ export type ServiceInstances = {
   [K in Kind]: K extends "database" ? DatabaseInstance : ServiceInstance<K>;
 };
 type AnyInstance = ServiceInstances[Kind];
-/** Streaming inputs and awaited output sinks for an attached finite tool. */
-export interface ToolOptions extends CallOptions {
+/** Streaming inputs and awaited output sinks for a PostgreSQL command. */
+export interface PostgresCommandOptions extends CallOptions {
   readonly args?: ReadonlyArray<string>;
   readonly env?: Readonly<Record<string, string>>;
   readonly pgProve?: StackEffect.PgProveOptions;
   readonly stdin?: AsyncIterable<Uint8Array>;
   readonly stdout: (bytes: Uint8Array) => void | Promise<void>;
   readonly stderr: (bytes: Uint8Array) => void | Promise<void>;
+}
+/** Output sinks for a finite service initialization command. */
+export interface InitializationCommandOptions extends CallOptions {
+  readonly stdout?: (bytes: Uint8Array) => void | Promise<void>;
+  readonly stderr?: (bytes: Uint8Array) => void | Promise<void>;
+}
+interface InternalCommandOptions extends CallOptions {
+  readonly args?: ReadonlyArray<string>;
+  readonly env?: Readonly<Record<string, string>>;
+  readonly pgProve?: StackEffect.PgProveOptions;
+  readonly stdin?: AsyncIterable<Uint8Array>;
+  readonly stdout?: (bytes: Uint8Array) => void | Promise<void>;
+  readonly stderr?: (bytes: Uint8Array) => void | Promise<void>;
 }
 
 const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
@@ -207,7 +218,6 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
       ),
     destroy: (options) => run(service.destroy, options),
     prepare: (options) => run(service.prepare, options),
-    initialize: (options) => run(service.initialize, options),
     status: (options) => run(service.status, options),
     followStatus: () => iterable(service.followStatus),
     logs: () => iterable(service.logs),
@@ -261,7 +271,7 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
   }
   const sinkError = (cause: unknown) =>
     new StackError({
-      operation: "tool-stream",
+      operation: "command-stream",
       message: cause instanceof Error ? cause.message : String(cause),
     });
   return {
@@ -301,31 +311,53 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
       ).then(() => runtime.dispose());
       return clientClosePromise;
     },
-    tools: {
-      run: (tool: PostgresTool, options: ToolOptions) =>
-        run(
-          handle.tools.run(tool, {
-            args: options.args,
-            env: options.env,
-            pgProve: options.pgProve,
-            ...(options.stdin === undefined
-              ? {}
-              : { stdin: Stream.fromAsyncIterable(options.stdin, sinkError) }),
-            stdout: (bytes) =>
-              Effect.tryPromise({
-                try: () => Promise.resolve(options.stdout(bytes)),
-                catch: sinkError,
-              }),
-            stderr: (bytes) =>
-              Effect.tryPromise({
-                try: () => Promise.resolve(options.stderr(bytes)),
-                catch: sinkError,
-              }),
-          }),
-          options,
-        ),
-    },
+    commands: { run: runCommands },
   };
+
+  function runCommands(
+    command: PostgresCommand,
+    options: PostgresCommandOptions,
+  ): Promise<{
+    readonly jobId: string;
+    readonly exitCode: number;
+  }>;
+  function runCommands(
+    command: InitializationCommand,
+    options?: InitializationCommandOptions,
+  ): Promise<{
+    readonly jobId: string;
+    readonly exitCode: number;
+  }>;
+  function runCommands(
+    command: PostgresCommand | InitializationCommand,
+    options?: InternalCommandOptions,
+  ) {
+    const output = (sink: InternalCommandOptions["stdout"]) => (bytes: Uint8Array) =>
+      sink === undefined
+        ? Effect.void
+        : Effect.tryPromise({ try: () => Promise.resolve(sink(bytes)), catch: sinkError });
+    if ("type" in command)
+      return run(
+        handle.commands.run(command, {
+          ...(options?.stdout === undefined ? {} : { stdout: output(options.stdout) }),
+          ...(options?.stderr === undefined ? {} : { stderr: output(options.stderr) }),
+        }),
+        options,
+      );
+    return run(
+      handle.commands.run(command, {
+        args: options?.args,
+        env: options?.env,
+        pgProve: options?.pgProve,
+        ...(options?.stdin === undefined
+          ? {}
+          : { stdin: Stream.fromAsyncIterable(options.stdin, sinkError) }),
+        stdout: output(options?.stdout),
+        stderr: output(options?.stderr),
+      }),
+      options,
+    );
+  }
 };
 /** A Promise client whose close operation leaves the detached owner running. */
 export type Stack = ReturnType<typeof adapt>;
