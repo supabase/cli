@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
+import * as SmolToml from "smol-toml";
 import {
   Cause,
   ConfigProvider,
@@ -139,30 +140,29 @@ describe("init", () => {
     });
   });
 
-  it.live("requires --experimental when --use-orioledb is set, with cobra's exact wording", () => {
+  it.live.each([
+    { experimental: false, label: "without --experimental" },
+    { experimental: true, label: "with --experimental" },
+  ])("writes OrioleDB config $label", ({ experimental }) => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
-      const { layer } = setup(tempDir, { experimental: false });
+      const { layer, out } = setup(tempDir, { experimental });
 
-      const exit = yield* init({
+      yield* init({
         interactive: false,
         useOrioledb: true,
         force: false,
         withVscodeWorkspace: false,
         withVscodeSettings: false,
         withIntellijSettings: false,
-      }).pipe(Effect.provide(layer), Effect.exit);
+      }).pipe(Effect.provide(layer));
 
-      const error = findFailure(exit);
-      expect(error["_tag"]).toBe("InitExperimentalRequiredError");
-      expect(error["message"]).toBe(`required flag(s) "experimental" not set`);
-      expect(error["suggestion"]).toBeUndefined();
-
-      expect(yield* renderFailureToStderr(exit)).toEqual([
-        `required flag(s) "experimental" not set\n`,
-        "Try rerunning the command with --debug to troubleshoot the error.\n",
-      ]);
+      const content = yield* readTextFile(tempDir, "supabase", "config.toml");
+      expect(SmolToml.parse(content)).toMatchObject({
+        experimental: { orioledb_version: "15.1.0.150" },
+      });
+      expect(out.stdoutText).toBe("Finished supabase init.\n");
     });
   });
 
