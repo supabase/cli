@@ -33,10 +33,8 @@ export const requirePgDelta = Effect.fnUntraced(function* (opts: {
   readonly configPath: string;
 }) {
   if (isPgDeltaEnabled(opts.experimental, opts.pgDeltaEnabled)) return;
-  return yield* Effect.fail(
-    new DeclarativeNotEnabledError({
-      message: "declarative commands require --experimental flag or pg-delta enabled in config",
-      suggestion: pgDeltaSuggestion(opts.configPath),
-    }),
-  );
+  return yield* new DeclarativeNotEnabledError({
+    message: "declarative commands require --experimental flag or pg-delta enabled in config",
+    suggestion: pgDeltaSuggestion(opts.configPath),
+  });
 });

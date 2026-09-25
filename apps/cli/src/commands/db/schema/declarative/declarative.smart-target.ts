@@ -12,6 +12,7 @@ import { currentStackBackend } from "../../../../command-internal/stack-backend.
 import { DbConfigResolver } from "../../../../command-internal/db-config.service.ts";
 import { loadProjectEnv } from "../../../../command-internal/db-config.toml-read.ts";
 import {
+  layeredParseEnv,
   parseConnectionString,
   redactConnectionString,
 } from "../../../../command-internal/db-config.parse.ts";
@@ -160,20 +161,16 @@ export const resolveSmartTargetEndpoint = Effect.fnUntraced(function* (
   if (choice === "custom") {
     const dbURL = yield* output.promptText("Enter database URL: ");
     if (dbURL.trim().length === 0) {
-      return yield* Effect.fail(
-        new DeclarativeInvalidDbUrlError({ message: "database URL cannot be empty" }),
-      );
+      return yield* new DeclarativeInvalidDbUrlError({ message: "database URL cannot be empty" });
     }
     // Layers the project env (loaded once above) under the shell env like the --db-url path so
     // libpq PG* fallbacks resolve; malformed input fails with a redacted connection string
     // (CWE-209).
-    const conn = parseConnectionString(dbURL, (name) => process.env[name] ?? projectEnv[name]);
+    const conn = parseConnectionString(dbURL, layeredParseEnv(projectEnv));
     if (conn === undefined) {
-      return yield* Effect.fail(
-        new DeclarativeInvalidDbUrlError({
-          message: `failed to parse connection string: ${redactConnectionString(dbURL)}`,
-        }),
-      );
+      return yield* new DeclarativeInvalidDbUrlError({
+        message: `failed to parse connection string: ${redactConnectionString(dbURL)}`,
+      });
     }
     return {
       kind: "database",
