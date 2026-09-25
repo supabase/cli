@@ -60,15 +60,17 @@ workdir). `--local` and `--db-url` do not call the Management API.
 
 ## Subprocesses
 
-| Command                                                          | When                                                                                                                                                                           | Purpose                                                                              |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| `docker`/`podman container inspect supabase_db_<project_id>`     | `--local`, only when the selected backend is the legacy Docker Compose stack (`[experimental].stack` off)                                                                      | assert `supabase start` is running                                                   |
-| `dart run supabase_typegen --output -` (the language's own tool) | `--lang dart` on every target; any `--lang` whose registry entry is out-of-process, in the working directory, with the introspected `GeneratorMetadata` JSON document on stdin | generate the types: stdout is the output, stderr is folded into the error on failure |
+| Command                                                      | When                                                                                                      | Purpose                                                       |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `docker`/`podman container inspect supabase_db_<project_id>` | `--local`, only when the selected backend is the legacy Docker Compose stack (`[experimental].stack` off) | assert `supabase start` is running                            |
+| `dart run supabase_typegen --output -`                       | `--lang dart` on every target, in the working directory                                                   | generate the types from the `GeneratorMetadata` JSON on stdin |
 
-Generation itself runs in-process and never shells out. On a native or
-Docker-based managed stack (`[experimental].stack` on), `--local` never
-inspects a container; it resolves the stack's database connection through
-`DbConfigResolver` the same way `--db-url` does.
+Any other `--lang` whose registry entry is out-of-process runs its own tool
+the same way: stdout is the output, stderr is folded into the error on
+failure. Introspection and the in-process languages never shell out. On a
+native or Docker-based managed stack (`[experimental].stack` on), `--local`
+never inspects a container; it resolves the stack's database connection
+through `DbConfigResolver` the same way `--db-url` does.
 
 ## Environment Variables
 
