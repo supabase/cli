@@ -1,4 +1,15 @@
-import { Cause, Config, ConfigProvider, Console, Data, Effect, Exit, Option, Schema } from "effect";
+import {
+  Cause,
+  Config,
+  ConfigProvider,
+  Console,
+  Data,
+  Effect,
+  Exit,
+  Option,
+  Schema,
+  Stream,
+} from "effect";
 import { dirname, join, STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
 
 import * as jose from "jose";
@@ -383,12 +394,33 @@ function shouldUsePackageJsonDiscovery({
   );
 }
 
-export function prepareUserRequest(req: Request): Request {
+interface RequestBodyReader {
+  read(): Promise<{ done: true; value?: undefined } | { done: false; value: Uint8Array }>;
+}
+
+const requestBodyChunks = (body: RequestBodyReader) =>
+  Stream.fromEffectRepeat(
+    foreign(() => body.read()).pipe(
+      Effect.flatMap((chunk) => (chunk.done ? Cause.done() : Effect.succeed(chunk.value))),
+    ),
+  );
+
+const drainRequestBody = (body: RequestBodyReader | undefined) =>
+  body === undefined ? Effect.void : Stream.runDrain(requestBodyChunks(body)).pipe(Effect.ignore);
+
+export function prepareUserRequest(req: Request, body: RequestBodyReader | undefined): Request {
   const clonedURL = new URL(req.url);
   const forwardedHost = req.headers.get("x-forwarded-host");
   clonedURL.hostname = forwardedHost ?? clonedURL.hostname;
-  // Cloning tees the body, so an unread branch can stall early worker responses.
-  const forwardedReq = new Request(clonedURL.href, req);
+  // The runtime closes a connection whose request body is unread, which gateways report as 502, so
+  // the worker gets its own stream and cancelling it leaves the body for `drainRequestBody`.
+  const forwardedReq = new Request(clonedURL.href, {
+    method: req.method,
+    headers: req.headers,
+    body: body === undefined ? null : Stream.toReadableStream(requestBodyChunks(body)),
+    signal: req.signal,
+    duplex: "half",
+  });
 
   forwardedReq.headers.delete("sb-api-key");
   EdgeRuntime.applySupabaseTag(req, forwardedReq);
@@ -400,6 +432,12 @@ Deno.serve({
   handler: (req: Request) =>
     Effect.runPromiseExit(
       Effect.gen(function* () {
+        // `worker.fetch` settles its body pipe before resolving, so the drain only reads what the
+        // worker abandoned.
+        const body = yield* Effect.acquireRelease(
+          Effect.sync(() => req.body?.getReader()),
+          (body) => Effect.interruptible(drainRequestBody(body)),
+        );
         const url = new URL(req.url);
         const { pathname } = url;
 
@@ -510,7 +548,7 @@ Deno.serve({
             }),
           );
 
-          const userReq = prepareUserRequest(req);
+          const userReq = prepareUserRequest(req, body);
           return yield* foreign(() => worker.fetch(userReq));
         });
 
@@ -527,7 +565,7 @@ Deno.serve({
             ),
           ),
         );
-      }),
+      }).pipe(Effect.scoped),
       { signal: req.signal },
     ).then((exit) => {
       if (Exit.isSuccess(exit)) return exit.value;
