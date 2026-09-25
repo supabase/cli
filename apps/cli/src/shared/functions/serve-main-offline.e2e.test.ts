@@ -593,7 +593,8 @@ describe("functions serve runtime template (offline)", () => {
           {
             method: "POST",
             headers: { "x-reject-before-body": "true" },
-            body: new Uint8Array(128 * 1024),
+            // Larger than the socket buffers, so Kong is still uploading when the function answers.
+            body: new Uint8Array(1024 * 1024),
             signal: AbortSignal.timeout(5_000),
           },
         );
@@ -606,7 +607,10 @@ describe("functions serve runtime template (offline)", () => {
         expect(runtimeLogs).not.toContain("must-not-appear-in-debug-logs");
 
         const authResponse = await fetch(authUrl, {
+          method: "POST",
           headers: { Origin: "http://localhost:3000" },
+          body: new Uint8Array(1024 * 1024),
+          signal: AbortSignal.timeout(5_000),
         });
         expect(authResponse.status).toBe(401);
         expect(authResponse.headers.get("sb-error-code")).toBe("UNAUTHORIZED_NO_AUTH_HEADER");

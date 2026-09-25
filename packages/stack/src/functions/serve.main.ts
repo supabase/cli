@@ -363,12 +363,31 @@ const shouldUsePackageJsonDiscovery = (config: FunctionConfig): Effect.Effect<bo
         fs: denoFileSystem,
       });
 
-export function prepareUserRequest(request: Request): Request {
+interface RequestBodyReader {
+  read(): Promise<{ done: true; value?: undefined } | { done: false; value: Uint8Array }>;
+}
+const requestBodyChunks = (body: RequestBodyReader) =>
+  Stream.fromEffectRepeat(
+    foreign(() => body.read()).pipe(
+      Effect.flatMap((chunk) => (chunk.done ? Cause.done() : Effect.succeed(chunk.value))),
+    ),
+  );
+const drainRequestBody = (body: RequestBodyReader | undefined) =>
+  body === undefined ? Effect.void : Stream.runDrain(requestBodyChunks(body)).pipe(Effect.ignore);
+
+export function prepareUserRequest(request: Request, body: RequestBodyReader | undefined): Request {
   const url = new URL(request.url);
   const forwardedHost = request.headers.get("x-forwarded-host");
   if (forwardedHost) url.hostname = forwardedHost;
-  // Cloning tees the body, so an unread branch can stall early worker responses.
-  const forwarded = new Request(url.href, request);
+  // The runtime closes a connection whose request body is unread, which gateways report as 502, so
+  // the worker gets its own stream and cancelling it leaves the body for `drainRequestBody`.
+  const forwarded = new Request(url.href, {
+    method: request.method,
+    headers: request.headers,
+    body: body === undefined ? null : Stream.toReadableStream(requestBodyChunks(body)),
+    signal: request.signal,
+    duplex: "half",
+  });
   forwarded.headers.delete("sb-api-key");
   EdgeRuntime.applySupabaseTag(request, forwarded);
   return forwarded;
@@ -378,6 +397,12 @@ Deno.serve({
   handler: (request: Request) =>
     Effect.runPromiseExit(
       Effect.gen(function* () {
+        // `worker.fetch` settles its body pipe before resolving, so the drain only reads what the
+        // worker abandoned.
+        const body = yield* Effect.acquireRelease(
+          Effect.sync(() => request.body?.getReader()),
+          drainRequestBody,
+        );
         const { pathname } = new URL(request.url);
         if (pathname === "/_internal/health") return getResponse({ message: "ok" }, STATUS_CODE.OK);
         if (pathname === "/_internal/metric")
@@ -435,7 +460,7 @@ Deno.serve({
               staticPatterns: config.staticFiles,
             }),
           );
-          return yield* foreign(() => worker.fetch(prepareUserRequest(request)));
+          return yield* foreign(() => worker.fetch(prepareUserRequest(request, body)));
         });
         return yield* workerRequest.pipe(
           Effect.retry({
@@ -450,7 +475,7 @@ Deno.serve({
             ),
           ),
         );
-      }),
+      }).pipe(Effect.scoped),
       { signal: request.signal },
     ).then((exit) => {
       if (Exit.isSuccess(exit)) return exit.value;

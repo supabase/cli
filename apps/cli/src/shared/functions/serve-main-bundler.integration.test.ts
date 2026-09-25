@@ -79,6 +79,7 @@ const load = async (
     AbortController,
     AbortSignal,
     Headers,
+    ReadableStream,
     Request,
     Response,
     URL,
@@ -327,6 +328,76 @@ describe("CLI functions bootstrap bundle", () => {
       expect(response.status).toBe(500);
       expect(await response.json()).toMatchObject({ code: "Internal Server Error" });
       expect(creates()).toBe(1);
+    });
+  });
+
+  describe("request body ownership", () => {
+    const upload = (chunks = 4) => {
+      const progress = { readToEnd: false, cancelled: false };
+      let sent = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull: (controller) => {
+          if (sent === chunks) {
+            progress.readToEnd = true;
+            controller.close();
+            return;
+          }
+          sent += 1;
+          controller.enqueue(new Uint8Array(1024));
+        },
+        cancel: () => {
+          progress.cancelled = true;
+        },
+      });
+      return { body, progress };
+    };
+    const functionConfig = (verifyJWT: boolean) =>
+      JSON.stringify({
+        hello: { entrypointPath: "hello/index.ts", importMapPath: "", staticFiles: [], verifyJWT },
+      });
+
+    it("reads the rest of a request body the worker abandons", async () => {
+      const loaded = await load(await bundleServeMainTemplate(), baseEnv(functionConfig(false)), {
+        fetch: async (request: Request) => {
+          const reader = request.body?.getReader();
+          await reader?.read();
+          // Not awaited: if the body were shared with the incoming request again, Bun
+          // would never settle this cancel and the test would hang instead of failing.
+          void reader?.cancel();
+          return new Response("rejected", { status: 400 });
+        },
+      });
+      const { body, progress } = upload();
+
+      const response = await loaded.options.handler(
+        new Request("http://localhost/hello", { method: "POST", body, duplex: "half" }),
+      );
+
+      expect(progress).toEqual({ readToEnd: true, cancelled: false });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toBe("rejected");
+    });
+
+    it.each([
+      ["an invalid token", "/hello", 401],
+      ["an unknown function", "/missing", 404],
+    ] as const)("reads the whole upload before rejecting %s", async (_, path, status) => {
+      const loaded = await load(await bundleServeMainTemplate(), baseEnv(functionConfig(true)), {
+        fetch: async () => new Response("should not run"),
+      });
+      const { body, progress } = upload();
+
+      const response = await loaded.options.handler(
+        new Request(`http://localhost${path}`, {
+          method: "POST",
+          body,
+          duplex: "half",
+          headers: { Authorization: "Bearer invalid" },
+        }),
+      );
+
+      expect(progress).toEqual({ readToEnd: true, cancelled: false });
+      expect(response.status).toBe(status);
     });
   });
 
