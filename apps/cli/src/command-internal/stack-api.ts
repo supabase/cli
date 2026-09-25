@@ -6,6 +6,7 @@ import {
   discover,
   open,
   type CreateOptions,
+  type DestroyResult,
   type OpenOptions,
   type Stack,
 } from "@supabase/stack/effect";
@@ -68,5 +69,17 @@ export const stackApiLayer = Layer.effect(
     });
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer));
+
+/** Describes the engine resources a destroy left behind and the commands that remove them. */
+export const skippedRuntimeCleanupWarning = (
+  subject: string,
+  result: Extract<DestroyResult, { readonly runtimeCleanup: "skipped" }>,
+): string => {
+  const engineName = result.engine === "docker" ? "Docker" : "Podman";
+  return [
+    `${engineName} was unavailable, so ${engineName} resources for ${subject} were not removed. Once it is running, remove them with:`,
+    ...result.cleanupCommands.map((command) => `  ${command}`),
+  ].join("\n");
+};
 
 export type { Stack };

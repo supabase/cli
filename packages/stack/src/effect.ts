@@ -4,10 +4,12 @@ import {
   Deferred,
   Effect,
   Exit,
+  FileSystem,
   Fiber,
   Layer,
   Match,
   Option,
+  Path,
   Ref,
   Scope,
   Schema,
@@ -17,7 +19,15 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
-import { connectHost, launchHost, waitForOwnerExit } from "./HostProcess.ts";
+import {
+  connectHost,
+  controlPortHeld,
+  HostProcessError,
+  launchHost,
+  waitForOwnerExit,
+} from "./HostProcess.ts";
+import { removeStackContainersCommand } from "./runtime/Container.ts";
+import { volumeDataCleanupCommands } from "./storage/DockerDatabaseStorage.ts";
 import type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import * as State from "./State.ts";
@@ -85,6 +95,7 @@ export interface CreateOptions extends StackLocations {
   readonly projectRoot: string;
   readonly name?: string;
   readonly runtime: "native" | "docker" | "podman";
+  readonly startOwner?: boolean;
 }
 /** Opens a previously registered stack. */
 export interface OpenOptions extends StackLocations {
@@ -141,6 +152,19 @@ export type ServiceInstances = {
   [K in Kind]: K extends "database" ? DatabaseInstance : ServiceInstance<K>;
 };
 type AnyInstance = ServiceInstances[Kind];
+/**
+ * The outcome of {@link Stack.destroy}. `skipped` means the stack's registration and host data
+ * were removed without its container engine, because the engine was unreachable; its containers
+ * and any database data in engine volumes remain, and `cleanupCommands` remove them once the
+ * engine is running.
+ */
+export type DestroyResult =
+  | { readonly runtimeCleanup: "complete" }
+  | {
+      readonly runtimeCleanup: "skipped";
+      readonly engine: "docker" | "podman";
+      readonly cleanupCommands: ReadonlyArray<string>;
+    };
 /** Options for streaming PostgreSQL command input and output. */
 export interface PostgresCommandOptions<E, R> {
   readonly args?: ReadonlyArray<string>;
@@ -199,7 +223,7 @@ export interface Stack {
     readonly restart: Effect.Effect<ReadonlyArray<Observation>, StackError>;
   };
   readonly stop: Effect.Effect<void, StackError>;
-  readonly destroy: Effect.Effect<void, StackError>;
+  readonly destroy: Effect.Effect<DestroyResult, StackError>;
   readonly commands: {
     readonly run: CommandRunner;
   };
@@ -223,6 +247,8 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   const http = yield* HttpClient.HttpClient;
   const crypto = yield* Crypto.Crypto;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const endpointFor = (live: boolean) =>
     (live
       ? launchHost(state, { ...locations, stackId: saved.id })
@@ -249,19 +275,91 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     Stream.unwrap(Effect.map(client(false), run)).pipe(
       Stream.mapError((cause) => failure(operation, cause)),
     );
+  /**
+   * Removes the stack's registration and host data without its owner, for a destroy that finds
+   * no owner running and can't start one because its container engine is unreachable. Its
+   * engine resources remain, and the result carries the commands that remove them.
+   */
+  const firstUnremovableDirectory = (directory: string): Effect.Effect<string | undefined> =>
+    Effect.gen(function* () {
+      const entries = yield* fs.readDirectory(directory).pipe(Effect.option);
+      const writable = yield* fs.access(directory, { writable: true }).pipe(Effect.isSuccess);
+      if (Option.isNone(entries) || !writable) return directory;
+      for (const entry of entries.value) {
+        const child = path.join(directory, entry);
+        const info = yield* fs.stat(child).pipe(Effect.option);
+        if (Option.isNone(info) || info.value.type !== "Directory") continue;
+        if (yield* fs.readLink(child).pipe(Effect.isSuccess)) continue;
+        const blocked = yield* firstUnremovableDirectory(child);
+        if (blocked !== undefined) return blocked;
+      }
+      return undefined;
+    });
+  const offlineDestroy = Effect.fn("Stack.offlineDestroy")(function* (engine: "docker" | "podman") {
+    const dataRoot = path.join(locations.stateRoot, saved.id, "data");
+    return yield* state
+      .withLock(
+        Effect.gen(function* () {
+          const current = yield* state.read(saved.id);
+          if (current !== undefined && (yield* controlPortHeld(current)))
+            return yield* failure(
+              "destroy",
+              "An owner for this stack started during destroy; run destroy again",
+            );
+          // Container-written host data, such as database files below Docker 26, can belong to the
+          // container user; only the engine can delete it, so refuse before deleting anything.
+          const blocked =
+            current !== undefined && (yield* fs.exists(dataRoot))
+              ? yield* firstUnremovableDirectory(dataRoot)
+              : undefined;
+          if (blocked !== undefined) {
+            const engineName = engine === "docker" ? "Docker" : "Podman";
+            return yield* failure(
+              "destroy",
+              `Stack data at ${blocked} can only be removed by ${engineName}; start ${engineName} and run destroy again`,
+            );
+          }
+          // Containers are labelled with the resolved data root the owner ran with.
+          const root = yield* fs.realPath(dataRoot).pipe(Effect.orElseSucceed(() => dataRoot));
+          const cleanupCommands = [
+            removeStackContainersCommand({ engine, stackId: saved.id, root }),
+            ...(yield* volumeDataCleanupCommands({ engine, root, fs, path })),
+          ];
+          if (current !== undefined) {
+            yield* fs.remove(dataRoot, { recursive: true, force: true });
+            yield* state.remove(saved.id);
+          }
+          return { runtimeCleanup: "skipped", engine, cleanupCommands } as const;
+        }),
+      )
+      .pipe(Effect.mapError((cause) => failure("destroy", cause)));
+  });
+
   const shutdown = Effect.fn("Stack.shutdown")(function* (destroy: boolean) {
     const operation = destroy ? "destroy" : "shutdown";
-    const { endpoint, shutdownExit } = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const endpoint = yield* endpointFor(destroy);
-        const shutdownExit = yield* clientFor(endpoint.port).pipe(
-          Effect.provideService(HttpClient.HttpClient, http),
-          Effect.flatMap((rpc) => rpc.shutdown({ destroy })),
-          Effect.exit,
-        );
-        return { endpoint, shutdownExit };
-      }),
-    ).pipe(Effect.mapError((cause) => failure(operation, cause)));
+    const endpointExit = yield* Effect.scoped(endpointFor(destroy)).pipe(Effect.exit);
+    if (Exit.isFailure(endpointExit)) {
+      const endpointFailure = Option.getOrUndefined(Cause.findErrorOption(endpointExit.cause));
+      if (
+        destroy &&
+        saved.runtime !== "native" &&
+        endpointFailure instanceof HostProcessError &&
+        endpointFailure.reason === "runtime-unavailable"
+      )
+        return yield* offlineDestroy(saved.runtime);
+      return yield* Option.match(Cause.findErrorOption(endpointExit.cause), {
+        onNone: () => Effect.fail(failure(operation, Cause.pretty(endpointExit.cause))),
+        onSome: (cause) => Effect.fail(failure(operation, cause)),
+      });
+    }
+    const endpoint = endpointExit.value;
+    const shutdownExit = yield* Effect.scoped(
+      clientFor(endpoint.port).pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.flatMap((rpc) => rpc.shutdown({ destroy })),
+        Effect.exit,
+      ),
+    );
     if (Exit.isFailure(shutdownExit)) {
       const shutdownFailure = Option.match(Cause.findErrorOption(shutdownExit.cause), {
         onNone: () => failure(operation, Cause.pretty(shutdownExit.cause)),
@@ -290,6 +388,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     yield* waitForOwnerExit(endpoint.pid).pipe(
       Effect.mapError((cause) => failure("shutdown-exit", cause)),
     );
+    return { runtimeCleanup: "complete" } as const;
   });
 
   const common = <K extends Kind>(id: string, service: K): ServiceInstance<K> => ({
@@ -525,7 +624,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       stop: call("stopComposition", (rpc) => rpc.stopComposition()),
       restart: call("restartComposition", (rpc) => rpc.restartComposition()),
     },
-    stop: shutdown(false),
+    stop: shutdown(false).pipe(Effect.asVoid),
     destroy: shutdown(true),
     commands: { run },
   } satisfies Stack;
@@ -552,6 +651,34 @@ export const create = Effect.fn("Stack.create")(
         yield* state.save(saved);
       }),
     );
+    // Keeps the stack when an owner holds it: one that reported ready before an interrupt, or one
+    // another caller launched after this registration was saved.
+    const rollback = state.withLock(
+      Effect.gen(function* () {
+        const current = yield* state.read(id);
+        if (current !== undefined && !(yield* controlPortHeld(current))) yield* state.remove(id);
+      }),
+    );
+    if (options.startOwner)
+      yield* Effect.scoped(launchHost(state, { ...options, stackId: id })).pipe(
+        Effect.onInterrupt(() => rollback.pipe(Effect.ignore)),
+        Effect.matchEffect({
+          onFailure: (launchError) =>
+            rollback.pipe(
+              Effect.matchEffect({
+                onFailure: (removeError) =>
+                  Effect.fail(
+                    failure(
+                      "create",
+                      `${failure("create", launchError).message}; failed to remove stack ${id} after startup failure: ${failure("create", removeError).message}`,
+                    ),
+                  ),
+                onSuccess: () => Effect.fail(failure("create", launchError)),
+              }),
+            ),
+          onSuccess: () => Effect.void,
+        }),
+      );
     return yield* makeHandle(state, saved, options);
   },
   Effect.mapError((cause) => failure("create", cause)),

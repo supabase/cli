@@ -45,13 +45,15 @@ export class StackHostError extends Data.TaggedError("StackHostError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
+  readonly reason?: "runtime-unavailable";
 }> {}
 
-const hostError = (operation: string, cause: unknown) =>
+const hostError = (operation: string, cause: unknown, reason?: "runtime-unavailable") =>
   new StackHostError({
     operation,
     message: cause instanceof Error ? cause.message : String(cause),
     cause,
+    ...(reason === undefined ? {} : { reason }),
   });
 
 const stackError = (operation: string, cause: unknown): StackError => {
@@ -475,7 +477,15 @@ export const runStackHost = Effect.fn("StackHost.run")(
               engine: saved.runtime,
               stackId: saved.id,
               root: dataRoot,
-            }).pipe(Effect.mapError((cause) => hostError("startup-cleanup", cause)));
+            }).pipe(
+              Effect.mapError((cause) =>
+                hostError(
+                  "startup-cleanup",
+                  cause,
+                  cause.reason === "engine-unavailable" ? "runtime-unavailable" : undefined,
+                ),
+              ),
+            );
           const services = yield* Layer.build(
             Layer.merge(
               Owner.layer({
