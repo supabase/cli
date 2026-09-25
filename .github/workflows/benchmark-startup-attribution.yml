@@ -1,0 +1,117 @@
+name: Measure fresh CLI catalog initialization
+
+on:
+  push:
+    branches: [bench/startup-concurrent-attribution-20260925]
+    paths:
+      - .github/workflows/benchmark-startup-attribution.yml
+      - scripts/benchmarks/startup-attribution.py
+  workflow_dispatch:
+    inputs:
+      changed_ref:
+        description: Instrumented product revision (defaults to this workflow commit)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux, macos]
+        variant: [baseline, changed]
+    runs-on: ${{ matrix.platform == 'macos' && 'macos-15' || 'ubuntu-22.04' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.variant == 'baseline' && '9b1d070321034f08146dc70fbddd56051dfaa3a6' || (github.event.inputs.changed_ref || github.sha) }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify exact instrumented source lineage
+        run: |
+          if [ '${{ matrix.variant }}' = baseline ]; then
+            git merge-base --is-ancestor aab0bc9e9289596e12db625852b9241dbcbbadbe HEAD
+            test "$(git rev-parse HEAD)" = 9b1d070321034f08146dc70fbddd56051dfaa3a6
+          else
+            git merge-base --is-ancestor 563932e67c1b4a04f6e2f1da53c1381d3ee86fee HEAD
+          fi
+      - uses: ./.github/actions/setup
+        with:
+          dependency-cache: "false"
+      - name: Build compiled CLI
+        run: pnpm exec turbo run supabase#build
+      - name: Record provenance and package binary
+        run: |
+          mkdir -p bundle
+          git rev-parse HEAD > bundle/instrumentation-commit.txt
+          if [ '${{ matrix.variant }}' = baseline ]; then
+            printf '%s\n' aab0bc9e9289596e12db625852b9241dbcbbadbe > bundle/product-commit.txt
+          else
+            printf '%s\n' 563932e67c1b4a04f6e2f1da53c1381d3ee86fee > bundle/product-commit.txt
+          fi
+          shasum -a 256 apps/cli/dist/supabase > bundle/binary-sha256.txt
+          tar -czf bundle/cli.tar.gz -C apps/cli/dist supabase supabase-go
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: startup-cli-${{ matrix.platform }}-${{ matrix.variant }}
+          path: bundle/
+          retention-days: 14
+
+  measure:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-22.04
+            runtime: native
+          - platform: linux
+            runner: ubuntu-22.04
+            runtime: docker
+          - platform: macos
+            runner: macos-15
+            runtime: native
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: startup-cli-${{ matrix.platform }}-baseline
+          path: bundle/baseline
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: startup-cli-${{ matrix.platform }}-changed
+          path: bundle/changed
+      - name: Unpack binaries and record provenance
+        run: |
+          mkdir -p benchmark-bin/baseline benchmark-bin/changed benchmark-results/provenance/baseline benchmark-results/provenance/changed
+          tar -xzf bundle/baseline/cli.tar.gz -C benchmark-bin/baseline
+          tar -xzf bundle/changed/cli.tar.gz -C benchmark-bin/changed
+          cp bundle/baseline/*.txt benchmark-results/provenance/baseline/
+          cp bundle/changed/*.txt benchmark-results/provenance/changed/
+      - name: Run alternating fresh cached CLI measurements
+        run: |
+          python3 scripts/benchmarks/startup-attribution.py \
+            --cli "$GITHUB_WORKSPACE/benchmark-bin/baseline/supabase" \
+            --api "$GITHUB_WORKSPACE/benchmark-bin/baseline/supabase" \
+            --baseline-cli "$GITHUB_WORKSPACE/benchmark-bin/baseline/supabase" \
+            --changed-cli "$GITHUB_WORKSPACE/benchmark-bin/changed/supabase" \
+            --runtime '${{ matrix.runtime }}' \
+            --output "$GITHUB_WORKSPACE/benchmark-results/${{ matrix.platform }}-${{ matrix.runtime }}-startup-results.json" \
+            --samples 3
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: startup-catalog-${{ matrix.platform }}-${{ matrix.runtime }}
+          path: benchmark-results/
+          if-no-files-found: error
+          retention-days: 30
