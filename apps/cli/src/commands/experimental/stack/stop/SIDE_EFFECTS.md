@@ -20,7 +20,9 @@ Text confirms each successful shutdown and identifies each unavailable owner.
 JSON and stream-json success data contain `stopped` and `unavailable` ID arrays.
 A missing default selection reports `found: false`; an unknown explicit name or
 ID fails. `--all` attempts every selected reachable owner and reports failures
-with their IDs. Corrupt registry state fails discovery without partial results.
+with their IDs. Malformed or vanished state documents are skipped with a warning
+on stderr identifying each stack; other registry read failures fail discovery
+without partial results.
 
 ## Files and network
 

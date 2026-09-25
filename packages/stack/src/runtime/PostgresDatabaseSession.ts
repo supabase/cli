@@ -138,11 +138,20 @@ export const ensureInternalDatabase = Effect.fn("PostgresDatabaseSession.ensureI
     openInternal: Effect.Effect<PostgresDatabaseSession, DatabaseBootstrapError, Scope.Scope>,
   ) {
     return yield* Effect.gen(function* () {
-      const databases = yield* postgres.query("SELECT 1 FROM pg_database WHERE datname = $1", [
-        INTERNAL_DATABASE,
-      ]);
-      if (databases.length === 0)
-        yield* postgres.execute(`CREATE DATABASE ${INTERNAL_DATABASE} WITH OWNER postgres`);
+      const exists = postgres
+        .query("SELECT 1 FROM pg_database WHERE datname = $1", [INTERNAL_DATABASE])
+        .pipe(Effect.map((databases) => databases.length > 0));
+      // A concurrent creator, such as an abandoned earlier attempt, can win between check and create.
+      if (!(yield* exists))
+        yield* postgres
+          .execute(`CREATE DATABASE ${INTERNAL_DATABASE} WITH OWNER postgres`)
+          .pipe(
+            Effect.catch((error) =>
+              exists.pipe(
+                Effect.flatMap((created) => (created ? Effect.void : Effect.fail(error))),
+              ),
+            ),
+          );
 
       const internal = yield* openInternal;
       for (const schema of INTERNAL_SCHEMAS) {

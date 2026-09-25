@@ -64,8 +64,10 @@ const session: DbSession = {
 const instance = (
   creation: ServiceCreation,
   id: string,
-  lifecycle: () => "stopped" | "running",
+  lifecycle: () => "stopped" | "starting" | "running",
   wakeEnabled: () => boolean,
+  health: () => "starting" | "healthy" | "unhealthy" | undefined = () =>
+    lifecycle() === "running" ? "healthy" : undefined,
 ): ServiceInstances[ServiceCreation["service"]] => {
   const status = (config: ServiceCreation) => ({
     id,
@@ -75,7 +77,7 @@ const instance = (
         : [],
     config,
     lifecycle: lifecycle(),
-    health: undefined,
+    health: health(),
     error: undefined,
     cleanupError: undefined,
     exit: undefined,
@@ -171,6 +173,12 @@ const requireConcreteCreation = (creation: ServiceCreationInput): ServiceCreatio
   };
 };
 
+interface MemberStatus {
+  readonly lifecycle?: "stopped" | "starting" | "running";
+  readonly wakeEnabled?: boolean;
+  readonly health?: "starting" | "healthy" | "unhealthy";
+}
+
 const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   let stopped = 0;
@@ -178,12 +186,10 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   let hostDestroyed = 0;
   let composed = 0;
   let catalogApplied = 0;
+  let compositionStarts = 0;
   let lifecycle: "stopped" | "running" = "stopped";
   let activations = new Map<string, "eager" | "lazy">();
-  const memberStatuses = new Map<
-    string,
-    { readonly lifecycle?: "stopped" | "running"; readonly wakeEnabled?: boolean }
-  >();
+  const memberStatuses = new Map<string, MemberStatus>();
   let savedCredentials: StackCredentials = {
     jwtSecret: DEFAULT_LOCAL_JWT_SECRET,
     postgresRootKey: DEFAULT_POSTGRES_ROOT_KEY,
@@ -260,6 +266,11 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
               () =>
                 memberStatuses.get(id)?.wakeEnabled ??
                 (lifecycle === "running" && activations.get(id) === "lazy"),
+              () => {
+                const status = memberStatuses.get(id);
+                if (status?.health !== undefined) return status.health;
+                return (status?.lifecycle ?? lifecycle) === "running" ? "healthy" : undefined;
+              },
             );
           });
           activations = new Map(members.map(({ id }) => [id, "eager"]));
@@ -272,7 +283,9 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
       start:
         compositionStart ??
         Effect.sync(() => {
+          compositionStarts += 1;
           lifecycle = "running";
+          memberStatuses.clear();
           return [];
         }),
       stop: Effect.sync(() => {
@@ -311,16 +324,16 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     get catalogApplied() {
       return catalogApplied;
     },
+    get compositionStarts() {
+      return compositionStarts;
+    },
     applyCatalog() {
       catalogApplied += 1;
     },
     get savedCredentials() {
       return savedCredentials;
     },
-    setMemberStatus(
-      id: string,
-      status: { readonly lifecycle?: "stopped" | "running"; readonly wakeEnabled?: boolean },
-    ) {
+    setMemberStatus(id: string, status: MemberStatus) {
       memberStatuses.set(id, status);
     },
   };
@@ -736,6 +749,72 @@ describe("experimental stack start", () => {
       });
       expect(fixture.stopped).toBe(0);
       expect(fixture.composed).toBe(1);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects a stack whose database alone was started before reading changed config", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-db-only-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "db-only"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      for (const member of fixture.members)
+        if (member.service !== "database")
+          fixture.setMemberStatus(member.id, { lifecycle: "stopped", wakeEnabled: false });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "db-only"\n[auth]\nsigning_keys_path = "missing-keys.json"\n',
+      );
+
+      const error = yield* stackStart(flags(["studio"])).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        reason: "lifecycle",
+        message: "The stack is in a partial lifecycle state",
+        suggestion: "Run supabase stack stop, then supabase stack start to recover the stack.",
+      });
+      expect(fixture.compositionStarts).toBe(1);
+      expect(fixture.composed).toBe(1);
+      expect(fixture.stopped).toBe(0);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("resumes a running stack with unhealthy or booting members through readiness", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-resume-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "resume"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const rest = fixture.members.find(({ service }) => service === "rest");
+      const auth = fixture.members.find(({ service }) => service === "auth");
+      if (rest === undefined || auth === undefined)
+        return yield* Effect.die("Expected REST and Auth members");
+      fixture.setMemberStatus(rest.id, { lifecycle: "running", health: "unhealthy" });
+      fixture.setMemberStatus(auth.id, { lifecycle: "starting", health: "starting" });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "resume"\n[auth]\nsigning_keys_path = "missing-keys.json"\n',
+      );
+      const output = mockOutput();
+
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture, output)));
+
+      expect(fixture.compositionStarts).toBe(2);
+      expect(fixture.composed).toBe(1);
+      expect(fixture.stopped).toBe(0);
+      expect(output.messages).toContainEqual({
+        type: "info",
+        message:
+          "Resuming the saved stack services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
+      });
+      expect(output.messages).toContainEqual({ type: "success", message: "Stack is ready." });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

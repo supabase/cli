@@ -92,7 +92,13 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
       stateRoot: path.join(settings.supabaseHome, "stacks"),
       cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
     };
-    const discovered = yield* api.discover(locations).pipe(Effect.mapError(stopError));
+    const discovered = yield* api
+      .discover({
+        ...locations,
+        onInvalidState: (id, error) =>
+          output.raw(`Warning: skipping invalid stack ${id}: ${error.message}\n`, "stderr"),
+      })
+      .pipe(Effect.mapError(stopError));
     const selected = all
       ? discovered
       : discovered.filter(({ definition }) => definition.id === target?.id);

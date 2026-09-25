@@ -10,6 +10,7 @@ import {
   type DatabaseInstance,
   type ServiceInstance,
 } from "./effect.ts";
+import * as PromiseApi from "./index.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
@@ -58,6 +59,41 @@ it.live("registers and discovers saved definitions without inventing live observ
     });
     expectTypeOf<Effect.Success<typeof database>>().toEqualTypeOf<DatabaseInstance>();
     expectTypeOf<Effect.Success<typeof rest>>().toEqualTypeOf<ServiceInstance<"rest">>();
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("discovers readable stacks past invalid siblings and reports each skipped entry", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-invalid-" });
+    const stateRoot = `${root}/state`;
+    const stack = yield* create({
+      projectRoot: root,
+      stateRoot,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    });
+    yield* fs.makeDirectory(`${stateRoot}/malformed`);
+    yield* fs.writeFileString(`${stateRoot}/malformed/state.json`, "{broken");
+    yield* fs.makeDirectory(`${stateRoot}/unreadable/state.json`, { recursive: true });
+
+    const silent = yield* discover({ stateRoot });
+    expect(silent.map(({ definition }) => definition.id)).toEqual([stack.id]);
+
+    const reported: Array<string> = [];
+    const observed = yield* discover({
+      stateRoot,
+      onInvalidState: (id) => Effect.sync(() => reported.push(id)),
+    });
+    expect(observed.map(({ definition }) => definition.id)).toEqual([stack.id]);
+    expect(reported.toSorted()).toEqual(["malformed", "unreadable"]);
+
+    const promiseReported: Array<string> = [];
+    const promiseObserved = yield* Effect.promise(() =>
+      PromiseApi.discover({ stateRoot, onInvalidState: (id) => promiseReported.push(id) }),
+    );
+    expect(promiseObserved.map(({ definition }) => definition.id)).toEqual([stack.id]);
+    expect(promiseReported.toSorted()).toEqual(["malformed", "unreadable"]);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 

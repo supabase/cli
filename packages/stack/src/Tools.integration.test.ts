@@ -45,7 +45,7 @@ describe("finite PostgreSQL tools", { timeout: 180_000 }, () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-tools-" });
-          const stackId = "tools-integration";
+          const stackId = `tools-integration-${randomUUID()}`;
           const database = yield* makeDatabase({
             root,
             cacheRoot,
@@ -193,7 +193,7 @@ describe("finite PostgreSQL tools", { timeout: 180_000 }, () => {
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
             const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-pgprove-${major}-` });
-            const stackId = `tools-pgprove-${runtime}-${major}`;
+            const stackId = `tools-pgprove-${runtime}-${major}-${randomUUID()}`;
             const database = yield* makeDatabase({
               root,
               cacheRoot,

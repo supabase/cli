@@ -147,6 +147,72 @@ describe("Postgres database session", () => {
     }),
   );
 
+  it.live("accepts an internal database that a concurrent creator publishes first", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      let published = false;
+      const postgres = makeDatabaseSessionFromSqlClient({
+        unsafe: (sql) =>
+          Effect.suspend(() => {
+            calls.push(sql);
+            if (sql.startsWith("CREATE DATABASE")) {
+              published = true;
+              return Effect.fail(
+                new SqlError({
+                  reason: new UnknownError({
+                    message: 'database "_supabase" already exists',
+                    cause: new Error("duplicate database"),
+                  }),
+                }),
+              );
+            }
+            return Effect.succeed(
+              sql.startsWith("SELECT 1 FROM pg_database") && published ? [{ exists: true }] : [],
+            );
+          }),
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+      });
+      const internal = makeDatabaseSessionFromSqlClient({
+        unsafe: (sql) =>
+          Effect.sync(() => {
+            calls.push(sql);
+            return [];
+          }),
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+      });
+
+      yield* Effect.scoped(ensureInternalDatabase(postgres, Effect.succeed(internal)));
+
+      expect(calls).toContain("CREATE DATABASE _supabase WITH OWNER postgres");
+      expect(calls).toContain("CREATE SCHEMA IF NOT EXISTS _supavisor AUTHORIZATION postgres");
+    }),
+  );
+
+  it.live("fails when the internal database is still missing after a failed create", () =>
+    Effect.gen(function* () {
+      const postgres = makeDatabaseSessionFromSqlClient({
+        unsafe: (sql) =>
+          sql.startsWith("CREATE DATABASE")
+            ? Effect.fail(
+                new SqlError({
+                  reason: new UnknownError({
+                    message: "permission denied",
+                    cause: new Error("permission denied"),
+                  }),
+                }),
+              )
+            : Effect.succeed([]),
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+      });
+
+      const error = yield* Effect.scoped(
+        ensureInternalDatabase(postgres, Effect.die("internal database must not open")),
+      ).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(DatabaseBootstrapError);
+    }),
+  );
+
   it.live("reuses an existing internal database without recreating it", () =>
     Effect.gen(function* () {
       const calls: Array<string> = [];

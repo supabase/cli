@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Queue, Ref, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Queue, Ref, Scope, Stream } from "effect";
 import {
   makeService,
   ServiceDestroyed,
@@ -1110,3 +1110,244 @@ it.live("keeps a sleeping instance armed when exit observation retries failed re
     }),
   ),
 );
+
+const unhealthy = (message: string) => new ServiceError({ operation: "health", message });
+
+const makeProbedService = (
+  check: (launch: number) => Effect.Effect<void, ServiceError>,
+  options: { readonly probe: boolean } = { probe: true },
+) =>
+  Effect.gen(function* () {
+    const launches = yield* Ref.make(0);
+    const service = yield* makeService<Config>(
+      {
+        launch: () =>
+          Ref.updateAndGet(launches, (count) => count + 1).pipe(
+            Effect.map((launch): RuntimeSession => ({
+              health: check(launch),
+              ...(options.probe ? { probe: check(launch) } : {}),
+              exit: Effect.never,
+              stop: Effect.void,
+              remove: Effect.void,
+            })),
+          ),
+        removeData: () => Effect.void,
+      },
+      { id: "probed", config: { version: 1 } },
+    );
+    return { service, launches };
+  });
+
+const startUnhealthy = (service: ServiceInstance<Config>) =>
+  Effect.gen(function* () {
+    const failed = yield* waitForObservation(service, (value) => value.health === "unhealthy");
+    yield* service.start;
+    yield* Fiber.join(failed);
+  });
+
+describe("service readiness recovery", () => {
+  it.live("serves readiness once a running launch recovers from a failed health check", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const healthy = yield* Ref.make(false);
+        const { service, launches } = yield* makeProbedService(() =>
+          Ref.get(healthy).pipe(
+            Effect.flatMap((ok) => (ok ? Effect.void : Effect.fail(unhealthy("still booting")))),
+          ),
+        );
+        yield* startUnhealthy(service);
+        expect(yield* Effect.flip(service.ready)).toMatchObject({ message: "still booting" });
+
+        yield* Ref.set(healthy, true);
+        yield* service.ready;
+
+        expect(yield* service.get).toMatchObject({
+          lifecycle: "running",
+          health: "healthy",
+          error: undefined,
+          launchId: 1,
+        });
+        expect(yield* Ref.get(launches)).toBe(1);
+        yield* service.stop;
+      }),
+    ),
+  );
+
+  it.live("reports the initial check's failure to callers waiting on it without re-probing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checks = yield* Ref.make(0);
+        const checkStarted = yield* Deferred.make<void>();
+        const checkGate = yield* Deferred.make<void>();
+        const { service } = yield* makeProbedService(() =>
+          Ref.updateAndGet(checks, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 1
+                ? open(checkStarted).pipe(
+                    Effect.andThen(Deferred.await(checkGate)),
+                    Effect.andThen(Effect.fail(unhealthy("rest HTTP readiness timed out"))),
+                  )
+                : Effect.fail(unhealthy("probe replaced the initial failure")),
+            ),
+          ),
+        );
+        yield* service.start;
+        yield* Deferred.await(checkStarted);
+        const waiting = yield* Effect.forkChild(Effect.flip(service.ready), {
+          startImmediately: true,
+        });
+
+        yield* open(checkGate);
+
+        expect(yield* Fiber.join(waiting)).toMatchObject({
+          message: "rest HTTP readiness timed out",
+        });
+        expect(yield* Ref.get(checks)).toBe(1);
+        expect(yield* service.get).toMatchObject({
+          health: "unhealthy",
+          error: { message: "rest HTTP readiness timed out" },
+        });
+        yield* service.stop;
+      }),
+    ),
+  );
+
+  it.live("keeps a failed check final for a session without a probe", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checks = yield* Ref.make(0);
+        const { service } = yield* makeProbedService(
+          () =>
+            Ref.updateAndGet(checks, (count) => count + 1).pipe(
+              Effect.flatMap((count) =>
+                count === 1 ? Effect.fail(unhealthy("setup failed")) : Effect.void,
+              ),
+            ),
+          { probe: false },
+        );
+        yield* startUnhealthy(service);
+
+        expect(yield* Effect.flip(service.ready)).toMatchObject({ message: "setup failed" });
+        expect(yield* Effect.flip(service.ready)).toMatchObject({ message: "setup failed" });
+        expect(yield* Ref.get(checks)).toBe(1);
+        yield* service.stop;
+      }),
+    ),
+  );
+
+  it.live("shares one re-probe among concurrent readiness callers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checks = yield* Ref.make(0);
+        const probeStarted = yield* Deferred.make<void>();
+        const probeGate = yield* Deferred.make<void>();
+        const { service } = yield* makeProbedService(() =>
+          Ref.updateAndGet(checks, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 1
+                ? Effect.fail(unhealthy("first check failed"))
+                : count === 2
+                  ? open(probeStarted).pipe(
+                      Effect.andThen(Deferred.await(probeGate)),
+                      Effect.andThen(Effect.fail(unhealthy("still booting"))),
+                    )
+                  : Effect.void,
+            ),
+          ),
+        );
+        yield* startUnhealthy(service);
+
+        const first = yield* Effect.forkChild(Effect.flip(service.ready), {
+          startImmediately: true,
+        });
+        const second = yield* Effect.forkChild(Effect.flip(service.ready), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(probeStarted);
+        yield* open(probeGate);
+
+        expect(yield* Fiber.join(first)).toMatchObject({ message: "still booting" });
+        expect(yield* Fiber.join(second)).toMatchObject({ message: "still booting" });
+        expect(yield* Ref.get(checks)).toBe(2);
+        yield* service.ready;
+        expect(yield* Ref.get(checks)).toBe(3);
+        yield* service.stop;
+      }),
+    ),
+  );
+
+  it.live("interrupts a superseded launch's probe and reports only the new launch", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstLaunchChecks = yield* Ref.make(0);
+        const probeStarted = yield* Deferred.make<void>();
+        const probeInterrupted = yield* Deferred.make<void>();
+        const { service } = yield* makeProbedService((launch) =>
+          launch === 1
+            ? Ref.updateAndGet(firstLaunchChecks, (count) => count + 1).pipe(
+                Effect.flatMap((count) =>
+                  count === 1
+                    ? Effect.fail(unhealthy("first launch unhealthy"))
+                    : open(probeStarted).pipe(
+                        Effect.andThen(Effect.never),
+                        Effect.onInterrupt(() => open(probeInterrupted)),
+                      ),
+                ),
+              )
+            : Effect.fail(unhealthy("second launch unhealthy")),
+        );
+        yield* startUnhealthy(service);
+        const stale = yield* Effect.forkChild(service.ready, { startImmediately: true });
+        yield* Deferred.await(probeStarted);
+
+        const relaunched = yield* waitForObservation(
+          service,
+          (value) => value.launchId === 2 && value.health === "unhealthy",
+        );
+        yield* service.restart();
+        yield* Fiber.join(relaunched);
+
+        yield* Deferred.await(probeInterrupted);
+        expect(Exit.isFailure(yield* Fiber.await(stale))).toBe(true);
+        expect(yield* service.get).toMatchObject({
+          launchId: 2,
+          health: "unhealthy",
+          error: { message: "second launch unhealthy" },
+        });
+        expect(yield* Effect.flip(service.ready)).toMatchObject({
+          message: "second launch unhealthy",
+        });
+        expect(yield* Ref.get(firstLaunchChecks)).toBe(2);
+        yield* service.stop;
+      }),
+    ),
+  );
+
+  it.live("releases readiness waiters when the owner scope closes during a probe", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checks = yield* Ref.make(0);
+        const probeStarted = yield* Deferred.make<void>();
+        const owner = yield* Scope.make();
+        const { service } = yield* makeProbedService(() =>
+          Ref.updateAndGet(checks, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 1
+                ? Effect.fail(unhealthy("first check failed"))
+                : open(probeStarted).pipe(Effect.andThen(Effect.never)),
+            ),
+          ),
+        ).pipe(Scope.provide(owner));
+        yield* startUnhealthy(service).pipe(Scope.provide(owner));
+        const waiting = yield* Effect.forkChild(Effect.flip(service.ready), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(probeStarted);
+
+        yield* Scope.close(owner, Exit.void);
+
+        expect(yield* Fiber.join(waiting)).toMatchObject({ message: "Session stopped" });
+      }),
+    ),
+  );
+});

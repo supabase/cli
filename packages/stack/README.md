@@ -51,7 +51,7 @@ await stack.close(); // disconnects this client
 
 `start` and `ready` are separate operations. `restart({ config })` replaces recipe configuration while retaining the instance identity and endpoint intentions. A health failure leaves a launched process running and observable; it does not prevent `stop`. Database snapshots require a stopped instance with wake disabled. `saveSnapshot(key)` publishes complete data to managed backend storage and replaces the previous entry for that key; `restoreSnapshot(key)` returns `false` on a miss and `true` after restoring a compatible entry. Managed retention may evict older keys, while snapshots survive destruction of the source stack. Other service handles have no snapshot methods.
 
-Creating a service records its definition. Configured public ports are bound during startup and retained across normal stop/start and owner reopening. An occupied saved port reports a conflict instead of moving. Omitted public endpoints are not exposed.
+Creating a service records its definition. Configured public ports are bound during startup and retained across normal stop/start and owner reopening. An occupied saved port reports a conflict instead of moving. Automatic ports avoid numbers saved by any stack under the same `stateRoot`; a fixed port is decided by binding it, so another stack's saved port blocks only while something listens on it; that conflict names the stack that saved the port. Omitted public endpoints are not exposed.
 
 Native public listeners bind to loopback. Docker and Podman public proxies bind all interfaces so services inside the container network can reach them; those listeners are reachable from the LAN according to the host firewall.
 
@@ -59,7 +59,7 @@ Functions configuration requires bootstrap source. Database versions belong in `
 
 On Linux, native Functions project files must be outside `/tmp`: Edge Runtime uses a private filesystem at that path. Docker and Podman mount project files at a separate runtime path.
 
-`open({ id, stateRoot, cacheRoot })` reconnects to a saved stack. The package stores the stack document at `<stateRoot>/<id>/state.json` and service data at `<stateRoot>/<id>/data/<instance-id>`. `discover({ stateRoot })` lists saved definitions and port assignments separately from live-owner availability. Offline definitions are not live lifecycle observations.
+`open({ id, stateRoot, cacheRoot })` reconnects to a saved stack. The package stores the stack document at `<stateRoot>/<id>/state.json` and service data at `<stateRoot>/<id>/data/<instance-id>`. `discover({ stateRoot })` lists saved definitions and port assignments separately from live-owner availability, skipping malformed or vanished entries while persistent read failures fail discovery; pass `onInvalidState(id, error)` to observe them. Offline definitions are not live lifecycle observations.
 
 Pass `startOwner: true` to `open` when live status and other owner-backed operations are needed; this starts only the detached owner and does not start services.
 
