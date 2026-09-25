@@ -1,6 +1,11 @@
 name: Release Smoke Test
 
 on:
+  pull_request:
+    branches:
+      - main
+      # TODO(CLI-2442): spike 2 only. Remove `develop` before merging.
+      - develop
   workflow_dispatch:
     inputs:
       version:
@@ -29,10 +34,11 @@ permissions:
 jobs:
   smoke:
     name: Run release smoke tests
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'hotfix/')
     uses: ./.github/workflows/release-shared.yml
     with:
-      version: ${{ inputs.version }}
-      npm_tag: ${{ inputs.npm_tag }}
+      version: ${{ inputs.version || '0.0.0-smoke' }}
+      npm_tag: ${{ inputs.npm_tag || 'beta' }}
       channel: beta
       prerelease: true
       dry_run: true
