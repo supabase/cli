@@ -52,6 +52,15 @@ const rest: ServiceCreation = {
   config: {},
   endpoints: { http: { port: 54321 } },
 };
+const functions: ServiceCreation = {
+  service: "functions",
+  config: {
+    functionsRoot: "/project/supabase/functions",
+    bootstrap: "export default {};",
+    verifyJwt: true,
+  },
+  endpoints: { http: { port: 54321 } },
+};
 const flags = (input?: Partial<StackStatusFlags>): StackStatusFlags => ({
   stack: Option.none(),
   stackId: Option.none(),
@@ -150,7 +159,7 @@ const runStatus = (input: {
   readonly members?: ReadonlyArray<{ readonly id: string; readonly activation: "eager" | "lazy" }>;
   readonly reachable?: boolean;
   readonly outputFormat?: StatusOutputFormat;
-  readonly config?: "missing" | "invalid" | "explicit";
+  readonly config?: "missing" | "invalid" | "explicit" | "multiline-functions-env";
   readonly stackCredentials?: StackCredentials;
   readonly planned?: ReadonlyArray<PlannedInstance>;
   readonly flags?: StackStatusFlags;
@@ -167,6 +176,17 @@ const runStatus = (input: {
       yield* fs.writeFileString(
         `${root}/supabase/config.toml`,
         'project_id = "status-test"\n[db]\nport = 54322\n',
+      );
+    }
+    if (input.config === "multiline-functions-env") {
+      yield* fs.makeDirectory(`${root}/supabase/functions`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "status-test"\n[edge_runtime]\nenabled = true\n',
+      );
+      yield* fs.writeFileString(
+        `${root}/supabase/functions/.env`,
+        'PRIVATE_KEY="-----BEGIN KEY-----\nsecret\n-----END KEY-----"\n',
       );
     }
     const projectRoot = root;
@@ -415,6 +435,34 @@ it.live("reports the planned differences of composition members as drift", () =>
     });
   }),
 );
+
+for (const { functionsMember, status } of [
+  { functionsMember: false, status: "unchanged" },
+  { functionsMember: true, status: "unavailable" },
+] as const)
+  it.live(
+    `reports ${status} drift for a multiline Functions dotenv when Functions is ${functionsMember ? "" : "not "}a member`,
+    () =>
+      Effect.gen(function* () {
+        const services = [
+          makeService({ id: "database-id", creation: database, statusCalls: { value: 0 } }),
+          makeService({ id: "functions-id", creation: functions, statusCalls: { value: 0 } }),
+        ];
+        const run = yield* runStatus({
+          services,
+          members: [
+            { id: "database-id", activation: "eager" },
+            ...(functionsMember ? [{ id: "functions-id", activation: "eager" as const }] : []),
+          ],
+          config: "multiline-functions-env",
+          reachable: false,
+          outputFormat: "json",
+        });
+        yield* run.effect;
+        const result = run.out.messages.find((message) => message.type === "success")?.data;
+        expect(result).toMatchObject({ config_drift: { status } });
+      }),
+  );
 
 it.live("reports unavailable owner and does not query service status", () =>
   Effect.gen(function* () {

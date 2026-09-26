@@ -317,11 +317,14 @@ const unavailableDrift = (message: string): StackReport["config_drift"] => ({
   message,
 });
 
-const configDrift = (stack: Stack, projectRoot: string) =>
+const configDrift = (stack: Stack, projectRoot: string, functionsIsMember: boolean) =>
   Effect.gen(function* () {
     const loaded = yield* loadStackConfig(projectRoot);
     const creations = yield* loaded.creations(stack.id);
-    const requested = yield* Effect.forEach(creations, withProjectFunctionsEnv);
+    // Drift ignores non-members, so a Functions dotenv only matters when Functions is a member.
+    const requested = functionsIsMember
+      ? yield* Effect.forEach(creations, withProjectFunctionsEnv)
+      : creations;
     return driftFrom(yield* stack.composition.plan(requested));
   }).pipe(
     Effect.catchTags({
@@ -384,8 +387,8 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
       .open({ ...locations, id: target.id })
       .pipe(Effect.mapError(mapStackError));
     const observed = yield* observe(stack, target.owner);
+    const memberIds = new Set(observed.members.map(({ id }) => id));
     if (flags.env) {
-      const memberIds = new Set(observed.members.map(({ id }) => id));
       const database = observed.observed.find(
         ({ instance }) => memberIds.has(instance.id) && instance.service === "database",
       );
@@ -447,7 +450,13 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
       else yield* output.result(values);
       return;
     }
-    const config = yield* configDrift(stack, target.definition.identity.projectRoot);
+    const config = yield* configDrift(
+      stack,
+      target.definition.identity.projectRoot,
+      observed.observed.some(
+        ({ instance }) => memberIds.has(instance.id) && instance.service === "functions",
+      ),
+    );
     const report = reportFor(
       target.definition,
       target.owner,

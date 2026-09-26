@@ -21,8 +21,9 @@ members remain visible without live lifecycle or health values. Lifecycle,
 health, endpoint, and aggregate readiness values are reported separately so a
 stopped or unhealthy member is distinguishable from an unavailable owner.
 
-The command compares the project configuration, including `supabase/functions/.env`, with the
-saved configuration of existing composition members through the stack package's composition plan.
+The command compares the project configuration with the saved configuration of existing
+composition members through the stack package's composition plan. It reads
+`supabase/functions/.env` only when Functions is a saved composition member.
 Values that the composition or stack credentials supply are ignored, as are changes to membership;
 an excluded service is not considered drift. The comparison reads saved state only, so it is
 available while the owner is unavailable. It reports `config_drift.status` as `unchanged` or
