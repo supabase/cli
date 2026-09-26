@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeService } from "../Service.ts";
 import { makeDatabase, type BackendEndpoint, type DatabaseConfig } from "./Database.ts";
-import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { makeDockerDatabaseRoot, runDocker } from "../../tests/docker-fixture.ts";
 
 const config: DatabaseConfig = {
   version: "17",
@@ -459,4 +459,90 @@ describe("database component", { timeout: 180_000 }, () => {
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     );
+
+  it.live("shuts PostgreSQL down fast while a client stays connected across stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const stackId = "stack-fast-shutdown";
+        const root = yield* makeDockerDatabaseRoot("stack-database-shutdown-", stackId);
+        const database = yield* makeDatabase({
+          stackId,
+          instanceId: "database",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "docker",
+        });
+        const service = yield* makeService(database.definition, {
+          id: "database:shutdown",
+          config: { ...config, stopGraceSeconds: 30 },
+        });
+        yield* service.start;
+        yield* service.ready;
+        const endpoint = yield* database.endpoint;
+        if (endpoint.kind !== "tcp") return yield* Effect.die("Expected a TCP endpoint");
+        const listed = yield* runDocker([
+          "ps",
+          "--filter",
+          `label=com.supabase.stack-root=${path.resolve(root)}`,
+          "--filter",
+          "label=com.supabase.instance=database",
+          "--format",
+          "{{.Names}}",
+        ]);
+        const containers = listed.output
+          .split("\n")
+          .filter((name) => /^supabase-[0-9a-f]{8}-[0-9a-f-]+$/u.test(name));
+        expect(containers).toHaveLength(1);
+        const container = containers.join("");
+        const startedAt = yield* runDocker([
+          "inspect",
+          "--format",
+          "{{.State.StartedAt}}",
+          container,
+        ]);
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const services = yield* Layer.build(
+              PgClient.layer({
+                host: endpoint.host,
+                port: endpoint.port,
+                database: "postgres",
+                username: "supabase_admin",
+                password: config.databasePassword,
+              }),
+            );
+            const connection = yield* Context.get(services, PgClient.PgClient).reserve;
+            expect(yield* connection.executeUnprepared("SELECT 1 AS ok", [], undefined)).toEqual([
+              { ok: 1 },
+            ]);
+            yield* service.stop;
+          }),
+        );
+
+        const stoppedAt = yield* runDocker(["info", "--format", "{{.SystemTime}}"]);
+        const events = yield* runDocker([
+          "events",
+          "--since",
+          startedAt.output.trim(),
+          "--until",
+          stoppedAt.output.trim(),
+          "--filter",
+          `container=${container}`,
+          "--filter",
+          "event=kill",
+          "--filter",
+          "event=die",
+          "--format",
+          '{{.Action}} {{index .Actor.Attributes "signal"}}{{index .Actor.Attributes "exitCode"}}',
+        ]);
+        expect(
+          events.output.trim().split("\n"),
+          "stop sends SIGINT and PostgreSQL exits cleanly",
+        ).toEqual(["kill 2", "die 0"]);
+        yield* service.destroy;
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
 });
