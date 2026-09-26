@@ -1,0 +1,81 @@
+{
+  "run_id": 36269764438,
+  "stack_samples": 45,
+  "schema_samples": 15,
+  "failures": [],
+  "docker_image_consistent": true,
+  "docker_images": {
+    "ghcr.io/supabase/cli/analytics": [
+      [
+        "ghcr.io/supabase/cli/analytics@sha256:7db85cc6cb0cdeb4b71f2fadb49c0f9197bea0492daf7896f6ae69edad76d28e",
+        "sha256:ee4762caee2760d035b718c06aaec7e5df44b76c4a378ec4bbf2254c30024ffe"
+      ]
+    ],
+    "ghcr.io/supabase/cli/auth": [
+      [
+        "ghcr.io/supabase/cli/auth@sha256:12cb5b4f18e83247f6ee34550cddd0779749a6c9fa13160ab3842fdf0c8d4a00",
+        "sha256:5c975db9280c9301fa2498ac1b1eebbea7515afacfab8851068531f71c342b72"
+      ]
+    ],
+    "ghcr.io/supabase/cli/edge-runtime": [
+      [
+        "ghcr.io/supabase/cli/edge-runtime@sha256:db55555ba640180671be297179797ea39c8c6cf09a22a0b883923cb86938f5e1",
+        "sha256:4701a19778f991d1023cf6e7730bccc2d467e46ce0216c3e30942bc8314c17b0"
+      ]
+    ],
+    "ghcr.io/supabase/cli/mailpit": [
+      [
+        "ghcr.io/supabase/cli/mailpit@sha256:37a38e48e9338cd7e89dfeb487f37b02ebfcd9cb23111bed2d345e79d37d6dd6",
+        "sha256:cdb09a322d77e0b233727104beaafb4b7b503fd3badce6a6d9e58fd9993025f6"
+      ]
+    ],
+    "ghcr.io/supabase/cli/pgmeta": [
+      [
+        "ghcr.io/supabase/cli/pgmeta@sha256:90de2dcf03ac548ae2d1d3e71b3cd10bde4c627572720a42e4c3946b7090292e",
+        "sha256:28d518fbe2712d871f37c5c54ec13432c2a3713224168f864478c01dd5211b43"
+      ]
+    ],
+    "ghcr.io/supabase/cli/pooler": [
+      [
+        "ghcr.io/supabase/cli/pooler@sha256:12bb9dcb7ddace79bee173ccb7327c6646af2236679f3bd932a86b3a06479aac",
+        "sha256:44d577739619418b298d6e55eb32052913b2031cce32a97289675b4ab9df1983"
+      ]
+    ],
+    "ghcr.io/supabase/cli/postgres": [
+      [
+        "ghcr.io/supabase/cli/postgres@sha256:9d6e542382946cad5eb1f11f1c8108a51297902ee42fe5098358816d3784ba5a",
+        "sha256:e5d401d89b1a5861761dddc042ecd9ea6921fb6a5f18bb9e2196744cf4e517e1"
+      ]
+    ],
+    "ghcr.io/supabase/cli/postgrest": [
+      [
+        "ghcr.io/supabase/cli/postgrest@sha256:f3676fb80598450052557fe742a6a42e6e39106103d46618d893256bfd207d73",
+        "sha256:f7d76a6d9fecd67bc49f665546e7537551c6b20b9b0814f974765faba6806571"
+      ]
+    ],
+    "ghcr.io/supabase/cli/realtime": [
+      [
+        "ghcr.io/supabase/cli/realtime@sha256:ee672ffd06ca0a1712a06aea1307c134c366ec082a51b051a8d59a8ad0c72755",
+        "sha256:d787a0ba28f9ab446da299a7623d3e221b8a1a3384c776f52cf58519679b4283"
+      ]
+    ],
+    "ghcr.io/supabase/cli/storage": [
+      [
+        "ghcr.io/supabase/cli/storage@sha256:69590a75f916837641976d4018e5ead7c7d2c2305312d9bfb06d86aec8fb1cdd",
+        "sha256:072869813bc6879d428a59fe039cd1429391cec286e9b1391c1b5ee65db1c4cd"
+      ]
+    ],
+    "ghcr.io/supabase/cli/studio": [
+      [
+        "ghcr.io/supabase/cli/studio@sha256:9823a31668028f1846e87331bc21598d9cd74bcaa1466c72dab58c33c9c82720",
+        "sha256:2b38e0174010b292916dc7f4c1ebeb0f6e7f0f3b6c92aa319947fa0727401744"
+      ]
+    ],
+    "ghcr.io/supabase/cli/vector": [
+      [
+        "ghcr.io/supabase/cli/vector@sha256:ca92d617e905953c3f852e7e88061f7039460e733522e3f0c21bc6ae946b2558",
+        "sha256:dbd1d86387c3fe901ff1bd17910a779744a5312597815296d08153ec06d2f346"
+      ]
+    ]
+  }
+}

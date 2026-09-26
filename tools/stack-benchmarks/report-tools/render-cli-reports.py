@@ -130,7 +130,7 @@ def paired_direct_chart(out: Path, name: str, eyebrow: str, headline: str, subti
         val, y = i * 1000, bottom - 400 * i / ticks
         p += [line(left, y, left + width, y, "#53615a", 1, "6 10", .4),
               text(left - 18, y + 5, f"{val:,.0f}", 14, MUTED, "500", "end")]
-    p.append(text(92, 367, unit, 15, MUTED, "700"))
+    p.append(text(92, 350, unit, 15, MUTED, "700"))
     step = width / len(groups)
     for i, g in enumerate(groups):
         cx, bw, gap = left + step * (i + .5), 70, 16
@@ -218,7 +218,7 @@ def main() -> None:
     paired_direct_chart(stack_out, "payload-size", "LOCAL STACK · DOWNLOAD METADATA",
                         f"Up to {payload_reduction:.0f}% smaller payload", "Metadata-derived payload; not measured network traffic.",
                         payload_groups, "MiB", f"Exact compressed payload bytes from metadata · n={samples} samples.",
-                        "Linux legacy Docker baseline; eager mode includes the pooler.")
+                        "Linux legacy Docker baseline; pooler columns use pooler-enabled configurations.")
 
     default_rss = []
     for runtime in ("docker", "native"):
