@@ -61,8 +61,10 @@ export class ServiceStaleLaunch extends Data.TaggedError("ServiceStaleLaunch")<{
 
 /** The exact runtime resources owned by one service launch. */
 export interface RuntimeSession {
-  /** The one readiness program for this session. */
+  /** The initial readiness program for this session. */
   readonly health: Effect.Effect<void, ServiceError>;
+  /** Bounded re-check for a running session whose last check failed; without it the failure is final. */
+  readonly probe?: Effect.Effect<void, ServiceError>;
   /** Resolves with the runtime's terminal result and remains attached to this session. */
   readonly exit: Effect.Effect<Exit.Exit<void, ServiceError>>;
   readonly stop: Effect.Effect<void, ServiceError>;
@@ -130,15 +132,20 @@ export interface ServiceInstance<Config> {
   readonly destroy: Effect.Effect<void, ServiceError | ServiceDestroyed>;
 }
 
+type HealthCheck = Deferred.Deferred<Exit.Exit<void, ServiceError>>;
+
 interface SessionRecord {
   readonly launchId: number;
   readonly runtime: RuntimeSession;
   readonly scope: Scope.Closeable;
   readonly healthScope: Scope.Closeable;
-  readonly health: Deferred.Deferred<Exit.Exit<void, ServiceError>>;
+  /** The latest readiness check of this launch; a settled failure is replaced by an on-demand probe. */
+  readonly health: Ref.Ref<HealthCheck>;
   readonly stopped: Ref.Ref<boolean>;
   readonly removed: Ref.Ref<boolean>;
 }
+
+const sessionStopped = () => new ServiceError({ operation: "health", message: "Session stopped" });
 
 const contextFor = <Config>(
   id: string,
@@ -213,6 +220,56 @@ export const makeService = <Config>(
       options.coordinate ??
       ((_operation: ServiceAdmission, transition: Effect.Effect<void, ServiceError>) => transition);
 
+    // Health and exit settlement each write the observation and launchError as one step.
+    const settlement = yield* Semaphore.make(1);
+
+    const settleCheck = Effect.fn("Service.settleCheck")(function* (
+      record: SessionRecord,
+      exit: Exit.Exit<void, ServiceError>,
+    ) {
+      const error = exitError("health", exit);
+      yield* settlement.withPermit(
+        Effect.gen(function* () {
+          const owned = yield* SubscriptionRef.modify(
+            observations,
+            (observation): [boolean, ServiceObservation<Config>] =>
+              observation.launchId === record.launchId && observation.lifecycle === "running"
+                ? [
+                    true,
+                    {
+                      ...observation,
+                      health: error === undefined ? "healthy" : "unhealthy",
+                      error,
+                    },
+                  ]
+                : [false, observation],
+          );
+          if (owned)
+            yield* Ref.set(
+              launchError,
+              error === undefined ? undefined : { launchId: record.launchId, error },
+            );
+        }),
+      );
+    });
+
+    /** Runs one readiness check whose result is shared by every `ready` caller awaiting it. */
+    const runCheck = Effect.fn("Service.runCheck")(
+      (record: SessionRecord, check: Effect.Effect<void, ServiceError>, result: HealthCheck) =>
+        Effect.forkIn(
+          check.pipe(
+            Effect.onExit((exit) =>
+              Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)
+                ? Deferred.succeed(result, Exit.fail(sessionStopped()))
+                : settleCheck(record, exit).pipe(Effect.andThen(Deferred.succeed(result, exit))),
+            ),
+          ),
+          record.healthScope,
+          // Starting immediately installs the settlement before a closing scope can interrupt it.
+          { startImmediately: true, uninterruptible: false },
+        ),
+    );
+
     // Mask only the permit handoff; admitted work belongs to the host scope.
     const run = Effect.fn("Service.run")(function* <
       A,
@@ -245,10 +302,7 @@ export const makeService = <Config>(
         }
 
         yield* update({ lifecycle: "stopping", health: undefined, wakeEnabled: retainWake });
-        yield* Deferred.succeed(
-          record.health,
-          Exit.fail(new ServiceError({ operation: "health", message: "Session stopped" })),
-        );
+        yield* Deferred.succeed(yield* Ref.get(record.health), Exit.fail(sessionStopped()));
         yield* Scope.close(record.healthScope, Exit.void);
         if (!(yield* Ref.get(record.stopped))) {
           const halt =
@@ -353,7 +407,7 @@ export const makeService = <Config>(
           runtime,
           scope: runtimeScope,
           healthScope: yield* Scope.fork(runtimeScope, "parallel"),
-          health,
+          health: yield* Ref.make(health),
           stopped: yield* Ref.make(false),
           removed: yield* Ref.make(false),
         };
@@ -368,55 +422,34 @@ export const makeService = <Config>(
           config: yield* Ref.get(config),
         });
 
-        const observeHealth = runtime.health.pipe(
-          Effect.onExit((exit) =>
-            Effect.gen(function* () {
-              const error = exitError("health", exit);
-              const currentObservation = yield* SubscriptionRef.get(observations);
-              if (
-                error !== undefined &&
-                currentObservation.launchId === launchId &&
-                currentObservation.lifecycle === "running"
-              )
-                yield* Ref.set(launchError, { launchId, error });
-              yield* SubscriptionRef.update(
-                observations,
-                (observation): ServiceObservation<Config> => {
-                  if (observation.launchId !== launchId || observation.lifecycle !== "running")
-                    return observation;
-                  return {
-                    ...observation,
-                    health: Exit.isSuccess(exit) ? "healthy" : "unhealthy",
-                    error,
-                  };
-                },
-              );
-              yield* Deferred.succeed(record.health, exit);
-            }),
-          ),
-        );
         const observeExit = record.runtime.exit.pipe(
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
-              if ((yield* Ref.get(current)) !== record) return;
-              const observation = yield* SubscriptionRef.get(observations);
-              const error =
-                observation.lifecycle === "stopping"
-                  ? observation.error
-                  : (exitError("exit", exit) ??
-                    new ServiceError({
-                      operation: "exit",
-                      message: "Runtime exited unexpectedly",
-                    }));
-              if (error !== undefined)
-                yield* Ref.set(launchError, { launchId: record.launchId, error });
-              yield* update({
-                lifecycle: "stopping",
-                health: undefined,
-                error,
-                exit,
-                wakeEnabled: observation.lifecycle === "stopping" && observation.wakeEnabled,
-              });
+              const owned = yield* settlement.withPermit(
+                Effect.gen(function* () {
+                  if ((yield* Ref.get(current)) !== record) return false;
+                  const observation = yield* SubscriptionRef.get(observations);
+                  const error =
+                    observation.lifecycle === "stopping"
+                      ? observation.error
+                      : (exitError("exit", exit) ??
+                        new ServiceError({
+                          operation: "exit",
+                          message: "Runtime exited unexpectedly",
+                        }));
+                  if (error !== undefined)
+                    yield* Ref.set(launchError, { launchId: record.launchId, error });
+                  yield* update({
+                    lifecycle: "stopping",
+                    health: undefined,
+                    error,
+                    exit,
+                    wakeEnabled: observation.lifecycle === "stopping" && observation.wakeEnabled,
+                  });
+                  return true;
+                }),
+              );
+              if (!owned) return;
               yield* run(
                 Effect.gen(function* () {
                   if ((yield* Ref.get(current)) !== record) return;
@@ -430,11 +463,10 @@ export const makeService = <Config>(
             }),
           ),
         );
-        if (launchFailure === undefined)
-          yield* Effect.forkIn(observeHealth, record.healthScope, { uninterruptible: false });
+        if (launchFailure === undefined) yield* runCheck(record, runtime.health, health);
         yield* Effect.forkIn(observeExit, runtimeScope, { uninterruptible: false });
         if (launchFailure !== undefined) {
-          yield* Deferred.succeed(record.health, Exit.fail(launchFailure));
+          yield* Deferred.succeed(health, Exit.fail(launchFailure));
           yield* stopNow(undefined, observation.wakeEnabled);
           return yield* launchFailure;
         }
@@ -588,6 +620,30 @@ export const makeService = <Config>(
         if (owned !== undefined && owned.launchId === launchId) return yield* owned.error;
         return yield* staleLaunch(launchId, `Service ${options.id} stopped before it was ready`);
       });
+    const isLive = (record: SessionRecord) =>
+      Effect.gen(function* () {
+        if ((yield* Ref.get(current)) !== record) return false;
+        return (yield* SubscriptionRef.get(observations)).lifecycle === "running";
+      });
+
+    /** Concurrent callers share one probe per settled failure of a launch. */
+    const reprobe = Effect.fn("Service.reprobe")(function* (
+      record: SessionRecord,
+      failed: HealthCheck,
+      probe: Effect.Effect<void, ServiceError>,
+    ) {
+      const next = yield* Deferred.make<Exit.Exit<void, ServiceError>>();
+      const check = yield* Ref.modify(record.health, (latest): [HealthCheck, HealthCheck] =>
+        latest === failed ? [next, next] : [latest, latest],
+      );
+      if (check === next) {
+        // stopNow fails the latest check after leaving "running", so a probe admitted here is always settled.
+        if (yield* isLive(record)) yield* runCheck(record, probe, next);
+        else yield* Deferred.succeed(next, Exit.fail(sessionStopped()));
+      }
+      return yield* Deferred.await(check);
+    });
+
     const ready = Effect.fn("Service.ready")(function* () {
       const initial = yield* SubscriptionRef.get(observations);
       if (!initial.registered) return yield* new ServiceDestroyed({ id: options.id });
@@ -614,14 +670,16 @@ export const makeService = <Config>(
       if ((yield* SubscriptionRef.get(observations)).lifecycle === "stopping") {
         return yield* diedBeforeReady(launchId);
       }
-      const healthResult = yield* Deferred.await(record.health);
-      if (
-        (yield* Ref.get(current)) !== record ||
-        (yield* SubscriptionRef.get(observations)).lifecycle !== "running"
-      ) {
-        return yield* diedBeforeReady(launchId);
-      }
-      yield* healthResult;
+      const check = yield* Ref.get(record.health);
+      const settledOnArrival = yield* Deferred.isDone(check);
+      const healthResult = yield* Deferred.await(check);
+      if (!(yield* isLive(record))) return yield* diedBeforeReady(launchId);
+      const probe = record.runtime.probe;
+      if (Exit.isSuccess(healthResult) || !settledOnArrival || probe === undefined)
+        return yield* healthResult;
+      const reprobed = yield* reprobe(record, check, probe);
+      if (!(yield* isLive(record))) return yield* diedBeforeReady(launchId);
+      return yield* reprobed;
     });
 
     const storage = Effect.fn("Service.storage")(function* <A>(

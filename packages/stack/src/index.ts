@@ -344,6 +344,19 @@ export const create = (
 /** Opens an existing stack without launching its services. */
 export const open = (options: StackEffect.OpenOptions, callOptions?: CallOptions): Promise<Stack> =>
   acquire(StackEffect.open(options), callOptions);
-/** Discovers saved stacks and separately reports their live-owner availability. */
-export const discover = (options: Pick<StackEffect.StackLocations, "stateRoot">) =>
-  Effect.runPromise(StackEffect.discover(options).pipe(Effect.provide(clientLayer)));
+/** Discovers readable saved stacks with their live owners; `onInvalidState` observes skipped entries. */
+export const discover = (
+  options: Pick<StackEffect.StackLocations, "stateRoot"> & {
+    readonly onInvalidState?: (id: string, error: Error) => void;
+  },
+) => {
+  const onInvalidState = options.onInvalidState;
+  return Effect.runPromise(
+    StackEffect.discover({
+      stateRoot: options.stateRoot,
+      ...(onInvalidState === undefined
+        ? {}
+        : { onInvalidState: (id, error) => Effect.sync(() => onInvalidState(id, error)) }),
+    }).pipe(Effect.provide(clientLayer)),
+  );
+};

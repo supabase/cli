@@ -4,6 +4,7 @@ import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
 import {
   resolveNativePostgresUser,
+  type Observation,
   type ServiceCreationInput,
   type Stack,
   type StackError,
@@ -226,6 +227,26 @@ const compose = (
     ...(reuseIds.length === 0 ? {} : { reuseIds }),
   });
 
+const isServing = (status: Pick<Observation, "lifecycle" | "health">) =>
+  status.lifecycle === "running" && status.health === "healthy";
+
+const reportEndpoints = (
+  members: ReadonlyArray<{
+    readonly service: string;
+    readonly status: Effect.Effect<Observation, StackError>;
+  }>,
+) =>
+  Effect.forEach(members, (member) =>
+    member.status.pipe(
+      Effect.mapError(stackError),
+      Effect.map((observation) =>
+        Object.entries(endpointReports(observation)).map(
+          ([name, endpoint]) => [`${member.service}.${name}`, endpoint] as const,
+        ),
+      ),
+    ),
+  ).pipe(Effect.map((entries) => Object.fromEntries(entries.flat())));
+
 /** Starts the selected managed stack and applies the local database overlays. */
 export const stackStart = Effect.fn("experimental.stack.start")(function* (flags: StackStartFlags) {
   const telemetryState = yield* TelemetryState;
@@ -308,24 +329,45 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const primaryDatabase = currentInstances.find((instance) => instance.service === "database");
     const databaseStatus = currentStatuses.find(({ id }) => id === primaryDatabase?.id);
     const fullyStarted =
-      databaseStatus?.lifecycle === "running" &&
-      currentStatuses.every(({ lifecycle, wakeEnabled }) => lifecycle === "running" || wakeEnabled);
+      databaseStatus !== undefined &&
+      isServing(databaseStatus) &&
+      currentStatuses.every((status) =>
+        status.lifecycle === "running" ? isServing(status) : status.wakeEnabled,
+      );
     if (fullyStarted) {
       yield* Ref.set(startupComplete, true);
-      const endpoints = Object.fromEntries(
-        currentStatuses.flatMap((observation, index) => {
-          const instance = currentInstances[index];
-          return instance === undefined
-            ? []
-            : Object.entries(endpointReports(observation)).map(
-                ([name, endpoint]) => [`${instance.service}.${name}`, endpoint] as const,
-              );
-        }),
-      );
       yield* output.success(
         "Stack is already running with its current services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
-        { id: stack.id, endpoints },
+        { id: stack.id, endpoints: yield* reportEndpoints(currentInstances) },
       );
+      return stack.id;
+    }
+    const resumable =
+      primaryDatabase !== undefined &&
+      databaseStatus?.lifecycle === "running" &&
+      currentStatuses.every(
+        ({ lifecycle, wakeEnabled }) =>
+          lifecycle === "running" || lifecycle === "starting" || wakeEnabled,
+      );
+    if (resumable) {
+      yield* output.info(
+        "Resuming the saved stack services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
+      );
+      const starting = yield* output.task("Starting local Supabase stack...");
+      yield* primaryDatabase.ready.pipe(
+        Effect.tapError((error) => starting.fail(error.message)),
+        Effect.mapError(stackError),
+      );
+      yield* stack.composition.start.pipe(
+        Effect.tapError((error) => starting.fail(error.message)),
+        Effect.mapError((error) => stackError(error, currentInstances)),
+      );
+      yield* Ref.set(startupComplete, true);
+      const endpoints = yield* reportEndpoints(currentInstances).pipe(
+        Effect.tapError((error) => starting.fail(error.message)),
+      );
+      yield* starting.succeed("Stack is ready.");
+      yield* output.success("", { id: stack.id, endpoints });
       return stack.id;
     }
     const fullyStopped = currentStatuses.every(
@@ -673,18 +715,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     );
     yield* Effect.forEach(preparation, (fiber) => Fiber.join(fiber));
     yield* Ref.set(startupComplete, true);
-    const endpoints = Object.fromEntries(
-      (yield* Effect.forEach(members, (member) =>
-        member.status.pipe(
-          Effect.tapError((error) => starting.fail(error.message)),
-          Effect.mapError(stackError),
-          Effect.map((observation) =>
-            Object.entries(endpointReports(observation)).map(
-              ([name, endpoint]) => [`${member.service}.${name}`, endpoint] as const,
-            ),
-          ),
-        ),
-      )).flat(),
+    const endpoints = yield* reportEndpoints(members).pipe(
+      Effect.tapError((error) => starting.fail(error.message)),
     );
     yield* starting.succeed("Stack is ready.");
     yield* output.success("", { id: stack.id, endpoints });

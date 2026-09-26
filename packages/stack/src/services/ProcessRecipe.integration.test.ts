@@ -463,7 +463,14 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
 
 const platform = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
-const nativePoolerArtifact = Effect.fn(function* (cacheRoot: string) {
+const nativeFixtureArtifact = Effect.fn(function* (
+  cacheRoot: string,
+  artifact: {
+    readonly name: string;
+    readonly executablePath: string;
+    readonly files: Readonly<Record<string, string>>;
+  },
+) {
   const platformName = `${process.platform}-${process.arch}`;
   const target =
     platformName === "darwin-arm64"
@@ -476,11 +483,35 @@ const nativePoolerArtifact = Effect.fn(function* (cacheRoot: string) {
   if (target === undefined) return yield* Effect.fail(`Unsupported test platform: ${platformName}`);
 
   const request: ArtifactRequest = {
-    key: `slim-services/pooler/v2.9.12/${target}`,
-    requiredRuntimePaths: ["bin/server", "bin/prepare", "bin/provision-tenant"],
-    executablePath: "bin/server",
+    key: `slim-services/${artifact.name}/${target}`,
+    requiredRuntimePaths: Object.keys(artifact.files),
+    executablePath: artifact.executablePath,
   };
   const fs = yield* FileSystem.FileSystem;
+  const source: ArtifactSource = {
+    checksum: () => Effect.succeed("0".repeat(64)),
+    materialize: (_entry, destination) =>
+      Effect.gen(function* () {
+        yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+        for (const [file, content] of Object.entries(artifact.files)) {
+          yield* fs.writeFileString(`${destination}/${file}`, content);
+          yield* fs.chmod(`${destination}/${file}`, 0o755);
+        }
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PreparationError({
+              message: `Unable to write native ${artifact.name} fixture: ${cause.message}`,
+              cause,
+            }),
+        ),
+      ),
+  };
+  const store = yield* makeArtifactStore({ cacheRoot, source });
+  yield* store.prepare(request);
+});
+
+const nativePoolerArtifact = (cacheRoot: string) => {
   const server =
     `#!${process.execPath}\nconst http = require("node:http");\n` +
     `const port = Number(process.env.PORT);\n` +
@@ -498,29 +529,12 @@ const nativePoolerArtifact = Effect.fn(function* (cacheRoot: string) {
     `console.log("Running SupavisorWeb.Endpoint at 127.0.0.1:" + port + " (http)");\n` +
     `});\n`;
   const oneShot = `#!${process.execPath}\nprocess.exit(0);\n`;
-  const source: ArtifactSource = {
-    checksum: () => Effect.succeed("0".repeat(64)),
-    materialize: (_entry, destination) =>
-      Effect.gen(function* () {
-        yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
-        yield* fs.writeFileString(`${destination}/bin/server`, server);
-        yield* fs.writeFileString(`${destination}/bin/prepare`, oneShot);
-        yield* fs.writeFileString(`${destination}/bin/provision-tenant`, oneShot);
-        yield* fs.chmod(`${destination}/bin/prepare`, 0o755);
-        yield* fs.chmod(`${destination}/bin/provision-tenant`, 0o755);
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new PreparationError({
-              message: `Unable to write native Pooler fixture: ${cause.message}`,
-              cause,
-            }),
-        ),
-      ),
-  };
-  const store = yield* makeArtifactStore({ cacheRoot, source });
-  yield* store.prepare(request);
-});
+  return nativeFixtureArtifact(cacheRoot, {
+    name: "pooler/v2.9.12",
+    executablePath: "bin/server",
+    files: { "bin/server": server, "bin/prepare": oneShot, "bin/provision-tenant": oneShot },
+  });
+};
 
 const NativeLaunchPayload = Schema.Struct({
   executable: Schema.String,
@@ -579,6 +593,69 @@ const countingSpawner = (
     ),
 });
 
+const interceptRestLaunch = (
+  spawner: ChildProcessSpawnerService["Service"],
+  onLaunch: (payload: typeof NativeLaunchPayload.Type) => Effect.Effect<void>,
+): ChildProcessSpawnerService["Service"] => ({
+  ...spawner,
+  spawn: (command) =>
+    spawner.spawn(command).pipe(
+      Effect.map((handle) => ({
+        ...handle,
+        getInputFd: (fd: number) => {
+          const sink = handle.getInputFd(fd);
+          if (fd !== 4) return sink;
+          return Sink.mapInputEffect(sink, (bytes) =>
+            Effect.gen(function* () {
+              const payload = yield* Schema.decodeEffect(
+                Schema.fromJsonString(NativeLaunchPayload),
+              )(new TextDecoder().decode(bytes)).pipe(Effect.orDie);
+              if (payload.executable.endsWith("/bin/postgrest")) yield* onLaunch(payload);
+              return bytes;
+            }),
+          );
+        },
+      })),
+    ),
+});
+
+const nativeRestRecipe = Effect.fn(function* (
+  root: string,
+  program: string,
+  spawner: ChildProcessSpawnerService["Service"],
+  env: Readonly<Record<string, string>> = {},
+  nativeReadinessOutput?: ProcessRecipeSpec<TestCreation>["nativeReadinessOutput"],
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
+  const client = yield* HttpClient.HttpClient;
+  const cacheRoot = path.join(root, "cache");
+  yield* nativeFixtureArtifact(cacheRoot, {
+    name: "postgrest/v16.2",
+    executablePath: "bin/postgrest",
+    files: { "bin/postgrest": `#!${process.execPath}\n${program}` },
+  });
+  return yield* makeProcessRecipe(
+    creation,
+    {
+      ...options,
+      root,
+      cacheRoot,
+      runtime: "native",
+      platform: { os: process.platform, arch: process.arch },
+    },
+    { fs, path, crypto, client, spawner, container: undefined },
+    {
+      ...spec,
+      env: (_creation, endpoints) =>
+        Effect.succeed({ ...env, PORT: String(endpoints.get("http")?.port) }),
+      startup: [],
+      ...(nativeReadinessOutput === undefined ? {} : { nativeReadinessOutput }),
+    },
+  );
+});
+
 describe("process recipe startup", () => {
   it.effect("reports the startup process's recent stdout and stderr when it exits non-zero", () =>
     Effect.scoped(
@@ -600,6 +677,154 @@ describe("process recipe startup", () => {
         expect(error.message).toContain("realtime startup exited with 1");
         expect(error.message).toContain(postgrexFailure);
         expect(error.message).toContain(poolTimeout);
+      }),
+    ).pipe(Effect.provide(platform)),
+  );
+
+  it.live("relaunches on fresh ports while a silently failing process finds its ports taken", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const client = yield* HttpClient.HttpClient;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const testScope = yield* Effect.scope;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-collision-" });
+        const launches = yield* Ref.make(0);
+        const taken = yield* Ref.make<ReadonlyArray<number>>([]);
+        const collidingSpawner = interceptRestLaunch(spawner, (payload) =>
+          Effect.gen(function* () {
+            if ((yield* Ref.updateAndGet(launches, (count) => count + 1)) > 2) return;
+            const port = Number(payload.env?.PORT);
+            yield* Effect.acquireRelease(
+              Effect.callback<Net.Server>((resume) => {
+                const server = Net.createServer((socket) => socket.destroy());
+                server.once("error", (cause) => resume(Effect.die(cause)));
+                server.listen(port, "127.0.0.1", () => resume(Effect.succeed(server)));
+              }),
+              (server) =>
+                Effect.callback<void>((resume) => {
+                  server.close(() => resume(Effect.void));
+                }),
+            ).pipe(Scope.provide(testScope));
+            yield* Ref.update(taken, (ports) => [...ports, port]);
+          }),
+        );
+        const recipe = yield* nativeRestRecipe(
+          root,
+          `const http = require("node:http");\n` +
+            `const server = http.createServer((_request, response) => response.end("owned-fixture"));\n` +
+            `server.on("error", () => process.exit(1));\n` +
+            `server.listen(Number(process.env.PORT), "127.0.0.1");\n`,
+          collidingSpawner,
+        );
+        const service = yield* makeService(recipe.definition, { id: "rest", config: creation });
+
+        yield* service.start;
+        yield* service.ready;
+
+        const endpoint = (yield* Ref.get(recipe.endpoints)).get("http");
+        expect(yield* Ref.get(launches)).toBe(3);
+        expect(yield* Ref.get(taken)).toHaveLength(2);
+        expect(yield* Ref.get(taken)).not.toContain(endpoint?.port);
+        const response = yield* client.execute(
+          HttpClientRequest.get(`http://${endpoint?.host}:${endpoint?.port}/`),
+        );
+        expect(yield* response.text).toBe("owned-fixture");
+        yield* service.stop;
+      }),
+    ).pipe(Effect.provide(platform)),
+  );
+
+  it.live(
+    "does not relaunch a crash after the bind is confirmed while its port still answers",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const testScope = yield* Effect.scope;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-crash-" });
+          const launches = yield* Ref.make(0);
+          const inheritedListener = interceptRestLaunch(spawner, (payload) =>
+            Effect.gen(function* () {
+              yield* Ref.update(launches, (count) => count + 1);
+              yield* Effect.acquireRelease(
+                Effect.callback<Net.Server>((resume) => {
+                  const server = Net.createServer((socket) => socket.destroy());
+                  server.once("error", (cause) => resume(Effect.die(cause)));
+                  server.listen(Number(payload.env?.PORT), "127.0.0.1", () =>
+                    resume(Effect.succeed(server)),
+                  );
+                }),
+                (server) =>
+                  Effect.callback<void>((resume) => {
+                    server.close(() => resume(Effect.void));
+                  }),
+              ).pipe(Scope.provide(testScope));
+            }),
+          );
+          const recipe = yield* nativeRestRecipe(
+            root,
+            `process.stdout.write("listener bound\\n");\n` +
+              `setTimeout(() => process.exit(4), 50);\n`,
+            inheritedListener,
+            {},
+            (line) => line.includes("listener bound"),
+          );
+          const service = yield* makeService(recipe.definition, { id: "rest", config: creation });
+
+          yield* service.start;
+          const failure = yield* Effect.flip(service.ready);
+
+          expect(failure.message).toContain("rest exited with 4 before it was ready");
+          expect(failure.message).not.toContain("native port collision");
+          expect(yield* Ref.get(launches)).toBe(1);
+        }),
+      ).pipe(Effect.provide(platform)),
+  );
+
+  it.live("fails an early exit promptly when a detached descendant keeps its output open", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-drain-" });
+        const pidFile = path.join(root, "descendant.pid");
+        yield* Effect.addFinalizer(() =>
+          fs.readFileString(pidFile).pipe(
+            Effect.flatMap((pid) =>
+              Effect.sync(() => {
+                try {
+                  process.kill(Number(pid), "SIGKILL");
+                } catch {
+                  // The descendant already exited.
+                }
+              }),
+            ),
+            Effect.ignore,
+          ),
+        );
+        const recipe = yield* nativeRestRecipe(
+          root,
+          `const { spawn } = require("node:child_process");\n` +
+            `const { writeFileSync, writeSync } = require("node:fs");\n` +
+            `const descendant = spawn(process.execPath, ["-e", "setTimeout(() => {}, 300000)"], { detached: true, stdio: ["ignore", "inherit", "inherit"] });\n` +
+            `writeFileSync(process.env.PID_FILE, String(descendant.pid));\n` +
+            `writeSync(2, "startup failed before listening\\n");\n` +
+            `process.exit(3);\n`,
+          spawner,
+          { PID_FILE: pidFile },
+        );
+        const service = yield* makeService(recipe.definition, { id: "rest", config: creation });
+
+        yield* service.start;
+        const failure = yield* Effect.flip(service.ready);
+
+        expect(failure.message).toContain("rest exited with 3 before it was ready");
+        expect(failure.message).toContain("startup failed before listening");
+        expect(failure.message).not.toContain("native port collision");
+        expect(yield* fs.exists(pidFile)).toBe(true);
       }),
     ).pipe(Effect.provide(platform)),
   );
@@ -698,6 +923,7 @@ describe("process recipe startup", () => {
           config: creation,
           scope,
         });
+        yield* runtime.health;
         const endpoints = yield* Ref.get(recipe.endpoints);
         const endpoint = endpoints.get("http");
         const collided = yield* Ref.get(collisionPort);
@@ -834,8 +1060,14 @@ describe("process recipe startup", () => {
                           Stream.concat(
                             Stream.fromEffectDrain(
                               Deferred.await(exitReached).pipe(
-                                Effect.andThen(TestClock.adjust("61 seconds")),
-                                Effect.tap(() => Deferred.succeed(clockAdvanced, undefined)),
+                                // The bounded output drain can close this attempt while the clock moves.
+                                Effect.andThen(
+                                  Effect.uninterruptible(
+                                    TestClock.adjust("61 seconds").pipe(
+                                      Effect.andThen(Deferred.succeed(clockAdvanced, undefined)),
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
@@ -887,13 +1119,10 @@ describe("process recipe startup", () => {
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
         const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
-        const launched = recipe.definition
-          .launch({ id: "pooler", config: creation, scope })
-          .pipe(Effect.forkChild);
-        const fiber = yield* launched;
+        const runtime = yield* recipe.definition.launch({ id: "pooler", config: creation, scope });
+        const health = yield* Effect.flip(runtime.health).pipe(Effect.forkChild);
         yield* Deferred.await(clockAdvanced);
-        const runtime = yield* Fiber.join(fiber);
-        const failure = yield* Effect.flip(runtime.health);
+        const failure = yield* Fiber.join(health);
         expect(failure.operation).toBe("launch");
         expect(failure.message).toContain("native port collision");
         expect(failure.message).not.toContain("readiness timed out");
@@ -906,7 +1135,7 @@ describe("process recipe startup", () => {
     ).pipe(Effect.provide(platform)),
   );
 
-  it.live("does not retry an unrelated native Pooler startup failure", () =>
+  it.live("does not relaunch a native process that exits early while its ports stay free", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -953,10 +1182,10 @@ describe("process recipe startup", () => {
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
         const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
         const runtime = yield* recipe.definition.launch({ id: "pooler", config: creation, scope });
+        const health = yield* Effect.exit(runtime.health);
         expect(yield* Ref.get(mainLaunches)).toBe(1);
         expect(yield* Ref.get(startupLaunches)).toEqual(["prepare", "provision-tenant"]);
         expect(yield* Ref.get(recipe.endpoints)).toEqual(new Map());
-        const health = yield* Effect.exit(runtime.health);
         expect(Exit.isFailure(health)).toBe(true);
         if (Exit.isFailure(health))
           expect(health.cause.toString()).toContain("unrelated startup failure");

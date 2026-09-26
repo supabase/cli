@@ -639,7 +639,7 @@ export const open = Effect.fn("Stack.open")(
   Effect.mapError((cause) => failure("open", cause)),
 );
 
-/** Lists saved resources separately from the availability of their live owners. */
+/** Lists readable saved stacks with their live owners; `onInvalidState` observes skipped entries. */
 export const discover = Effect.fn("Stack.discover")(
   function* (
     options: Pick<StackLocations, "stateRoot"> & {

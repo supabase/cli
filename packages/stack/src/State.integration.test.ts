@@ -298,6 +298,151 @@ describe("durable stack state", () => {
     ),
   );
 
+  const listingWithReadFailures = (options: {
+    readonly root: string;
+    readonly platform: NodeJS.Platform;
+    readonly code: string;
+    readonly failures: number;
+  }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const remaining = yield* Ref.make(options.failures);
+      const firstFailure = yield* Deferred.make<void>();
+      const reported = yield* Ref.make<ReadonlyArray<string>>([]);
+      const injectedFs = Layer.succeed(FileSystem.FileSystem, {
+        ...fs,
+        readFileString: (path: string, encoding?: string) =>
+          Effect.gen(function* () {
+            if (path.endsWith(`${initial.id}/state.json`) && (yield* Ref.get(remaining)) > 0) {
+              yield* Ref.update(remaining, (count) => count - 1);
+              yield* Deferred.succeed(firstFailure, undefined);
+              return yield* PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "readFile",
+                pathOrDescriptor: path,
+                cause: Object.assign(new Error("injected read failure"), { code: options.code }),
+              });
+            }
+            return yield* fs.readFileString(path, encoding);
+          }),
+      });
+      const store = yield* Layer.build(
+        State.layer({
+          root: options.root,
+          platform: options.platform,
+          onInvalidState: (id) => Ref.update(reported, (ids) => [...ids, id]),
+        }).pipe(Layer.provide(injectedFs)),
+      ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+      return { store, firstFailure, reported };
+    });
+
+  it.effect("lists a stack after a transient Windows read failure clears", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-list-retry-" });
+        yield* (yield* makeTestState(root)).save(initial);
+        const { store, firstFailure, reported } = yield* listingWithReadFailures({
+          root,
+          platform: "win32",
+          code: "EBUSY",
+          failures: 1,
+        });
+
+        const listing = yield* store.list.pipe(Effect.forkScoped);
+        yield* Deferred.await(firstFailure);
+        yield* TestClock.adjust("10 millis");
+        expect((yield* Fiber.join(listing)).map(({ id }) => id)).toEqual([initial.id]);
+        expect(yield* Ref.get(reported)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("skips and reports a stack whose state stays unreadable after retries", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        for (const [platform, code] of [
+          ["win32", "EBUSY"],
+          ["linux", "EACCES"],
+        ] as const) {
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-list-skip-" });
+          yield* (yield* makeTestState(root)).save(initial);
+          const { store, firstFailure, reported } = yield* listingWithReadFailures({
+            root,
+            platform,
+            code,
+            failures: Number.POSITIVE_INFINITY,
+          });
+
+          const listing = yield* store.list.pipe(Effect.forkScoped);
+          yield* Deferred.await(firstFailure);
+          yield* TestClock.adjust("950 millis");
+          expect(yield* Fiber.join(listing)).toEqual([]);
+          expect(yield* Ref.get(reported)).toEqual([initial.id]);
+        }
+      }),
+    ),
+  );
+
+  it.live.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "lists and claims readable stacks past a sibling directory it cannot access",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-list-eacces-" });
+          const reported: Array<string> = [];
+          const store = yield* Layer.build(
+            State.layer({ root, onInvalidState: (id) => Effect.sync(() => reported.push(id)) }),
+          ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+          yield* store.save(initial);
+          const locked = path.join(root, "locked");
+          yield* fs.makeDirectory(locked, { mode: 0o700 });
+          yield* fs.writeFileString(path.join(locked, "state.json"), "{}");
+          yield* Effect.acquireRelease(fs.chmod(locked, 0o000), () =>
+            fs.chmod(locked, 0o700).pipe(Effect.orDie),
+          );
+
+          expect((yield* store.list).map(({ id }) => id)).toEqual([initial.id]);
+          expect(reported).toEqual(["locked"]);
+          expect((yield* store.claims).map(({ id }) => id)).toEqual([initial.id]);
+        }),
+      ),
+  );
+
+  it.live("skips and reports malformed, mismatched, and non-file entries while listing", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-list-invalid-" });
+        const reported: Array<string> = [];
+        const store = yield* Layer.build(
+          State.layer({
+            root,
+            onInvalidState: (id) => Effect.sync(() => reported.push(id)),
+          }),
+        ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+        yield* store.save(initial);
+        yield* fs.makeDirectory(path.join(root, "malformed"));
+        yield* fs.writeFileString(path.join(root, "malformed", "state.json"), "{broken");
+        yield* fs.makeDirectory(path.join(root, "mismatched"));
+        yield* fs.writeFileString(
+          path.join(root, "mismatched", "state.json"),
+          yield* Schema.encodeEffect(Schema.fromJsonString(State.SavedStack))(initial),
+        );
+        yield* fs.makeDirectory(path.join(root, "directory", "state.json"), { recursive: true });
+        yield* fs.writeFileString(path.join(root, "stray-file"), "");
+
+        expect((yield* store.list).map(({ id }) => id)).toEqual([initial.id]);
+        expect(reported.toSorted()).toEqual(["directory", "malformed", "mismatched", "stray-file"]);
+      }),
+    ),
+  );
+
   it.effect("cleans up a cancelled Windows replacement and releases the state lock", () =>
     run(
       Effect.gen(function* () {

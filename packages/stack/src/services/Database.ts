@@ -261,6 +261,7 @@ const reconcileContainerPassword = Effect.fn("Database.reconcileContainerPasswor
     ),
 );
 
+/** Idempotent readiness reconciliation, so a session also re-runs it as its probe. */
 const health = Effect.fn("Database.health")((
   endpoint: BackendEndpoint,
   config: DatabaseConfig,
@@ -930,19 +931,21 @@ export const makeDatabase = (
             yield* Ref.set(endpoint, selectedEndpoint);
             const stderrTail = yield* Ref.make("");
             const stderrDrained = yield* publishLogs(process, logs, context.scope, stderrTail);
+            const setup = health(selectedEndpoint, config, Effect.void, {
+              fs,
+              instanceRoot,
+              version: config.version,
+              runtime: options.runtime,
+              markInitialized:
+                storage === undefined
+                  ? undefined
+                  : storage
+                      .markInitialized(config.version)
+                      .pipe(Effect.mapError((cause) => errorFor("health", cause))),
+            });
             return {
-              health: health(selectedEndpoint, config, Effect.void, {
-                fs,
-                instanceRoot,
-                version: config.version,
-                runtime: options.runtime,
-                markInitialized:
-                  storage === undefined
-                    ? undefined
-                    : storage
-                        .markInitialized(config.version)
-                        .pipe(Effect.mapError((cause) => errorFor("health", cause))),
-              }),
+              health: setup,
+              probe: setup,
               exit: processExit(process.exitCode, { tail: stderrTail, drained: stderrDrained }),
               stop: process.kill.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
               remove: fs.remove(socketPath, { recursive: true, force: true }).pipe(
@@ -959,30 +962,32 @@ export const makeDatabase = (
           yield* Ref.set(endpoint, selectedEndpoint);
           yield* publishLogs(launched, logs, context.scope);
           const session = runtimeFromContainer(launched, config.stopGraceSeconds === 0);
+          const setup = health(
+            selectedEndpoint,
+            config,
+            reconcileContainerPassword(
+              options.runtime,
+              launched.id,
+              config.databasePassword,
+              spawner,
+            ),
+            {
+              fs,
+              instanceRoot,
+              version: config.version,
+              runtime: options.runtime,
+              markInitialized:
+                storage === undefined
+                  ? undefined
+                  : storage
+                      .markInitialized(config.version)
+                      .pipe(Effect.mapError((cause) => errorFor("health", cause))),
+            },
+          );
           return {
             ...session,
-            health: health(
-              selectedEndpoint,
-              config,
-              reconcileContainerPassword(
-                options.runtime,
-                launched.id,
-                config.databasePassword,
-                spawner,
-              ),
-              {
-                fs,
-                instanceRoot,
-                version: config.version,
-                runtime: options.runtime,
-                markInitialized:
-                  storage === undefined
-                    ? undefined
-                    : storage
-                        .markInitialized(config.version)
-                        .pipe(Effect.mapError((cause) => errorFor("health", cause))),
-              },
-            ),
+            health: setup,
+            probe: setup,
             remove: session.remove.pipe(Effect.tap(() => Ref.set(endpoint, undefined))),
           } satisfies RuntimeSession;
         }),

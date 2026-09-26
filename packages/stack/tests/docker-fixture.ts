@@ -1,5 +1,6 @@
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Crypto, Effect, FileSystem, Path, Stream } from "effect";
+import { volumeNameFor } from "../src/storage/DockerDatabaseStorage.ts";
 import { cleanupDockerRoot } from "./docker-cleanup.ts";
 
 /** Runs a Docker CLI command and returns its combined output and exit code. */
@@ -48,7 +49,7 @@ export const makeDockerDatabaseRoot = Effect.fn("DockerTest.makeDatabaseRoot")(
             Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""),
           ),
         );
-      const volume = `supabase-db-${stateDigest.slice(0, 32)}`;
+      const volume = volumeNameFor(stateDigest);
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
           const inspected = yield* runDocker([
