@@ -609,23 +609,21 @@ for (const { name, make } of engines)
         }),
       ),
     );
+
+    it.live("refuses to clear a restore-stage root that is a symbolic link", () =>
+      live(
+        Effect.gen(function* () {
+          const { engine, shell, tool } = yield* setup(make);
+          const target = yield* engine.instance("target");
+          const victim = `${target.restoreStages}-victim`;
+          yield* shell(
+            `set -eu; ${tool}rm -rf ${shellQuote(target.restoreStages)}; ${tool}mkdir -p ${shellQuote(victim)}; printf kept > ${shellQuote(`${victim}/sentinel`)}; ${tool}ln -s ${shellQuote(victim)} ${shellQuote(target.restoreStages)}`,
+          );
+
+          const failure = yield* target.restoreSnapshot("absent").pipe(Effect.flip);
+          expect(failure.operation).toBe("clear");
+          expect(yield* shell(`${tool}cat ${shellQuote(`${victim}/sentinel`)}`)).toBe("kept");
+        }),
+      ),
+    );
   });
-
-describe("native database snapshot stages", () => {
-  it.live("refuses to clear a restore-stage root that is a symbolic link", () =>
-    live(
-      Effect.gen(function* () {
-        const { fs, engine } = yield* setup(native);
-        const target = yield* engine.instance("target");
-        const victim = `${target.root}-victim`;
-        yield* fs.makeDirectory(victim);
-        yield* fs.writeFileString(`${victim}/sentinel`, "kept");
-        yield* fs.symlink(victim, target.restoreStages);
-
-        const failure = yield* target.restoreSnapshot("absent").pipe(Effect.flip);
-        expect(failure.operation).toBe("clear");
-        expect(yield* fs.readFileString(`${victim}/sentinel`)).toBe("kept");
-      }),
-    ),
-  );
-});
