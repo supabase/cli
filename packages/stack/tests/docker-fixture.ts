@@ -3,7 +3,8 @@ import { Crypto, Effect, FileSystem, Path, Stream } from "effect";
 import { volumeNameFor } from "../src/storage/DockerDatabaseStorage.ts";
 import { cleanupDockerRoot } from "./docker-cleanup.ts";
 
-const runDocker = Effect.fn("DockerTest.runDocker")((args: ReadonlyArray<string>) =>
+/** Runs a Docker CLI command and returns its combined output and exit code. */
+export const runDocker = Effect.fn("DockerTest.runDocker")((args: ReadonlyArray<string>) =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

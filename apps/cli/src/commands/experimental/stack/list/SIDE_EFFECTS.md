@@ -23,10 +23,9 @@ registry prints `No managed stacks found.` Use `--output-format json` to obtain
 the full ID required by `--stack-id`; the text column shows only a prefix.
 
 JSON emits `{ "stacks": [...], "message": "" }`; stream-json wraps that data in
-one result event. Invalid state documents are skipped with a warning on stderr identifying each stack.
-Other registry read failures still fail discovery. State is never repaired or deleted;
-opening stacks and allocating ports still reject invalid documents. Target resolution for
-other stack commands also remains strict.
+one result event. State entries that cannot be read or decoded are skipped with a warning on
+stderr identifying each stack; only a failure to read the stacks directory itself fails
+discovery. State is never repaired or deleted.
 
 ## Flags and exit codes
 
