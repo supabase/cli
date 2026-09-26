@@ -284,7 +284,7 @@ const fixture = (
       },
       stop: Effect.die("unused"),
       destroy: Effect.die("unused"),
-      tools: { run: () => Effect.die("unused") },
+      commands: { run: () => Effect.die("unused") },
     } satisfies Stack;
     const identity = { projectRoot: "/project", branchContext: "main", stackName: "default" };
     const apiService = {

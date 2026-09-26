@@ -11,13 +11,16 @@ import {
   Predicate,
   Redacted,
   Ref,
+  Scope,
   Schedule,
   Stream,
 } from "effect";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { postgres } from "./Tools.ts";
-import * as ToolRunner from "./host/ToolRunner.ts";
+import { postgres } from "./Commands.ts";
+import * as CommandRunner from "./host/CommandRunner.ts";
+import { CommandError } from "./host/CommandRunner.ts";
+import type { PgProveOptions, PostgresCommand } from "./Commands.ts";
 import { makeDatabase } from "./services/Database.ts";
 import { makeService } from "./Service.ts";
 import { bindTcp, serveTcp } from "./Proxy.ts";
@@ -28,17 +31,47 @@ class PgProveTestError extends Data.TaggedError("PgProveTestError")<{
   readonly message: string;
 }> {}
 
-const makeTestToolRunner = (options: {
+const makeTestCommandRunner = (options: {
   readonly stackId: string;
   readonly root: string;
   readonly cacheRoot: string;
   readonly runtime: "native" | "docker" | "podman";
 }) =>
-  Layer.build(ToolRunner.layer(options)).pipe(
-    Effect.map((context) => Context.get(context, ToolRunner.Service)),
+  Layer.build(CommandRunner.layer(options)).pipe(
+    Effect.map((context) => Context.get(context, CommandRunner.Service)),
   );
 
-describe("finite PostgreSQL tools", { timeout: 180_000 }, () => {
+const runPostgres = (
+  runner: CommandRunner.Interface,
+  input: {
+    readonly postgres: PostgresCommand;
+    readonly args: ReadonlyArray<string>;
+    readonly env: Readonly<Record<string, string>>;
+    readonly pgProve?: PgProveOptions;
+    readonly stdin?: Stream.Stream<Uint8Array>;
+    readonly stdout: (bytes: Uint8Array) => Effect.Effect<void>;
+    readonly stderr: (bytes: Uint8Array) => Effect.Effect<void>;
+  },
+): Effect.Effect<
+  { readonly jobId: string; readonly exitCode: number },
+  CommandError,
+  Scope.Scope
+> =>
+  runner.run({
+    command: {
+      type: "postgres",
+      command: input.postgres,
+      args: input.args,
+      env: input.env,
+      ...(input.pgProve === undefined ? {} : { pgProve: input.pgProve }),
+      stdin: input.stdin !== undefined,
+    },
+    stdin: input.stdin,
+    stdout: input.stdout,
+    stderr: input.stderr,
+  });
+
+describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
   for (const runtime of ["native", "docker"] as const) {
     it.live(`${runtime} runs SQL from stdin, streams a dump, and returns client failure`, () =>
       Effect.scoped(
@@ -74,7 +107,7 @@ describe("finite PostgreSQL tools", { timeout: 180_000 }, () => {
               endpoint.kind === "unix" ? { path: `${endpoint.path}/.s.PGSQL.5432` } : endpoint,
             ),
           ).pipe(Effect.forkScoped);
-          const runner = yield* makeTestToolRunner({ root, cacheRoot, stackId, runtime });
+          const runner = yield* makeTestCommandRunner({ root, cacheRoot, stackId, runtime });
           const env = {
             PGHOST: runtime === "native" ? "127.0.0.1" : "host.docker.internal",
             PGPORT: String(listener.address.port),
@@ -90,8 +123,8 @@ describe("finite PostgreSQL tools", { timeout: 180_000 }, () => {
             stderr: (bytes: Uint8Array) =>
               Ref.update(stderr, (text) => text + new TextDecoder().decode(bytes)),
           };
-          const sql = yield* runner.run({
-            tool: postgres.psql({ major: 17 }),
+          const sql = yield* runPostgres(runner, {
+            postgres: postgres.psql({ major: 17 }),
             args: ["-X", "-v", "ON_ERROR_STOP=1"],
             env,
             stdin: Stream.make(
@@ -104,8 +137,8 @@ describe("finite PostgreSQL tools", { timeout: 180_000 }, () => {
           expect(sql.exitCode).toBe(0);
           expect(yield* Ref.get(stdout)).toContain("streamed-row");
           yield* Ref.set(stdout, "");
-          const dump = yield* runner.run({
-            tool: postgres.pgDump({ major: 17 }),
+          const dump = yield* runPostgres(runner, {
+            postgres: postgres.pgDump({ major: 17 }),
             args: ["--data-only", "--table=tool_story"],
             env,
             ...output,
@@ -114,8 +147,8 @@ describe("finite PostgreSQL tools", { timeout: 180_000 }, () => {
           expect(dump.jobId).not.toBe(sql.jobId);
           expect(yield* Ref.get(stdout)).toContain("COPY public.tool_story");
           expect(yield* Ref.get(stdout)).toContain("streamed-row");
-          const failed = yield* runner.run({
-            tool: postgres.psql({ major: 17 }),
+          const failed = yield* runPostgres(runner, {
+            postgres: postgres.psql({ major: 17 }),
             args: ["-X", "-v", "ON_ERROR_STOP=1", "-c", "SELECT missing_column FROM tool_story"],
             env,
             ...output,
@@ -123,18 +156,18 @@ describe("finite PostgreSQL tools", { timeout: 180_000 }, () => {
           expect(failed.exitCode).not.toBe(0);
           expect(yield* Ref.get(stderr)).toContain("missing_column");
           const rejected = yield* Effect.flip(
-            runner.run({
-              tool: postgres.psql({ major: 17 }),
+            runPostgres(runner, {
+              postgres: postgres.psql({ major: 17 }),
               args: [],
               env,
               pgProve: { mounts: [] },
               ...output,
             }),
           );
-          expect(rejected.message).toContain("pgProve options require the pg_prove tool");
+          expect(rejected.message).toContain("pgProve options require the pg_prove command");
           yield* Ref.set(stderr, "");
-          const early = yield* runner.run({
-            tool: postgres.psql({ major: 17 }),
+          const early = yield* runPostgres(runner, {
+            postgres: postgres.psql({ major: 17 }),
             args: ["-X", "-v", "ON_ERROR_STOP=1"],
             env,
             stdin: Stream.make(
@@ -147,26 +180,24 @@ describe("finite PostgreSQL tools", { timeout: 180_000 }, () => {
           expect(early.exitCode).not.toBe(0);
           expect(yield* Ref.get(stderr)).toContain("missing_column");
           const attached = yield* Deferred.make<void>();
-          const job = yield* runner
-            .run({
-              tool: postgres.psql({ major: 17 }),
-              args: ["-X", "-q", "-t", "-A"],
-              env: { ...env, PGAPPNAME: "attached-tool-story" },
-              stdin: Stream.make(new TextEncoder().encode("SELECT 'attached-ready';\n")).pipe(
-                Stream.concat(Stream.never),
-              ),
-              stdout: (bytes) =>
-                new TextDecoder().decode(bytes).includes("attached-ready")
-                  ? Deferred.succeed(attached, undefined).pipe(Effect.asVoid)
-                  : Effect.void,
-              stderr: output.stderr,
-            })
-            .pipe(Effect.forkChild);
+          const job = yield* runPostgres(runner, {
+            postgres: postgres.psql({ major: 17 }),
+            args: ["-X", "-q", "-t", "-A"],
+            env: { ...env, PGAPPNAME: "attached-tool-story" },
+            stdin: Stream.make(new TextEncoder().encode("SELECT 'attached-ready';\n")).pipe(
+              Stream.concat(Stream.never),
+            ),
+            stdout: (bytes) =>
+              new TextDecoder().decode(bytes).includes("attached-ready")
+                ? Deferred.succeed(attached, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            stderr: output.stderr,
+          }).pipe(Effect.forkChild);
           yield* Deferred.await(attached);
           yield* Fiber.interrupt(job);
           yield* Ref.set(stdout, "");
-          const remaining = yield* runner.run({
-            tool: postgres.psql({ major: 17 }),
+          const remaining = yield* runPostgres(runner, {
+            postgres: postgres.psql({ major: 17 }),
             args: [
               "-X",
               "-t",
@@ -222,7 +253,7 @@ describe("finite PostgreSQL tools", { timeout: 180_000 }, () => {
                 endpoint.kind === "unix" ? { path: `${endpoint.path}/.s.PGSQL.5432` } : endpoint,
               ),
             ).pipe(Effect.forkScoped);
-            const runner = yield* makeTestToolRunner({ root, cacheRoot, stackId, runtime });
+            const runner = yield* makeTestCommandRunner({ root, cacheRoot, stackId, runtime });
             const env = {
               PGHOST: runtime === "native" ? "127.0.0.1" : "host.docker.internal",
               PGPORT: String(listener.address.port),
@@ -246,16 +277,16 @@ describe("finite PostgreSQL tools", { timeout: 180_000 }, () => {
               stderr: (bytes: Uint8Array) =>
                 Ref.update(stderr, (text) => text + new TextDecoder().decode(bytes)),
             };
-            const extension = yield* runner.run({
-              tool: postgres.psql({ major }),
+            const extension = yield* runPostgres(runner, {
+              postgres: postgres.psql({ major }),
               args: ["-X", "-v", "ON_ERROR_STOP=1", "-c", "CREATE EXTENSION IF NOT EXISTS pgtap"],
               env,
               ...output,
             });
             expect(extension.exitCode).toBe(0);
             const pgProve = (file: string) =>
-              runner.run({
-                tool: postgres.pgProve({ major }),
+              runPostgres(runner, {
+                postgres: postgres.pgProve({ major }),
                 args: ["--ext", ".sql", file, "--verbose"],
                 env,
                 pgProve: {
@@ -295,34 +326,32 @@ describe("finite PostgreSQL tools", { timeout: 180_000 }, () => {
                   "SELECT plan(1);\nSELECT pass('pgprove-idle');\n\\watch 60\n",
                 );
                 const cancelOutput = yield* Ref.make("");
-                const running = yield* runner
-                  .run({
-                    tool: postgres.pgProve({ major }),
-                    args: ["--ext", ".sql", "cancel-ready.sql", "cancel.sql", "--verbose"],
-                    env: { ...env, PGAPPNAME: applicationName },
-                    pgProve: {
-                      mounts: [{ source: tests, target: "/tests" }],
-                      cwd: tests,
-                      workingDir: "/tests",
-                    },
-                    stdout: (bytes) =>
-                      Effect.gen(function* () {
-                        yield* Ref.update(
-                          cancelOutput,
-                          (text) => text + new TextDecoder().decode(bytes),
-                        );
-                        if ((yield* Ref.get(cancelOutput)).includes("pgprove-ready"))
-                          yield* Deferred.succeed(ready, undefined);
-                      }),
-                    stderr: output.stderr,
-                  })
-                  .pipe(Effect.forkChild);
+                const running = yield* runPostgres(runner, {
+                  postgres: postgres.pgProve({ major }),
+                  args: ["--ext", ".sql", "cancel-ready.sql", "cancel.sql", "--verbose"],
+                  env: { ...env, PGAPPNAME: applicationName },
+                  pgProve: {
+                    mounts: [{ source: tests, target: "/tests" }],
+                    cwd: tests,
+                    workingDir: "/tests",
+                  },
+                  stdout: (bytes) =>
+                    Effect.gen(function* () {
+                      yield* Ref.update(
+                        cancelOutput,
+                        (text) => text + new TextDecoder().decode(bytes),
+                      );
+                      if ((yield* Ref.get(cancelOutput)).includes("pgprove-ready"))
+                        yield* Deferred.succeed(ready, undefined);
+                    }),
+                  stderr: output.stderr,
+                }).pipe(Effect.forkChild);
                 yield* Deferred.await(ready);
                 const idleOutput = yield* Ref.make("");
                 const idle = Effect.gen(function* () {
                   yield* Ref.set(idleOutput, "");
-                  const probe = yield* runner.run({
-                    tool: postgres.psql({ major }),
+                  const probe = yield* runPostgres(runner, {
+                    postgres: postgres.psql({ major }),
                     args: [
                       "-X",
                       "-t",
@@ -347,8 +376,8 @@ describe("finite PostgreSQL tools", { timeout: 180_000 }, () => {
                 const remainingOutput = yield* Ref.make("");
                 const remaining = Effect.gen(function* () {
                   yield* Ref.set(remainingOutput, "");
-                  const probe = yield* runner.run({
-                    tool: postgres.psql({ major }),
+                  const probe = yield* runPostgres(runner, {
+                    postgres: postgres.psql({ major }),
                     args: [
                       "-X",
                       "-t",

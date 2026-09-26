@@ -163,7 +163,7 @@ function generateStackApi(workdir: string) {
     },
     stop: unusedStack,
     destroy: unusedStack,
-    tools: { run: unusedStackFn },
+    commands: { run: unusedStackFn },
   };
   const identity = { projectRoot: workdir, branchContext: "main", stackName: "default" };
   return Layer.succeed(StackApi, {

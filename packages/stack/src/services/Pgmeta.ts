@@ -37,5 +37,5 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
     }),
   args: () => Effect.succeed([]),
   mounts: () => Effect.succeed([]),
-  startup: [],
+  startupCommands: [],
 });

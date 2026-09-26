@@ -9,7 +9,8 @@ The package accepts service configuration directly. Loading CLI configuration, m
 The Promise entrypoint accepts plain configuration:
 
 ```ts
-import { create, postgres } from "@supabase/stack";
+import { create } from "@supabase/stack";
+import { postgres } from "@supabase/stack/commands";
 
 const stack = await create({
   projectRoot: process.cwd(),
@@ -34,7 +35,7 @@ await database.ready(); // initialization and health completed
 const { databaseUrl } = await database.credentials({ from: "runtime" });
 
 if (databaseUrl === undefined) throw new Error("Database endpoint missing");
-await stack.tools.run(postgres.psql({ major: 17 }), {
+await stack.commands.run(postgres.psql({ major: 17 }), {
   args: ["--dbname", databaseUrl, "--command", "SELECT 1"],
   stdout: (bytes) => {
     process.stdout.write(bytes);
@@ -43,6 +44,11 @@ await stack.tools.run(postgres.psql({ major: 17 }), {
     process.stderr.write(bytes);
   },
 });
+
+// Runs recipe initialization without registering a service instance.
+const { authDatabaseUrl } = await database.credentials({ from: "runtime" });
+if (authDatabaseUrl === undefined) throw new Error("Auth database URL missing");
+await stack.commands.run({ type: "auth.initialize", databaseUrl: authDatabaseUrl });
 
 await database.stop();
 await database.saveSnapshot("baseline");
@@ -67,7 +73,7 @@ Pass `startOwner: true` to `open` when live status and other owner-backed operat
 
 `destroy` normally returns `{ runtimeCleanup: "complete" }`. When no owner is running and the stack's container engine reports that its daemon cannot be reached, `destroy` removes the local registration and host data anyway and returns `{ runtimeCleanup: "skipped", engine, cleanupCommands }`; its containers and any database data in engine volumes remain, and `cleanupCommands` are the shell commands that remove them once the engine is running. If some host data cannot be deleted by the current user, `destroy` fails before removing anything so it can be retried with the engine running.
 
-The stack owns database, Functions bootstrap, and tool-job directories below its data directory. Storage uploads remain at the caller-supplied Storage `filePath` and are preserved when the stack is destroyed; the caller owns that directory. Host metadata remains under `stateRoot`; native database data uses host files. Docker database data normally uses a managed volume, while existing host data is retained through the host-backed fallback. A host marker records the selected Docker storage and detects a missing or mismatched volume; deleting that volume loses the associated database data. Native snapshot entries live below `cacheRoot`. Docker snapshots share the managed data volume in a separate namespace derived from `cacheRoot`, so they survive source destruction and can use filesystem cloning. A Docker cache hit requires the same daemon, `stateRoot`, and `cacheRoot`. There is no portable tar snapshot API.
+The stack owns database, Functions bootstrap, and command-job directories below its data directory. Storage uploads remain at the caller-supplied Storage `filePath` and are preserved when the stack is destroyed; the caller owns that directory. Host metadata remains under `stateRoot`; native database data uses host files. Docker database data normally uses a managed volume, while existing host data is retained through the host-backed fallback. A host marker records the selected Docker storage and detects a missing or mismatched volume; deleting that volume loses the associated database data. Native snapshot entries live below `cacheRoot`. Docker snapshots share the managed data volume in a separate namespace derived from `cacheRoot`, so they survive source destruction and can use filesystem cloning. A Docker cache hit requires the same daemon, `stateRoot`, and `cacheRoot`. There is no portable tar snapshot API.
 
 Omitted database `jwtSecret` and `rootKey` inputs use the shared local-development values exported
 as `DEFAULT_LOCAL_JWT_SECRET` and `DEFAULT_POSTGRES_ROOT_KEY`. Explicit values override these defaults.
@@ -135,7 +141,7 @@ Bindings supply ordinary configuration values; a URL alone never creates a depen
 
 - Instance methods affect that instance, subject to dependency checks.
 - Composition methods affect selected members; startup also includes declared prerequisites.
-- `stack.stop()` stops every owned instance and attached tool and returns after confirming owner exit. It requires a live owner; an unavailable owner cannot confirm cleanup.
+- `stack.stop()` stops every owned instance and attached command and returns after confirming owner exit. It requires a live owner; an unavailable owner cannot confirm cleanup.
 - `stack.destroy()` additionally removes owned data and registrations, and also waits for owner exit.
 - `stack.close()` disposes the client and invalidates its active observation iterators. Stopping the last instance leaves the owner available.
 
@@ -155,7 +161,7 @@ try {
 }
 ```
 
-Each service exposes `status`, `followStatus`, `logs`, and `credentials`. Observations include the currently bound public endpoints, including listeners for sleeping services. Credentials default to host addressing. Use `from: "runtime"` for a URL passed to a service or tool container.
+Each service exposes `status`, `followStatus`, `logs`, and `credentials`. Observations include the currently bound public endpoints, including listeners for sleeping services. Credentials default to host addressing. Use `from: "runtime"` for a URL passed to a service or command container.
 
 ## Effect consumers
 
@@ -179,7 +185,7 @@ await Effect.runPromise(
 );
 ```
 
-Cancelling an admitted lifecycle caller ends its wait; the owner finishes the operation. Cancelling an attached tool ends that job and cleans up its resources. Tool input and output stream with backpressure; the result contains a job ID and exit code, not collected output. Promise tool sinks should return a Promise when the destination requires waiting for capacity.
+Cancelling an admitted lifecycle caller ends its wait; the owner finishes the operation. Cancelling an attached command ends that job and cleans up its resources. Command input and output stream with backpressure; the result contains a job ID and exit code, not collected output. Promise output sinks should return a Promise when the destination requires waiting for capacity.
 
 For disposable Effect test fixtures, `acquireUseRelease` runs teardown on failure and interruption while retaining typed cleanup errors:
 

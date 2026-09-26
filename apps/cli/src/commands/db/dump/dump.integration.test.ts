@@ -33,7 +33,9 @@ import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
 import type { RunPostgresClientOptions } from "../../../command-internal/bundled-postgres-client.ts";
-import type { DatabaseInstance, ServiceCreation, Stack } from "@supabase/stack/effect";
+import type { DatabaseInstance, ServiceCreation, Stack, StackError } from "@supabase/stack/effect";
+import type { InitializationCommand, PostgresCommand } from "@supabase/stack/commands";
+import type { InitializationCommandOptions, PostgresCommandOptions } from "@supabase/stack/effect";
 import type { DbDumpFlags } from "./dump.command.ts";
 import { dbDump } from "./dump.handler.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
@@ -66,6 +68,26 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
     },
     endpoints: { sql: { port: 54322 } },
   };
+  function runCommand<E, R>(
+    command: PostgresCommand,
+    options: PostgresCommandOptions<E, R>,
+  ): Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E | StackError, R>;
+  function runCommand<E = never, R = never>(
+    command: InitializationCommand,
+    options?: InitializationCommandOptions<E, R>,
+  ): Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E | StackError, R>;
+  function runCommand<E, R>(
+    command: PostgresCommand | InitializationCommand,
+    options?: PostgresCommandOptions<E, R> | InitializationCommandOptions<E, R>,
+  ) {
+    if ("type" in command) return Effect.die("initializer is unused");
+    if (options?.stdout === undefined) return Effect.die("Postgres command requires a stdout sink");
+    const stdout = options.stdout;
+    return Effect.gen(function* () {
+      yield* stdout(new TextEncoder().encode('CREATE TABLE "public" (id integer);\n'));
+      return { jobId: "job", exitCode: 0 };
+    });
+  }
   const database: DatabaseInstance = {
     id,
     service: "database",
@@ -119,19 +141,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
     },
     stop: Effect.void,
     destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
-    tools: {
-      run: <E, R>(
-        _tool: { readonly command: string; readonly major: number },
-        options: {
-          readonly stdout: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
-          readonly stderr: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
-        },
-      ): Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E, R> =>
-        Effect.gen(function* () {
-          yield* options.stdout(new TextEncoder().encode('CREATE TABLE "public" (id integer);\n'));
-          return { jobId: "job", exitCode: 0 };
-        }),
-    },
+    commands: { run: runCommand },
   } satisfies Stack;
   return Layer.succeed(StackApi, {
     create: () => Effect.succeed(stack),

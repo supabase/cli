@@ -131,7 +131,7 @@ const makeFixture = (root: string, failPreparation = false) => {
     },
     stop: Effect.void,
     destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
-    tools: { run: () => Effect.die("unused") },
+    commands: { run: () => Effect.die("unused") },
   };
   const output = mockOutput();
   const telemetry = mockTelemetryStateTracked();

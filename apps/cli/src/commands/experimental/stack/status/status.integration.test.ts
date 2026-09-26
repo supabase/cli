@@ -137,7 +137,7 @@ const makeStack = (
   },
   stop: Effect.die("unused"),
   destroy: Effect.die("unused"),
-  tools: {
+  commands: {
     run: (_tool, _options) => Effect.die("unused"),
   },
 });

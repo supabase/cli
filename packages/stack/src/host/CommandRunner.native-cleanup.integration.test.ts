@@ -1,10 +1,10 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Path } from "effect";
+import { Context, Effect, FileSystem, Layer, Path, Stream } from "effect";
 import { systemError } from "effect/PlatformError";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { postgres } from "../Tools.ts";
-import * as ToolRunner from "./ToolRunner.ts";
+import { postgres } from "../Commands.ts";
+import * as CommandRunner from "./CommandRunner.ts";
 
 it.live.skipIf(process.platform === "win32")(
   "retries failed native workload cleanup when the stack runner is cleaned up",
@@ -52,18 +52,23 @@ it.live.skipIf(process.platform === "win32")(
             });
           }),
         );
-        const layer = ToolRunner.layer({
+        const layer = CommandRunner.layer({
           stackId: "native-cleanup-test",
           root,
           cacheRoot,
           runtime: "native",
         }).pipe(Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)));
-        const runner = Context.get(yield* Layer.build(layer), ToolRunner.Service);
+        const runner = Context.get(yield* Layer.build(layer), CommandRunner.Service);
         const result = yield* runner
           .run({
-            tool: postgres.psql({ major: 17 }),
-            args: ["--version"],
-            env: {},
+            command: {
+              type: "postgres",
+              command: postgres.psql({ major: 17 }),
+              args: ["--version"],
+              env: {},
+              stdin: false,
+            },
+            stdin: Stream.empty,
             stdout: () => Effect.void,
             stderr: () => Effect.void,
           })
