@@ -1,10 +1,10 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path, Redacted, Schema, Stream } from "effect";
+import { Effect, FileSystem, Layer, Path, Redacted, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import { tmpdir } from "node:os";
-import { find, open, postgres } from "./effect.ts";
+import { discover, open, postgres } from "./effect.ts";
 import * as PromiseStack from "./index.ts";
 import { assertOwnerExited, captureOwnerPid } from "../tests/owner.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
@@ -432,9 +432,12 @@ for (const runtime of ["node", "bun"] as const) {
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const stateRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: `stack-test-client-${runtime}-`,
+        });
         const child = yield* ChildProcess.make(
           runtime === "bun" ? process.execPath : "node",
-          [new URL("../tests/test-stack-client.ts", import.meta.url).pathname],
+          [new URL("../tests/test-stack-client.ts", import.meta.url).pathname, stateRoot],
           { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
         );
         const [stdout, stderr, code] = yield* Effect.all(
@@ -451,9 +454,7 @@ for (const runtime of ["node", "bun"] as const) {
             Schema.Struct({ stackId: Schema.String, projectRoot: Schema.String }),
           ),
         )(stdout.trim());
-        expect(
-          yield* find({ stateRoot: `${tmpdir()}/supabase-stack-tests`, id: disposed.stackId }),
-        ).toEqual(Option.none());
+        expect(yield* discover({ stateRoot })).toEqual([]);
         expect(yield* fs.exists(disposed.projectRoot)).toBe(false);
       }).pipe(
         Effect.scoped,

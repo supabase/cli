@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This fixture exercises the Promise testing API as a non-Effect consumer does. */
-import { postgres, type Stack } from "../src/index.ts";
+import { discover, postgres, type Stack } from "../src/index.ts";
 import { createTestStack } from "../src/testing.ts";
 
 const check = (condition: boolean, message: string) => {
@@ -25,9 +25,17 @@ const readRows = async (restUrl: string) => {
   return JSON.stringify(JSON.parse(body));
 };
 
+const stateRoot = process.argv[2];
+if (stateRoot === undefined) throw new Error("Missing fixture state root");
+
 let disposed: { readonly stackId: string; readonly projectRoot: string } | undefined;
 {
-  await using test = await createTestStack({ services: ["database", "rest"] });
+  await using test = await createTestStack({ services: ["database", "rest"], stateRoot });
+  const registered = await discover({ stateRoot });
+  check(
+    registered.some((entry) => entry.definition.id === test.stack.id),
+    "Test stack is not registered under the fixture state root",
+  );
   disposed = { stackId: test.stack.id, projectRoot: test.projectRoot };
   const { databaseUrl } = await test.services.database.credentials({ from: "runtime" });
   const { url: restUrl } = await test.services.rest.credentials();

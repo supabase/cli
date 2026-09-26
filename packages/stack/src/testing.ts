@@ -249,6 +249,8 @@ const make = Effect.fn("TestStack.make")(
                   }),
                 ),
             }),
+            // Signal aborts and test timeouts interrupt; the shared stack must not stay stopped.
+            Effect.onInterrupt(() => start(operation).pipe(Effect.catch(Effect.logWarning))),
           );
     const testStack: EffectTestStack<K> = {
       stack,

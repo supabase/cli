@@ -1,6 +1,18 @@
 import { NodeHttpClient, NodeServices, NodeSocketServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Cause, ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Stream,
+} from "effect";
 import { discover, type Stack } from "./effect.ts";
 import { makeTestStack } from "./testing.ts";
 import { postgres } from "./Tools.ts";
@@ -107,6 +119,46 @@ it.live(
 
       // Restore the real marker so destroying the stack during test cleanup succeeds.
       yield* fs.writeFileString(ownerFile, originalMarker);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    ),
+  { timeout: 120_000 },
+);
+
+it.live(
+  "restarts the composition when a checkpoint is interrupted after the stack stops",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-interrupt-" });
+      const test = yield* makeTestStack({ runtime: "native", stateRoot });
+      const database = test.services.database;
+      const subscribed = yield* Deferred.make<void>();
+      const stopped = yield* Deferred.make<void>();
+      yield* database.followStatus.pipe(
+        Stream.runForEach((status) =>
+          Deferred.succeed(subscribed, undefined).pipe(
+            Effect.andThen(
+              status.lifecycle === "stopped" ? Deferred.succeed(stopped, undefined) : Effect.void,
+            ),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(subscribed);
+
+      const checkpoint = yield* test.checkpoint("interrupted").pipe(Effect.forkScoped);
+      yield* Deferred.await(stopped);
+      yield* Fiber.interrupt(checkpoint);
+
+      expect(Exit.hasInterrupts(yield* Fiber.await(checkpoint))).toBe(true);
+      const status = yield* database.status;
+      expect(status.lifecycle).toBe("running");
+      expect(status.health).toBe("healthy");
+      const { databaseUrl } = yield* database.credentials();
+      if (databaseUrl === undefined) return yield* Effect.die("Database URL missing");
+      expect(yield* sql(test.stack, databaseUrl, "SELECT 1")).toBe("1");
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
