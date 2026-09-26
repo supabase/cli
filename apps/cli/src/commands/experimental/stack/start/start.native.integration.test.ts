@@ -145,8 +145,8 @@ enabled = false
 enabled = false
 `;
 
-const makeLayers = (root: string, apiLayer = liveStackApi) => {
-  const settings = mockCommandSettings({ workdir: root, supabaseHome: root });
+const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
+  const settings = mockCommandSettings({ workdir, supabaseHome: root });
   const resolver = stackTargetResolverLayer.pipe(
     Layer.provide(Layer.mergeAll(BunServices.layer, settings, apiLayer)),
   );
@@ -435,5 +435,66 @@ describe("experimental stack start native lifecycle", () => {
         ).pipe(Effect.provide(fixture.layer));
       }).pipe(Effect.provide(BunServices.layer)),
     { timeout: 60_000 },
+  );
+
+  it.live.skipIf(process.platform === "win32")(
+    "restarts a stack created through a symlinked workdir after it is stopped",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-symlink-" }),
+        );
+        const project = path.join(root, "project");
+        const workdir = path.join(root, "workdir");
+        yield* fs.makeDirectory(path.join(project, "supabase"), { recursive: true });
+        yield* fs.symlink(project, workdir);
+        yield* fs.writeFileString(
+          path.join(project, "supabase", "config.toml"),
+          projectConfig.replace(
+            "[edge_runtime]\nenabled = false",
+            "[edge_runtime]\nenabled = true",
+          ),
+        );
+        const fixture = makeLayers(root, liveStackApi, workdir);
+        const onlyFunctions = excluded.filter((name) => name !== "functions");
+        yield* Effect.ensuring(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            const locations = {
+              stateRoot: path.join(root, "stacks"),
+              cacheRoot: path.join(root, "cache"),
+            };
+            const functionsRoot = Effect.fn("functionsRoot")(function* (id: string) {
+              const stack = yield* api.open({ ...locations, id });
+              const functions = (yield* stack.services.list).find(
+                (instance) => instance.service === "functions",
+              );
+              if (functions === undefined) return yield* Effect.die("Functions missing");
+              const status = yield* functions.status;
+              return {
+                id: functions.id,
+                root:
+                  status.config.service === "functions" ? status.config.config.functionsRoot : "",
+              };
+            });
+            const stackId = yield* stackStart(flags(onlyFunctions));
+            const first = yield* functionsRoot(stackId);
+            expect(first.root.startsWith(project)).toBe(true);
+            yield* (yield* api.open({ ...locations, id: stackId })).stop;
+
+            const restartedId = yield* stackStart(flags(onlyFunctions));
+
+            expect(restartedId).toBe(stackId);
+            expect(yield* functionsRoot(restartedId)).toEqual(first);
+          }),
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(BunServices.layer)),
+    { timeout: 180_000 },
   );
 });

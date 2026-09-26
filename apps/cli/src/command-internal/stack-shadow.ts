@@ -4,7 +4,7 @@ import { CommandSettings } from "../config/command-settings.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { skippedRuntimeCleanupWarning, StackApi } from "./stack-api.ts";
-import { StackCatalogSetup } from "./stack-catalog-setup.ts";
+import { initializeStackDatabase } from "./stack-bootstrap.ts";
 import { stackProjectRuntime } from "./stack-local-database.ts";
 import { defaultStackRuntime } from "./stack-runtime.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
@@ -145,9 +145,8 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
   } else {
     yield* startReady(database);
   }
-  const catalog = yield* StackCatalogSetup;
   if (!restored)
-    yield* catalog.apply({
+    yield* initializeStackDatabase({
       target: {
         stack,
         database,

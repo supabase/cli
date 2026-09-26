@@ -61,30 +61,40 @@ vector_port = 59001
         realtime?.service === "realtime" ? realtime.config.secretKeyBase : undefined,
       ).toBeUndefined();
       expect(services.find((s) => s.service === "vector")?.endpoints?.http?.port).toBe(59001);
+      // A composition binds each database URL before launch.
+      const bound = <C extends { readonly config: object }>(creation: C) => ({
+        ...creation,
+        config: {
+          ...creation.config,
+          databaseUrl: "postgresql://supabase_admin@127.0.0.1/postgres",
+        },
+      });
       for (const container of [false, true]) {
         for (const service of services) {
           switch (service.service) {
             case "rest":
-              expect(yield* restSpec().env(service, new Map(), container)).toMatchObject({
+              expect(yield* restSpec().env(bound(service), new Map(), container)).toMatchObject({
                 PGRST_DB_EXTRA_SEARCH_PATH: "public,extensions,custom",
               });
               break;
             case "pooler":
-              expect(yield* poolerSpec().env(service, new Map(), container)).toMatchObject({
+              expect(yield* poolerSpec().env(bound(service), new Map(), container)).toMatchObject({
                 TENANT_ID: "pooler-dev",
                 DEFAULT_POOL_SIZE: "7",
                 MAX_CLIENT_CONN: "42",
               });
               break;
             case "realtime":
-              expect(yield* realtimeSpec().env(service, new Map(), container)).toMatchObject({
-                MAX_HEADER_LENGTH: "8192",
-                ERL_AFLAGS: "-proto_dist inet6_tcp",
-                DB_IP_VERSION: "ipv4",
-              });
+              expect(yield* realtimeSpec().env(bound(service), new Map(), container)).toMatchObject(
+                {
+                  MAX_HEADER_LENGTH: "8192",
+                  ERL_AFLAGS: "-proto_dist inet6_tcp",
+                  DB_IP_VERSION: "ipv4",
+                },
+              );
               break;
             case "storage":
-              expect(yield* storageSpec().env(service, new Map(), container)).toMatchObject({
+              expect(yield* storageSpec().env(bound(service), new Map(), container)).toMatchObject({
                 S3_PROTOCOL_ENABLED: "false",
                 VECTOR_ENABLED: "false",
                 VECTOR_MAX_BUCKETS: "3",
@@ -304,6 +314,7 @@ allow_dynamic_registration = true
           ...auth,
           config: {
             ...auth.config,
+            databaseUrl: "postgresql://supabase_auth_admin@127.0.0.1/postgres",
             smtpUrl: "smtp://127.0.0.1:1025",
           },
         },

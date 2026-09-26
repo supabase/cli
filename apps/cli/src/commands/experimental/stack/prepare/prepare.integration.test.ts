@@ -119,6 +119,7 @@ const makeFixture = (root: string, failPreparation = false) => {
     },
     credentials: { get: Effect.die("unused") },
     composition: {
+      plan: () => Effect.succeed([]),
       supabase: () => Effect.die("prepare must not change the composition"),
       configure: () => Effect.void,
       describe: Effect.succeed({
@@ -148,7 +149,7 @@ const makeFixture = (root: string, failPreparation = false) => {
       create: () => Effect.succeed(stack),
       open: () => Effect.succeed(stack),
       discover: () => Effect.succeed([]),
-      resolveIdentity: () => Effect.die("unused"),
+      find: () => Effect.die("unused"),
     }),
   );
   return {

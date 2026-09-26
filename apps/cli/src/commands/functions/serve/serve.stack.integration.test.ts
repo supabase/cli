@@ -266,6 +266,7 @@ const fixture = (
       },
       credentials: { get: Effect.succeed(stackCredentials) },
       composition: {
+        plan: () => Effect.succeed([]),
         describe: Effect.succeed({
           members:
             options.standaloneProjectRoot === undefined
@@ -290,22 +291,22 @@ const fixture = (
     const apiService = {
       create: () => Effect.die("unused"),
       open: () => Effect.succeed(stack),
-      discover: () =>
-        Effect.succeed([
-          {
+      discover: () => Effect.die("unused"),
+      find: () =>
+        Effect.succeed(
+          Option.some({
             definition: {
               id: stack.id,
               identity,
-              runtime: "native",
+              runtime: "native" as const,
               instances: [],
-              lifetime: "detached",
+              lifetime: "detached" as const,
               composition: { members: [], dependencies: [] },
               ports: [],
             },
             host: undefined,
-          },
-        ]),
-      resolveIdentity: () => Effect.succeed(identity),
+          }),
+        ),
     } satisfies StackApi["Service"];
     const api = Layer.succeed(StackApi, apiService);
     const layer = Layer.mergeAll(

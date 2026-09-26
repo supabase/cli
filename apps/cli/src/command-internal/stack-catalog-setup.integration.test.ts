@@ -48,13 +48,12 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                   },
                   {
                     service: "auth",
-                    config: { databaseUrl: "postgresql://placeholder", jwtSecret },
+                    config: { jwtSecret },
                     endpoints: { http: { port: "auto" } },
                   },
                   {
                     service: "storage",
                     config: {
-                      databaseUrl: "postgresql://placeholder",
                       jwtSecret,
                       filePath: `${root}/unused-storage`,
                     },
@@ -62,7 +61,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                   },
                   {
                     service: "realtime",
-                    config: { databaseUrl: "postgresql://placeholder", jwtSecret },
+                    config: { jwtSecret },
                     endpoints: { http: { port: "auto" }, rpc: { port: "auto" } },
                   },
                 ]);

@@ -19,10 +19,12 @@ after that preflight, the shutdown error remains a failure.
 Text confirms each successful shutdown and identifies each unavailable owner.
 JSON and stream-json success data contain `stopped` and `unavailable` ID arrays.
 A missing default selection reports `found: false`; an unknown explicit name or
-ID fails. `--all` attempts every selected reachable owner and reports failures
-with their IDs. State entries that cannot be read or decoded are skipped with a
-warning on stderr identifying each stack; only a failure to read the stacks
-directory itself fails discovery.
+ID fails. A single selection reads only the selected stack's state document; an
+unreadable document fails the selection instead of being reported as missing.
+`--all` attempts every selected reachable owner and reports failures with their
+IDs. It skips state entries that cannot be read or decoded with a warning on
+stderr identifying each stack; only a failure to read the stacks directory
+itself fails discovery.
 
 ## Files and network
 

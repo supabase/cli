@@ -1,4 +1,5 @@
 import { Data, Effect, FileSystem, Predicate } from "effect";
+import type { ServiceCreationInput } from "@supabase/stack/effect";
 import { parseDotEnv } from "./dotenv.ts";
 import {
   actionability,
@@ -59,3 +60,14 @@ export const readStackFunctionsEnv = Effect.fn("StackFunctionsEnv.read")(functio
     });
   return env;
 });
+
+/** Adds the project Functions dotenv values to a Functions creation; configured values win. */
+export const withProjectFunctionsEnv = (creation: ServiceCreationInput) =>
+  creation.service === "functions"
+    ? readStackFunctionsEnv(`${creation.config.functionsRoot}/.env`, true).pipe(
+        Effect.map((env): ServiceCreationInput => ({
+          ...creation,
+          config: { ...creation.config, env: { ...env, ...creation.config.env } },
+        })),
+      )
+    : Effect.succeed(creation);

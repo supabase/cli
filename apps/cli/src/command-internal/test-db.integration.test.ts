@@ -42,7 +42,7 @@ const stackApiStub = Layer.succeed(StackApi, {
   create: () => Effect.die("stack API unused"),
   open: () => Effect.die("stack API unused"),
   discover: () => Effect.die("stack API unused"),
-  resolveIdentity: () => Effect.die("stack API unused"),
+  find: () => Effect.die("stack API unused"),
 });
 
 function mockResolver(opts: { conn?: PgConnInput; isLocal?: boolean } = {}) {

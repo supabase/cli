@@ -139,23 +139,22 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
         },
         {
           service: "rest",
-          config: { databaseUrl: "postgresql://placeholder", jwtSecret: secret },
+          config: { jwtSecret: secret },
           endpoints: { http: endpoint("auto") },
         },
         {
           service: "auth",
-          config: { databaseUrl: "postgresql://placeholder", jwtSecret: secret },
+          config: { jwtSecret: secret },
           endpoints: { http: endpoint("auto") },
         },
         {
           service: "realtime",
-          config: { databaseUrl: "postgresql://placeholder", jwtSecret: secret },
+          config: { jwtSecret: secret },
           endpoints: { http: endpoint("auto"), rpc: endpoint("auto") },
         },
         {
           service: "storage",
           config: {
-            databaseUrl: "postgresql://placeholder",
             filePath: storageRoot,
             jwtSecret: secret,
           },
@@ -174,7 +173,7 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
         { service: "studio", config: { jwtSecret: secret }, endpoints: { http: endpoint("auto") } },
         {
           service: "pgmeta",
-          config: { databaseUrl: "postgresql://placeholder" },
+          config: {},
           endpoints: { http: endpoint("auto") },
         },
         {
@@ -184,13 +183,12 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
         },
         {
           service: "analytics",
-          config: { databaseUrl: "postgresql://placeholder", backend: "postgres", apiKey: secret },
+          config: { backend: "postgres", apiKey: secret },
           endpoints: { http: endpoint("auto") },
         },
         {
           service: "vector",
           config: {
-            analyticsUrl: "http://placeholder",
             apiKey: secret,
             configPath: vectorConfigPath,
           },
@@ -199,7 +197,6 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
         {
           service: "pooler",
           config: {
-            databaseUrl: "postgresql://placeholder",
             jwtSecret: secret,
             tenant: "whole",
             poolMode: "transaction",
@@ -207,7 +204,7 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
           endpoints: { http: endpoint("auto"), sql: endpoint("auto") },
         },
       ],
-      { identity: { gotrueJwtKeys: "[]", publicSigningKeys: "[]" } },
+      { keys: { gotrueJwtKeys: "[]", publicSigningKeys: "[]" } },
     );
     const logTails = yield* Ref.make<ReadonlyArray<readonly [string, string]>>([]);
     yield* watchServiceLogs(created, logTails);

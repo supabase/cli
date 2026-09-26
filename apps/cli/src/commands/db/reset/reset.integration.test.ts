@@ -551,6 +551,7 @@ const stackService = (
     readonly ready?: Effect.Effect<void>;
     readonly stop?: Effect.Effect<void>;
     readonly resetData?: Effect.Effect<void>;
+    readonly credentials?: Effect.Effect<Readonly<Record<string, string>>, StackError>;
   } = {},
 ): StackService => {
   const base = {
@@ -572,6 +573,7 @@ const stackService = (
         ...base,
         service: "database",
         credentials: () =>
+          overrides.credentials ??
           Effect.succeed({ databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres" }),
         saveSnapshot: () => Effect.die("unused"),
         restoreSnapshot: () => Effect.die("unused"),
@@ -638,6 +640,8 @@ function mockResetStackApi(opts: {
   readonly apiEndpoint?: { readonly url: string; readonly port: number };
   /** Models the `db start` overlay, whose composition holds only the database. */
   readonly postgresOnly?: boolean;
+  /** Makes the database address unavailable once the reset has started it again. */
+  readonly unavailableAfterReset?: boolean;
   /** Fails every database status read, as an unreachable or mismatched owner does. */
   readonly statusFailure?: StackError;
 }) {
@@ -730,6 +734,13 @@ function mockResetStackApi(opts: {
       startCalls++;
     }),
     ready: Effect.void,
+    ...(opts.unavailableAfterReset === true
+      ? {
+          credentials: Effect.fail(
+            new StackError({ operation: "credentials", message: "owner unavailable" }),
+          ),
+        }
+      : {}),
   });
   const composed: Array<StackService> = [
     db,
@@ -763,6 +774,7 @@ function mockResetStackApi(opts: {
     },
     credentials: { get: Effect.succeed(RESET_STACK_CREDENTIALS) },
     composition: {
+      plan: () => Effect.succeed([]),
       describe: Effect.succeed({
         members: members.map(({ id }, index) => ({
           id,
@@ -800,11 +812,10 @@ function mockResetStackApi(opts: {
   return {
     layer: Layer.succeed(StackApi, {
       create: () => Effect.die("unused"),
-      resolveIdentity: () =>
-        Effect.succeed({ projectRoot: opts.workdir, branchContext: "main", stackName: "default" }),
-      discover: () =>
-        Effect.succeed([
-          {
+      discover: () => Effect.die("unused"),
+      find: () =>
+        Effect.succeed(
+          Option.some({
             definition: {
               id: RESET_STACK_ID,
               identity: { projectRoot: opts.workdir, branchContext: "main", stackName: "default" },
@@ -818,8 +829,8 @@ function mockResetStackApi(opts: {
               ports: [],
             },
             host: undefined,
-          },
-        ]),
+          }),
+        ),
       open: () => Effect.succeed(stack),
     }),
     get resetCalls() {
@@ -890,6 +901,7 @@ function setup(
     stackStorageError?: string;
     stackApiEndpoint?: { readonly url: string; readonly port: number };
     stackPostgresOnly?: boolean;
+    stackUnavailableAfterReset?: boolean;
     stackStatusFailure?: StackError;
     httpClient?: Layer.Layer<HttpClient.HttpClient>;
   },
@@ -933,6 +945,7 @@ function setup(
     storageError: opts.stackStorageError,
     apiEndpoint: opts.stackApiEndpoint,
     postgresOnly: opts.stackPostgresOnly,
+    unavailableAfterReset: opts.stackUnavailableAfterReset,
     statusFailure: opts.stackStatusFailure,
   });
   const catalog =
@@ -1408,6 +1421,24 @@ describe("db reset", () => {
         const error = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
         expect(error).toMatchObject({ _tag: "StackError", message });
         expect(stackApi.resetCalls).toBe(0);
+      });
+    });
+
+    it.live("reports a database that becomes unavailable after the reset as not running", () => {
+      const { layer, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackUnavailableAfterReset: true,
+      });
+      return Effect.gen(function* () {
+        const error = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "ResetLocalDbNotRunningError",
+          message: "owner unavailable",
+        });
+        expect(stackApi.resetCalls).toBe(1);
       });
     });
 

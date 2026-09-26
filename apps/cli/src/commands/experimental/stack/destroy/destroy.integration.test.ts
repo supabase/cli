@@ -104,7 +104,6 @@ describe("stack destroy", () => {
           f.stack.services.create({
             service: "storage",
             config: {
-              databaseUrl: "postgresql://unused",
               jwtSecret: "test-secret",
               filePath: uploads,
             },

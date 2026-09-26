@@ -30,8 +30,13 @@ import {
   shutdownHost,
   waitForOwnerExit,
   type HostAccess,
+  type HostEndpoint,
 } from "./HostProcess.ts";
-import type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
+import {
+  planSupabaseComposition,
+  type PlannedInstance,
+  type SupabaseCompositionOptions,
+} from "./composition/Supabase.ts";
 import { removeStackContainersCommand } from "./runtime/Container.ts";
 import { volumeDataCleanupCommands } from "./storage/DockerDatabaseStorage.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
@@ -68,7 +73,13 @@ export { StackError } from "./Rpc.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
 export type ServiceCreationInput = CatalogServiceCreationInput;
 export type { CompositionConfig } from "./Orchestrator.ts";
-export type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
+export type {
+  CreationChange,
+  PlannedInstance,
+  SupabaseCompositionOptions,
+} from "./composition/Supabase.ts";
+export { StackIdSchema as StackId } from "./identity/StackId.ts";
+export type { SavedStack } from "./State.ts";
 export type { StackCredentials, StackIdentityInput };
 export type { Observation } from "./Rpc.ts";
 export type { PgProveOptions } from "./Tools.ts";
@@ -198,6 +209,13 @@ export interface Stack {
       services: ReadonlyArray<ServiceCreationInput>,
       options?: SupabaseCompositionOptions,
     ) => Effect.Effect<ReadonlyArray<AnyInstance>, StackError>;
+    /**
+     * Compares the requested creations with every saved instance of the same kinds, ignoring
+     * inputs the composition supplies, without changing state or contacting the owner.
+     */
+    readonly plan: (
+      services: ReadonlyArray<ServiceCreationInput>,
+    ) => Effect.Effect<ReadonlyArray<PlannedInstance>, StackError>;
     readonly configure: (config: Orchestrator.CompositionConfig) => Effect.Effect<void, StackError>;
     readonly describe: Effect.Effect<Orchestrator.CompositionConfig, StackError>;
     readonly start: Effect.Effect<ReadonlyArray<Observation>, StackError>;
@@ -747,9 +765,21 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           rpc.supabaseComposition({
             services,
             ...(options?.reuseIds === undefined ? {} : { reuseIds: options.reuseIds }),
-            ...(options?.identity === undefined ? {} : { identity: options.identity }),
+            ...(options?.keys === undefined ? {} : { keys: options.keys }),
+            ...(options?.eager === undefined ? {} : { eager: options.eager }),
           }),
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
+      plan: (services: ReadonlyArray<ServiceCreationInput>) =>
+        Effect.forEach(services, (service) =>
+          Schema.decodeEffect(ServiceCreationInputSchema)(service),
+        ).pipe(
+          Effect.mapError((cause) => failure("plan", cause)),
+          Effect.flatMap((requested) =>
+            savedDefinition.pipe(
+              Effect.map((current) => planSupabaseComposition(current, requested)),
+            ),
+          ),
+        ),
       configure: (config: Orchestrator.CompositionConfig) =>
         call("configureComposition", (rpc) => rpc.configureComposition(config)),
       describe: savedDefinition.pipe(Effect.map((current) => current.composition)),
@@ -855,4 +885,27 @@ export const discover = Effect.fn("Stack.discover")(
     );
   },
   Effect.mapError((cause) => failure("discover", cause)),
+);
+
+/** Selects a saved stack by id, or by the identity a project root and stack name derive. */
+export type FindOptions = Pick<StackLocations, "stateRoot"> &
+  ({ readonly id: string } | { readonly projectRoot: string; readonly name?: string });
+
+/** A saved stack with the endpoint of the live owner holding its lease, if any. */
+export interface FoundStack {
+  readonly definition: SavedStack;
+  readonly host: HostEndpoint | undefined;
+}
+
+/** Reads the one saved stack a selection names; unreadable state fails instead of being skipped. */
+export const find = Effect.fn("Stack.find")(
+  function* (options: FindOptions) {
+    const state = yield* stateFor(options.stateRoot);
+    const id =
+      "id" in options ? options.id : yield* deriveStackId(yield* resolveStackIdentity(options));
+    const definition = yield* state.read(id);
+    if (definition === undefined) return Option.none<FoundStack>();
+    return Option.some({ definition, host: yield* observeHost(state, definition) });
+  },
+  Effect.mapError((cause) => failure("find", cause)),
 );

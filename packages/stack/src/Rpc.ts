@@ -130,7 +130,8 @@ export const OwnerRpc = RpcGroup.make(
     payload: {
       services: Schema.Array(ServiceCreationInput),
       reuseIds: Schema.optionalKey(Schema.Array(Schema.String)),
-      identity: Schema.optionalKey(StackIdentityInput),
+      keys: Schema.optionalKey(StackIdentityInput),
+      eager: Schema.optionalKey(Schema.Boolean),
     },
     success: Schema.Array(Definition),
     error: StackError,

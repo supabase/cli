@@ -20,7 +20,7 @@ const serviceError = (operation: string, cause: unknown): ServiceError =>
 
 const stringify = (value: unknown) =>
   Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value).pipe(
-    Effect.mapError((cause) => serviceError("identity", cause)),
+    Effect.mapError((cause) => serviceError("keys", cause)),
   );
 
 export const localJwtSecret = DEFAULT_LOCAL_JWT_SECRET;
@@ -43,10 +43,10 @@ const fixedJwt = (secret: string, role: "anon" | "service_role") =>
       new SignJWT({ iss: "supabase-demo", role, exp: 1983812996 })
         .setProtectedHeader({ alg: "HS256", typ: "JWT" })
         .sign(new TextEncoder().encode(secret)),
-    catch: (cause) => serviceError("identity", cause),
+    catch: (cause) => serviceError("keys", cause),
   });
 
-const defaultStackIdentity = (jwtSecret: string) =>
+const defaultStackKeys = (jwtSecret: string) =>
   Effect.gen(function* () {
     const anonKey = yield* fixedJwt(jwtSecret, "anon");
     const serviceRoleKey = yield* fixedJwt(jwtSecret, "service_role");
@@ -65,14 +65,14 @@ const defaultStackIdentity = (jwtSecret: string) =>
 const JsonArray = Schema.Array(Schema.Unknown);
 const jsonArray = (value: string, field: string) =>
   Schema.decodeEffect(Schema.fromJsonString(JsonArray))(value).pipe(
-    Effect.mapError((cause) => serviceError("identity", new Error(`${field}: ${cause.message}`))),
+    Effect.mapError((cause) => serviceError("keys", new Error(`${field}: ${cause.message}`))),
   );
 
-export const resolveStackIdentity = Effect.fn("ServiceConfig.resolveStackIdentity")(
+export const resolveStackKeys = Effect.fn("ServiceConfig.resolveStackKeys")(
   (jwtSecret: string, input: StackIdentityInput | undefined, saved: StackCredentials | undefined) =>
     Effect.gen(function* () {
       if (input === undefined && saved !== undefined) return saved;
-      const defaults = yield* defaultStackIdentity(jwtSecret);
+      const defaults = yield* defaultStackKeys(jwtSecret);
       const gotrueJwtKeys = input?.gotrueJwtKeys ?? defaults.gotrueJwtKeys;
       const publicSigningKeys = input?.publicSigningKeys ?? defaults.publicSigningKeys;
       const remoteJwks = input?.remoteJwks ?? "[]";
@@ -85,7 +85,7 @@ export const resolveStackIdentity = Effect.fn("ServiceConfig.resolveStackIdentit
       if (saved !== undefined) {
         const savedJwks = yield* Schema.decodeEffect(
           Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.Unknown) })),
-        )(saved.jwks).pipe(Effect.mapError((cause) => serviceError("identity", cause)));
+        )(saved.jwks).pipe(Effect.mapError((cause) => serviceError("keys", cause)));
         const savedRemoteKeys = yield* jsonArray(saved.remoteJwks, "remoteJwks");
         savedLocalKeys = savedJwks.keys.slice(savedRemoteKeys.length);
       }
@@ -140,6 +140,21 @@ export const serviceJwt = Effect.fn("ServiceConfig.serviceJwt")(
         .sign(new TextEncoder().encode(secret)),
     ).pipe(Effect.mapError((cause) => serviceError("launch", cause))),
 );
+
+/** A required input that is neither bound by a composition nor provided in config. */
+export const missingInput = (service: string, input: string): ServiceError =>
+  new ServiceError({
+    operation: "input",
+    message: `${service} requires input ${input}; bind it through a composition or provide it in config`,
+  });
+
+/** Fails a launch whose required input is neither bound by a composition nor provided in config. */
+export const requiredInput = (
+  service: string,
+  input: string,
+  value: string | undefined,
+): Effect.Effect<string, ServiceError> =>
+  value === undefined ? Effect.fail(missingInput(service, input)) : Effect.succeed(value);
 
 export const databaseConnection = Effect.fn("ServiceConfig.databaseConnection")(
   (

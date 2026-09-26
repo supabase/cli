@@ -1,17 +1,13 @@
 import { endpointReports } from "../stack-endpoints.format.ts";
 import { Effect, Option, Path, Redacted } from "effect";
-import type {
-  Observation,
-  ServiceCreation,
-  ServiceCreationInput,
-  Stack,
-} from "@supabase/stack/effect";
+import type { Observation, PlannedInstance, ServiceCreation, Stack } from "@supabase/stack/effect";
 import type { StackError } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
+import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { toPostgresURL } from "../../../../command-internal/postgres-url.ts";
 import {
   StackApi,
@@ -258,10 +254,7 @@ const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
   name: string | undefined,
   id: string | undefined,
 ) {
-  const settings = yield* CommandSettings;
-  const path = yield* Path.Path;
   const resolver = yield* StackTargetResolver;
-  const api = yield* StackApi;
   const target = yield* resolver
     .resolve({
       projectRoot,
@@ -270,27 +263,17 @@ const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
       runtime: "auto",
     })
     .pipe(Effect.mapError(mapTargetError));
-  if (target.id === undefined)
+  if (target.id === undefined || target.definition === undefined)
     return yield* new StackCommandStatusError({
       reason: "not-found",
       message: "No managed stack exists for the selected project.",
       suggestion: "Run supabase stack start first.",
     });
-  const discovered = yield* api
-    .discover({ stateRoot: path.join(settings.supabaseHome, "stacks") })
-    .pipe(Effect.mapError(mapStackError));
-  const found = discovered.find(({ definition }) => definition.id === target.id);
-  if (found === undefined)
-    return yield* new StackCommandStatusError({
-      reason: "not-found",
-      message: `Stack ${target.id} was not found.`,
-      suggestion: "Choose an existing --stack-id, or run supabase stack start first.",
-    });
   return {
     ...target,
     id: target.id,
-    definition: found.definition,
-    owner: found.host === undefined ? ("unavailable" as const) : ("reachable" as const),
+    definition: target.definition,
+    owner: target.hostRunning ? ("reachable" as const) : ("unavailable" as const),
   };
 });
 
@@ -311,59 +294,16 @@ const observe = (stack: Stack, owner: StackReport["owner"]) =>
     return { observed, members: composition.members };
   });
 
-const compareConfig = (
-  creations: ReadonlyArray<ServiceCreationInput>,
-  observed: ReadonlyArray<ObservedService>,
-  members: ReadonlyArray<{ readonly id: string }>,
-): StackReport["config_drift"] => {
-  const paths: string[] = [];
-  const memberIds = new Set(members.map(({ id }) => id));
-  for (const creation of creations) {
-    const service = observed.find(
-      ({ instance }) => memberIds.has(instance.id) && instance.service === creation.service,
-    );
-    if (service === undefined) continue;
-    if (service.observation === undefined) {
-      if (service?.error !== undefined)
-        return {
-          status: "unavailable",
-          message: `Configuration could not be compared because ${creation.service} status failed: ${service.error.message}`,
-        };
-      paths.push(`services.${creation.service}`);
-      continue;
-    }
-    if (
-      creation.service === "database" &&
-      service.observation.config.service === "database" &&
-      creation.config.version !== service.observation.config.config.version
-    )
-      paths.push(`services.database.config.version`);
-    if (creation.endpoints === undefined) continue;
-    for (const name of Object.keys(creation.endpoints)) {
-      const endpoint = Reflect.get(creation.endpoints, name);
-      if (
-        typeof endpoint !== "object" ||
-        endpoint === null ||
-        !("port" in endpoint) ||
-        typeof endpoint.port !== "number"
-      )
-        continue;
-      const savedEndpoints = service.observation.config.endpoints;
-      const actual = savedEndpoints === undefined ? undefined : Reflect.get(savedEndpoints, name);
-      if (
-        typeof actual !== "object" ||
-        actual === null ||
-        !("port" in actual) ||
-        actual.port !== endpoint.port
-      )
-        paths.push(`services.${creation.service}.endpoints.${name}`);
-    }
-  }
+const driftFrom = (planned: ReadonlyArray<PlannedInstance>): StackReport["config_drift"] => {
+  const paths = planned.flatMap((entry) =>
+    !entry.member || entry.change === "unchanged"
+      ? []
+      : entry.paths.map((path) => `services.${entry.service}.${path}`),
+  );
   return paths.length === 0
     ? {
         status: "unchanged",
-        message:
-          "Configured database version and explicit endpoint ports match existing composition members.",
+        message: "Project configuration matches the saved composition members.",
       }
     : {
         status: "changed",
@@ -372,33 +312,35 @@ const compareConfig = (
       };
 };
 
-const configDrift = (
-  projectRoot: string,
-  stackId: string,
-  observed: ReadonlyArray<ObservedService>,
-  members: ReadonlyArray<{ readonly id: string }>,
-) =>
+const unavailableDrift = (message: string): StackReport["config_drift"] => ({
+  status: "unavailable",
+  message,
+});
+
+const configDrift = (stack: Stack, projectRoot: string, functionsIsMember: boolean) =>
   Effect.gen(function* () {
-    const memberIds = new Set(members.map(({ id }) => id));
-    const database = observed.find(
-      ({ instance }) => memberIds.has(instance.id) && instance.service === "database",
-    );
-    const databaseObservation = database?.observation;
-    if (databaseObservation?.config.service !== "database")
-      return {
-        status: "unavailable" as const,
-        message: "Configuration could not be compared without the saved database observation.",
-      };
     const loaded = yield* loadStackConfig(projectRoot);
-    const creations = yield* loaded.creations(stackId);
-    return compareConfig(creations, observed, members);
+    const creations = yield* loaded.creations(stack.id);
+    // Drift ignores non-members, so a Functions dotenv only matters when Functions is a member.
+    const requested = functionsIsMember
+      ? yield* Effect.forEach(creations, withProjectFunctionsEnv)
+      : creations;
+    return driftFrom(yield* stack.composition.plan(requested));
   }).pipe(
-    Effect.catchTag("StackConfigError", (error) =>
-      Effect.succeed({
-        status: "unavailable" as const,
-        message: `Project configuration could not be compared: ${error.message}`,
-      }),
-    ),
+    Effect.catchTags({
+      StackConfigError: (error) =>
+        Effect.succeed(
+          unavailableDrift(`Project configuration could not be compared: ${error.message}`),
+        ),
+      StackFunctionsEnvError: (error) =>
+        Effect.succeed(
+          unavailableDrift(`Project configuration could not be compared: ${error.message}`),
+        ),
+      StackError: (error) =>
+        Effect.succeed(
+          unavailableDrift(`Saved configuration could not be compared: ${error.message}`),
+        ),
+    }),
   );
 
 export const stackStatus = Effect.fn("experimental.stack.status")(function* (
@@ -445,8 +387,8 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
       .open({ ...locations, id: target.id })
       .pipe(Effect.mapError(mapStackError));
     const observed = yield* observe(stack, target.owner);
+    const memberIds = new Set(observed.members.map(({ id }) => id));
     if (flags.env) {
-      const memberIds = new Set(observed.members.map(({ id }) => id));
       const database = observed.observed.find(
         ({ instance }) => memberIds.has(instance.id) && instance.service === "database",
       );
@@ -509,10 +451,11 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
       return;
     }
     const config = yield* configDrift(
+      stack,
       target.definition.identity.projectRoot,
-      target.definition.id,
-      observed.observed,
-      observed.members,
+      observed.observed.some(
+        ({ instance }) => memberIds.has(instance.id) && instance.service === "functions",
+      ),
     );
     const report = reportFor(
       target.definition,

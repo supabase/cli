@@ -1,17 +1,18 @@
 import { generateKeyPairSync } from "node:crypto";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Redacted, Stream } from "effect";
+import { Effect, Equal, FileSystem, Layer, Option, Redacted, Stream } from "effect";
 import {
   DEFAULT_LOCAL_DATABASE_PASSWORD,
   DEFAULT_LOCAL_JWT_SECRET,
   DEFAULT_POSTGRES_ROOT_KEY,
 } from "@supabase/stack/defaults";
-import { postgresVersion } from "@supabase/stack/internal/postgres-artifact";
+import { postgresVersion } from "@supabase/stack/internal/artifacts";
 import {
   StackError,
   type ServiceCreation,
   type ServiceCreationInput,
+  type PlannedInstance,
   type ServiceInstance,
   type ServiceInstances,
   type StackCredentials,
@@ -242,15 +243,15 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
               database?.service === "database" && database.config.databasePassword !== undefined
                 ? Redacted.value(database.config.databasePassword)
                 : DEFAULT_LOCAL_DATABASE_PASSWORD,
-            publishableKey: options?.identity?.publishableKey ?? "sb_publishable_test",
-            secretKey: options?.identity?.secretKey ?? "sb_secret_test",
-            anonKey: options?.identity?.anonKey ?? "anon-token",
-            serviceRoleKey: options?.identity?.serviceRoleKey ?? "service-token",
+            publishableKey: options?.keys?.publishableKey ?? "sb_publishable_test",
+            secretKey: options?.keys?.secretKey ?? "sb_secret_test",
+            anonKey: options?.keys?.anonKey ?? "anon-token",
+            serviceRoleKey: options?.keys?.serviceRoleKey ?? "service-token",
             jwks: '{"keys":[]}',
-            gotrueJwtKeys: options?.identity?.gotrueJwtKeys ?? "[]",
-            remoteJwks: options?.identity?.remoteJwks ?? "[]",
-            anonKeyIsOverride: options?.identity?.anonKeyIsOverride ?? false,
-            serviceRoleKeyIsOverride: options?.identity?.serviceRoleKeyIsOverride ?? false,
+            gotrueJwtKeys: options?.keys?.gotrueJwtKeys ?? "[]",
+            remoteJwks: options?.keys?.remoteJwks ?? "[]",
+            anonKeyIsOverride: options?.keys?.anonKeyIsOverride ?? false,
+            serviceRoleKeyIsOverride: options?.keys?.serviceRoleKeyIsOverride ?? false,
           };
           const previousMembers = members;
           members = creations.map((creation) => {
@@ -276,6 +277,29 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
           activations = new Map(members.map(({ id }) => [id, "eager"]));
           return members;
         }),
+      plan: (creations) =>
+        Effect.forEach(members, (member) =>
+          member.status.pipe(
+            Effect.map(({ config }): ReadonlyArray<PlannedInstance> => {
+              const request = creations.find(({ service }) => service === member.service);
+              if (request === undefined) return [];
+              const base = { id: member.id, service: member.service, member: true };
+              if (config.service === "database" && request.service === "database")
+                return [
+                  postgresVersion(config.config.version) === postgresVersion(request.config.version)
+                    ? { ...base, change: "unchanged" }
+                    : { ...base, change: "incompatible", paths: ["config.version"] },
+                ];
+              if (!Equal.equals(config.endpoints, request.endpoints))
+                return [{ ...base, change: "incompatible", paths: ["endpoints"] }];
+              return [
+                Equal.equals(config.config, request.config)
+                  ? { ...base, change: "unchanged" }
+                  : { ...base, change: "changed", paths: ["config"] },
+              ];
+            }),
+          ),
+        ).pipe(Effect.map((planned) => planned.flat())),
       configure: ({ members: configured }) =>
         Effect.sync(() => {
           activations = new Map(configured.map(({ id, activation }) => [id, activation]));
@@ -359,7 +383,7 @@ const layers = (
     create: () => Effect.succeed(fixture.stack),
     open: () => Effect.succeed(fixture.stack),
     discover: () => Effect.succeed([]),
-    resolveIdentity: () => Effect.die("identity not used"),
+    find: () => Effect.die("identity not used"),
   });
   return Layer.mergeAll(
     BunServices.layer,
@@ -427,7 +451,7 @@ describe("experimental stack start", () => {
           }),
         open: () => Effect.succeed(fixture.stack),
         discover: () => Effect.succeed([]),
-        resolveIdentity: () => Effect.die("identity not used"),
+        find: () => Effect.die("identity not used"),
       });
       const result = yield* stackStart(flags()).pipe(
         Effect.flip,
@@ -606,8 +630,6 @@ describe("experimental stack start", () => {
       const refreshedStatus = yield* refreshed.status;
       if (refreshedStatus.config.service === "functions")
         expect(refreshedStatus.config.config.env).toEqual({ CUSTOM_VALUE: "changed" });
-      const configured = yield* fixture.stack.composition.describe;
-      expect(configured.members.find(({ id }) => id === functionsId)?.activation).toBe("lazy");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -845,6 +867,59 @@ describe("experimental stack start", () => {
         expect(fixture.stopped).toBe(1);
         expect(fixture.composed).toBe(1);
       }
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("applies changed service configuration after the stack is stopped", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-changed-config-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      const config = (maxRows: number) =>
+        `project_id = "changed-config"\n[api]\nmax_rows = ${maxRows}\n[edge_runtime]\nenabled = false\n`;
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, config(100));
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const restId = fixture.members.find(({ service }) => service === "rest")?.id;
+
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, config(500));
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      const rest = fixture.members.find(({ service }) => service === "rest");
+      if (rest === undefined) return yield* Effect.die("REST missing");
+      expect(rest.id).toBe(restId);
+      const status = yield* rest.status;
+      expect(status.config.service === "rest" ? status.config.config.maxRows : undefined).toBe(500);
+      expect(fixture.composed).toBe(2);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects a changed endpoint after the stack is stopped", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-changed-port-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "changed-port"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "changed-port"\n[api]\nport = 54999\n',
+      );
+      yield* fixture.stack.composition.stop;
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining("cannot change on the saved stack"),
+        suggestion: expect.stringContaining("supabase stack destroy"),
+      });
+      expect(fixture.composed).toBe(1);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
