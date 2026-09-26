@@ -23,7 +23,7 @@ const stepScript = (step: SnapshotStep, adoptOwner: string | undefined): string 
   const body = SnapshotStep.$match(step, {
     Ensure: ({ directory }) => `${busybox} mkdir -p ${shellQuote(directory)}`,
     Clear: ({ directory }) =>
-      `${busybox} mkdir -p ${shellQuote(directory)}; ${busybox} find ${shellQuote(directory)} -mindepth 1 -maxdepth 1 -exec ${busybox} rm -rf -- {} +`,
+      `[ ! -L ${shellQuote(directory)} ] || { echo ${shellQuote(`${directory} is a symbolic link`)} >&2; exit 1; }; ${busybox} mkdir -p ${shellQuote(directory)}; ${busybox} find ${shellQuote(directory)} -mindepth 1 -maxdepth 1 -exec ${busybox} rm -rf -- {} +`,
     Recover: ({ stages, entries }) =>
       `for retired in ${shellQuote(stages)}/retired-*; do [ -d "$retired" ] || continue; digest=\${retired##*/retired-}; digest=\${digest%%-*}; if [ ! -e ${shellQuote(entries)}/"$digest" ]; then ${busybox} mkdir -p ${shellQuote(entries)}; ${busybox} mv "$retired" ${shellQuote(entries)}/"$digest"; fi; done`,
     Expect: ({ path, present, otherwise }) =>
