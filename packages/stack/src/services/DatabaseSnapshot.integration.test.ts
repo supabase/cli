@@ -602,9 +602,30 @@ for (const { name, make } of engines)
           const source = yield* engine.instance("source");
           yield* source.seed("saved");
           yield* shell(`${tool}mkdir -p ${shellQuote(`${source.stages}/abandoned`)}`);
+          yield* shell(`${tool}mkdir -p ${shellQuote(`${source.restoreStages}/abandoned`)}`);
           yield* source.saveSnapshot("key");
           expect(yield* contents(source.stages)).toBe("");
+          expect(yield* contents(source.restoreStages)).toBe("");
         }),
       ),
     );
   });
+
+describe("native database snapshot stages", () => {
+  it.live("refuses to clear a restore-stage root that is a symbolic link", () =>
+    live(
+      Effect.gen(function* () {
+        const { fs, engine } = yield* setup(native);
+        const target = yield* engine.instance("target");
+        const victim = `${target.root}-victim`;
+        yield* fs.makeDirectory(victim);
+        yield* fs.writeFileString(`${victim}/sentinel`, "kept");
+        yield* fs.symlink(victim, target.restoreStages);
+
+        const failure = yield* target.restoreSnapshot("absent").pipe(Effect.flip);
+        expect(failure.operation).toBe("clear");
+        expect(yield* fs.readFileString(`${victim}/sentinel`)).toBe("kept");
+      }),
+    ),
+  );
+});
