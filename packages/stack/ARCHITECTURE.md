@@ -425,13 +425,13 @@ flowchart TB
 
 Keep Effect RPC as the transport initially. Composition startup calls the executors directly, not RPC back into its own host. Replacing RPC with handwritten messages would still require framing, validation, errors and stream transport; that replacement is not part of this simplification.
 
-| Module         | Responsibility                                                                                                                                                               |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `StackHost`    | Process lifetime: signals, lease, startup container sweep, shutdown state machine, `/identity` and `/rpc`; serves the owner's handlers plus shutdown and tool RPCs           |
-| `Owner`        | Builds the instance and composition RPC handlers, maps domain failures to `StackError` once, persists definitions and adapts recipes, listeners and the Supabase composition |
-| `Orchestrator` | The single in-memory registry of instance entries and the composition: admission, start plans, activity, idle sleep and exit watchers                                        |
-| `Network`      | Public listeners, the shared API proxy and port claims                                                                                                                       |
-| `host/*`       | Service-specific endpoint routes, rendered connection values and stack credential rules                                                                                      |
+| Module         | Responsibility                                                                                                                                                                  |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `StackHost`    | Process lifetime: signals, control-port claim, startup container sweep, shutdown state machine, `/identity` and `/rpc`; serves the owner's handlers plus shutdown and tool RPCs |
+| `Owner`        | Builds the instance and composition RPC handlers, maps domain failures to `StackError` once, persists definitions and adapts recipes, listeners and the Supabase composition    |
+| `Orchestrator` | The single in-memory registry of instance entries and the composition: admission, start plans, activity, idle sleep and exit watchers                                           |
+| `Network`      | Public listeners, the shared API proxy and port claims                                                                                                                          |
+| `host/*`       | Service-specific endpoint routes, rendered connection values and stack credential rules                                                                                         |
 
 Definition changes (service creation and destruction, composition configuration and Supabase composition) run one at a time in the owner's scope. A caller that disconnects stops waiting; the owner persists and registers together or rolls back, so saved definitions never outlive or precede their registered instances.
 
