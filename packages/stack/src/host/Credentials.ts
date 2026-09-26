@@ -6,7 +6,7 @@ import {
 } from "../Defaults.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
 import { resolveStackKeys } from "../services/ServiceConfig.ts";
-import type { SavedStack, StackCredentials, StackIdentityInput } from "../State.ts";
+import type { SavedStack, StackCredentials, StackKeysInput } from "../State.ts";
 
 export class CredentialError extends Data.TaggedError("CredentialError")<{
   readonly message: string;
@@ -101,7 +101,7 @@ const credentialsChanged = (saved: StackCredentials, next: StackCredentials) =>
 export const nextCredentials = Effect.fn("Credentials.next")(function* (
   current: Pick<SavedStack, "credentials" | "instances">,
   overrides: Overrides,
-  keys: StackIdentityInput | undefined,
+  keys: StackKeysInput | undefined,
 ) {
   const saved = current.credentials;
   if (saved === undefined) {

@@ -42,7 +42,7 @@ import { volumeDataCleanupCommands } from "./storage/DockerDatabaseStorage.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as State from "./State.ts";
-import type { SavedStack, StackCredentials, StackIdentityInput } from "./State.ts";
+import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
 import { StackError, type Definition, type Observation } from "./Rpc.ts";
 import { reclaimStack } from "./Sweep.ts";
 import {
@@ -50,27 +50,15 @@ import {
   type ServiceCreation,
   type ServiceCreationInput as CatalogServiceCreationInput,
 } from "./services/Catalog.ts";
+import type { SnapshotScope } from "./services/DatabaseSnapshot.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { PgProveOptions, PostgresTool } from "./Tools.ts";
-export {
-  DEFAULT_LOCAL_DATABASE_PASSWORD,
-  DEFAULT_LOCAL_JWT_SECRET,
-  DEFAULT_LOCAL_PUBLISHABLE_KEY,
-  DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
-  DEFAULT_LOCAL_S3_REGION,
-  DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
-  DEFAULT_LOCAL_SECRET_KEY,
-  DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
-  DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
-  DEFAULT_POSTGRES_ROOT_KEY,
-  DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
-  DEFAULT_SIGNING_KEY,
-} from "./Defaults.ts";
 
 export { postgres } from "./Tools.ts";
 export { resolveNativePostgresUser } from "./runtime/postgres-user.ts";
 export { StackError } from "./Rpc.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
+/** A service creation as `services.create` accepts it, before stack credentials fill its inputs. */
 export type ServiceCreationInput = CatalogServiceCreationInput;
 export type { CompositionConfig } from "./Orchestrator.ts";
 export type {
@@ -80,7 +68,7 @@ export type {
 } from "./composition/Supabase.ts";
 export { StackIdSchema as StackId } from "./identity/StackId.ts";
 export type { SavedStack } from "./State.ts";
-export type { StackCredentials, StackIdentityInput };
+export type { StackCredentials, StackKeysInput };
 export type { Observation } from "./Rpc.ts";
 export type { PgProveOptions } from "./Tools.ts";
 
@@ -157,10 +145,24 @@ export interface ServiceInstance<K extends Kind = Kind> {
     readonly from?: "host" | "runtime";
   }) => Effect.Effect<Readonly<Record<string, string>>, StackError>;
 }
+/** Snapshot placement; `cache` is the default. */
+export interface DatabaseSnapshotOptions {
+  /**
+   * `cache` shares bounded retention with every stack under the cache root and outlives the
+   * instance; `instance` is never evicted and is removed when the database instance is destroyed.
+   */
+  readonly scope?: SnapshotScope;
+}
 /** A database instance with stopped-data snapshot operations. */
 export interface DatabaseInstance extends ServiceInstance<"database"> {
-  readonly saveSnapshot: (key: string) => Effect.Effect<void, StackError>;
-  readonly restoreSnapshot: (key: string) => Effect.Effect<boolean, StackError>;
+  readonly saveSnapshot: (
+    key: string,
+    options?: DatabaseSnapshotOptions,
+  ) => Effect.Effect<void, StackError>;
+  readonly restoreSnapshot: (
+    key: string,
+    options?: DatabaseSnapshotOptions,
+  ) => Effect.Effect<boolean, StackError>;
   /** Removes database-owned data while preserving the instance registration. */
   readonly resetData: Effect.Effect<void, StackError>;
 }
@@ -559,6 +561,8 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     return { runtimeCleanup: "complete" } as const;
   });
 
+  const snapshotScope = (options: DatabaseSnapshotOptions | undefined) =>
+    options?.scope === undefined ? {} : { scope: options.scope };
   const common = <K extends Kind>(id: string, service: K): ServiceInstance<K> => ({
     id,
     service,
@@ -594,9 +598,12 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       case "database":
         return {
           ...common(id, "database"),
-          saveSnapshot: (key) => call("saveSnapshot", (rpc) => rpc.saveSnapshot({ id, key })),
-          restoreSnapshot: (key) =>
-            call("restoreSnapshot", (rpc) => rpc.restoreSnapshot({ id, key })),
+          saveSnapshot: (key, options) =>
+            call("saveSnapshot", (rpc) => rpc.saveSnapshot({ id, key, ...snapshotScope(options) })),
+          restoreSnapshot: (key, options) =>
+            call("restoreSnapshot", (rpc) =>
+              rpc.restoreSnapshot({ id, key, ...snapshotScope(options) }),
+            ),
           resetData: call("resetData", (rpc) => rpc.resetData({ id })),
         };
       case "rest":

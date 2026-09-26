@@ -1043,6 +1043,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         ]);
         if (process.platform === "linux") expect(expectedOwnership).toBe("100:101");
         yield* storage.saveSnapshot("17", "adopted");
+        yield* storage.saveSnapshot("17", "checkpoint", "instance");
         const nativeRoot = path.join(root, "native");
         yield* fs.makeDirectory(path.join(nativeRoot, "data"), { recursive: true });
         yield* fs.writeFileString(path.join(nativeRoot, "data", "PG_VERSION"), "17\n");
@@ -1074,11 +1075,14 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           ]),
         ).toBe(expectedOwnership);
         yield* storage.removeData("17");
+        expect(yield* storage.restoreSnapshot("17", "checkpoint", "instance")).toBe(true);
+        yield* storage.removeData("17");
         yield* storage.destroyData("unsupported");
         expect(yield* fs.exists(path.join(instanceRoot, ".supabase-database-storage.json"))).toBe(
           true,
         );
         expect(yield* fs.exists(dataRoot)).toBe(false);
+        expect(yield* fs.exists(path.join(instanceRoot, ".supabase-snapshots"))).toBe(false);
         yield* fs.remove(cacheRoot, { recursive: true });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),

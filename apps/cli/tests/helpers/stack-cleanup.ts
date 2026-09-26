@@ -1,6 +1,10 @@
+import type { Stack } from "@supabase/stack/effect";
 import { Cause, Effect, Exit } from "effect";
 import type { StackApi } from "../../src/command-internal/stack-api.ts";
-import { destroyTestStack } from "../../../../packages/stack/tests/stack-cleanup.ts";
+
+/** Destroys a test stack, failing the test when teardown fails. */
+export const destroyTestStack = (stack: Stack): Effect.Effect<void, never> =>
+  stack.destroy.pipe(Effect.orDie);
 
 export const destroyTestStacks = (
   api: StackApi["Service"],

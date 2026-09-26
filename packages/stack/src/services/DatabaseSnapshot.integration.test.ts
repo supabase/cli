@@ -8,7 +8,7 @@ import { makeDockerDatabaseStorage } from "../storage/DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 import { shellQuote } from "../storage/DockerSnapshotBackend.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
-import { makeDatabaseSnapshots } from "./DatabaseSnapshot.ts";
+import { makeDatabaseSnapshots, type SnapshotScope } from "./DatabaseSnapshot.ts";
 
 const version = "17.6.1.173";
 
@@ -74,10 +74,15 @@ interface Instance {
   readonly entries: string;
   readonly stages: string;
   readonly restoreStages: string;
-  readonly saveSnapshot: (key: string) => Effect.Effect<void, SnapshotError>;
-  readonly restoreSnapshot: (key: string) => Effect.Effect<boolean, SnapshotError>;
+  readonly saveSnapshot: (key: string, scope?: SnapshotScope) => Effect.Effect<void, SnapshotError>;
+  readonly restoreSnapshot: (
+    key: string,
+    scope?: SnapshotScope,
+  ) => Effect.Effect<boolean, SnapshotError>;
   /** Writes a stopped, ready database whose fixture files hold `value`. */
   readonly seed: (value: string) => Effect.Effect<void>;
+  /** Removes the database data the way a database reset does. */
+  readonly clear: Effect.Effect<void>;
   readonly destroy: Effect.Effect<void>;
 }
 
@@ -146,6 +151,10 @@ const native = Effect.fnUntraced(function* () {
               readyMarker("native"),
             );
           }).pipe(Effect.orDie),
+        clear: Effect.all([
+          fs.remove(data, { recursive: true, force: true }),
+          fs.remove(`${instanceRoot}/.supabase-database-ready.json`, { force: true }),
+        ]).pipe(Effect.asVoid, Effect.orDie),
         destroy: fs.remove(instanceRoot, { recursive: true }).pipe(Effect.orDie),
       };
       return instance;
@@ -256,8 +265,8 @@ const docker = Effect.fnUntraced(function* () {
         entries: `${cache}/entries`,
         stages: `${cache}/stages`,
         restoreStages: `${cache}/stages`,
-        saveSnapshot: (key) => storage.saveSnapshot(version, key),
-        restoreSnapshot: (key) => storage.restoreSnapshot(version, key),
+        saveSnapshot: (key, scope) => storage.saveSnapshot(version, key, scope),
+        restoreSnapshot: (key, scope) => storage.restoreSnapshot(version, key, scope),
         seed: (value) =>
           Effect.gen(function* () {
             yield* storage.prepare(version);
@@ -270,6 +279,7 @@ const docker = Effect.fnUntraced(function* () {
               readyMarker("docker"),
             );
           }).pipe(Effect.orDie),
+        clear: storage.removeData(version).pipe(Effect.orDie),
         destroy: storage
           .destroyData(version)
           .pipe(Effect.andThen(fs.remove(instanceRoot, { recursive: true })), Effect.orDie),
@@ -530,6 +540,46 @@ for (const { name, make } of engines)
             "validate",
           );
           expect(yield* contents(target.data)).toBe("");
+        }),
+      ),
+    );
+
+    it.live("keeps instance snapshots beyond cache retention and outside the cache", () =>
+      live(
+        Effect.gen(function* () {
+          const { engine, entries, fixture } = yield* setup(make);
+          const owner = yield* engine.instance("owner");
+          for (const key of ["one", "two", "three", "four"]) {
+            yield* owner.seed(`checkpoint-${key}`);
+            yield* owner.saveSnapshot(key, "instance");
+          }
+          const other = yield* engine.instance("other");
+          for (const key of ["a", "b", "c", "d"]) {
+            yield* other.seed(key);
+            yield* other.saveSnapshot(key);
+          }
+
+          yield* owner.clear;
+          expect(yield* owner.restoreSnapshot("one", "instance")).toBe(true);
+          expect(yield* fixture(owner)).toBe("checkpoint-one\ncheckpoint-one");
+          expect([...(yield* entries(other)).keys()].sort()).toEqual(["b", "c", "d"]);
+        }),
+      ),
+    );
+
+    it.live("restores instance snapshots only into their instance and removes them with it", () =>
+      live(
+        Effect.gen(function* () {
+          const { engine } = yield* setup(make);
+          const owner = yield* engine.instance("owner");
+          yield* owner.seed("checkpoint");
+          yield* owner.saveSnapshot("key", "instance");
+
+          const other = yield* engine.instance("other");
+          expect(yield* other.restoreSnapshot("key", "instance")).toBe(false);
+          yield* owner.destroy;
+          const recreated = yield* engine.instance("owner");
+          expect(yield* recreated.restoreSnapshot("key", "instance")).toBe(false);
         }),
       ),
     );

@@ -49,7 +49,7 @@ await database.saveSnapshot("baseline");
 await stack.close(); // disconnects this client
 ```
 
-`start` and `ready` are separate operations. `restart({ config })` replaces recipe configuration while retaining the instance identity and endpoint intentions. A health failure leaves a launched process running and observable; it does not prevent `stop`. Database snapshots require a stopped instance with wake disabled. `saveSnapshot(key)` publishes complete data to managed backend storage and replaces the previous entry for that key; `restoreSnapshot(key)` returns `false` on a miss and `true` after restoring a compatible entry. Managed retention may evict older keys, while snapshots survive destruction of the source stack. Other service handles have no snapshot methods.
+`start` and `ready` are separate operations. `restart({ config })` replaces recipe configuration while retaining the instance identity and endpoint intentions. A health failure leaves a launched process running and observable; it does not prevent `stop`. Database snapshots require a stopped instance with wake disabled. `saveSnapshot(key)` publishes complete data to managed backend storage and replaces the previous entry for that key; `restoreSnapshot(key)` returns `false` on a miss and `true` after restoring a compatible entry. By default snapshots live in the shared cache, whose retention may evict older keys, and survive destruction of the source stack. `{ scope: "instance" }` keeps a snapshot with the instance instead: it is never evicted, restores only into that instance, survives `resetData`, and is removed when the instance is destroyed. Other service handles have no snapshot methods.
 
 Creating a service records its definition. Configured public ports are bound during startup and retained across normal stop/start and owner reopening. An occupied saved port reports a conflict instead of moving. Automatic ports avoid numbers saved by any stack under the same `stateRoot`; a fixed port is decided by binding it, so another stack's saved port blocks only while something listens on it; that conflict names the stack that saved the port. Omitted public endpoints are not exposed.
 
@@ -151,21 +151,39 @@ Bindings supply ordinary configuration values; a URL alone never creates a depen
 
 Exit confirmation is bounded. If cleanup is acknowledged but owner exit cannot be confirmed, the operation fails with `operation: "shutdown-exit"` and the owner PID in the message. A failed or cancelled call does not guarantee that teardown has completed. Do not start or restart the same stack concurrently with whole-stack shutdown; separate stacks remain independent.
 
-A session stack is destroyed when its creating client closes. A detached test stack needs explicit teardown, because closing a client does not own its lifetime:
+Each service exposes `status`, `followStatus`, `logs`, and `credentials`. Observations include the currently bound public endpoints, including listeners for sleeping services. Credentials default to host addressing. Use `from: "runtime"` for a URL passed to a service or tool container.
+
+## Testing
+
+`@supabase/stack/testing` creates a disposable, ready stack for a test:
 
 ```ts
-try {
-  // Exercise the stack.
-} finally {
-  try {
-    await stack.destroy();
-  } finally {
-    await stack.close();
-  }
-}
+import { createTestStack } from "@supabase/stack/testing";
+
+await using test = await createTestStack({ services: ["database", "rest"] });
+const { databaseUrl } = await test.services.database.credentials();
+
+await test.checkpoint("seeded"); // after loading fixtures
+// Exercise the stack.
+await test.reset("seeded"); // discard writes made since the checkpoint
 ```
 
-Each service exposes `status`, `followStatus`, `logs`, and `credentials`. Observations include the currently bound public endpoints, including listeners for sleeping services. Credentials default to host addressing. Use `from: "runtime"` for a URL passed to a service or tool container.
+The stack is a session stack composed with `composition.supabase` and `{ eager: true }`; each selected service is configured for local development with every endpoint on an automatic port, and `test.services` holds a typed handle per selected kind. Select a kind by name, or pass `{ service, config, endpoints }` to override part of its configuration. Disposal destroys the stack, then closes the client and removes the temporary project root. A session stack is also destroyed when the test process exits.
+
+Every test stack for the current OS user shares one state root and the package's artifact cache root under the OS temp directory, so their ports are coordinated and Docker uses one data volume; each gets a unique temporary project root and name. Pass `stateRoot`, `cacheRoot`, or `projectRoot` to override them. The runtime comes from `runtime`, then `SUPABASE_STACK_TEST_RUNTIME`, then the platform default: native where the catalog publishes native artifacts and Docker elsewhere. A startup failure names the state of each registered service and the owner log.
+
+`checkpoint(name)` stops the composition, saves the database data as an instance-scoped snapshot, and starts the composition again. `reset(name)` stops it, clears the database data, restores that snapshot, and waits until every service is ready. Checkpoints are never evicted by other stacks' snapshots and are removed when the test stack is destroyed.
+
+Effect tests use the scoped `makeTestStack`, which destroys the stack when its scope closes:
+
+```ts
+import { makeTestStack } from "@supabase/stack/testing";
+
+const test = Effect.gen(function* () {
+  const { services } = yield* makeTestStack({ services: ["database"] });
+  yield* exercise(services.database);
+}).pipe(Effect.scoped);
+```
 
 ## Effect consumers
 
@@ -192,16 +210,8 @@ await Effect.runPromise(
 );
 ```
 
+The Promise entrypoint is derived from this one: each Effect becomes a call that accepts `{ signal }`, each Effect-returning function takes the same arguments plus a trailing `{ signal }`, each Stream becomes an async iterable, and `Redacted` configuration values become plain strings. `tools.run` takes Promise-returning sinks and an async-iterable `stdin`.
+
 Cancelling an admitted lifecycle caller ends its wait; the owner finishes the operation. Cancelling an attached tool ends that job and cleans up its resources. Tool input and output stream with backpressure; the result contains a job ID and exit code, not collected output. Promise tool sinks should return a Promise when the destination requires waiting for capacity.
-
-For disposable Effect test fixtures, `acquireUseRelease` runs teardown on failure and interruption while retaining typed cleanup errors:
-
-```ts
-const test = Effect.acquireUseRelease(
-  Stack.create(options),
-  (stack) => exerciseStack(stack),
-  (stack) => stack.destroy,
-);
-```
 
 The owner supports normal stop/start persistence. When an owner dies unexpectedly, its native processes die with it. Its containers remain until the next owner start in the same `stateRoot` removes them; that start also destroys session stacks whose owner is gone. Unexpected owner death does not trigger resource adoption or interrupted-operation recovery. CLI integration is maintained separately from this package.

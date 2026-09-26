@@ -64,11 +64,16 @@ import {
 } from "../runtime/postgres-user.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
-import { makeDatabaseSnapshots } from "./DatabaseSnapshot.ts";
+import {
+  instanceSnapshotsDirectory,
+  makeDatabaseSnapshots,
+  type SnapshotScope,
+} from "./DatabaseSnapshot.ts";
 import type { DockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 import {
   makeDockerDatabaseStorage,
   type DockerDatabaseStorage,
+  type DockerDatabaseStorageError,
 } from "../storage/DockerDatabaseStorage.ts";
 
 export const DatabaseConfig = Schema.Struct({
@@ -136,10 +141,12 @@ export interface DatabaseComponent {
   readonly saveSnapshot: (
     context: ServiceInstanceContext<DatabaseConfig>,
     key: string,
+    scope: SnapshotScope,
   ) => Effect.Effect<void, ServiceError>;
   readonly restoreSnapshot: (
     context: ServiceInstanceContext<DatabaseConfig>,
     key: string,
+    scope: SnapshotScope,
   ) => Effect.Effect<boolean, ServiceError>;
   readonly endpoint: Effect.Effect<BackendEndpoint, DatabaseError>;
   readonly logs: Stream.Stream<DatabaseLog, DatabaseError>;
@@ -382,6 +389,8 @@ const removeOwnedRoot = Effect.fn("Database.removeOwnedRoot")((
   stackId: string,
   instanceId: string,
   removeData: Effect.Effect<void, ServiceError>,
+  /** Root entries kept with the owner marker; when empty the root itself is removed. */
+  keep: ReadonlyArray<string> = [],
 ): Effect.Effect<void, ServiceError> => {
   const ownerFile = path.join(root, ".supabase-database-owner.json");
   const marker = JSON.stringify({ stackId, instanceId });
@@ -400,9 +409,18 @@ const removeOwnedRoot = Effect.fn("Database.removeOwnedRoot")((
     if (existing !== marker)
       return yield* errorFor("destroy", "Database root belongs to another instance");
     yield* removeData;
-    yield* fs
-      .remove(root, { recursive: true, force: true })
+    if (keep.length === 0)
+      return yield* fs
+        .remove(root, { recursive: true, force: true })
+        .pipe(Effect.mapError((cause) => errorFor("destroy", cause)));
+    const names = yield* fs
+      .readDirectory(root)
       .pipe(Effect.mapError((cause) => errorFor("destroy", cause)));
+    for (const name of names)
+      if (name !== path.basename(ownerFile) && !keep.includes(name))
+        yield* fs
+          .remove(path.join(root, name), { recursive: true, force: true })
+          .pipe(Effect.mapError((cause) => errorFor("destroy", cause)));
   });
 });
 
@@ -937,53 +955,46 @@ export const makeDatabase = (
           }).pipe(Effect.mapError((cause) => errorFor("destroy", cause))),
         ),
     };
-    const resetData = Effect.fn("Database.resetData")(
-      (context: ServiceInstanceContext<DatabaseConfig>) =>
+    const resetData = Effect.fn("Database.resetData")((
+      context: ServiceInstanceContext<DatabaseConfig>,
+    ) => {
+      const clear: Effect.Effect<void, ServiceError | DockerDatabaseStorageError> =
         storage === undefined
-          ? definition
-              .removeData(context)
-              .pipe(
-                Effect.andThen(
-                  ensureOwnedRoot(
-                    fs,
-                    path,
-                    instanceRoot,
-                    String(options.stackId),
-                    options.instanceId,
-                  ).pipe(Effect.mapError((cause) => errorFor("reset", cause))),
-                ),
-              )
-          : storage.removeData(postgresVersion(context.config.version)).pipe(
-              Effect.andThen(
-                ensureOwnedRoot(
-                  fs,
-                  path,
-                  instanceRoot,
-                  String(options.stackId),
-                  options.instanceId,
-                ).pipe(Effect.mapError((cause) => errorFor("reset", cause))),
-              ),
-              Effect.mapError((cause) => errorFor("reset", cause)),
-            ),
-    );
+          ? removeOwnedRoot(
+              fs,
+              path,
+              instanceRoot,
+              String(options.stackId),
+              options.instanceId,
+              Effect.void,
+              [instanceSnapshotsDirectory],
+            )
+          : storage.removeData(postgresVersion(context.config.version));
+      return clear.pipe(
+        Effect.andThen(
+          ensureOwnedRoot(fs, path, instanceRoot, String(options.stackId), options.instanceId),
+        ),
+        Effect.mapError((cause) => errorFor("reset", cause)),
+      );
+    });
     return {
       definition,
       resetData,
-      saveSnapshot: (context, key) =>
+      saveSnapshot: (context, key, scope) =>
         storage === undefined
           ? Effect.flatMap(snapshots(context.config.version), (store) =>
-              store.saveSnapshot(key),
+              store.saveSnapshot(key, scope),
             ).pipe(Effect.mapError((cause) => errorFor("snapshot", cause)))
           : storage
-              .saveSnapshot(postgresVersion(context.config.version), key)
+              .saveSnapshot(postgresVersion(context.config.version), key, scope)
               .pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
-      restoreSnapshot: (context, key) =>
+      restoreSnapshot: (context, key, scope) =>
         storage === undefined
           ? Effect.flatMap(snapshots(context.config.version), (store) =>
-              store.restoreSnapshot(key),
+              store.restoreSnapshot(key, scope),
             ).pipe(Effect.mapError((cause) => errorFor("snapshot", cause)))
           : storage
-              .restoreSnapshot(postgresVersion(context.config.version), key)
+              .restoreSnapshot(postgresVersion(context.config.version), key, scope)
               .pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
       endpoint: Ref.get(endpoint).pipe(
         Effect.flatMap((value) =>

@@ -7,7 +7,7 @@
     ".": "./src/index.ts",
     "./effect": "./src/effect.ts",
     "./defaults": "./src/Defaults.ts",
-    "./tools": "./src/Tools.ts",
+    "./testing": "./src/testing.ts",
     "./internal/dispatch": "./src/internal/dispatch.ts",
     "./internal/artifacts": "./src/internal/artifacts.ts",
     "./internal/release": "./src/internal/release.ts"
