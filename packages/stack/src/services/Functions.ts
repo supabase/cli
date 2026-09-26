@@ -3,6 +3,7 @@ import {
   makeFunctionsBootstrapOwner,
   type FunctionsBootstrapOwner,
 } from "../functions/FunctionsBootstrap.ts";
+import { defaultFunctionsBootstrap } from "../functions/generated/serve-main-bundle.ts";
 import { StackIdSchema } from "../identity/StackId.ts";
 import { ServiceError } from "../Service.ts";
 import { serviceJwt } from "./ServiceConfig.ts";
@@ -32,7 +33,7 @@ export const Config = Schema.Struct({
   functionsRoot: Schema.String,
   filesRoot: Schema.optionalKey(Schema.String),
   functions: Schema.optionalKey(Schema.Record(Schema.String, FunctionSettings)),
-  bootstrap: Schema.String,
+  bootstrap: Schema.optionalKey(Schema.String),
   databaseUrl: Schema.optionalKey(Schema.String),
   env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   apiUrl: Schema.optionalKey(Schema.String),
@@ -202,7 +203,7 @@ const makeSpec = (
     }),
   startup: [],
   prepare: (creation) =>
-    bootstrap.write({ content: creation.config.bootstrap }).pipe(
+    bootstrap.write({ content: creation.config.bootstrap ?? defaultFunctionsBootstrap }).pipe(
       Effect.flatMap((target) => Ref.set(functionsRoot, path.dirname(target))),
       Effect.mapError(
         (cause) =>
