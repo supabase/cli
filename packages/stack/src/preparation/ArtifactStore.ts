@@ -597,48 +597,54 @@ const cleanup = (fs: FileSystem.FileSystem, path: string): Effect.Effect<void, P
 
 const orphanMaxAgeMillis = 24 * 60 * 60 * 1000;
 
-const isOrphanCandidate = (name: string): boolean =>
-  name.startsWith(".") && (name.endsWith(".tmp") || name.endsWith(".invalid"));
+const leftoverToken = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+
+/** Matches the temporary and quarantine names the store creates beside `targetName`. */
+const isLeftoverOf = (targetName: string, name: string): boolean => {
+  const prefix = `.${targetName}.`;
+  const suffix = [".tmp", ".invalid"].find((candidate) => name.endsWith(candidate));
+  return (
+    suffix !== undefined &&
+    name.startsWith(prefix) &&
+    leftoverToken.test(name.slice(prefix.length, name.length - suffix.length))
+  );
+};
 
 /**
- * Best-effort sweep of temp/quarantine leftovers a hard kill left behind. Only entries whose own
- * mtime is older than `orphanMaxAgeMillis` are removed, so a concurrent in-progress download by
- * another process is never touched. Every failure is swallowed: this is opportunistic cleanup,
- * not a correctness requirement.
+ * Best-effort removal of one target's temp/quarantine siblings that a hard kill left behind.
+ * Only entries older than `orphanMaxAgeMillis` are removed, so a concurrent in-progress download
+ * by another process is never touched.
  */
-const reapOrphanedArtifacts = (
+const reapLeftoversOf = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
-  cacheRoot: string,
+  target: string,
 ): Effect.Effect<void> =>
-  Clock.currentTimeMillis.pipe(
-    Effect.flatMap((now) =>
-      fs.readDirectory(cacheRoot, { recursive: true }).pipe(
-        Effect.flatMap((entries) =>
-          Effect.forEach(
-            entries.filter((entry) => isOrphanCandidate(path.basename(entry))),
-            (entry) => {
-              const candidate = path.join(cacheRoot, entry);
-              return fs.stat(candidate).pipe(
-                Effect.flatMap((info) =>
-                  Option.match(info.mtime, {
-                    onNone: () => Effect.void,
-                    onSome: (mtime) =>
-                      now - mtime.getTime() > orphanMaxAgeMillis
-                        ? fs.remove(candidate, { recursive: true, force: true })
-                        : Effect.void,
-                  }),
-                ),
-                Effect.ignore,
-              );
-            },
-            { discard: true },
+  Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const parent = path.dirname(target);
+    const targetName = path.basename(target);
+    const names = yield* fs.readDirectory(parent);
+    yield* Effect.forEach(
+      names.filter((name) => isLeftoverOf(targetName, name)),
+      (name) => {
+        const candidate = path.join(parent, name);
+        return fs.stat(candidate).pipe(
+          Effect.flatMap((info) =>
+            Option.match(info.mtime, {
+              onNone: () => Effect.void,
+              onSome: (mtime) =>
+                now - mtime.getTime() > orphanMaxAgeMillis
+                  ? fs.remove(candidate, { recursive: true, force: true })
+                  : Effect.void,
+            }),
           ),
-        ),
-      ),
-    ),
-    Effect.ignore,
-  );
+          Effect.ignore,
+        );
+      },
+      { discard: true },
+    );
+  }).pipe(Effect.ignore);
 
 const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
   fs: FileSystem.FileSystem,
@@ -654,6 +660,7 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
     const target = path.resolve(cacheRoot, request.key);
     const targetParent = path.dirname(target);
     yield* ensureDirectory(fs, path, targetParent, cacheRoot);
+    yield* reapLeftoversOf(fs, path, target);
     const metadataPath = path.join(target, METADATA_NAME);
     const checkCached: Effect.Effect<
       Option.Option<PreparedArtifact>,
@@ -872,7 +879,6 @@ export const makeArtifactStore = Effect.fn("ArtifactStore.makeStore")(function* 
   if (rootInfo.type !== "Directory")
     return yield* artifactError("Artifact cache root must be a directory", { path: cacheRoot });
   yield* mapFs(cacheRoot, "secure artifact cache root", restrictDirectoryToOwner(fs, cacheRoot));
-  yield* reapOrphanedArtifacts(fs, path, cacheRoot);
   const prepare = Effect.fn("ArtifactStore.prepare")(function* (
     request: ArtifactRequest,
     onProgress?: (state: "downloading" | "preparing") => void,
