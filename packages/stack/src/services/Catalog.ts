@@ -33,8 +33,6 @@ import { makeProcessRecipe, type ProcessDependencies } from "./ProcessRecipe.ts"
 import { slimImageMirrors, type ServiceKind } from "../Artifacts.ts";
 import type { ServiceInstanceContext } from "../Service.ts";
 
-export type { CatalogLog } from "./Recipe.ts";
-
 const endpointSchemas = [
   ["database", DatabaseEndpoints],
   ["rest", Rest.Endpoints],

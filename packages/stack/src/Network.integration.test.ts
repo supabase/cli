@@ -27,7 +27,7 @@ const stack = (id: string, port: number | "auto") => ({
   identity: { projectRoot: "/tmp", branchContext: "test", stackName: id },
   runtime: "native" as const,
   instances: [],
-  composition: {},
+  composition: { members: [], dependencies: [] },
   ports: port === "auto" ? [] : [{ key: "api", host: "127.0.0.1", port }],
 });
 

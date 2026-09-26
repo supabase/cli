@@ -32,15 +32,8 @@ import type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import * as State from "./State.ts";
 import type { SavedStack, StackCredentials, StackIdentityInput } from "./State.ts";
+import { StackError, StackRpc, type Definition, type Observation } from "./Rpc.ts";
 import {
-  StackError,
-  StackErrorSchema,
-  StackRpc,
-  type Definition,
-  type Observation,
-} from "./Rpc.ts";
-import {
-  ServiceCreation as ServiceCreationSchema,
   ServiceCreationInput as ServiceCreationInputSchema,
   type ServiceCreation,
   type ServiceCreationInput as CatalogServiceCreationInput,
@@ -94,8 +87,8 @@ export interface OpenOptions extends StackLocations {
 }
 
 const failure = (operation: string, cause: unknown): StackError =>
-  Schema.is(StackErrorSchema)(cause)
-    ? new StackError(cause)
+  Schema.is(StackError)(cause)
+    ? cause
     : new StackError({
         operation,
         message: Schema.is(RpcClientError)(cause)
@@ -481,8 +474,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
                         ),
                         Effect.catchIf(
                           (cause) =>
-                            Schema.is(StackErrorSchema)(cause) &&
-                            cause.operation === "tool-input-closed",
+                            Schema.is(StackError)(cause) && cause.operation === "tool-input-closed",
                           () => Effect.void,
                         ),
                         Effect.tapCause((cause) => Deferred.failCause(inputFailure, cause)),
@@ -511,16 +503,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     if (current === undefined) return yield* failure("definition", "Stack does not exist");
     return current;
   }).pipe(Effect.mapError((cause) => failure("definition", cause)));
-  const definitions = savedDefinition.pipe(
-    Effect.flatMap((current) =>
-      Effect.forEach(current.instances, (entry) =>
-        Schema.decodeUnknownEffect(Schema.toCodecJson(ServiceCreationSchema))(entry.creation).pipe(
-          Effect.map((creation) => ({ id: entry.id, creation })),
-          Effect.mapError((cause) => failure("definition", cause)),
-        ),
-      ),
-    ),
-  );
+  const definitions = savedDefinition.pipe(Effect.map((current) => current.instances));
   return {
     id: saved.id,
     services: {
@@ -530,7 +513,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           Effect.flatMap((entries) => {
             const definition = entries.find((entry) => entry.id === id);
             return definition === undefined
-              ? Effect.fail(failure("getService", `Unknown service ${id}`))
+              ? Effect.fail(failure("service", `Unknown service ${id}`))
               : Effect.succeed(instance(definition));
           }),
         ),
@@ -556,12 +539,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
       configure: (config: Orchestrator.CompositionConfig) =>
         call("configureComposition", (rpc) => rpc.configureComposition(config)),
-      describe: savedDefinition.pipe(
-        Effect.flatMap((current) =>
-          Schema.decodeUnknownEffect(Orchestrator.CompositionConfig)(current.composition),
-        ),
-        Effect.mapError((cause) => failure("getComposition", cause)),
-      ),
+      describe: savedDefinition.pipe(Effect.map((current) => current.composition)),
       start: call("startComposition", (rpc) => rpc.startComposition()),
       stop: call("stopComposition", (rpc) => rpc.stopComposition()),
       restart: call("restartComposition", (rpc) => rpc.restartComposition()),

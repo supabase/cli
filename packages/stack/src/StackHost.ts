@@ -14,7 +14,6 @@ import {
   Ref,
   Scope,
   Semaphore,
-  Stream,
   Path,
 } from "effect";
 import * as HttpServer from "effect/unstable/http/HttpServer";
@@ -24,15 +23,10 @@ import * as RpcServer from "effect/unstable/rpc/RpcServer";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import { acquireHost, HostEndpoint } from "./HostProcess.ts";
 import * as Owner from "./Owner.ts";
-import { OwnerError } from "./Owner.ts";
-import * as Orchestrator from "./Orchestrator.ts";
-import { StackError, StackRpc } from "./Rpc.ts";
+import { StackError, stackError, StackRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
 import { makeToolAttachments, type ToolAttachmentPayload } from "./host/ToolAttachments.ts";
 import * as ToolRunner from "./host/ToolRunner.ts";
-import * as Container from "./runtime/Container.ts";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import type { CatalogLog } from "./services/Catalog.ts";
 
 export interface StackHostOptions {
   readonly stateRoot: string;
@@ -55,33 +49,6 @@ const hostError = (operation: string, cause: unknown, reason?: "runtime-unavaila
     cause,
     ...(reason === undefined ? {} : { reason }),
   });
-
-const stackError = (operation: string, cause: unknown): StackError => {
-  if (cause instanceof StackError) return cause;
-  const orchestration =
-    cause instanceof Orchestrator.OrchestratorError
-      ? cause
-      : cause instanceof OwnerError && cause.cause instanceof Orchestrator.OrchestratorError
-        ? cause.cause
-        : undefined;
-  if (orchestration?.outcomes !== undefined) {
-    return new StackError({
-      operation,
-      message: orchestration.message,
-      outcomes: orchestration.outcomes.map(({ id, result }) => ({
-        id,
-        succeeded: Exit.isSuccess(result),
-        ...(Exit.isFailure(result) ? { error: Orchestrator.causeMessage(result.cause) } : {}),
-      })),
-    });
-  }
-  return new StackError({
-    operation,
-    message: cause instanceof Error ? cause.message : String(cause),
-  });
-};
-
-const log = (value: CatalogLog) => ({ stream: value.stream, bytes: value.bytes });
 
 const isOpen = (value: boolean): Effect.Effect<void, StackError> =>
   value
@@ -132,25 +99,12 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
     endpoint: HostEndpoint,
     server: HttpServer.HttpServer["Service"],
     closeConnections: Effect.Effect<void>,
-    container?: {
-      readonly engine: "docker" | "podman";
-      readonly stackId: string;
-      readonly root: string;
-    },
-  ): Effect.Effect<
-    StackHostRuntime,
-    never,
-    Scope.Scope | ToolRunner.Service | ChildProcessSpawner.ChildProcessSpawner
-  > =>
+  ): Effect.Effect<StackHostRuntime, never, Scope.Scope | ToolRunner.Service> =>
     Effect.gen(function* () {
       const scope = yield* Scope.Scope;
       const runner = yield* ToolRunner.Service;
-      const childSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const attachments = yield* makeToolAttachments({
-        admit: owner.getServing.pipe(
-          Effect.flatMap(isOpen),
-          Effect.mapError((cause) => stackError("host", cause)),
-        ),
+        admit: owner.getServing.pipe(Effect.flatMap(isOpen)),
         run: runner.run,
         toError: stackError,
       });
@@ -190,21 +144,10 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                   if (response !== undefined && responseClosedSignal !== undefined)
                     yield* watchResponse(response, responseClosedSignal);
                   let retiringAfterDestroyFailure = false;
-                  const removeOwned =
-                    container === undefined
-                      ? Effect.void
-                      : Container.removeStackContainers(container).pipe(
-                          Effect.provideService(
-                            ChildProcessSpawner.ChildProcessSpawner,
-                            childSpawner,
-                          ),
-                          Effect.mapError((cause) => stackError("shutdown", cause)),
-                        );
                   const stopOwned = Effect.gen(function* () {
                     yield* attachments.stopAll;
                     yield* runner.cleanup;
                     yield* owner.namespace.stop;
-                    yield* removeOwned;
                   });
                   const finish = Effect.gen(function* () {
                     if (response !== undefined) {
@@ -279,11 +222,12 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                     Effect.catchCause((cause) =>
                       retiringAfterDestroyFailure
                         ? Effect.failCause(cause)
-                        : owner.setDraining(false).pipe(
-                            Effect.mapError((reset) => stackError("shutdown", reset)),
-                            Effect.andThen(gate.withPermits(1)(Ref.set(current, undefined))),
-                            Effect.andThen(Effect.failCause(cause)),
-                          ),
+                        : owner
+                            .setDraining(false)
+                            .pipe(
+                              Effect.andThen(gate.withPermits(1)(Ref.set(current, undefined))),
+                              Effect.andThen(Effect.failCause(cause)),
+                            ),
                     ),
                   );
                   const fiber = yield* Effect.forkIn(cleanup, scope);
@@ -295,98 +239,8 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
             yield* Fiber.join(fiber);
           }).pipe(Effect.mapError((cause) => stackError("shutdown", cause))),
       );
-      const handlers = {
-        createService: (creation: unknown) =>
-          owner.services
-            .create(creation)
-            .pipe(Effect.mapError((cause) => stackError("createService", cause))),
-        getService: ({ id }: { readonly id: string }) =>
-          owner.services.get(id).pipe(Effect.mapError((cause) => stackError("getService", cause))),
-        listServices: () =>
-          owner.services.list.pipe(Effect.mapError((cause) => stackError("listServices", cause))),
-        startService: ({ id }: { readonly id: string }) =>
-          owner.core.start(id).pipe(Effect.mapError((cause) => stackError("startService", cause))),
-        readyService: ({ id }: { readonly id: string }) =>
-          owner.core.ready(id).pipe(Effect.mapError((cause) => stackError("readyService", cause))),
-        stopService: ({ id }: { readonly id: string }) =>
-          owner.core.stop(id).pipe(Effect.mapError((cause) => stackError("stopService", cause))),
-        restartService: ({ id, config }: { readonly id: string; readonly config?: unknown }) =>
-          owner.core
-            .restart(id, config)
-            .pipe(Effect.mapError((cause) => stackError("restartService", cause))),
-        destroyService: ({ id }: { readonly id: string }) =>
-          owner.core
-            .destroy(id)
-            .pipe(Effect.mapError((cause) => stackError("destroyService", cause))),
-        prepareService: ({ id }: { readonly id: string }) =>
-          owner.core
-            .prepare(id)
-            .pipe(Effect.mapError((cause) => stackError("prepareService", cause))),
-        status: ({ id }: { readonly id: string }) =>
-          owner.core.status(id).pipe(Effect.mapError((cause) => stackError("status", cause))),
-        followStatus: ({ id }: { readonly id: string }) =>
-          owner.core
-            .followStatus(id)
-            .pipe(Stream.mapError((cause) => stackError("followStatus", cause))),
-        logs: ({ id }: { readonly id: string }) =>
-          owner.core.logs(id).pipe(
-            Stream.map(log),
-            Stream.mapError((cause) => stackError("logs", cause)),
-          ),
-        credentials: ({ id, from }: { readonly id: string; readonly from: "host" | "runtime" }) =>
-          owner
-            .credentials(id, from)
-            .pipe(Effect.mapError((cause) => stackError("credentials", cause))),
-        saveSnapshot: ({ id, key }: { readonly id: string; readonly key: string }) =>
-          owner.snapshots
-            .saveSnapshot(id, key)
-            .pipe(Effect.mapError((cause) => stackError("saveSnapshot", cause))),
-        restoreSnapshot: ({ id, key }: { readonly id: string; readonly key: string }) =>
-          owner.snapshots
-            .restoreSnapshot(id, key)
-            .pipe(Effect.mapError((cause) => stackError("restoreSnapshot", cause))),
-        resetData: ({ id }: { readonly id: string }) =>
-          owner.snapshots
-            .resetData(id)
-            .pipe(Effect.mapError((cause) => stackError("resetData", cause))),
-        supabaseComposition: ({
-          services,
-          reuseIds,
-          identity,
-        }: {
-          readonly services: Parameters<Owner.Interface["composition"]["supabase"]>[0];
-          readonly reuseIds?: NonNullable<
-            Parameters<Owner.Interface["composition"]["supabase"]>[1]
-          >["reuseIds"];
-          readonly identity?: NonNullable<
-            Parameters<Owner.Interface["composition"]["supabase"]>[1]
-          >["identity"];
-        }) =>
-          owner.composition
-            .supabase(services, { reuseIds, identity })
-            .pipe(Effect.mapError((cause) => stackError("supabaseComposition", cause))),
-        configureComposition: (
-          configuration: Parameters<Owner.Interface["composition"]["configure"]>[0],
-        ) =>
-          owner.composition
-            .configure(configuration)
-            .pipe(Effect.mapError((cause) => stackError("configureComposition", cause))),
-        getComposition: () =>
-          owner.composition.get.pipe(
-            Effect.mapError((cause) => stackError("getComposition", cause)),
-          ),
-        startComposition: () =>
-          owner.composition.start.pipe(
-            Effect.mapError((cause) => stackError("startComposition", cause)),
-          ),
-        stopComposition: () =>
-          owner.composition.stop.pipe(
-            Effect.mapError((cause) => stackError("stopComposition", cause)),
-          ),
-        restartComposition: () =>
-          owner.composition.restart.pipe(
-            Effect.mapError((cause) => stackError("restartComposition", cause)),
-          ),
+      const handlers = StackRpc.of({
+        ...owner.handlers,
         shutdown: ({ destroy }: { readonly destroy: boolean }) =>
           Effect.gen(function* () {
             const request = yield* Effect.serviceOption(HttpServerRequest.HttpServerRequest);
@@ -406,7 +260,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           readonly attachmentId: string;
           readonly bytes: Uint8Array | null;
         }) => attachments.input(attachmentId, true, bytes),
-      };
+      });
       const rpc = yield* RpcServer.toHttpEffect(StackRpc, { streamBufferSize: 16 }).pipe(
         Effect.provide(Layer.merge(StackRpc.toLayer(handlers), RpcSerialization.layerNdjson)),
       );
@@ -452,20 +306,15 @@ export const runStackHost = Effect.fn("StackHost.run")(
           const dataRootPath = path.join(options.stateRoot, saved.id, "data");
           yield* fs.makeDirectory(dataRootPath, { recursive: true });
           const dataRoot = yield* fs.realPath(dataRootPath);
-          if (saved.runtime !== "native")
-            yield* Container.removeStackContainers({
-              engine: saved.runtime,
-              stackId: saved.id,
-              root: dataRoot,
-            }).pipe(
-              Effect.mapError((cause) =>
-                hostError(
-                  "startup-cleanup",
-                  cause,
-                  cause.reason === "engine-unavailable" ? "runtime-unavailable" : undefined,
-                ),
+          yield* Owner.sweepContainers(saved, dataRoot).pipe(
+            Effect.mapError((cause) =>
+              hostError(
+                "startup-cleanup",
+                cause,
+                cause.reason === "engine-unavailable" ? "runtime-unavailable" : undefined,
               ),
-            );
+            ),
+          );
           const services = yield* Layer.build(
             Layer.merge(
               Owner.layer({
@@ -493,9 +342,6 @@ export const runStackHost = Effect.fn("StackHost.run")(
             endpoint,
             acquired.server,
             acquired.closeConnections,
-            saved.runtime === "native"
-              ? undefined
-              : { engine: saved.runtime, stackId: saved.id, root: dataRoot },
           ).pipe(
             Effect.provideService(ToolRunner.Service, Context.get(services, ToolRunner.Service)),
           );

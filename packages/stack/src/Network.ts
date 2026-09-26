@@ -16,13 +16,13 @@ export interface NetworkEndpoint {
   readonly enabled: Effect.Effect<boolean>;
 }
 
-class NetworkError extends Data.TaggedError("NetworkError")<{
+export class NetworkError extends Data.TaggedError("NetworkError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
 }> {}
 
-export interface NetworkBinding {
+interface NetworkBinding {
   readonly name: string;
   readonly protocol: "tcp" | "http";
   readonly host: string;
@@ -77,7 +77,6 @@ const makeNetwork = (options: {
         }
       | undefined
     >(undefined);
-    const namespaces = yield* Ref.make(new Map<string, ReadonlyArray<string>>());
 
     const listenHost = options.runtime === "native" ? "127.0.0.1" : "0.0.0.0";
     const hostAddress = "127.0.0.1";
@@ -95,12 +94,6 @@ const makeNetwork = (options: {
       readonly id: string;
       readonly endpoints: Readonly<Record<string, NetworkEndpoint>>;
     }) {
-      const names = Object.keys(endpoints);
-      const duplicate = yield* Ref.modify(namespaces, (current) => [
-        current.has(id),
-        current.has(id) ? current : new Map(current).set(id, names),
-      ]);
-      if (duplicate) return yield* errorFor("register", `Duplicate instance ${id}`);
       const bound = yield* Ref.make<Map<string, NetworkBinding>>(new Map());
       const scopes = yield* Ref.make<Map<string, Scope.Closeable>>(new Map());
       const closed = yield* Ref.make(false);
@@ -249,18 +242,13 @@ const makeNetwork = (options: {
                     "Stop the instance before releasing its endpoints",
                   );
               yield* Ref.set(closed, true);
-              for (const name of names) {
+              for (const name of Object.keys(endpoints)) {
                 const endpoint = endpoints[name];
                 if (endpoint?.shared === undefined)
                   yield* ports
                     .release(options.stackId, `${id}:${name}`)
                     .pipe(Effect.mapError((cause) => errorFor("release", cause)));
               }
-              yield* Ref.update(namespaces, (current) => {
-                const next = new Map(current);
-                next.delete(id);
-                return next;
-              });
             }),
           ),
         ),
@@ -295,13 +283,9 @@ const makeNetwork = (options: {
 
     const release = Effect.fn("Network.releaseNamespace")(() =>
       gate.withPermits(1)(
-        Effect.gen(function* () {
-          if ((yield* Ref.get(namespaces)).size !== 0)
-            return yield* errorFor("release", "Destroy instances before releasing the namespace");
-          yield* ports
-            .release(options.stackId, "api")
-            .pipe(Effect.mapError((cause) => errorFor("release", cause)));
-        }),
+        ports
+          .release(options.stackId, "api")
+          .pipe(Effect.mapError((cause) => errorFor("release", cause))),
       ),
     );
     return { register, release: release() } satisfies Interface;
