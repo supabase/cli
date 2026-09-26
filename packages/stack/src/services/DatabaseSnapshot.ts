@@ -206,6 +206,9 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
   const reclaimStages = [
     Recover({ stages: backend.stages, entries: backend.entries }),
     Clear({ directory: backend.stages }),
+    ...(backend.restoreStages === backend.stages
+      ? []
+      : [Clear({ directory: backend.restoreStages })]),
   ];
 
   const saveSnapshot = Effect.fn("DatabaseSnapshot.save")(function* (logicalKey: string) {
@@ -297,9 +300,6 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
               backend.run([
                 Ensure({ directory: backend.entries }),
                 ...reclaimStages,
-                ...(backend.restoreStages === backend.stages
-                  ? []
-                  : [Clear({ directory: backend.restoreStages })]),
                 ExpectEmpty({ directory: backend.data, otherwise: "nonempty" }),
                 Expect({ path: entry, present: true, otherwise: "miss" }),
                 ExpectText({
@@ -389,6 +389,8 @@ const makeNativeSnapshotBackend = Effect.fnUntraced(function* (
         fs.makeDirectory(directory, { recursive: true, mode: 0o700 }).pipe(Effect.as(proceed)),
       Clear: ({ directory }) =>
         Effect.gen(function* () {
+          if (yield* fs.readLink(directory).pipe(Effect.isSuccess))
+            return yield* errorFor("clear", `${directory} is a symbolic link`);
           yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
           for (const name of yield* fs.readDirectory(directory))
             yield* fs.remove(path.join(directory, name), { recursive: true, force: true });
