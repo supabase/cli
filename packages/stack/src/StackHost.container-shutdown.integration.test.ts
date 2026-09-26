@@ -2,12 +2,11 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Crypto, Effect, FileSystem, Layer, Path, Redacted, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as State from "./State.ts";
-import { launchHost, waitForOwnerExit } from "./HostProcess.ts";
-import { StackRpc } from "./Rpc.ts";
+import { hasReason, launchHost, ownerClient, waitForOwnerExit } from "./HostProcess.ts";
 import { makeContainerRuntime } from "./runtime/Container.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
+import { shutdownOwner } from "../tests/owner.ts";
 
 const helperImage =
   "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
@@ -73,15 +72,6 @@ const createOwnedContainer = (name: string, stackId: string, dataRoot: string) =
     helperImage,
   ]);
 
-const clientFor = (port: number) =>
-  RpcClient.make(StackRpc).pipe(
-    Effect.provide(
-      RpcClient.layerProtocolHttp({ url: `http://127.0.0.1:${port}/rpc` }).pipe(
-        Layer.provide(RpcSerialization.layerNdjson),
-      ),
-    ),
-  );
-
 const startHost = (stateRoot: string, cacheRoot: string, stackId: string, projectRoot: string) =>
   Effect.gen(function* () {
     const state = yield* stateFor(stateRoot);
@@ -92,6 +82,7 @@ const startHost = (stateRoot: string, cacheRoot: string, stackId: string, projec
         runtime: "docker",
         identity: { projectRoot, branchContext: "container-shutdown-test", stackName: stackId },
         instances: [],
+        lifetime: "detached",
         composition: { members: [], dependencies: [] },
         ports: [],
       });
@@ -123,9 +114,16 @@ it.live.skipIf(process.platform === "win32")(
         let activeB: { readonly pid: number; readonly port: number } | undefined;
         let stoppedA = true;
         let stoppedB = true;
+        // A signalled owner stops its containers, each within a 10 second grace, before exiting;
+        // no acknowledgement precedes that cleanup, so the post-acknowledgement exit bound repeats.
         const signalAndWait = (endpoint: { pid: number }, signal: NodeJS.Signals) =>
           Effect.sync(() => process.kill(endpoint.pid, signal)).pipe(
-            Effect.andThen(waitForOwnerExit(endpoint.pid).pipe(Effect.timeout("15 seconds"))),
+            Effect.andThen(
+              waitForOwnerExit(endpoint.pid).pipe(
+                Effect.retry({ while: hasReason("owner-exit-pending") }),
+                Effect.timeout("30 seconds"),
+              ),
+            ),
           );
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
@@ -142,7 +140,8 @@ it.live.skipIf(process.platform === "win32")(
           stackId,
           dataA,
         );
-        const endpointA = yield* startHost(rootA, cacheRoot, stackId, `${base}/project-a`);
+        const accessA = yield* startHost(rootA, cacheRoot, stackId, `${base}/project-a`);
+        const endpointA = accessA.endpoint;
         activeA = endpointA;
         stoppedA = false;
         expect(staleAtStartup.length).toBeGreaterThan(0);
@@ -160,7 +159,8 @@ it.live.skipIf(process.platform === "win32")(
           stackId,
           dataB,
         );
-        const endpointB = yield* startHost(rootB, cacheRoot, stackId, `${base}/project-b`);
+        const accessB = yield* startHost(rootB, cacheRoot, stackId, `${base}/project-b`);
+        const endpointB = accessB.endpoint;
         activeB = endpointB;
         stoppedB = false;
         expect(staleForA.length).toBeGreaterThan(0);
@@ -171,9 +171,9 @@ it.live.skipIf(process.platform === "win32")(
           "startup sweep removes B stale container",
         ).toEqual([]);
 
-        const clientA = yield* clientFor(endpointA.port);
-        const clientB = yield* clientFor(endpointB.port);
-        const createAndStartDatabase = (client: ReturnType<typeof clientFor>, suffix: string) =>
+        const clientA = yield* ownerClient(accessA);
+        const clientB = yield* ownerClient(accessB);
+        const createAndStartDatabase = (client: ReturnType<typeof ownerClient>, suffix: string) =>
           client.pipe(
             Effect.flatMap((rpc) =>
               rpc.createService({
@@ -221,24 +221,22 @@ it.live.skipIf(process.platform === "win32")(
         expect(yield* containers(stackId, dataB), "SIGINT removes B containers").toEqual([]);
         expect(yield* (yield* stateFor(rootB)).read(stackId)).toBeDefined();
 
-        const endpointA2 = yield* startHost(rootA, cacheRoot, stackId, `${base}/project-a`);
+        const accessA2 = yield* startHost(rootA, cacheRoot, stackId, `${base}/project-a`);
+        const endpointA2 = accessA2.endpoint;
         activeA = endpointA2;
         stoppedA = false;
-        yield* clientFor(endpointA2.port).pipe(
-          Effect.flatMap((rpc) => rpc.shutdown({ destroy: true })),
-        );
+        yield* shutdownOwner(accessA2, true);
         yield* waitForOwnerExit(endpointA2.pid).pipe(Effect.timeout("15 seconds"));
         stoppedA = true;
         activeA = undefined;
         expect(yield* containers(stackId, dataA), "destroy removes A containers").toEqual([]);
         expect(yield* (yield* stateFor(rootA)).read(stackId)).toBeUndefined();
 
-        const endpointB2 = yield* startHost(rootB, cacheRoot, stackId, `${base}/project-b`);
+        const accessB2 = yield* startHost(rootB, cacheRoot, stackId, `${base}/project-b`);
+        const endpointB2 = accessB2.endpoint;
         activeB = endpointB2;
         stoppedB = false;
-        yield* clientFor(endpointB2.port).pipe(
-          Effect.flatMap((rpc) => rpc.shutdown({ destroy: true })),
-        );
+        yield* shutdownOwner(accessB2, true);
         yield* waitForOwnerExit(endpointB2.pid).pipe(Effect.timeout("15 seconds"));
         stoppedB = true;
         activeB = undefined;

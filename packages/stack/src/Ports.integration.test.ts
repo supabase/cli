@@ -26,6 +26,7 @@ it.live("retains distinct claims for stopped stacks and rebinds the original pub
           runtime: "native",
           identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
           instances: [],
+          lifetime: "detached",
           composition: { members: [], dependencies: [] },
           ports: [],
         });
@@ -59,6 +60,7 @@ it.live("reports an occupied saved port without moving its assignment", () =>
         runtime: "native",
         identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
         instances: [],
+        lifetime: "detached",
         composition: { members: [], dependencies: [] },
         ports: [],
       });
@@ -90,6 +92,7 @@ it.live("allocates an auto port outside a contiguous range that refuses to bind"
         runtime: "native",
         identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
         instances: [],
+        lifetime: "detached",
         composition: { members: [], dependencies: [] },
         ports: [],
       });
@@ -122,6 +125,7 @@ it.live("reassigns the same auto port after its claim is released", () =>
         runtime: "native",
         identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
         instances: [],
+        lifetime: "detached",
         composition: { members: [], dependencies: [] },
         ports: [],
       });
@@ -147,6 +151,7 @@ it.live("names the last bind failure when no public port is available", () =>
         runtime: "native",
         identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
         instances: [],
+        lifetime: "detached",
         composition: { members: [], dependencies: [] },
         ports: [],
       });
@@ -174,6 +179,7 @@ const saveStack = (
     runtime: "native",
     identity: { projectRoot: root, branchContext: `branch-${id}`, stackName: id },
     instances: [],
+    lifetime: "detached",
     composition: { members: [], dependencies: [] },
     ports,
   });
@@ -350,7 +356,7 @@ it.live("lets a stack bind a port that a running stack claims but does not liste
       yield* saveStack(state, root, "current");
       const ports = yield* makePorts(state);
       yield* ports.acquire(
-        { stackId: "running", key: "control", host: "127.0.0.1", port: "auto" },
+        { stackId: "running", key: "admin", host: "127.0.0.1", port: "auto" },
         bind,
       );
       const restScope = yield* Scope.make();

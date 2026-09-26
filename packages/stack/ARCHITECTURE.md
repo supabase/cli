@@ -425,13 +425,13 @@ flowchart TB
 
 Keep Effect RPC as the transport initially. Composition startup calls the executors directly, not RPC back into its own host. Replacing RPC with handwritten messages would still require framing, validation, errors and stream transport; that replacement is not part of this simplification.
 
-| Module         | Responsibility                                                                                                                                                                  |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `StackHost`    | Process lifetime: signals, control-port claim, startup container sweep, shutdown state machine, `/identity` and `/rpc`; serves the owner's handlers plus shutdown and tool RPCs |
-| `Owner`        | Builds the instance and composition RPC handlers, maps domain failures to `StackError` once, persists definitions and adapts recipes, listeners and the Supabase composition    |
-| `Orchestrator` | The single in-memory registry of instance entries and the composition: admission, start plans, activity, idle sleep and exit watchers                                           |
-| `Network`      | Public listeners, the shared API proxy and port claims                                                                                                                          |
-| `host/*`       | Service-specific endpoint routes, rendered connection values and stack credential rules                                                                                         |
+| Module         | Responsibility                                                                                                                                                               |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `StackHost`    | Process lifetime: lease, signals, session lifeline, sweeps, shutdown state machine; serves `/identity`, `POST /shutdown` and `/rpc` (owner handlers plus tool RPCs)          |
+| `Owner`        | Builds the instance and composition RPC handlers, maps domain failures to `StackError` once, persists definitions and adapts recipes, listeners and the Supabase composition |
+| `Orchestrator` | The single in-memory registry of instance entries and the composition: admission, start plans, activity, idle sleep and exit watchers                                        |
+| `Network`      | Public listeners, the shared API proxy and port claims                                                                                                                       |
+| `host/*`       | Service-specific endpoint routes, rendered connection values and stack credential rules                                                                                      |
 
 Definition changes (service creation and destruction, composition configuration and Supabase composition) run one at a time in the owner's scope. A caller that disconnects stops waiting; the owner persists and registers together or rolls back, so saved definitions never outlive or precede their registered instances.
 
@@ -466,11 +466,19 @@ stateDiagram-v2
     Exited --> [*]
 ```
 
-During Starting, acquire the exclusive stack lease, load the instance definitions and saved resources needed for normal restart, construct components and open the control endpoint. The lease is held by an operating-system locking primitive whose ownership ends with the process; an on-disk PID/endpoint file is only discovery metadata and never proves an active owner. A competing launcher connects to the winning owner. For a container stack, remove containers labeled with this stack and its canonical data root before accepting work. This is cleanup of proven-owned workloads, not adoption or replay of interrupted operations. Other runtime or port conflicts remain errors.
+During Starting, acquire the exclusive stack lease, load the instance definitions and saved resources needed for normal restart, construct components and open the control endpoint. For a container stack, remove containers labeled with this stack and its canonical data root before accepting work. This is cleanup of proven-owned workloads, not adoption or replay of interrupted operations. Other runtime or port conflicts remain errors.
+
+**Lease and discovery.** The lease is a SQLite write transaction on `<stateRoot>/<id>/owner.lock`, held for the owner's whole lifetime; the operating system releases it when the process exits for any reason. POSIX record locks belong to the process, so only the lease code opens that file. A waiter may open the file just before a releasing holder unlinks it; after locking, it checks that the path still names the file it locked and otherwise reopens. A stack is live exactly while its lease is held. After taking the lease the owner binds a loopback control listener on an OS-assigned port and, once it serves, atomically publishes `owner.json`, readable only by its user, with its port, PID, release, lifetime, start time and a random per-owner secret; it retracts the record on exit. A client first try-locks the lease: a free lease means no owner, so `discover` reports dead stacks without any network probe. Only while the lease is held does a client read `owner.json`, then validate the stack identity, PID and port through `GET /identity`. Every control request carries the secret as `Authorization: Bearer <secret>`, a header HTTP tracing redacts, and the owner rejects requests without it after a constant-time comparison. A stale record, a foreign listener on a previous control port, or another owner that later binds that port therefore never receives this stack's requests; a client treats a rejection as a stale record and resolves the owner again. Concurrent spawners may start several owners; each loser fails to take the lease, reports that on its readiness descriptor and exits, and its spawner attaches to the winner through `owner.json`.
+
+**Release handshake.** `/identity` reports the owner's release: the package version plus a build identifier. The identifier is a digest of this package's module sources and its Effect version: the CLI build scripts embed it in every compiled binary and a source checkout computes it, so a binary and a source run of the same sources interoperate, and any change to the owner or its protocol is a new release. Operations fail with an error asking the user to stop or destroy the stack when the releases differ. `stop` and `destroy` use `POST /shutdown` with the bearer secret and a `{ "destroy": boolean }` body, which do not depend on the RPC schema and so reach owners of any release.
+
+**Session lifetime.** A session stack is registered by its owner under the lease, so it never exists without a live owner except after that owner dies. Its spawner keeps the owner's stdin pipe open for the life of the creating handle. End of input means the creator is gone, whether it closed the handle or its process died: the owner destroys the stack and exits. Only the creating handle starts a session stack's owner; other handles attach.
+
+**Orphan sweep.** Stack-labelled containers and session stacks exist only while their lease is held. After readiness, each owner visits every other stack in its state root in the background, with a bounded time per stack. It skips stacks whose lease is held. For a free lease it takes that lease for the duration of the visit, publishing a sweeper record in `owner.json` so clients wait for the visit instead of mistaking it for a starting owner, removes containers labelled with the stack and its data root, and destroys the stack through the owner's own destroy path when its lifetime is `session`. Filtering on the data-root label keeps other state roots untouched. Creating a stack whose identity belongs to a dead session stack reclaims that stack the same way first.
 
 During Serving, keep the owner alive independently of callers. Sleeping instances still need its public listeners. This is process lifetime management, not automatic service restart or continuous reconciliation.
 
-Where the platform delivers SIGTERM or SIGINT to the host, treat it as the same graceful shutdown request as `host.stop`. Repeated shutdown requests join that shutdown; they do not pre-empt executing transitions. On Unix, native launchers stop their process groups when the host pipe closes. Graceful shutdown stops owned services and tools, then synchronously removes containers labeled with the stack and canonical data root before the host exits. Forced termination may require manual cleanup.
+Where the platform delivers SIGTERM or SIGINT to the host, treat it as the same graceful shutdown request as `host.stop`. Repeated shutdown requests join that shutdown; they do not pre-empt executing transitions. On Unix, native launchers stop their process groups when the host pipe closes. Graceful shutdown stops owned services and tools, then synchronously removes containers labeled with the stack and canonical data root before the host exits. After forced termination, the orphan sweep removes leftover containers.
 
 During Draining:
 
@@ -481,13 +489,13 @@ During Draining:
 5. For destruction, remove proven-owned data and metadata after shutdown.
 6. Send the outcome, close the control endpoint and release ownership.
 
-**Successful whole-stack shutdown.** `stack.stop()` reports success only after admitted work settles, every owned live service and tool workload has stopped (including native processes, descendants and containers labeled with this stack and data root), stack listeners close, the shutdown RPC is acknowledged, and the detached host's exit is confirmed. If workload cleanup cannot be confirmed, stop fails and the live host retains ownership for inspection and retry; the stack is not reported stopped. If cleanup succeeds but host exit cannot be confirmed, stop also fails, though the host may already have exited. A delivered SIGTERM or SIGINT follows this cleanup path. Stop preserves stack definitions, service data, caches and saved port assignments. `destroy` follows the same live-workload cleanup, then removes only proven-owned persistent data.
+**Successful whole-stack shutdown.** `stack.stop()` reports success only after admitted work settles, every owned live service and tool workload has stopped (including native processes, descendants and containers labeled with this stack and data root), stack listeners close, the shutdown request is acknowledged, and the detached host's exit is confirmed. If workload cleanup cannot be confirmed, stop fails and the live host retains ownership for inspection and retry; the stack is not reported stopped. If cleanup succeeds but host exit cannot be confirmed, stop also fails, though the host may already have exited. A delivered SIGTERM or SIGINT follows this cleanup path. Stop preserves stack definitions, service data, caches and saved port assignments. `destroy` follows the same live-workload cleanup, then removes only proven-owned persistent data.
 
-The client captures the live owner PID from the validated identity endpoint or readiness handshake, completes and closes the shutdown RPC, then performs bounded process-existence checks. An absent PID confirms exit; a permission-denied probe remains inconclusive until the deadline. Failure to confirm exit is a `shutdown-exit` error carrying the PID in its message, even when workload cleanup has already succeeded. This does not require persisted PID records or forceful termination. Caller cancellation ends its wait without cancelling admitted owner cleanup.
+The client captures the live owner PID from the validated identity endpoint or readiness handshake, completes the shutdown request, then performs bounded process-existence checks. An absent PID confirms exit; a permission-denied probe remains inconclusive until the deadline. Failure to confirm exit is a `shutdown-exit` error carrying the PID in its message, even when workload cleanup has already succeeded. This does not require persisted PID records or forceful termination. Caller cancellation ends its wait without cancelling admitted owner cleanup.
 
-Callers must not start or restart the same stack concurrently with whole-stack shutdown. In particular, replacing an owner between identity lookup and the shutdown request is outside this guarantee. Parallel stacks with separate identities remain independent. Client disposal and Effect scope closure do not implicitly stop a detached stack; disposable fixtures register explicit destruction.
+Callers must not start or restart the same stack concurrently with whole-stack shutdown. In particular, replacing an owner between identity lookup and the shutdown request is outside this guarantee. Parallel stacks with separate identities remain independent. Client disposal and Effect scope closure do not implicitly stop a detached stack; disposable fixtures register explicit destruction or use a session stack, which closing its creating handle destroys.
 
-Returning to Serving after cleanup failure does not undo completed cleanup. Unexpected host death does not resume interrupted operations or restore live service state. The next host startup sweeps containers owned by that stack and data root without removing volumes or saved definitions. A forced host termination does not guarantee immediate container cleanup. A lost control response is reported as uncertain; do not blindly retry a mutation.
+Returning to Serving after cleanup failure does not undo completed cleanup. Unexpected host death does not resume interrupted operations or restore live service state. Native launchers stop their process groups when the dead host's pipe closes. The next host startup for that stack sweeps its containers without removing volumes or saved definitions, and any host start in the same state root sweeps them in the background, also destroying the stack if it is a session stack. A forced host termination does not guarantee immediate container cleanup. A lost control response is reported as uncertain; do not blindly retry a mutation.
 
 ### Request lifetime is separate from execution lifetime
 
@@ -617,6 +625,9 @@ The state root is the stack registry root. Each stack keeps one state document a
 ```text
 <stateRoot>/<stack-id>/state.json
 <stateRoot>/<stack-id>/data/<instance-id>/...
+<stateRoot>/<stack-id>/owner.lock    lease; opened only by SQLite
+<stateRoot>/<stack-id>/owner.json    endpoint of the lease holder
+<stateRoot>/<stack-id>/owner.log     owner stdout and stderr, truncated at each owner start
 ```
 
 Registry updates use an OS-backed lock through a private `node:sqlite` connection to
@@ -628,7 +639,7 @@ SQLite. No tables, state records, or WAL are created there. Saved stack data rem
 the lock does not make multi-file operations transactional or recover interrupted operations.
 This uses the built-in SQLite API available in the pinned Bun runtime and modern Node.js.
 
-The artifact cache is independent and shared across stacks. Normal stop preserves the stack directory and service data. Destroy removes the state document and proven-owned, empty parents; caller-owned paths such as Storage uploads remain untouched.
+The artifact cache is independent and shared across stacks. Normal stop preserves the stack directory and service data. Destroy removes the state document, owner files and proven-owned, empty parents; the lease file goes last, while its lock is still held; caller-owned paths such as Storage uploads remain untouched.
 
 ### Snapshots belong to the database instance
 

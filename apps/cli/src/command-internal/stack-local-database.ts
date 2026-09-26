@@ -79,7 +79,10 @@ const databaseReady = Effect.fn("StackLocalDatabase.ready")(function* (stack: St
     return Option.none<{ readonly stack: Stack; readonly database: DatabaseInstance }>();
   const observation = yield* database.status.pipe(
     Effect.map(Option.some),
-    Effect.catchTag("StackError", () => Effect.succeed(Option.none())),
+    Effect.catchIf(
+      (cause) => cause.reason === "owner-unavailable",
+      () => Effect.succeed(Option.none()),
+    ),
   );
   if (
     Option.isNone(observation) ||
@@ -157,7 +160,7 @@ export const stackProjectDatabaseVersion: Effect.Effect<
   if (database === undefined) return undefined;
   const status = yield* database.status.pipe(Effect.option, Effect.map(Option.getOrUndefined));
   return status?.config.service === "database" ? status.config.config.version : undefined;
-});
+}).pipe(Effect.scoped);
 
 export class StackNativeEngineError extends Data.TaggedError("StackNativeEngineError")<{
   readonly message: string;
@@ -197,7 +200,7 @@ const stackLocalDatabaseUrl: Effect.Effect<
   const password = Redacted.value(status.config.config.databasePassword);
   const host = endpoint.host.includes(":") ? `[${endpoint.host}]` : endpoint.host;
   return `postgresql://postgres:${encodeURIComponent(password)}@${host}:${endpoint.port}/postgres`;
-});
+}).pipe(Effect.scoped);
 
 export const stackLocalDatabaseConn: Effect.Effect<
   PgConnInput,

@@ -1,6 +1,18 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted, Schema } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Redacted,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 import { tmpdir } from "node:os";
 import {
   create,
@@ -10,8 +22,14 @@ import {
   type DatabaseInstance,
   type ServiceInstance,
 } from "./effect.ts";
+import { fileURLToPath } from "node:url";
+import { launchHost } from "./HostProcess.ts";
 import * as PromiseApi from "./index.ts";
+import * as State from "./State.ts";
+import { assertOwnerExited } from "../tests/owner.ts";
+import { foreignRelease } from "../tests/release-owner-fixture.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
+import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 const databaseOwnerMarker = Schema.fromJsonString(
@@ -366,3 +384,326 @@ it.live("resets native database data through the public RPC", () => resetDataSto
 it.live("resets Docker database data through the public RPC", () => resetDataStory("docker"), {
   timeout: 15 * 60_000,
 });
+
+it.live("stops an instance without starting an owner when none is live", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-idle-stop-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* create(options);
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        const mail = yield* stack.services.create({ service: "mail", config: {} });
+        yield* stack.stop;
+        expect((yield* discover(options))[0]?.host).toBeUndefined();
+
+        yield* mail.stop;
+        expect(yield* stack.composition.stop).toEqual([]);
+        yield* stack.stop;
+        expect((yield* discover(options))[0]?.host).toBeUndefined();
+      }),
+      destroyTestStack(stack),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("rejects an owner of another release while stop and destroy still reach it", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-release-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* create(options);
+    const state = yield* State.Service.pipe(
+      Effect.provide(State.layer({ root: options.stateRoot })),
+    );
+    const startForeignOwner = launchHost(state, {
+      ...options,
+      stackId: stack.id,
+      entrypoint: fileURLToPath(new URL("../tests/release-owner-fixture.ts", import.meta.url)),
+    });
+
+    const stale = yield* startForeignOwner;
+    expect(stale.endpoint.release).toBe(foreignRelease);
+    const rejected = yield* Effect.flip(stack.composition.start);
+    expect(rejected.reason).toBe("release-mismatch");
+    expect(rejected.message).toContain(`served by release ${foreignRelease}`);
+    expect(rejected.message).toContain("stop or destroy the stack");
+    yield* stack.stop;
+    yield* assertOwnerExited(stale.endpoint.pid);
+
+    const doomed = yield* startForeignOwner;
+    yield* stack.destroy;
+    yield* assertOwnerExited(doomed.endpoint.pid);
+    expect(yield* state.read(stack.id)).toBeUndefined();
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("treats a sweeper's hold as no owner and starts one once the sweep ends", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-sweeping-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* create(options);
+    const state = yield* State.Service.pipe(
+      Effect.provide(State.layer({ root: options.stateRoot })),
+    );
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        const sweep = yield* Scope.make();
+        expect(yield* state.lease(stack.id).pipe(Scope.provide(sweep))).toBe(true);
+        yield* state.publishHolder(stack.id, {
+          role: "sweeper",
+          pid: process.pid,
+          startedAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* stack.stop;
+        expect(yield* stack.composition.stop).toEqual([]);
+        expect((yield* discover(options))[0]?.host).toBeUndefined();
+
+        const starting = yield* stack.composition.start.pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* state.retractHolder(stack.id);
+        yield* Scope.close(sweep, Exit.void);
+        expect(yield* Fiber.join(starting)).toEqual([]);
+        expect((yield* discover(options))[0]?.host).toBeDefined();
+      }),
+      destroyTestStack(stack),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("interrupts a call waiting for an owner while a sweeper holds the stack", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-interrupt-launch-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* create(options);
+    const state = yield* State.Service.pipe(
+      Effect.provide(State.layer({ root: options.stateRoot })),
+    );
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        const sweep = yield* Scope.make();
+        expect(yield* state.lease(stack.id).pipe(Scope.provide(sweep))).toBe(true);
+        yield* state.publishHolder(stack.id, {
+          role: "sweeper",
+          pid: process.pid,
+          startedAt: "2026-01-01T00:00:00.000Z",
+        });
+
+        const waited = yield* stack.composition.start.pipe(Effect.timeoutOption("200 millis"));
+
+        expect(Option.isNone(waited), "the wait for the sweeper ends at the timeout").toBe(true);
+        yield* state.retractHolder(stack.id);
+        yield* Scope.close(sweep, Exit.void);
+        expect(yield* stack.composition.start, "the handle still launches afterwards").toEqual([]);
+      }),
+      destroyTestStack(stack),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("reports a stopped owner as unavailable to attach-only calls", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-unavailable-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* create(options);
+    const mail = yield* stack.services.create({ service: "mail", config: {} });
+    yield* stack.stop;
+
+    const unavailable = yield* Effect.flip(mail.status);
+
+    expect(unavailable.reason).toBe("owner-unavailable");
+    yield* destroyTestStack(stack);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "releases each call's owner connection in the call's scope, not the handle's",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-call-scope-" });
+      const options = {
+        projectRoot: root,
+        stateRoot: `${root}/state`,
+        cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+        runtime: "native",
+      } satisfies Parameters<typeof create>[0];
+      const handleScope = yield* Scope.make();
+      const stack = yield* create(options).pipe(Scope.provide(handleScope));
+      const handleFinalizers = () =>
+        handleScope.state._tag === "Open"
+          ? (handleScope.state.finalizers?.size ?? 0) +
+            (handleScope.state.finalizerKey === undefined ? 0 : 1)
+          : 0;
+      const useHandle = (mail: ServiceInstance<"mail">) =>
+        Effect.gen(function* () {
+          yield* mail.status;
+          yield* mail.followStatus.pipe(Stream.take(1), Stream.runDrain);
+          const version = yield* stack.tools.run(postgres.psql({ major: 17 }), {
+            args: ["--version"],
+            stdout: () => Effect.void,
+            stderr: () => Effect.void,
+          });
+          expect(version.exitCode).toBe(0);
+        });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const mail = yield* stack.services.create({ service: "mail", config: {} });
+          yield* useHandle(mail);
+          const settled = handleFinalizers();
+
+          yield* useHandle(mail);
+          yield* useHandle(mail);
+          expect(handleFinalizers(), "repeated calls add nothing to the handle").toBe(settled);
+
+          const other = yield* open({ ...options, id: stack.id });
+          yield* other.stop;
+          expect(yield* other.composition.start).toEqual([]);
+          yield* useHandle(mail);
+          expect(handleFinalizers(), "the retired connection closed after its last use").toBe(
+            settled,
+          );
+        }),
+        destroyTestStack(stack).pipe(Effect.andThen(Scope.close(handleScope, Exit.void))),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  { timeout: 120_000 },
+);
+
+it.live("confirms owner exit after shutdown even while a stray handle keeps its loop alive", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-exit-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* create(options);
+    const state = yield* State.Service.pipe(
+      Effect.provide(State.layer({ root: options.stateRoot })),
+    );
+    const owner = yield* launchHost(state, {
+      ...options,
+      stackId: stack.id,
+      entrypoint: fileURLToPath(new URL("../tests/lingering-owner-fixture.ts", import.meta.url)),
+    });
+
+    yield* stack.stop;
+
+    yield* assertOwnerExited(owner.endpoint.pid);
+    yield* destroyTestStack(stack);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("replaces a dead session stack that holds the requested identity", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-session-replace-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+      lifetime: "session",
+    } satisfies Parameters<typeof create>[0];
+    const identity = yield* resolveStackIdentity(options);
+    const id = yield* deriveStackId(identity);
+    const state = yield* State.Service.pipe(
+      Effect.provide(State.layer({ root: options.stateRoot })),
+    );
+    yield* state.save({
+      id,
+      identity,
+      lifetime: "session",
+      runtime: "native",
+      instances: [{ id: "abandoned", creation: { service: "mail", config: {} } }],
+      composition: { members: [], dependencies: [] },
+      ports: [],
+    });
+
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const stack = yield* create(options);
+        expect(stack.id).toBe(id);
+        expect(yield* stack.services.list).toEqual([]);
+      }),
+    );
+    expect(yield* state.read(id)).toBeUndefined();
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "re-resolves a restarted owner for calls and tools on a long-lived handle",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-reconnect-" });
+      const options = {
+        projectRoot: root,
+        stateRoot: `${root}/state`,
+        cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+        runtime: "native",
+      } satisfies Parameters<typeof create>[0];
+      const stack = yield* create(options);
+      const version = (stack: Effect.Success<ReturnType<typeof open>>) =>
+        stack.tools.run(postgres.psql({ major: 17 }), {
+          args: ["--version"],
+          stdout: () => Effect.void,
+          stderr: () => Effect.void,
+        });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const mail = yield* stack.services.create({ service: "mail", config: {} });
+          expect((yield* version(stack)).exitCode).toBe(0);
+          const first = (yield* discover(options))[0]?.host;
+
+          const other = yield* open({ ...options, id: stack.id });
+          yield* other.stop;
+          expect(yield* other.composition.start).toEqual([]);
+          const second = (yield* discover(options))[0]?.host;
+          expect(second?.port).toBeDefined();
+          expect(second?.pid).not.toBe(first?.pid);
+
+          expect((yield* version(stack)).exitCode, "a tools-only call follows the new owner").toBe(
+            0,
+          );
+          yield* other.stop;
+          expect(yield* other.composition.start).toEqual([]);
+          expect((yield* mail.status).lifecycle, "a call follows the new owner").toBe("stopped");
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  { timeout: 120_000 },
+);

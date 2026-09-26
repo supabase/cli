@@ -1,4 +1,4 @@
-import { Context, Crypto, Effect, FileSystem, Layer, Path } from "effect";
+import { Context, Crypto, Effect, FileSystem, Layer, Path, Scope } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
@@ -17,12 +17,12 @@ type StackError = Effect.Error<ReturnType<typeof create>>;
 type IdentityResult = Effect.Success<ReturnType<typeof resolveStackIdentity>>;
 type IdentityError = Effect.Error<ReturnType<typeof resolveStackIdentity>>;
 
-/** Operations used by the CLI stack boundary. */
+/** Operations used by the CLI stack boundary; a handle lasts until its scope closes. */
 export class StackApi extends Context.Service<
   StackApi,
   {
-    readonly create: (options: CreateOptions) => Effect.Effect<Stack, StackError>;
-    readonly open: (options: OpenOptions) => Effect.Effect<Stack, StackError>;
+    readonly create: (options: CreateOptions) => Effect.Effect<Stack, StackError, Scope.Scope>;
+    readonly open: (options: OpenOptions) => Effect.Effect<Stack, StackError, Scope.Scope>;
     readonly discover: (
       options: Parameters<typeof discover>[0],
     ) => Effect.Effect<DiscoverResult, StackError>;

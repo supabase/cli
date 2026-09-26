@@ -2,7 +2,7 @@ import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bund
 import { bundleStackFunctionsServeMainTemplate } from "../src/command-internal/stack-functions-bundler.ts";
 import { Effect } from "effect";
 import { oxfmtStubPlugin } from "./bundle-externals.ts";
-import { compileOptions } from "./compile-options.ts";
+import { compileOptions, stackReleaseDefine } from "./compile-options.ts";
 
 /**
  * Compiles the CLI to a standalone binary, run via `pnpm build:binary`. Embeds the pre-bundled
@@ -26,6 +26,7 @@ const result = await Bun.build({
   plugins: [oxfmtStubPlugin],
   define: {
     SUPABASE_CLI_VERSION: JSON.stringify(packageJson.version),
+    ...(await stackReleaseDefine()),
     SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleServeMainTemplate()),
     SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(
       await Effect.runPromise(bundleStackFunctionsServeMainTemplate()),

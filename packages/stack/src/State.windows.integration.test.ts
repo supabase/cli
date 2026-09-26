@@ -20,6 +20,7 @@ const saved: State.SavedStack = {
   identity: { projectRoot: "C:\\project", branchContext: "test", stackName: "windows" },
   runtime: "native",
   instances: [],
+  lifetime: "detached",
   composition: { members: [], dependencies: [] },
   ports: [],
 };

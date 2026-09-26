@@ -61,13 +61,14 @@ import {
   StackCatalogSetup,
   type StackCatalogSetupInput,
 } from "../../../command-internal/stack-catalog-setup.ts";
-import type {
-  ServiceCreation,
-  ServiceInstance,
-  ServiceInstances,
-  StackCredentials,
-  Stack,
-  Observation,
+import {
+  StackError,
+  type ServiceCreation,
+  type ServiceInstance,
+  type ServiceInstances,
+  type StackCredentials,
+  type Stack,
+  type Observation,
 } from "@supabase/stack/effect";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
@@ -544,7 +545,7 @@ const serviceCreation = (
 const stackService = (
   id: string,
   creation: Extract<ServiceCreation, { readonly service: ResetServiceKind }>,
-  observation: Effect.Effect<Observation>,
+  observation: Effect.Effect<Observation, StackError>,
   overrides: {
     readonly start?: Effect.Effect<void>;
     readonly ready?: Effect.Effect<void>;
@@ -637,6 +638,8 @@ function mockResetStackApi(opts: {
   readonly apiEndpoint?: { readonly url: string; readonly port: number };
   /** Models the `db start` overlay, whose composition holds only the database. */
   readonly postgresOnly?: boolean;
+  /** Fails every database status read, as an unreachable or mismatched owner does. */
+  readonly statusFailure?: StackError;
 }) {
   let resetCalls = 0;
   let stopCalls = 0;
@@ -704,13 +707,16 @@ function mockResetStackApi(opts: {
             }),
           ),
         );
-  const dbStatus = Effect.sync(() =>
-    makeStackObservation(DB_ID, database, {
-      lifecycle: databaseRunning ? "running" : "stopped",
-      health: databaseRunning ? "healthy" : undefined,
-      endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54329 }],
-    }),
-  );
+  const dbStatus =
+    opts.statusFailure === undefined
+      ? Effect.sync(() =>
+          makeStackObservation(DB_ID, database, {
+            lifecycle: databaseRunning ? "running" : "stopped",
+            health: databaseRunning ? "healthy" : undefined,
+            endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54329 }],
+          }),
+        )
+      : Effect.fail(opts.statusFailure);
   const db = stackService(DB_ID, database, dbStatus, {
     resetData: Effect.suspend(() =>
       databaseRunning
@@ -807,6 +813,7 @@ function mockResetStackApi(opts: {
                 id: member.id,
                 creation: { service: "mail" as const, config: {} },
               })),
+              lifetime: "detached" as const,
               composition: { members: [], dependencies: [] },
               ports: [],
             },
@@ -883,6 +890,7 @@ function setup(
     stackStorageError?: string;
     stackApiEndpoint?: { readonly url: string; readonly port: number };
     stackPostgresOnly?: boolean;
+    stackStatusFailure?: StackError;
     httpClient?: Layer.Layer<HttpClient.HttpClient>;
   },
 ) {
@@ -925,6 +933,7 @@ function setup(
     storageError: opts.stackStorageError,
     apiEndpoint: opts.stackApiEndpoint,
     postgresOnly: opts.stackPostgresOnly,
+    statusFailure: opts.stackStatusFailure,
   });
   const catalog =
     opts.stackBackend === true
@@ -1355,6 +1364,49 @@ describe("db reset", () => {
         const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("is not running.");
+        expect(stackApi.resetCalls).toBe(0);
+      });
+    });
+
+    it.live("reports a stack whose owner is absent as not running", () => {
+      const { layer, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackStatusFailure: new StackError({
+          operation: "status",
+          message: "Stack owner is not running",
+          reason: "owner-unavailable",
+        }),
+      });
+      return Effect.gen(function* () {
+        const error = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "ResetLocalDbNotRunningError",
+          message: "The local stack is not running.",
+        });
+        expect(stackApi.resetCalls).toBe(0);
+      });
+    });
+
+    it.live("surfaces a release mismatch instead of reporting the stack as not running", () => {
+      const message =
+        "Stack test is served by release 1.0.0+old, but this client is release 1.0.0+new; stop or destroy the stack (both work across releases) and retry";
+      const { layer, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackStatusFailure: new StackError({
+          operation: "status",
+          message,
+          reason: "release-mismatch",
+        }),
+      });
+      return Effect.gen(function* () {
+        const error = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+        expect(error).toMatchObject({ _tag: "StackError", message });
         expect(stackApi.resetCalls).toBe(0);
       });
     });

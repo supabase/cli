@@ -12,6 +12,7 @@
     "./internal/identity": "./src/identity/Identity.ts",
     "./internal/functions/serve-main": "./src/functions/serve.main.ts",
     "./internal/postgres-artifact": "./src/internal/postgres-artifact.ts",
+    "./internal/release": "./src/internal/release.ts",
     "./internal/service-catalog": "./src/internal/service-catalog.ts"
   },
   "scripts": {

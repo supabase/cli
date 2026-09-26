@@ -181,6 +181,7 @@ function syncStackApi(workdir: string, port: number) {
             runtime: "native",
             instances: [],
             composition,
+            lifetime: "detached" as const,
             ports: [],
           },
           host: undefined,

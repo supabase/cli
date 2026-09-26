@@ -58,13 +58,14 @@ const withHeldOwner = <A, E, R>(
       runtime: "native",
       identity: { projectRoot: root, branchContext: "main", stackName: "shutdown-held" },
       instances: [],
+      lifetime: "detached",
       composition: { members: [], dependencies: [] },
       ports: [],
     });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     return yield* Effect.acquireUseRelease(
       spawner.spawn(
-        ChildProcess.make(process.execPath, [fixturePath, stateRoot, cacheRoot, id, "rpc-held"], {
+        ChildProcess.make(process.execPath, [fixturePath, stateRoot, cacheRoot, id, "held"], {
           cwd: process.cwd(),
           detached: true,
           stdin: "ignore",

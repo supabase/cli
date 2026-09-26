@@ -1,38 +1,45 @@
 import {
   Cause,
+  Context,
   Crypto,
+  DateTime,
   Deferred,
   Effect,
   Exit,
   FileSystem,
   Fiber,
-  Layer,
   Match,
   Option,
   Path,
+  Predicate,
   Ref,
   Scope,
   Schema,
+  Semaphore,
   Stream,
 } from "effect";
 import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import {
   connectHost,
-  controlPortHeld,
+  hasReason,
   HostProcessError,
   launchHost,
+  observeHost,
+  ownerClient,
+  shutdownHost,
   waitForOwnerExit,
+  type HostAccess,
 } from "./HostProcess.ts";
+import type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
 import { removeStackContainersCommand } from "./runtime/Container.ts";
 import { volumeDataCleanupCommands } from "./storage/DockerDatabaseStorage.ts";
-import type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
+import { failureMessage } from "./internal/failure-message.ts";
 import * as State from "./State.ts";
 import type { SavedStack, StackCredentials, StackIdentityInput } from "./State.ts";
-import { StackError, StackRpc, type Definition, type Observation } from "./Rpc.ts";
+import { StackError, type Definition, type Observation } from "./Rpc.ts";
+import { reclaimStack } from "./Sweep.ts";
 import {
   ServiceCreationInput as ServiceCreationInputSchema,
   type ServiceCreation,
@@ -78,6 +85,15 @@ export interface CreateOptions extends StackLocations {
   readonly projectRoot: string;
   readonly name?: string;
   readonly runtime: "native" | "docker" | "podman";
+  /**
+   * A `session` stack starts its owner at creation and is destroyed when the creating handle's
+   * scope closes or its process exits; a `detached` stack (the default) outlives its creator.
+   */
+  readonly lifetime?: State.StackLifetime;
+  /**
+   * Starts the owner at creation and lets it register the stack under its lease, so a failed or
+   * interrupted launch leaves no registration behind. Session stacks always do this.
+   */
   readonly startOwner?: boolean;
 }
 /** Opens a previously registered stack. */
@@ -86,6 +102,11 @@ export interface OpenOptions extends StackLocations {
   readonly startOwner?: boolean;
 }
 
+/** No owner serves the stack: nothing holds its lease, or a sweeper is cleaning it up. */
+const ownerAbsent = hasReason("not-running", "sweeping");
+/** The stack is no longer registered: it was destroyed or swept. */
+const stackGone = hasReason("unregistered");
+
 const failure = (operation: string, cause: unknown): StackError =>
   Schema.is(StackError)(cause)
     ? cause
@@ -93,9 +114,12 @@ const failure = (operation: string, cause: unknown): StackError =>
         operation,
         message: Schema.is(RpcClientError)(cause)
           ? `Owner response unavailable; the request outcome is uncertain: ${cause.message}`
-          : cause instanceof Error
-            ? cause.message
-            : String(cause),
+          : failureMessage(cause),
+        ...(ownerAbsent(cause) || stackGone(cause)
+          ? { reason: "owner-unavailable" as const }
+          : hasReason("release-mismatch")(cause)
+            ? { reason: "release-mismatch" as const }
+            : {}),
       });
 
 type Kind = ServiceCreation["service"];
@@ -156,7 +180,7 @@ export interface ToolOptions<E, R> {
   readonly stdout: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
   readonly stderr: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
 }
-/** A client handle; its lifetime does not own service processes. */
+/** A client handle; only the creating handle of a session stack owns its services. */
 export interface Stack {
   readonly id: string;
   readonly services: {
@@ -190,140 +214,305 @@ export interface Stack {
   };
 }
 
-type Client = Effect.Success<ReturnType<typeof clientFor>>;
-const clientFor = (port: number) =>
-  RpcClient.make(StackRpc).pipe(
-    Effect.provide(
-      RpcClient.layerProtocolHttp({ url: `http://127.0.0.1:${port}/rpc` }).pipe(
-        Layer.provide(RpcSerialization.layerNdjson),
-      ),
-    ),
-  );
+type Client = Effect.Success<ReturnType<typeof ownerClient>>;
+
+const causeCode = (cause: unknown): string | undefined => {
+  if (typeof cause !== "object" || cause === null) return undefined;
+  if ("code" in cause && typeof cause.code === "string") return cause.code;
+  if ("cause" in cause) return causeCode(cause.cause);
+  if ("reason" in cause) return causeCode(cause.reason);
+  return undefined;
+};
+/**
+ * A refused connection, or a listener that rejects the owner secret, proves the request never
+ * reached this stack's owner: the owner is gone or another process holds its port. Resending
+ * after re-resolving the owner is safe. Other transport failures leave the connection in place.
+ */
+const ownerGone = (cause: unknown) =>
+  Schema.is(RpcClientError)(cause) &&
+  (["ECONNREFUSED", "ConnectionRefused"].includes(causeCode(cause) ?? "") ||
+    (cause.reason._tag === "HttpError" &&
+      Predicate.hasProperty(cause.reason.cause, "response") &&
+      Predicate.hasProperty(cause.reason.cause.response, "status") &&
+      cause.reason.cause.response.status === 401));
+
+interface Connection {
+  readonly access: HostAccess;
+  readonly rpc: Client;
+  readonly scope: Scope.Closeable;
+  /** Calls and streams currently using this client. */
+  active: number;
+  /** Replaced by a newer connection; closes once its last user finishes. */
+  retired: boolean;
+}
+/** Finds a directory below `directory` that the current user cannot empty and delete. */
+const firstUnremovableDirectory = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  directory: string,
+): Effect.Effect<string | undefined> =>
+  Effect.gen(function* () {
+    const entries = yield* fs.readDirectory(directory).pipe(Effect.option);
+    const writable = yield* fs.access(directory, { writable: true }).pipe(Effect.isSuccess);
+    if (Option.isNone(entries) || !writable) return directory;
+    for (const entry of entries.value) {
+      const child = path.join(directory, entry);
+      const info = yield* fs.stat(child).pipe(Effect.option);
+      if (Option.isNone(info) || info.value.type !== "Directory") continue;
+      if (yield* fs.readLink(child).pipe(Effect.isSuccess)) continue;
+      const blocked = yield* firstUnremovableDirectory(fs, path, child);
+      if (blocked !== undefined) return blocked;
+    }
+    return undefined;
+  });
+
+/**
+ * Destroys a stack whose owner cannot start because its container engine is unreachable: under
+ * the stack's lease it removes the registration and host data, and returns the commands that
+ * remove the containers and engine-volume data left behind.
+ */
+const destroyWithoutEngine = Effect.fn("Stack.destroyWithoutEngine")(function* (
+  state: State.Interface,
+  saved: SavedStack,
+  locations: StackLocations,
+  engine: "docker" | "podman",
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const id = saved.id;
+  const dataRoot = path.join(locations.stateRoot, id, "data");
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      if (!(yield* state.lease(id)))
+        return yield* failure(
+          "destroy",
+          "An owner for this stack started during destroy; run destroy again",
+        );
+      yield* Effect.addFinalizer(() => state.retractHolder(id).pipe(Effect.ignore));
+      yield* state.publishHolder(id, {
+        role: "sweeper",
+        pid: process.pid,
+        startedAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      const current = yield* state.read(id);
+      // Container-written host data, such as database files below Docker 26, can belong to the
+      // container user; only the engine can delete it, so refuse before deleting anything.
+      const blocked =
+        current !== undefined && (yield* fs.exists(dataRoot))
+          ? yield* firstUnremovableDirectory(fs, path, dataRoot)
+          : undefined;
+      if (blocked !== undefined) {
+        const engineName = engine === "docker" ? "Docker" : "Podman";
+        return yield* failure(
+          "destroy",
+          `Stack data at ${blocked} can only be removed by ${engineName}; start ${engineName} and run destroy again`,
+        );
+      }
+      // Containers are labelled with the resolved data root the owner ran with.
+      const root = yield* fs.realPath(dataRoot).pipe(Effect.orElseSucceed(() => dataRoot));
+      const cleanupCommands = [
+        removeStackContainersCommand({ engine, stackId: id, root }),
+        ...(yield* volumeDataCleanupCommands({ engine, root, fs, path })),
+      ];
+      if (current !== undefined) {
+        yield* fs.remove(dataRoot, { recursive: true, force: true });
+        yield* state.withLock(state.remove(id));
+      }
+      return { runtimeCleanup: "skipped", engine, cleanupCommands } as const;
+    }),
+  ).pipe(Effect.mapError((cause) => failure("destroy", cause)));
+});
+
+/** `launch` starts an owner when none is live; `attach` requires a live one. */
+type Reach = "launch" | "attach";
 
 const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   state: State.Interface,
   saved: SavedStack,
   locations: StackLocations,
+  seed: { readonly access?: HostAccess; readonly creator?: boolean } = {},
 ) {
-  const http = yield* HttpClient.HttpClient;
+  // Calls and streams release what they borrow in their own scope, not in the handle's.
+  const services = Context.omit(Scope.Scope)(
+    yield* Effect.context<
+      HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | Crypto.Crypto | Scope.Scope
+    >(),
+  );
   const crypto = yield* Crypto.Crypto;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const endpointFor = (live: boolean) =>
-    (live
-      ? launchHost(state, { ...locations, stackId: saved.id })
-      : connectHost(state, saved.id)
-    ).pipe(
-      Effect.provideService(HttpClient.HttpClient, http),
-      Effect.provideService(Crypto.Crypto, crypto),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
-  const client = (live: boolean) =>
+  const handleScope = yield* Scope.Scope;
+  const session = saved.lifetime === "session";
+  const launchOptions = { ...locations, stackId: saved.id, lifeline: session };
+  const cached = yield* Ref.make<Connection | undefined>(undefined);
+  const gate = yield* Semaphore.make(1);
+  const connectTo = (access: HostAccess) =>
     Effect.gen(function* () {
-      const endpoint = yield* endpointFor(live);
-      return yield* clientFor(endpoint.port);
-    }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+      const scope = yield* Scope.fork(handleScope, "sequential");
+      const rpc = yield* ownerClient(access).pipe(Scope.provide(scope));
+      const connection: Connection = { access, rpc, scope, active: 0, retired: false };
+      return connection;
+    });
+  const resolve = (reach: Reach) =>
+    // A session stack's owner is spawned only by its creator, which holds the lifeline.
+    reach === "launch" && (!session || seed.creator === true)
+      ? launchHost(state, launchOptions)
+      : connectHost(state, saved.id).pipe(
+          Effect.mapError((cause) =>
+            session && ownerAbsent(cause) && reach === "launch"
+              ? new HostProcessError({
+                  operation: "connect",
+                  message: `Session stack ${saved.id} has no live owner; it ends when its creator exits`,
+                  reason: "not-running",
+                })
+              : cause,
+          ),
+        );
+  const closeIfIdle = (connection: Connection) =>
+    Effect.suspend(() =>
+      connection.retired && connection.active === 0
+        ? Scope.close(connection.scope, Exit.void)
+        : Effect.void,
+    );
+  const connection = (reach: Reach) =>
+    Effect.gen(function* () {
+      const existing = yield* Ref.get(cached);
+      if (existing !== undefined) return existing;
+      // A spawned session owner's lifeline belongs to the handle, not to this call.
+      const access = yield* resolve(reach).pipe(Effect.provideService(Scope.Scope, handleScope));
+      return yield* connectTo(access).pipe(
+        Effect.tap((connected) => Ref.set(cached, connected)),
+        Effect.uninterruptible,
+      );
+    });
+  /**
+   * Uses the cached connection for the enclosing scope, resolving the owner when there is none.
+   * Waiting for the gate or the owner stays interruptible.
+   */
+  const borrow = (reach: Reach) =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.Scope;
+      return yield* gate.withPermits(1)(
+        connection(reach).pipe(
+          Effect.tap((current) =>
+            Effect.sync(() => {
+              current.active++;
+            }).pipe(
+              Effect.andThen(
+                Scope.addFinalizer(
+                  scope,
+                  Effect.suspend(() => {
+                    current.active--;
+                    return closeIfIdle(current);
+                  }),
+                ),
+              ),
+              Effect.uninterruptible,
+            ),
+          ),
+        ),
+      );
+    });
+  /** Drops the cached connection; calls and streams already using it run to completion. */
+  const invalidate = (connection?: Connection) =>
+    gate.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(cached);
+        if (current === undefined || (connection !== undefined && current !== connection)) return;
+        yield* Ref.set(cached, undefined);
+        current.retired = true;
+        yield* closeIfIdle(current);
+      }),
+    );
+  const dropIfGone = (connection: Connection) => (cause: unknown) =>
+    ownerGone(cause) ? invalidate(connection) : Effect.void;
+  if (seed.access !== undefined) yield* Ref.set(cached, yield* connectTo(seed.access));
+  const invoke = <A, E, R>(run: (rpc: Client) => Effect.Effect<A, E, R>, reach: Reach) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const current = yield* borrow(reach);
+        return yield* run(current.rpc).pipe(Effect.tapError(dropIfGone(current)));
+      }),
+    ).pipe(Effect.retry({ times: 1, while: ownerGone }), Effect.provideContext(services));
   const call = <A, E, R>(
     operation: string,
     run: (rpc: Client) => Effect.Effect<A, E, R>,
-    live = true,
+    reach: Reach = "launch",
+  ) => invoke(run, reach).pipe(Effect.mapError((cause) => failure(operation, cause)));
+  /** Without a live owner, or with a destroyed stack, nothing runs, so the request is already satisfied. */
+  const whileRunning = <A, E, R>(
+    operation: string,
+    run: (rpc: Client) => Effect.Effect<A, E, R>,
+    idle: A,
   ) =>
-    Effect.scoped(Effect.flatMap(client(live), run)).pipe(
+    invoke(run, "attach").pipe(
+      Effect.catchIf(
+        (cause) => ownerAbsent(cause) || stackGone(cause),
+        () => Effect.succeed(idle),
+      ),
       Effect.mapError((cause) => failure(operation, cause)),
     );
   const stream = <A, E>(operation: string, run: (rpc: Client) => Stream.Stream<A, E>) =>
-    Stream.unwrap(Effect.map(client(false), run)).pipe(
-      Stream.mapError((cause) => failure(operation, cause)),
-    );
-  /**
-   * Removes the stack's registration and host data without its owner, for a destroy that finds
-   * no owner running and can't start one because its container engine is unreachable. Its
-   * engine resources remain, and the result carries the commands that remove them.
-   */
-  const firstUnremovableDirectory = (directory: string): Effect.Effect<string | undefined> =>
-    Effect.gen(function* () {
-      const entries = yield* fs.readDirectory(directory).pipe(Effect.option);
-      const writable = yield* fs.access(directory, { writable: true }).pipe(Effect.isSuccess);
-      if (Option.isNone(entries) || !writable) return directory;
-      for (const entry of entries.value) {
-        const child = path.join(directory, entry);
-        const info = yield* fs.stat(child).pipe(Effect.option);
-        if (Option.isNone(info) || info.value.type !== "Directory") continue;
-        if (yield* fs.readLink(child).pipe(Effect.isSuccess)) continue;
-        const blocked = yield* firstUnremovableDirectory(child);
-        if (blocked !== undefined) return blocked;
-      }
-      return undefined;
-    });
-  const offlineDestroy = Effect.fn("Stack.offlineDestroy")(function* (engine: "docker" | "podman") {
-    const dataRoot = path.join(locations.stateRoot, saved.id, "data");
-    return yield* state
-      .withLock(
-        Effect.gen(function* () {
-          const current = yield* state.read(saved.id);
-          if (current !== undefined && (yield* controlPortHeld(current)))
-            return yield* failure(
-              "destroy",
-              "An owner for this stack started during destroy; run destroy again",
-            );
-          // Container-written host data, such as database files below Docker 26, can belong to the
-          // container user; only the engine can delete it, so refuse before deleting anything.
-          const blocked =
-            current !== undefined && (yield* fs.exists(dataRoot))
-              ? yield* firstUnremovableDirectory(dataRoot)
-              : undefined;
-          if (blocked !== undefined) {
-            const engineName = engine === "docker" ? "Docker" : "Podman";
-            return yield* failure(
-              "destroy",
-              `Stack data at ${blocked} can only be removed by ${engineName}; start ${engineName} and run destroy again`,
-            );
-          }
-          // Containers are labelled with the resolved data root the owner ran with.
-          const root = yield* fs.realPath(dataRoot).pipe(Effect.orElseSucceed(() => dataRoot));
-          const cleanupCommands = [
-            removeStackContainersCommand({ engine, stackId: saved.id, root }),
-            ...(yield* volumeDataCleanupCommands({ engine, root, fs, path })),
-          ];
-          if (current !== undefined) {
-            yield* fs.remove(dataRoot, { recursive: true, force: true });
-            yield* state.remove(saved.id);
-          }
-          return { runtimeCleanup: "skipped", engine, cleanupCommands } as const;
-        }),
-      )
-      .pipe(Effect.mapError((cause) => failure("destroy", cause)));
-  });
-
+    Stream.unwrap(
+      borrow("attach").pipe(
+        Effect.map((current) => run(current.rpc).pipe(Stream.tapError(dropIfGone(current)))),
+        Effect.provideContext(services),
+      ),
+    ).pipe(Stream.mapError((cause) => failure(operation, cause)));
   const shutdown = Effect.fn("Stack.shutdown")(function* (destroy: boolean) {
     const operation = destroy ? "destroy" : "shutdown";
-    const endpointExit = yield* Effect.scoped(endpointFor(destroy)).pipe(Effect.exit);
-    if (Exit.isFailure(endpointExit)) {
-      const endpointFailure = Option.getOrUndefined(Cause.findErrorOption(endpointExit.cause));
-      if (
-        destroy &&
-        saved.runtime !== "native" &&
-        endpointFailure instanceof HostProcessError &&
-        endpointFailure.reason === "runtime-unavailable"
-      )
-        return yield* offlineDestroy(saved.runtime);
-      return yield* Option.match(Cause.findErrorOption(endpointExit.cause), {
-        onNone: () => Effect.fail(failure(operation, Cause.pretty(endpointExit.cause))),
-        onSome: (cause) => Effect.fail(failure(operation, cause)),
-      });
-    }
-    const endpoint = endpointExit.value;
-    const shutdownExit = yield* Effect.scoped(
-      clientFor(endpoint.port).pipe(
-        Effect.provideService(HttpClient.HttpClient, http),
-        Effect.flatMap((rpc) => rpc.shutdown({ destroy })),
-        Effect.exit,
-      ),
+    yield* invalidate();
+    const engine = saved.runtime === "native" ? undefined : saved.runtime;
+    // Shutdown uses the release-stable endpoint, so it reaches owners of any release.
+    const { endpoint, refusal, engineUnavailable } = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const idle = { endpoint: undefined, refusal: Exit.void, engineUnavailable: false };
+        const live = yield* connectHost(state, saved.id, { anyRelease: true }).pipe(
+          Effect.map(Option.some),
+          Effect.catchIf(ownerAbsent, () =>
+            destroy
+              ? launchHost(state, launchOptions).pipe(Effect.map(Option.some))
+              : Effect.succeed(Option.none<HostAccess>()),
+          ),
+          Effect.catchIf(stackGone, () => Effect.succeed(Option.none<HostAccess>())),
+          // The owner's startup sweep reports an unreachable engine before any owner serves.
+          Effect.catchIf(
+            (cause) => engine !== undefined && hasReason("runtime-unavailable")(cause),
+            () => Effect.succeed("engine-unavailable" as const),
+          ),
+        );
+        if (live === "engine-unavailable") return { ...idle, engineUnavailable: true };
+        if (Option.isNone(live)) return idle;
+        const access = live.value;
+        const endpoint = access.endpoint;
+        const refusal = yield* shutdownHost(access, destroy).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.void,
+              onSome: (rejected) =>
+                Effect.fail(
+                  new StackError({
+                    operation: "shutdown",
+                    message: rejected.message,
+                    ...(rejected.outcomes === undefined ? {} : { outcomes: rejected.outcomes }),
+                  }),
+                ),
+            }),
+          ),
+          Effect.exit,
+        );
+        return { endpoint, refusal, engineUnavailable: false };
+      }),
+    ).pipe(
+      Effect.provideContext(services),
+      Effect.mapError((cause) => failure(operation, cause)),
     );
-    if (Exit.isFailure(shutdownExit)) {
-      const shutdownFailure = Option.match(Cause.findErrorOption(shutdownExit.cause), {
-        onNone: () => failure(operation, Cause.pretty(shutdownExit.cause)),
+    if (engineUnavailable && engine !== undefined)
+      return yield* destroyWithoutEngine(state, saved, locations, engine).pipe(
+        Effect.provideContext(services),
+      );
+    if (endpoint === undefined) return { runtimeCleanup: "complete" } as const;
+    if (Exit.isFailure(refusal)) {
+      const shutdownFailure = Option.match(Cause.findErrorOption(refusal.cause), {
+        onNone: () => failure(operation, Cause.pretty(refusal.cause)),
         onSome: (cause) => failure(operation, cause),
       });
       if (!destroy) return yield* shutdownFailure;
@@ -356,8 +545,8 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     id,
     service,
     start: call("start", (rpc) => rpc.startService({ id })),
-    ready: call("ready", (rpc) => rpc.readyService({ id }), false),
-    stop: call("stop", (rpc) => rpc.stopService({ id })),
+    ready: call("ready", (rpc) => rpc.readyService({ id }), "attach"),
+    stop: whileRunning("stop", (rpc) => rpc.stopService({ id }), undefined),
     restart: (input) =>
       input === undefined
         ? call("restart", (rpc) => rpc.restartService({ id }))
@@ -371,7 +560,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           ),
     destroy: call("destroy", (rpc) => rpc.destroyService({ id })),
     prepare: call("prepare", (rpc) => rpc.prepareService({ id })),
-    status: call("status", (rpc) => rpc.status({ id }), false),
+    status: call("status", (rpc) => rpc.status({ id }), "attach"),
     followStatus: stream("followStatus", (rpc) => rpc.followStatus({ id })),
     logs: stream("logs", (rpc) => rpc.logs({ id })),
     credentials: (options) =>
@@ -428,9 +617,17 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     tool: PostgresTool,
     options: ToolOptions<E, R>,
   ) {
+    // A request that never reached this stack's owner is resent once, as `invoke` does.
+    let resend = false;
     return yield* Effect.scoped(
       Effect.gen(function* () {
-        const rpc = yield* client(true).pipe(Effect.mapError((cause) => failure("tool", cause)));
+        resend = false;
+        let started = false;
+        const current = yield* borrow("launch").pipe(
+          Effect.provideContext(services),
+          Effect.mapError((cause) => failure("tool", cause)),
+        );
+        const { rpc } = current;
         const attachmentId = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError((cause) => failure("tool", cause)),
         );
@@ -448,6 +645,22 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
             stdin: options.stdin !== undefined,
           })
           .pipe(
+            Stream.tapError((cause) =>
+              ownerGone(cause) && !started
+                ? invalidate(current).pipe(
+                    Effect.andThen(
+                      Effect.sync(() => {
+                        resend = true;
+                      }),
+                    ),
+                  )
+                : Effect.void,
+            ),
+            Stream.tap(() =>
+              Effect.sync(() => {
+                started = true;
+              }),
+            ),
             Stream.mapError((cause) => failure("tool", cause)),
             Stream.runForEach((event): Effect.Effect<void, E | StackError, R> =>
               Match.valueTags(event, {
@@ -496,7 +709,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           return yield* failure("tool", "Tool attachment ended without an exit result");
         return completed;
       }),
-    );
+    ).pipe(Effect.retry({ times: 1, while: () => resend }));
   });
   const savedDefinition = Effect.gen(function* () {
     const current = yield* state.read(saved.id);
@@ -541,7 +754,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         call("configureComposition", (rpc) => rpc.configureComposition(config)),
       describe: savedDefinition.pipe(Effect.map((current) => current.composition)),
       start: call("startComposition", (rpc) => rpc.startComposition()),
-      stop: call("stopComposition", (rpc) => rpc.stopComposition()),
+      stop: whileRunning("stopComposition", (rpc) => rpc.stopComposition(), []),
       restart: call("restartComposition", (rpc) => rpc.restartComposition()),
     },
     stop: shutdown(false).pipe(Effect.asVoid),
@@ -550,7 +763,10 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   } satisfies Stack;
 });
 
-/** Registers a stack; a matching existing identity must be opened explicitly. */
+/**
+ * Registers a stack; a matching existing identity must be opened explicitly. The handle's
+ * connections, and a session stack itself, last until the enclosing scope closes.
+ */
 export const create = Effect.fn("Stack.create")(
   function* (options: CreateOptions) {
     const state = yield* stateFor(options.stateRoot);
@@ -559,11 +775,36 @@ export const create = Effect.fn("Stack.create")(
     const saved: SavedStack = {
       id,
       identity,
+      lifetime: options.lifetime ?? "detached",
       runtime: options.runtime,
       instances: [],
       composition: { members: [], dependencies: [] },
       ports: [],
     };
+    const locations = { stateRoot: options.stateRoot, cacheRoot: options.cacheRoot };
+    const existing = yield* state.read(id);
+    // A session stack whose owner is gone is disposable, so its identity is free again.
+    if (existing?.lifetime === "session" && !(yield* state.leased(id)))
+      yield* reclaimStack({
+        state,
+        stateRoot: options.stateRoot,
+        cacheRoot: options.cacheRoot,
+        id,
+      });
+    const session = saved.lifetime === "session";
+    if (session || options.startOwner === true) {
+      if ((yield* state.read(id)) !== undefined)
+        return yield* failure("create", "Stack already exists; use open");
+      // The owner registers the stack under its lease and removes it if its startup fails, so no
+      // sweep sees a session stack unowned and a failed launch leaves no registration behind.
+      const access = yield* launchHost(state, {
+        ...locations,
+        stackId: id,
+        register: saved,
+        lifeline: session,
+      });
+      return yield* makeHandle(state, saved, locations, { access, creator: true });
+    }
     yield* state.withLock(
       Effect.gen(function* () {
         if ((yield* state.read(id)) !== undefined)
@@ -571,35 +812,7 @@ export const create = Effect.fn("Stack.create")(
         yield* state.save(saved);
       }),
     );
-    // Keeps the stack when an owner holds it: one that reported ready before an interrupt, or one
-    // another caller launched after this registration was saved.
-    const rollback = state.withLock(
-      Effect.gen(function* () {
-        const current = yield* state.read(id);
-        if (current !== undefined && !(yield* controlPortHeld(current))) yield* state.remove(id);
-      }),
-    );
-    if (options.startOwner)
-      yield* Effect.scoped(launchHost(state, { ...options, stackId: id })).pipe(
-        Effect.onInterrupt(() => rollback.pipe(Effect.ignore)),
-        Effect.matchEffect({
-          onFailure: (launchError) =>
-            rollback.pipe(
-              Effect.matchEffect({
-                onFailure: (removeError) =>
-                  Effect.fail(
-                    failure(
-                      "create",
-                      `${failure("create", launchError).message}; failed to remove stack ${id} after startup failure: ${failure("create", removeError).message}`,
-                    ),
-                  ),
-                onSuccess: () => Effect.fail(failure("create", launchError)),
-              }),
-            ),
-          onSuccess: () => Effect.void,
-        }),
-      );
-    return yield* makeHandle(state, saved, options);
+    return yield* makeHandle(state, saved, locations);
   },
   Effect.mapError((cause) => failure("create", cause)),
 );
@@ -610,9 +823,13 @@ export const open = Effect.fn("Stack.open")(
     const state = yield* stateFor(options.stateRoot);
     const saved = yield* state.read(options.id);
     if (saved === undefined) return yield* failure("open", "Stack does not exist");
-    if (options.startOwner)
-      yield* Effect.scoped(launchHost(state, { ...options, stackId: saved.id }));
-    return yield* makeHandle(state, saved, options);
+    const locations = { stateRoot: options.stateRoot, cacheRoot: options.cacheRoot };
+    const access = !options.startOwner
+      ? undefined
+      : saved.lifetime === "session"
+        ? yield* connectHost(state, saved.id)
+        : yield* launchHost(state, { ...locations, stackId: saved.id });
+    return yield* makeHandle(state, saved, locations, { access });
   },
   Effect.mapError((cause) => failure("open", cause)),
 );
@@ -630,11 +847,11 @@ export const discover = Effect.fn("Stack.discover")(
       ),
     );
     const saved = yield* state.list;
-    return yield* Effect.forEach(saved, (definition) =>
-      connectHost(state, definition.id).pipe(
-        Effect.map((host) => ({ definition, host })),
-        Effect.catchTag("HostProcessError", () => Effect.succeed({ definition, host: undefined })),
-      ),
+    return yield* Effect.forEach(
+      saved,
+      (definition) =>
+        observeHost(state, definition).pipe(Effect.map((host) => ({ definition, host }))),
+      { concurrency: 8 },
     );
   },
   Effect.mapError((cause) => failure("discover", cause)),
