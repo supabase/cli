@@ -33,6 +33,12 @@ import {
   type NativeProcessError,
   spawnNativeProcess,
 } from "../runtime/NativeProcess.ts";
+import {
+  mapToServiceError,
+  processExit as sharedProcessExit,
+  publishProcessLogs,
+  runtimeSessionFromContainer,
+} from "../runtime/Session.ts";
 import { ServiceError, ServiceLaunchError, type RuntimeSession } from "../Service.ts";
 import {
   type CatalogLog,
@@ -100,18 +106,9 @@ export interface ProcessDependencies {
   readonly container: ContainerRuntime | undefined;
 }
 
-const serviceError = (operation: string, cause: unknown): ServiceError =>
-  cause instanceof ServiceError
-    ? cause
-    : new ServiceError({
-        operation,
-        message: Cause.isTimeoutError(cause)
-          ? `Service ${operation} timed out`
-          : cause instanceof Error
-            ? cause.message
-            : String(cause),
-        cause,
-      });
+const serviceError = mapToServiceError;
+
+const describeProcessExit = (code: number) => `Process exited with ${code}`;
 
 const catalogError = (operation: string, message: string, service?: ServiceKind, cause?: unknown) =>
   new CatalogError({
@@ -123,25 +120,10 @@ const catalogError = (operation: string, message: string, service?: ServiceKind,
 
 const processExit = (
   exitCode: Effect.Effect<number, { readonly message: string }>,
-): Effect.Effect<Exit.Exit<void, ServiceError>> =>
-  exitCode.pipe(
-    Effect.flatMap((code) =>
-      Number(code) === 0
-        ? Effect.void
-        : Effect.fail(
-            new ServiceError({ operation: "exit", message: `Process exited with ${code}` }),
-          ),
-    ),
-    Effect.mapError((cause) => serviceError("exit", cause)),
-    Effect.exit,
-  );
+): Effect.Effect<Exit.Exit<void, ServiceError>> => sharedProcessExit(exitCode, describeProcessExit);
 
-const runtimeFromContainer = (process: ContainerProcess): RuntimeSession => ({
-  health: Effect.void,
-  exit: processExit(process.exitCode),
-  stop: process.stop.pipe(Effect.mapError((cause) => serviceError("stop", cause))),
-  remove: process.remove.pipe(Effect.mapError((cause) => serviceError("remove", cause))),
-});
+const runtimeFromContainer = (process: ContainerProcess): RuntimeSession =>
+  runtimeSessionFromContainer(process, describeProcessExit);
 
 const runtimeFromNative = (process: NativeProcess): RuntimeSession => ({
   health: Effect.void,
@@ -193,29 +175,6 @@ const reserveNativePort = Effect.fn("ProcessRecipe.reserveNativePort")(
       ({ server }) => closeNativePort(server),
     ),
 );
-
-const publishLogs = Effect.fn("ProcessRecipe.publishLogs")((
-  process: {
-    readonly stdout: Stream.Stream<Uint8Array, unknown>;
-    readonly stderr: Stream.Stream<Uint8Array, unknown>;
-  },
-  logs: PubSub.PubSub<CatalogLog>,
-  scope: Scope.Closeable,
-): Effect.Effect<void> => {
-  const drain = (stream: Stream.Stream<Uint8Array, unknown>, name: CatalogLog["stream"]) =>
-    stream.pipe(
-      Stream.runForEach((bytes) => PubSub.publish(logs, { stream: name, bytes })),
-      Effect.catch((cause) => Effect.logError(cause)),
-      Effect.asVoid,
-    );
-  return Effect.all(
-    [
-      Effect.forkIn(drain(process.stdout, "stdout"), scope),
-      Effect.forkIn(drain(process.stderr, "stderr"), scope),
-    ],
-    { concurrency: "unbounded", discard: true },
-  );
-});
 
 const startupTimeoutSeconds = 60;
 const nativeLaunchAttempts = 3;
@@ -843,7 +802,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         selected.set(name, { kind: "tcp", host: "127.0.0.1", port: published });
       }
       yield* Ref.set(endpoints, selected);
-      yield* publishLogs(launched, logs, context.scope);
+      yield* publishProcessLogs(launched, logs, context.scope);
       const runtime = runtimeFromContainer(launched);
       const ready = selected.get("http");
       const noReadinessEndpoint = Effect.fail(
