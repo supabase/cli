@@ -276,7 +276,8 @@ export async function queryLiveDb<T extends Record<string, unknown>>(
   query: string,
   values?: ReadonlyArray<unknown>,
 ): Promise<T[]> {
-  const client = new pg.Client({ connectionString: dbUrl });
+  // TLS like the CLI's default dial, so the query works whatever the project's SSL enforcement.
+  const client = new pg.Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
   await client.connect();
   try {
     const result = await client.query(query, values === undefined ? undefined : [...values]);
