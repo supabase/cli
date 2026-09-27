@@ -32,7 +32,7 @@ class DeclaredStatusError extends Data.TaggedError("DeclaredStatusError")<{
   }
 }
 
-class PlainDeclaredError extends Error {
+class PlainDeclaredError extends Data.Error<{ readonly message: string }> {
   static readonly [ErrorActionabilityFingerprintId] = "PlainDeclaredError";
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -90,9 +90,10 @@ describe("classifyCliErrorActionability", () => {
       suggestion_type: "login",
       suggested_command: "supabase login",
     });
-    expect(classifyCliErrorActionability(new PlainDeclaredError("private")).error_fingerprint).toBe(
-      "error:PlainDeclaredError",
-    );
+    expect(
+      classifyCliErrorActionability(new PlainDeclaredError({ message: "private" }))
+        .error_fingerprint,
+    ).toBe("error:PlainDeclaredError");
   });
 
   it("preserves native Error subclass identifiers after minification", () => {
@@ -141,7 +142,7 @@ describe("classifyCliErrorActionability", () => {
   });
 
   it("rejects malformed declarations and arbitrary remediation text", () => {
-    class InvalidDeclaration extends Error {
+    class InvalidDeclaration extends Data.Error {
       get [ErrorActionabilityId]() {
         return {
           error_kind: "user_actionable",
@@ -159,7 +160,7 @@ describe("classifyCliErrorActionability", () => {
 
   it("handles hostile declarations and unknown failures safely", () => {
     const secret = "customer-project-ref";
-    class HostileError extends Error {
+    class HostileError extends Data.Error {
       get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
         throw new Error(secret);
       }
