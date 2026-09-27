@@ -24,15 +24,22 @@ const delivered: PostHogFetchResponse = {
 function toPostHogResponse(
   response: HttpClientResponse.HttpClientResponse,
   context: Context.Context<never>,
+  signal: AbortSignal | undefined,
 ): PostHogFetchResponse {
-  const run = Effect.runPromiseWith(context);
+  const body = () =>
+    Stream.toReadableStreamWith(
+      response.stream.pipe(
+        Stream.catchReason("HttpClientError", "EmptyBodyError", () => Stream.empty),
+      ),
+      context,
+    ).pipeThrough(new TransformStream(), { signal });
   return {
     status: response.status,
     headers: { get: (name) => Option.getOrNull(Headers.get(response.headers, name)) },
-    text: () => run(response.text),
-    json: () => run(response.json),
+    text: () => new Response(body()).text(),
+    json: () => new Response(body()).json(),
     get body() {
-      return Stream.toReadableStreamWith(response.stream, context);
+      return body();
     },
   };
 }
@@ -49,7 +56,7 @@ const sendPosthogRequest = Effect.fnUntraced(function* (url: string, options: Po
   const response = yield* client
     .execute(request)
     .pipe(Effect.provideService(HttpClient.TracerDisabledWhen, constTrue));
-  return response.status >= 400 ? delivered : toPostHogResponse(response, context);
+  return response.status >= 400 ? delivered : toPostHogResponse(response, context, options.signal);
 });
 
 // posthog-node has no logger hook: delivery failures hit hardcoded
