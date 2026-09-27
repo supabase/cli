@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   Duration,
   Effect,
@@ -21,7 +22,7 @@ const LegacyTelemetryConfigSchema = Schema.Struct({
   session_id: Schema.String,
   session_last_active: Schema.String,
   distinct_id: Schema.optionalKey(Schema.String),
-  schema_version: Schema.optionalKey(Schema.Number),
+  schema_version: Schema.optionalKey(Schema.declare(Predicate.isNumber)),
 });
 type LegacyTelemetryConfig = Schema.Schema.Type<typeof LegacyTelemetryConfigSchema>;
 
@@ -58,11 +59,7 @@ const decodeTelemetryConfigFile = Effect.fnUntraced(function* (content: string) 
     Effect.catch(() =>
       Effect.gen(function* () {
         const legacyConfig = yield* decodeLegacyTelemetryConfigFile(content);
-        const config = legacyConfigToTelemetryConfig(legacyConfig);
-        if (config === undefined) {
-          return yield* Effect.fail(new Error("invalid legacy telemetry state"));
-        }
-        return config;
+        return yield* Effect.fromNullishOr(legacyConfigToTelemetryConfig(legacyConfig));
       }),
     ),
   );
@@ -94,7 +91,7 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
   // Random suffix, not a timestamp: concurrent writers (parallel test files,
   // two CLI processes) in the same millisecond would otherwise share a tmp
   // path and race the rename into ENOENT.
-  const tmpPath = `${configPath}.tmp.${crypto.randomUUID()}`;
+  const tmpPath = `${configPath}.tmp.${randomUUID()}`;
   const retrySchedule = Schedule.exponential("10 millis", 2).pipe(
     Schedule.modifyDelay(({ duration }) =>
       Effect.succeed(Duration.min(duration, Duration.millis(100))),
