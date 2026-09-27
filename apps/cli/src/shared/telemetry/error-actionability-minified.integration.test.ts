@@ -66,7 +66,8 @@ describe("release-minified error fingerprints", () => {
       expect(output).toBeDefined();
       if (output === undefined) return;
 
-      yield* Effect.tryPromise(() => Bun.write(bundlePath, output));
+      const bundle = yield* Effect.tryPromise(() => output.arrayBuffer());
+      yield* fs.writeFile(bundlePath, new Uint8Array(bundle));
       const fixture = yield* Effect.tryPromise(
         () => import(`${pathToFileURL(bundlePath).href}?run=${randomUUID()}`),
       );
