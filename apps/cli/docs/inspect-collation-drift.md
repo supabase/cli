@@ -1,10 +1,5 @@
 # `supabase inspect db collation-drift`
 
-Companion documents, not duplicated here: full test transcripts live in
-`apps/cli/docs/inspect-collation-drift-test-evidence.md`; the report output
-model this command introduced is specified in
-`apps/cli/docs/inspect-report-output.md`.
-
 ## 1. Introduction
 
 Postgres stores btree indexes on text columns in sorted order, using rules
@@ -60,8 +55,8 @@ damaging as one in `public`.
 
 A row in the output is a candidate, not confirmed corruption. Detection is a
 catalog version comparison; only `amcheck` (step 1 of the emitted workflow)
-confirms whether a given index is actually mis-ordered. The test evidence
-demonstrates this distinction live: a fixture with a falsified recorded
+confirms whether a given index is actually mis-ordered. Live testing during development
+demonstrated this distinction: a fixture with a falsified recorded
 version is flagged by the command, while amcheck correctly returns silently.
 
 ## 3. What it leaves out
@@ -172,7 +167,7 @@ Connecting to local database...
 Postgres's own behaviour validates the emitted statements: during a reindex
 under a live mismatch, the server's HINT prescribes character-for-character
 the `ALTER COLLATION … REFRESH VERSION` statement this command generates,
-schema qualification included (see the test evidence document, section 2).
+schema qualification included.
 
 ## 6. PostgreSQL version support
 
@@ -190,8 +185,7 @@ versions clear both thresholds. Verified live against PG 17.6.
 
 ## 7. Implementation
 
-The command is built on the structured report model introduced alongside it
-(design: `apps/cli/docs/inspect-report-output.md`). A command produces a
+The command is built on the structured report model introduced alongside it. A command produces a
 `Report` — a document of typed blocks: `keyValue`, `table`, `callout`, `sql`
 and `steps`, each with optional severity — and per-format renderers turn the
 document into terminal text (`renderReportText`, whose table blocks reuse the
@@ -225,4 +219,4 @@ fully unit-tested without a database (severity, block structure, ordering,
 statement generation, quoting, dedup), and integration tests drive the
 handler through the repo's mocked resolver/connection layers. Live behaviour,
 including the full verify → rebuild → refresh lifecycle executed with only
-the SQL the command emitted, is recorded in the test evidence document.
+the SQL the command emitted, was verified end to end during development.

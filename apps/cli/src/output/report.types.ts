@@ -6,7 +6,6 @@
  * single source of truth, so text and JSON mode finally describe the same
  * thing, severities included.
  *
- * Design doc: apps/cli/docs/inspect-report-output.md (Part 2, Option 2).
  */
 
 export type ReportSeverity = "info" | "ok" | "warn" | "critical";
