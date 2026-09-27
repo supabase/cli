@@ -1,106 +1,115 @@
 import { describe, expect, it } from "@effect/vitest";
-import { afterEach, vi } from "vitest";
-import { Effect } from "effect";
+import { Deferred, Effect, Layer, Ref } from "effect";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientError,
+  HttpClientResponse,
+} from "effect/unstable/http";
 import { PostHog } from "posthog-node";
-import { fireAndForgetFetch, scopedPosthogClient } from "./posthog-client.ts";
+import { makePosthogFetch, scopedPosthogClient } from "./posthog-client.ts";
 
 const BATCH_URL = "https://eu.i.posthog.com/batch/";
 const BATCH_OPTIONS = { method: "POST" as const, headers: {}, body: "{}" };
 
-describe("fireAndForgetFetch", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+const respondingClient = (response: Response) =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => Effect.succeed(HttpClientResponse.fromWeb(request, response))),
+  );
 
-  it("passes successful responses through untouched", async () => {
-    vi.stubGlobal("fetch", async () => new Response(`{"status":1}`, { status: 200 }));
+describe("makePosthogFetch", () => {
+  it.live("passes successful responses through untouched", () =>
+    Effect.gen(function* () {
+      const posthogFetch = makePosthogFetch(yield* Effect.context<HttpClient.HttpClient>());
+      const response = yield* Effect.promise(() => posthogFetch(BATCH_URL, BATCH_OPTIONS));
 
-    const response = await fireAndForgetFetch(BATCH_URL, BATCH_OPTIONS);
+      expect(response.status).toBe(200);
+      expect(yield* Effect.promise(() => response.text())).toBe(`{"status":1}`);
+    }).pipe(Effect.provide(respondingClient(new Response(`{"status":1}`, { status: 200 })))),
+  );
 
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe(`{"status":1}`);
-  });
+  it.live("reports success when the network is unreachable", () =>
+    Effect.gen(function* () {
+      const posthogFetch = makePosthogFetch(yield* Effect.context<HttpClient.HttpClient>());
+      const response = yield* Effect.promise(() => posthogFetch(BATCH_URL, BATCH_OPTIONS));
 
-  it("reports success when the network is unreachable", async () => {
-    vi.stubGlobal("fetch", async () => {
-      throw new Error("connect ECONNREFUSED");
-    });
+      expect(response.status).toBe(200);
+      expect(yield* Effect.promise(() => response.text())).toBe("");
+      expect(yield* Effect.promise(() => response.json())).toEqual({});
+    }).pipe(
+      Effect.provide(
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.fail(
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({
+                  request,
+                  cause: new Error("connect ECONNREFUSED"),
+                }),
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 
-    const response = await fireAndForgetFetch(BATCH_URL, BATCH_OPTIONS);
+  it.live("reports success on error responses so the SDK never retries or logs", () =>
+    Effect.gen(function* () {
+      const posthogFetch = makePosthogFetch(yield* Effect.context<HttpClient.HttpClient>());
+      const response = yield* Effect.promise(() => posthogFetch(BATCH_URL, BATCH_OPTIONS));
 
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe("");
-    expect(await response.json()).toEqual({});
-  });
-
-  it("reports success on error responses so the SDK never retries or logs", async () => {
-    vi.stubGlobal(
-      "fetch",
-      async () => new Response("Proxy Authentication Required", { status: 407 }),
-    );
-
-    const response = await fireAndForgetFetch(BATCH_URL, BATCH_OPTIONS);
-
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe("");
-  });
+      expect(response.status).toBe(200);
+      expect(yield* Effect.promise(() => response.text())).toBe("");
+    }).pipe(
+      Effect.provide(
+        respondingClient(new Response("Proxy Authentication Required", { status: 407 })),
+      ),
+    ),
+  );
 });
 
 describe("scopedPosthogClient", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it.live("captures and shuts down cleanly against an unreachable host", () =>
     Effect.gen(function* () {
       const client = yield* scopedPosthogClient("phc_test", "http://127.0.0.1:9");
       expect(client).toBeInstanceOf(PostHog);
       client.capture({ event: "verify_event", distinctId: "device-1" });
-    }).pipe(Effect.scoped),
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   );
 
   it.live(
     "bounds the whole shutdown when a request is in flight and another event is queued",
     () =>
       Effect.gen(function* () {
-        let requestStarted = () => {};
-        const firstRequestInFlight = new Promise<void>((resolve) => {
-          requestStarted = resolve;
-        });
-        let activeRequests = 0;
-        vi.stubGlobal(
-          "fetch",
-          (_url: string, options: { signal?: AbortSignal }) =>
-            new Promise<Response>((_resolve, reject) => {
-              activeRequests += 1;
-              requestStarted();
-              const abort = () => {
-                activeRequests -= 1;
-                reject(new DOMException("The operation was aborted.", "AbortError"));
-              };
-              if (options.signal?.aborted) {
-                abort();
-                return;
-              }
-              options.signal?.addEventListener("abort", abort);
-            }),
+        const firstRequestInFlight = yield* Deferred.make<void>();
+        const activeRequests = yield* Ref.make(0);
+        const hangingClient = HttpClient.make(() =>
+          Effect.acquireUseRelease(
+            Ref.update(activeRequests, (count) => count + 1),
+            () =>
+              Deferred.succeed(firstRequestInFlight, undefined).pipe(Effect.andThen(Effect.never)),
+            () => Ref.update(activeRequests, (count) => count - 1),
+          ),
         );
 
         const startedAt = performance.now();
         yield* Effect.gen(function* () {
           const client = yield* scopedPosthogClient("phc_test", "https://blackhole.invalid");
           client.capture({ event: "first_event", distinctId: "device-1" });
-          yield* Effect.promise(() => firstRequestInFlight);
+          yield* Deferred.await(firstRequestInFlight);
           client.capture({ event: "second_event", distinctId: "device-1" });
-        }).pipe(Effect.scoped);
+        }).pipe(Effect.scoped, Effect.provideService(HttpClient.HttpClient, hangingClient));
 
         expect(performance.now() - startedAt).toBeLessThan(3_000);
 
         // The SDK's drain keeps running past the shutdown deadline; without
         // cancellation it starts the queued request AFTER scope release and
         // keeps the process alive for that request's own timeout.
-        yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
-        expect(activeRequests).toBe(0);
+        yield* Effect.sleep("50 millis");
+        expect(yield* Ref.get(activeRequests)).toBe(0);
       }),
     10_000,
   );

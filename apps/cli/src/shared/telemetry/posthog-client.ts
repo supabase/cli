@@ -1,27 +1,72 @@
-import { Effect } from "effect";
+import { type Context, Effect, Exit, Option, Stream } from "effect";
+import { constTrue } from "effect/Function";
+import {
+  Headers,
+  HttpBody,
+  HttpClient,
+  HttpClientRequest,
+  type HttpClientResponse,
+} from "effect/unstable/http";
 import { PostHog, type PostHogOptions } from "posthog-node";
 
 const EXIT_DELAY_CAP_MS = 2_000;
 
-const delivered = {
+type PostHogFetch = NonNullable<PostHogOptions["fetch"]>;
+type PostHogFetchOptions = Parameters<PostHogFetch>[1];
+type PostHogFetchResponse = Awaited<ReturnType<PostHogFetch>>;
+
+const delivered: PostHogFetchResponse = {
   status: 200,
   text: () => Promise.resolve(""),
   json: () => Promise.resolve({}),
 };
 
+function toPostHogResponse(
+  response: HttpClientResponse.HttpClientResponse,
+  context: Context.Context<never>,
+): PostHogFetchResponse {
+  const run = Effect.runPromiseWith(context);
+  return {
+    status: response.status,
+    headers: { get: (name) => Option.getOrNull(Headers.get(response.headers, name)) },
+    text: () => run(response.text),
+    json: () => run(response.json),
+    get body() {
+      return Stream.toReadableStreamWith(response.stream, context);
+    },
+  };
+}
+
+const sendPosthogRequest = Effect.fnUntraced(function* (url: string, options: PostHogFetchOptions) {
+  const client = yield* HttpClient.HttpClient;
+  const context = yield* Effect.context<never>();
+  const request = HttpClientRequest.make(options.method)(url).pipe(
+    HttpClientRequest.setBody(
+      options.body === undefined ? HttpBody.empty : HttpBody.raw(options.body),
+    ),
+    HttpClientRequest.setHeaders(options.headers),
+  );
+  const response = yield* client
+    .execute(request)
+    .pipe(Effect.provideService(HttpClient.TracerDisabledWhen, constTrue));
+  return response.status >= 400 ? delivered : toPostHogResponse(response, context);
+});
+
 // posthog-node has no logger hook: delivery failures hit hardcoded
 // console.error calls and multi-second retries, so report them as delivered.
-export const fireAndForgetFetch: NonNullable<PostHogOptions["fetch"]> = async (url, options) => {
-  try {
-    const response = await globalThis.fetch(url, options);
-    return response.status >= 400 ? delivered : response;
-  } catch {
-    return delivered;
-  }
-};
+export function makePosthogFetch(context: Context.Context<HttpClient.HttpClient>): PostHogFetch {
+  const runExit = Effect.runPromiseExitWith(context);
+  return (url, options) =>
+    options.signal?.aborted
+      ? Promise.resolve(delivered)
+      : runExit(sendPosthogRequest(url, options), { signal: options.signal }).then(
+          Exit.match({ onSuccess: (response) => response, onFailure: () => delivered }),
+        );
+}
 
-export const scopedPosthogClient = (apiKey: string, host: string) =>
-  Effect.acquireRelease(
+export const scopedPosthogClient = Effect.fnUntraced(function* (apiKey: string, host: string) {
+  const posthogFetch = makePosthogFetch(yield* Effect.context<HttpClient.HttpClient>());
+  const { client } = yield* Effect.acquireRelease(
     Effect.sync(() => {
       const shutdown = new AbortController();
       const client = new PostHog(apiKey, {
@@ -30,7 +75,7 @@ export const scopedPosthogClient = (apiKey: string, host: string) =>
         flushInterval: 0,
         requestTimeout: EXIT_DELAY_CAP_MS,
         fetch: (url, options) =>
-          fireAndForgetFetch(url, {
+          posthogFetch(url, {
             ...options,
             signal: options.signal
               ? AbortSignal.any([options.signal, shutdown.signal])
@@ -48,4 +93,6 @@ export const scopedPosthogClient = (apiKey: string, host: string) =>
         // fetches lets that background drain settle without active requests.
         Effect.ensuring(Effect.sync(() => shutdown.abort())),
       ),
-  ).pipe(Effect.map(({ client }) => client));
+  );
+  return client;
+});

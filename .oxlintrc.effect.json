@@ -63,6 +63,12 @@
     "!apps/cli/src/shared/telemetry/identity.unit.test.ts",
     "!apps/cli/src/shared/telemetry/runtime.layer.unit.test.ts",
     "!apps/cli/src/shared/telemetry/types.ts",
+    "!apps/cli/src/shared/telemetry/failure-metadata.e2e.test.ts",
+    "!apps/cli/src/shared/telemetry/posthog-client.e2e.test.ts",
+    "!apps/cli/src/shared/telemetry/posthog-client.ts",
+    "!apps/cli/src/shared/telemetry/posthog-client.unit.test.ts",
+    "!apps/cli/src/shared/telemetry/posthog-config.ts",
+    "!apps/cli/src/shared/telemetry/posthog-config.unit.test.ts",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
     "apps/cli/src/shared/compute/stacks/**",
