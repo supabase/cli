@@ -1,12 +1,12 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
-import { Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Option, Schema, Scope, Stream } from "effect";
 import * as StackEffect from "./effect.ts";
 import { StackError } from "./Rpc.ts";
 import {
   ServiceCreationInput as CreationSchema,
   type ServiceCreation as EffectCreation,
 } from "./services/Catalog.ts";
-import type { PostgresTool } from "./Tools.ts";
+import type { InitializationCommand, PostgresCommand } from "./Commands.ts";
 
 export {
   DEFAULT_LOCAL_DATABASE_PASSWORD,
@@ -24,7 +24,7 @@ export {
 } from "./Defaults.ts";
 export type { StackCredentials, StackIdentityInput } from "./State.ts";
 
-export { postgres } from "./Tools.ts";
+export { initialization, postgres } from "./Commands.ts";
 export { StackError } from "./Rpc.ts";
 type DatabaseCreation = Extract<EffectCreation, { service: "database" }>;
 /** Plain service configuration accepted by non-Effect callers. */
@@ -49,14 +49,21 @@ const decodeCreation = (creation: unknown) =>
 export type { CompositionConfig } from "./Orchestrator.ts";
 export type { Observation } from "./Rpc.ts";
 export type { PgProveOptions } from "./effect.ts";
-export type { SupabaseCompositionOptions } from "./effect.ts";
-export type { CreateOptions, OpenOptions, StackLocations } from "./effect.ts";
+export type { CreationChange, PlannedInstance, SupabaseCompositionOptions } from "./effect.ts";
+export type {
+  CreateOptions,
+  DestroyResult,
+  FindOptions,
+  FoundStack,
+  OpenOptions,
+  StackLocations,
+} from "./effect.ts";
 
 const clientLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 type Runtime = ReturnType<typeof makeRuntime>;
 const makeRuntime = () => ManagedRuntime.make(clientLayer);
 type Kind = ServiceCreation["service"];
-/** Optional cancellation ends the caller's wait, or its attached tool job. */
+/** Optional cancellation ends the caller's wait, or its attached command job. */
 export interface CallOptions {
   readonly signal?: AbortSignal;
 }
@@ -73,6 +80,7 @@ export interface ServiceInstance<K extends Kind = Kind> {
     options?: CallOptions,
   ) => Promise<void>;
   readonly destroy: (options?: CallOptions) => Promise<void>;
+  /** Ensures the service artifact or image is available without starting the service. */
   readonly prepare: (options?: CallOptions) => Promise<void>;
   readonly status: (options?: CallOptions) => Promise<StackEffect.Observation>;
   readonly followStatus: () => AsyncIterable<StackEffect.Observation>;
@@ -96,8 +104,8 @@ export type ServiceInstances = {
   [K in Kind]: K extends "database" ? DatabaseInstance : ServiceInstance<K>;
 };
 type AnyInstance = ServiceInstances[Kind];
-/** Streaming inputs and awaited output sinks for an attached finite tool. */
-export interface ToolOptions extends CallOptions {
+/** Streaming inputs and awaited output sinks for a PostgreSQL command. */
+export interface PostgresCommandOptions extends CallOptions {
   readonly args?: ReadonlyArray<string>;
   readonly env?: Readonly<Record<string, string>>;
   readonly pgProve?: StackEffect.PgProveOptions;
@@ -105,8 +113,21 @@ export interface ToolOptions extends CallOptions {
   readonly stdout: (bytes: Uint8Array) => void | Promise<void>;
   readonly stderr: (bytes: Uint8Array) => void | Promise<void>;
 }
+/** Output sinks for a finite service initialization command. */
+export interface InitializationCommandOptions extends CallOptions {
+  readonly stdout?: (bytes: Uint8Array) => void | Promise<void>;
+  readonly stderr?: (bytes: Uint8Array) => void | Promise<void>;
+}
+interface InternalCommandOptions extends CallOptions {
+  readonly args?: ReadonlyArray<string>;
+  readonly env?: Readonly<Record<string, string>>;
+  readonly pgProve?: StackEffect.PgProveOptions;
+  readonly stdin?: AsyncIterable<Uint8Array>;
+  readonly stdout?: (bytes: Uint8Array) => void | Promise<void>;
+  readonly stderr?: (bytes: Uint8Array) => void | Promise<void>;
+}
 
-const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
+const adapt = (handle: StackEffect.Stack, runtime: Runtime, scope: Scope.Closeable) => {
   const run = <A, E>(effect: Effect.Effect<A, E>, options?: CallOptions) =>
     runtime.runPromise(effect, options);
   const activeIterators = new Set<() => Promise<void>>();
@@ -257,7 +278,7 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
   }
   const sinkError = (cause: unknown) =>
     new StackError({
-      operation: "tool-stream",
+      operation: "command-stream",
       message: cause instanceof Error ? cause.message : String(cause),
     });
   return {
@@ -281,6 +302,11 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
           ),
           options,
         ),
+      plan: (services: ReadonlyArray<ServiceCreation>, options?: CallOptions) =>
+        run(
+          Effect.forEach(services, decodeCreation).pipe(Effect.flatMap(handle.composition.plan)),
+          options,
+        ),
       configure: (config: StackEffect.CompositionConfig, options?: CallOptions) =>
         run(handle.composition.configure(config), options),
       describe: (options?: CallOptions) => run(handle.composition.describe, options),
@@ -292,38 +318,60 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
     destroy: (options?: CallOptions) => run(handle.destroy, options),
     close: () => {
       if (clientClosePromise !== undefined) return clientClosePromise;
-      clientClosePromise = Promise.allSettled(
-        [...activeIterators].map((dispose) => dispose()),
-      ).then(() => runtime.dispose());
+      clientClosePromise = Promise.allSettled([...activeIterators].map((dispose) => dispose()))
+        .then(() => runtime.runPromise(Scope.close(scope, Exit.void)))
+        .then(() => runtime.dispose());
       return clientClosePromise;
     },
-    tools: {
-      run: (tool: PostgresTool, options: ToolOptions) =>
-        run(
-          handle.tools.run(tool, {
-            args: options.args,
-            env: options.env,
-            pgProve: options.pgProve,
-            ...(options.stdin === undefined
-              ? {}
-              : { stdin: Stream.fromAsyncIterable(options.stdin, sinkError) }),
-            stdout: (bytes) =>
-              Effect.tryPromise({
-                try: () => Promise.resolve(options.stdout(bytes)),
-                catch: sinkError,
-              }),
-            stderr: (bytes) =>
-              Effect.tryPromise({
-                try: () => Promise.resolve(options.stderr(bytes)),
-                catch: sinkError,
-              }),
-          }),
-          options,
-        ),
-    },
+    commands: { run: runCommands },
   };
+
+  function runCommands(
+    command: PostgresCommand,
+    options: PostgresCommandOptions,
+  ): Promise<{
+    readonly jobId: string;
+    readonly exitCode: number;
+  }>;
+  function runCommands(
+    command: InitializationCommand,
+    options?: InitializationCommandOptions,
+  ): Promise<{
+    readonly jobId: string;
+    readonly exitCode: number;
+  }>;
+  function runCommands(
+    command: PostgresCommand | InitializationCommand,
+    options?: InternalCommandOptions,
+  ) {
+    const output = (sink: InternalCommandOptions["stdout"]) => (bytes: Uint8Array) =>
+      sink === undefined
+        ? Effect.void
+        : Effect.tryPromise({ try: () => Promise.resolve(sink(bytes)), catch: sinkError });
+    if ("type" in command)
+      return run(
+        handle.commands.run(command, {
+          ...(options?.stdout === undefined ? {} : { stdout: output(options.stdout) }),
+          ...(options?.stderr === undefined ? {} : { stderr: output(options.stderr) }),
+        }),
+        options,
+      );
+    return run(
+      handle.commands.run(command, {
+        args: options?.args,
+        env: options?.env,
+        pgProve: options?.pgProve,
+        ...(options?.stdin === undefined
+          ? {}
+          : { stdin: Stream.fromAsyncIterable(options.stdin, sinkError) }),
+        stdout: output(options?.stdout),
+        stderr: output(options?.stderr),
+      }),
+      options,
+    );
+  }
 };
-/** A Promise client whose close operation leaves the detached owner running. */
+/** A Promise client; closing the creating client of a session stack destroys the stack. */
 export type Stack = ReturnType<typeof adapt>;
 
 const acquire = (
@@ -331,9 +379,14 @@ const acquire = (
   options?: CallOptions,
 ): Promise<Stack> => {
   const runtime = makeRuntime();
-  return runtime.runPromise(effect, options).then(
-    (handle) => adapt(handle, runtime),
-    (error: unknown) => runtime.dispose().then(() => Promise.reject(error)),
+  const scope = runtime.runSync(Scope.make());
+  return runtime.runPromise(effect.pipe(Scope.provide(scope)), options).then(
+    (handle) => adapt(handle, runtime, scope),
+    (error: unknown) =>
+      runtime
+        .runPromise(Scope.close(scope, Exit.void))
+        .then(() => runtime.dispose())
+        .then(() => Promise.reject(error)),
   );
 };
 /** Registers a new stack identity. */
@@ -344,6 +397,26 @@ export const create = (
 /** Opens an existing stack without launching its services. */
 export const open = (options: StackEffect.OpenOptions, callOptions?: CallOptions): Promise<Stack> =>
   acquire(StackEffect.open(options), callOptions);
-/** Discovers saved stacks and separately reports their live-owner availability. */
-export const discover = (options: Pick<StackEffect.StackLocations, "stateRoot">) =>
-  Effect.runPromise(StackEffect.discover(options).pipe(Effect.provide(clientLayer)));
+/** Discovers readable saved stacks with their live owners; `onInvalidState` observes skipped entries. */
+export const discover = (
+  options: Pick<StackEffect.StackLocations, "stateRoot"> & {
+    readonly onInvalidState?: (id: string, error: Error) => void;
+  },
+) => {
+  const onInvalidState = options.onInvalidState;
+  return Effect.runPromise(
+    StackEffect.discover({
+      stateRoot: options.stateRoot,
+      ...(onInvalidState === undefined
+        ? {}
+        : { onInvalidState: (id, error) => Effect.sync(() => onInvalidState(id, error)) }),
+    }).pipe(Effect.provide(clientLayer)),
+  );
+};
+/** Reads one saved stack by id or by project identity; resolves `undefined` when none is saved. */
+export const find = (
+  options: StackEffect.FindOptions,
+): Promise<StackEffect.FoundStack | undefined> =>
+  Effect.runPromise(
+    StackEffect.find(options).pipe(Effect.map(Option.getOrUndefined), Effect.provide(clientLayer)),
+  );

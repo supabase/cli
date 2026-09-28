@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
@@ -13,6 +10,7 @@ import {
   mockLocalDockerEngineUnavailableLayer,
   mockShadowContainerCliSpawner,
   useShadowCacheDisabled,
+  useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
@@ -77,6 +75,8 @@ function fakeShadowSetupDocker() {
 }
 
 useShadowCacheDisabled();
+
+const tmp = useTempWorkdir("pgdelta-seam-");
 
 function setup(
   workdir: string,
@@ -157,21 +157,20 @@ describe("declarativeSeamLayer.ensureLocalDatabaseStarted", () => {
       // debug hint instead of the actionable Docker recovery text (review: the start-failure
       // catch below it already propagates `suggestion`; this asserts the inspect mapping does
       // too).
-      const dir = mkdtempSync(join(tmpdir(), "pgdelta-seam-"));
+      const dir = tmp.current;
       const { layer } = setup(dir, {
         dbInspectFailsWith:
           "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
       });
       return Effect.gen(function* () {
         const seam = yield* DeclarativeSeam;
-        const exit = yield* seam.ensureLocalDatabaseStarted().pipe(Effect.exit);
+        const exit = yield* seam.ensureLocalDatabaseStarted.pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const error = failError(exit);
         expect(error).toBeInstanceOf(DeclarativeShadowDbError);
         const shadowError = error as DeclarativeShadowDbError;
         expect(shadowError.docker).toBe("daemon");
         expect(shadowError.suggestion).toBe(SUGGEST_DOCKER_INSTALL);
-        rmSync(dir, { recursive: true, force: true });
       }).pipe(Effect.provide(layer));
     },
   );
@@ -189,11 +188,11 @@ describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
     "flags a running docker.io container as stale against a slim-flagged expectation, even on a matching tag",
     () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-      const dir = mkdtempSync(join(tmpdir(), "pgdelta-seam-"));
+      const dir = tmp.current;
       const { layer } = setup(dir, { dbInspectImage: dockerfileServiceImageRaw("pg") });
       return Effect.gen(function* () {
         const seam = yield* DeclarativeSeam;
-        const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
+        const exit = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const error = failError(exit);
         expect(error).toBeInstanceOf(DeclarativeShadowDbError);
@@ -204,46 +203,42 @@ describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
           "same SUPABASE_USE_SLIM_IMAGES setting",
         );
         expect((error as DeclarativeShadowDbError).message).not.toContain("--no-backup");
-        rmSync(dir, { recursive: true, force: true });
       }).pipe(Effect.provide(layer));
     },
   );
 
   it.effect("bails out when inspect succeeds but the image name is unparseable", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    const dir = mkdtempSync(join(tmpdir(), "pgdelta-seam-"));
+    const dir = tmp.current;
     const { layer } = setup(dir, { dbInspectImage: "" });
     return Effect.gen(function* () {
       const seam = yield* DeclarativeSeam;
-      const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
+      const exit = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      rmSync(dir, { recursive: true, force: true });
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("passes when the running container matches the expected image's family and tag", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pgdelta-seam-"));
+    const dir = tmp.current;
     const { layer } = setup(dir, { dbInspectImage: dockerfileServiceImageRaw("pg") });
     return Effect.gen(function* () {
       const seam = yield* DeclarativeSeam;
-      const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
+      const exit = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      rmSync(dir, { recursive: true, force: true });
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("skips docker container inspect when the stack backend is on", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pgdelta-seam-"));
+    const dir = tmp.current;
     const { layer, shadowSpawned } = setup(dir, {
       dbInspectImage: dockerfileServiceImageRaw("pg"),
       stackBackend: true,
     });
     return Effect.gen(function* () {
       const seam = yield* DeclarativeSeam;
-      const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
+      const exit = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(shadowSpawned.some((s) => s.args.includes("inspect"))).toBe(false);
-      rmSync(dir, { recursive: true, force: true });
     }).pipe(Effect.provide(layer));
   });
 });

@@ -1,0 +1,54 @@
+diff --git a/dist/internal/internal.js b/dist/internal/internal.js
+index 0000000..0000000 100644
+--- a/dist/internal/internal.js
++++ b/dist/internal/internal.js
+@@ -30,7 +30,20 @@
+   signal: ctx?.signal
+ }));
+ /** @internal */
+-const runTest = ctx => effect => runPromise(effect, ctx);
++const runTest = ctx => effect => {
++  const failure = cause => {
++    const errors = Cause.prettyErrors(cause);
++    return errors.length > 1 ? new AggregateError(errors) : errors[0] ?? Cause.squash(cause);
++  };
++  const exitPromise = Effect.runPromiseExit(effect, {
++    signal: ctx?.signal
++  });
++  const promise = exitPromise.then(exit => Exit.isSuccess(exit) ? exit.value : Promise.reject(failure(exit.cause)));
++  ctx?.onTestFinished(() => exitPromise.then(exit => {
++    if (Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause) && !Cause.hasInterruptsOnly(exit.cause)) return Promise.reject(failure(exit.cause));
++  }));
++  return promise;
++};
+ const TestEnv = /*#__PURE__*/Layer.mergeAll(TestConsole.layer, /*#__PURE__*/TestClock.layer());
+ /** @internal */
+ export const addEqualityTesters = () => {
+diff --git a/src/internal/internal.ts b/src/internal/internal.ts
+index 0000000..0000000 100644
+--- a/src/internal/internal.ts
++++ b/src/internal/internal.ts
+@@ -36,7 +36,22 @@
+ }, (effect, _, ctx) => Effect.runPromise(effect, { signal: ctx?.signal }))
+ 
+ /** @internal */
+-const runTest = (ctx?: Vitest.TestContext) => <E, A>(effect: Effect.Effect<A, E>) => runPromise(effect, ctx)
++const runTest = (ctx?: Vitest.TestContext) => <E, A>(effect: Effect.Effect<A, E>) => {
++  const failure = (cause: Cause.Cause<E>) => {
++    const errors = Cause.prettyErrors(cause)
++    return errors.length > 1 ? new AggregateError(errors) : errors[0] ?? Cause.squash(cause)
++  }
++  const exitPromise = Effect.runPromiseExit(effect, { signal: ctx?.signal })
++  const promise = exitPromise.then((exit) => Exit.isSuccess(exit)
++    ? exit.value
++    : Promise.reject(failure(exit.cause)))
++  ctx?.onTestFinished(() => exitPromise.then((exit) => {
++    if (Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause) && !Cause.hasInterruptsOnly(exit.cause)) {
++      return Promise.reject(failure(exit.cause))
++    }
++  }))
++  return promise
++}
+ 
+ /** @internal */
+ export type TestContext = TestConsole.TestConsole | TestClock.TestClock

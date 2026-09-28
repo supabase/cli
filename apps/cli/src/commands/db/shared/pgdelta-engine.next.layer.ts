@@ -114,15 +114,13 @@ export function parsePgDeltaNextEndpoint(
     if (endpoint.connection !== undefined) return endpoint.connection;
     const parsed = parseConnectionString(endpoint.ref, layeredParseEnv(projectEnv));
     if (parsed !== undefined) return parsed;
-    return yield* Effect.fail(
-      new PgDeltaEngineError({
-        message: "failed to parse Postgres connection string for pg-delta",
-        // The input is by definition unparseable, so a naive `:password@` regex could miss a
-        // hand-typed password containing `/`, `@`, or `:` (CWE-209); `redactConnectionString`
-        // over-redacts instead of risking a leak.
-        cause: redactConnectionString(endpoint.ref),
-      }),
-    );
+    return yield* new PgDeltaEngineError({
+      message: "failed to parse Postgres connection string for pg-delta",
+      // The input is by definition unparseable, so a naive `:password@` regex could miss a
+      // hand-typed password containing `/`, `@`, or `:` (CWE-209); `redactConnectionString`
+      // over-redacts instead of risking a leak.
+      cause: redactConnectionString(endpoint.ref),
+    });
   });
 }
 
@@ -244,12 +242,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
                   : undefined;
             if (migrationsEndpoint !== undefined) {
               if (input.toml === undefined) {
-                return yield* Effect.fail(
-                  new PgDeltaEngineError({
-                    message: "pg-delta migrations endpoint requires loaded database config",
-                    cause: "missing database config",
-                  }),
-                );
+                return yield* new PgDeltaEngineError({
+                  message: "pg-delta migrations endpoint requires loaded database config",
+                  cause: "missing database config",
+                });
               }
               shadow = yield* shadowService.provisionMigrations({
                 context: input.context,
@@ -269,12 +265,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
                 }
                 const connection = parseConnectionString(shadow.migrationsUrl);
                 if (connection === undefined) {
-                  return yield* Effect.fail(
-                    new PgDeltaEngineError({
-                      message: "failed to parse pg-delta migrations shadow URL",
-                      cause: redactConnectionString(shadow.migrationsUrl),
-                    }),
-                  );
+                  return yield* new PgDeltaEngineError({
+                    message: "failed to parse pg-delta migrations shadow URL",
+                    cause: redactConnectionString(shadow.migrationsUrl),
+                  });
                 }
                 return yield* acquirePgPool(connection, {
                   isLocal: true,
@@ -338,12 +332,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
             const migrations = parseConnectionString(shadow.migrationsUrl);
             const declarative = parseConnectionString(shadow.declarativeUrl);
             if (migrations === undefined || declarative === undefined) {
-              return yield* Effect.fail(
-                new PgDeltaEngineError({
-                  message: "failed to parse pg-delta next shadow database URL",
-                  cause: "invalid password-free shadow output",
-                }),
-              );
+              return yield* new PgDeltaEngineError({
+                message: "failed to parse pg-delta next shadow database URL",
+                cause: "invalid password-free shadow output",
+              });
             }
             const [migrationsPool, declarativePool] = yield* Effect.all(
               [

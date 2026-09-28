@@ -51,6 +51,7 @@ export const notebooksPull = Effect.fn("notebooks.pull")(function* (flags: Noteb
   const telemetryState = yield* TelemetryState;
 
   const workdir = cliSettings.workdir;
+  const dir = yield* notebooksDir(workdir);
 
   // The telemetry state file is written on every invocation, success or
   // failure, so everything that can fail lives inside the flush.
@@ -110,7 +111,7 @@ export const notebooksPull = Effect.fn("notebooks.pull")(function* (flags: Noteb
           summary: `${localOnly.length} local notebook(s) are not in the project:`,
           names: localOnly,
           copyLabel: "Create them in the project",
-          deleteLabel: `Delete them from ${notebooksDir(workdir)}`,
+          deleteLabel: `Delete them from ${dir}`,
           machineOutput,
         });
 
@@ -133,7 +134,7 @@ export const notebooksPull = Effect.fn("notebooks.pull")(function* (flags: Noteb
 
       const payload = {
         project_ref: ref,
-        notebooks_dir: notebooksDir(workdir),
+        notebooks_dir: dir,
         pulled,
         preserved_locally: preserved,
         created: pushed,
@@ -152,7 +153,7 @@ export const notebooksPull = Effect.fn("notebooks.pull")(function* (flags: Noteb
       yield* output.raw(
         pulled.length === 0
           ? "No notebooks to pull.\n"
-          : `Pulled ${pulled.length} notebook(s) into ${notebooksDir(workdir)}\n`,
+          : `Pulled ${pulled.length} notebook(s) into ${dir}\n`,
       );
       if (skipped > 0) {
         yield* output.raw(

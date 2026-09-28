@@ -48,6 +48,7 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
   const telemetryState = yield* TelemetryState;
 
   const workdir = cliSettings.workdir;
+  const dir = yield* notebooksDir(workdir);
 
   // The telemetry state file is written on every invocation, success or
   // failure, so everything that can fail lives inside the flush.
@@ -65,7 +66,7 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
 
       if (requested !== undefined && !local.includes(requested)) {
         return yield* new NotebookNotFoundError({
-          detail: `${notebooksDir(workdir)} has no notebook named "${requested}".`,
+          detail: `${dir} has no notebook named "${requested}".`,
           suggestion:
             "Run supabase notebooks pull <notebook-id> to write the project's copy first.",
         });
@@ -92,9 +93,9 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
       let choice: NotebooksReconcileChoice = "keep";
       if (remoteOnly.length > 0) {
         choice = yield* promptNotebooksReconcile({
-          summary: `${remoteOnly.length} project notebook(s) are not in ${notebooksDir(workdir)}:`,
+          summary: `${remoteOnly.length} project notebook(s) are not in ${dir}:`,
           names: remoteOnly.map((notebook) => notebook.name),
-          copyLabel: `Write them into ${notebooksDir(workdir)}`,
+          copyLabel: `Write them into ${dir}`,
           deleteLabel: "Delete them from the project",
           machineOutput,
         });
@@ -142,7 +143,7 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
 
       const payload = {
         project_ref: ref,
-        notebooks_dir: notebooksDir(workdir),
+        notebooks_dir: dir,
         created,
         updated,
         deleted,
@@ -159,7 +160,7 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
 
       yield* output.raw(
         files.length === 0
-          ? `No notebooks in ${notebooksDir(workdir)} to push.\n`
+          ? `No notebooks in ${dir} to push.\n`
           : `Pushed ${files.length} notebook(s) to ${ref} (${created.length} created, ${updated.length} updated)\n`,
       );
       if (deleted.length > 0) {

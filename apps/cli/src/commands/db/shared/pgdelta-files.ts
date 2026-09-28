@@ -24,6 +24,10 @@ function readManifestValue(doc: object, key: string): unknown {
   return Reflect.get(doc, key);
 }
 
+function parseManifestJson(raw: string): unknown {
+  return JSON.parse(raw);
+}
+
 /** Reads a next-engine export manifest from an explicit declarative directory. */
 export const ReadPgDeltaExportManifest = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -46,14 +50,14 @@ export const ReadPgDeltaExportManifest = Effect.fnUntraced(function* (
       ),
     );
   const decoded = yield* Effect.try({
-    try: (): unknown => JSON.parse(raw),
+    try: () => parseManifestJson(raw),
     catch: (cause) =>
       filesError(
         `malformed export manifest ${manifestPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
       ),
   });
   if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
-    return yield* Effect.fail(filesError(`malformed export manifest ${manifestPath}`));
+    return yield* filesError(`malformed export manifest ${manifestPath}`);
   }
 
   const formatVersion = readManifestValue(decoded, "formatVersion");
@@ -64,9 +68,7 @@ export const ReadPgDeltaExportManifest = Effect.fnUntraced(function* (
     typeof redactSecrets !== "boolean" ||
     (scope !== "database" && scope !== "cluster")
   ) {
-    return yield* Effect.fail(
-      filesError(`export manifest ${manifestPath} is missing required policy metadata`),
-    );
+    return yield* filesError(`export manifest ${manifestPath} is missing required policy metadata`);
   }
 
   const profile = readManifestValue(decoded, "profile");
@@ -106,7 +108,7 @@ export const LoadPgDeltaSqlFiles = Effect.fnUntraced(function* (
   for (const name of paths) {
     const normalized = path.normalize(name);
     if (normalized.startsWith("..") || path.isAbsolute(normalized)) {
-      return yield* Effect.fail(filesError(`unsafe declarative schema path: ${name}`));
+      return yield* filesError(`unsafe declarative schema path: ${name}`);
     }
     const full = path.join(directory, name);
     const sql = yield* fs

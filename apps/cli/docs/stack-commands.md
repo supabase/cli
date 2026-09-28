@@ -2,8 +2,12 @@
 
 `supabase stack` manages local stacks with the new experimental runtime. It is unstable, its
 command interface may change, and it is excluded from the CLI compatibility promise. It is
-available when the `experimental.stack` feature flag is enabled and supports both Docker and
+available when the `experimental.stack` feature flag is enabled and supports Docker, Podman, and
 native runtimes.
+
+Native PostgreSQL requires passwords for every role except `supabase_admin`. Its local bootstrap
+and password-reconciliation connection uses that administrative role, so a native
+`supabase_admin` connection is not password-checked.
 
 | Command                  | Purpose                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------- |
@@ -17,6 +21,14 @@ native runtimes.
 | `supabase stack stop`    | Stop a stack while retaining its data.                                            |
 
 Use each command's `--help` for its available targeting and runtime options.
+
+A new stack created with `--runtime auto` uses Docker when its daemon answers, otherwise Podman
+when its engine answers, and otherwise native on Linux x64/arm64 and macOS arm64. On other
+platforms without a reachable engine, the command fails and asks you to start Docker or Podman. The
+selected runtime is saved with the stack and reused without probing; when auto selection skips
+Docker, the command prints a notice saying so. To switch, destroy the stack or choose a different
+`--stack` name. Project stacks created by database commands, and shadow stacks
+created without a project stack, use the same selection.
 
 `supabase stack prepare` downloads or pulls artifacts for the selected stack without starting
 services. If the target does not exist, prepare creates and registers it; the stack then appears in
@@ -53,8 +65,9 @@ The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pre
 `-o env` becomes `--env`.
 
 `supabase stack list` reads the global managed-stack registry and reports each readable stack's
-project, branch, runtime, and owner availability. A corrupt or unsupported registry entry fails the
-whole discovery operation with a diagnostic; readable entries are not emitted as a partial list.
+project, branch, runtime, and owner availability. Registry entries that cannot be read or decoded
+are skipped with a warning on stderr identifying each stack; only a failure to read the stacks
+directory itself fails discovery.
 The text table shortens readable IDs for scanning; use `--output-format json` or
 `--output-format stream-json` for the complete structured inventory with full IDs.
 
@@ -225,8 +238,9 @@ Excluding `rest` while Studio remains selected is rejected; excluding `analytics
 Studio. The effective configuration is
 retained in stack state, so starting without `--exclude` restores the project's configured services.
 
-`supabase stack stop --all` stops every managed stack while preserving data. Discovery fails closed
-when any registry entry is unreadable, so no partial stop operation is attempted. Individual stop
+`supabase stack stop --all` stops every managed stack while preserving data. Registry entries that
+cannot be read or decoded are skipped with a warning on stderr; only a failure to read the stacks
+directory itself fails discovery, before any stop is attempted. Individual stop
 failures make the command fail and identify the affected stack IDs with their error details; no
 success or unavailable summary is emitted when a stop fails.
 

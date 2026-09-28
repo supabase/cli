@@ -6,8 +6,8 @@ import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { homedir, tmpdir } from "node:os";
 
 import { spawnSupabase } from "../../../../tests/helpers/cli.ts";
-import { bundleStackFunctionsServeMainTemplate } from "../../../command-internal/stack-functions-bundler.ts";
 import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { destroyTestStack } from "../../../../../../packages/stack/tests/stack-cleanup.ts";
 
 const jwtSecret = "functions-serve-stack-e2e-secret-at-least-32-characters";
 const nativeSupported =
@@ -64,14 +64,7 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
     cacheRoot: path.join(home, "cache", "stack"),
     runtime,
   });
-  yield* Effect.addFinalizer(() =>
-    stack.destroy.pipe(
-      Effect.catch((cause) =>
-        Effect.die(new FunctionsServeE2eError({ message: "stack cleanup failed", cause })),
-      ),
-    ),
-  );
-  const bootstrap = yield* bundleStackFunctionsServeMainTemplate();
+  yield* Effect.addFinalizer(() => destroyTestStack(stack));
   yield* stack.composition.supabase([
     {
       service: "database",
@@ -85,7 +78,7 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
     },
     {
       service: "rest",
-      config: { databaseUrl: "postgresql://placeholder", jwtSecret },
+      config: { jwtSecret },
       endpoints: { http: { port: "auto" } },
     },
     ...(included
@@ -94,7 +87,6 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
             service: "functions" as const,
             config: {
               functionsRoot,
-              bootstrap,
               jwtSecret,
               verifyJwt: true,
               env: { CUSTOM_VALUE: "original" },
@@ -121,7 +113,6 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
       service: "functions",
       config: {
         functionsRoot,
-        bootstrap,
         jwtSecret,
         verifyJwt: true,
         env: { CUSTOM_VALUE: "excluded" },

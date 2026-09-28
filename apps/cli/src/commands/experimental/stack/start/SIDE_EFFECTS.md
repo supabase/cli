@@ -8,12 +8,16 @@ It creates or resumes the stack for the project and optional `--stack` name, or 
 
 For a new stack or a stopped existing stack, the CLI loads the target project's
 `supabase/config.toml`, supported environment overrides, and project dotenv files. It validates the
-supported configuration before creating service definitions. When the existing composition is
-already running, start reports its current endpoints and returns without reading or applying project
+supported configuration before creating service definitions. When every member of the existing
+composition is running and healthy, or armed to wake and not already starting, start reports its
+current endpoints and returns without reading or applying project configuration. When the database
+is running and every other member is running with any health, starting, or armed to wake, start
+notes that configuration changes apply after stop and start, starts the saved composition, and waits
+until every member that was running or starting is ready, again without reading project
 configuration.
 
-If the stack is in a partial lifecycle state, start fails with guidance to stop the stack and start
-it again before applying configuration.
+If the stack is otherwise in a partial lifecycle state, start fails with guidance to stop the stack
+and start it again before applying configuration.
 Auth policies, OAuth providers, hooks, MFA, SMTP, email subjects and notification controls are
 forwarded to Auth. REST search paths, pooler limits, Realtime settings, Studio settings, Storage
 S3 protocol/vector controls, and configured Vector ports are forwarded to their services.
@@ -29,9 +33,18 @@ Secrets needed by enabled services are passed to the runtime. State and service 
 use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project directory
 `supabase/.temp/stack-uploads/<stack-id>/`. Functions preparation may build the project's source.
 
-For a new stack, `--runtime auto` selects native on Linux x64/arm64 and macOS arm64, and Docker
-elsewhere. An existing stack keeps its saved runtime. Explicit runtime selection has no fallback.
-Native startup refuses root because PostgreSQL `initdb` cannot run as root.
+For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
+Podman when `podman info` reaches its engine, then native on Linux x64/arm64 and macOS arm64. Each
+probe is bounded by 10 seconds. Without a reachable engine on other platforms, the command fails and
+asks the user to start Docker or Podman. When auto selection skips Docker, an info line names the
+saved Podman or native runtime and how to switch to Docker. An existing stack keeps its saved
+runtime and runs no probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
+Native startup refuses root because PostgreSQL `initdb` cannot run as root, unless a Claude Code
+sandbox is detected or `SUPABASE_NATIVE_POSTGRES_USER` names a non-root user. PostgreSQL then runs
+as that user: the CLI chowns the instance data, root key, socket directory, and the cached bundle's
+`pgsodium_getkey.sh` to it, and adds traverse-only `o+x` to their parent directories, including
+root's home directory. Later commands that restrict the artifact cache and stack state roots to
+their owner keep that grant.
 
 Database is eager by default. Other services are lazy; traffic wakes them through their listeners.
 Lazy services with idle policies stop after 60 seconds without traffic; Functions has no automatic
@@ -45,10 +58,8 @@ provides per-function values from project environment references. Per-function e
 entrypoints, import maps and static files are forwarded to the worker bootstrap. Configured paths
 are relative to `supabase/` and must remain within the project; Docker mounts that project read-only.
 The inspector port is retained as an endpoint intent and does not enable debugging by itself.
-After an explicit stack stop, start applies changed Functions env values, per-function settings,
-files root, and JWT verification when it updates the saved composition. Existing service identities,
-endpoints, and lazy activation are retained. Running start calls do not refresh Functions from
-changed project files; stop the stack and start it again to apply those changes.
+Running start calls do not refresh Functions from changed project files; stop the stack and start
+it again to apply those changes.
 
 ## Service selection
 
@@ -59,11 +70,16 @@ Studio requires REST; excluding REST while keeping Studio fails before stopping 
 Vector runs a stack-owned default configuration that enables its health API and forwards no service
 logs; log collection into Analytics is not implemented yet.
 
-After an explicit stop, changed exclusions reuse existing service identities, data, and ports.
-Removed services remain saved and stopped so including them again can reuse them. The
-project configuration file is unchanged. Incompatible version, endpoint, or supported configuration
-changes fail before modifying the stopped composition; they are not silently applied to saved
-instances.
+After an explicit stop, start compares the project configuration with the saved composition through
+the stack package's composition plan, ignoring values the composition and stack credentials supply.
+Changed service settings, including Functions env values, per-function settings, files root, and JWT
+verification, replace the saved configuration of the existing instances; their identities, data,
+and ports are retained. Changed exclusions reuse existing service identities, data, and ports.
+Removed services remain saved and stopped so including them again can reuse them; a saved stopped
+instance of a newly included service is reused when its endpoints and versions still match. The
+project configuration file is unchanged. A changed endpoint, artifact version, or PostgreSQL major
+version fails before modifying the stopped composition, naming the changed setting and suggesting
+`supabase stack destroy` to recreate the stack.
 
 ## First startup and retries
 
@@ -76,12 +92,18 @@ When configured, initial Storage bucket seeding creates buckets and uploads thei
 files using the service-role JWT. Storage is started and made ready before those requests. A resumed
 stack is not re-seeded. Projects without configured buckets make no bucket-seeding requests.
 
-A failure or interruption during the first startup stops and unconfigures that initial composition,
-then destroys only the service instances created by this invocation. Cleanup diagnostics name any
-instance that could not be removed. Existing instances and their data are retained. After successful
-cleanup, fixing the cause and retrying starts from an empty composition. Failed resumes do not
-destroy existing data. Abrupt process termination that bypasses finalizers requires manual inspection
-and, for an incomplete first bootstrap, destruction before retrying; there is no recovery journal.
+A new stack is registered by its owner once that owner starts; if the owner fails to start (for
+example, Docker is unavailable) or the launch is interrupted, it removes that registration, and the
+CLI reports the single launch failure with no separate stop diagnostic. Any other failure or interruption during the first startup stops and
+unconfigures that initial composition, then destroys only the service instances created by this
+invocation. When startup began without a running owner, failure cleanup stops any owner launched
+during startup and waits for its exit. A target with a running owner keeps it. Existing instances and
+their data are retained, and failed resumes do not destroy existing data. Cleanup diagnostics name any
+instance that could not be removed or owner that could not be stopped. After successful cleanup,
+fixing the cause and retrying starts from an empty composition.
+Successful startup leaves the owner available after the CLI exits. Abrupt process termination that
+bypasses finalizers requires manual inspection and, for an incomplete first bootstrap, destruction
+before retrying; there is no recovery journal.
 
 ## Processes, network, and output
 

@@ -2,7 +2,8 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { FetchHttpClient } from "effect/unstable/http";
 import { Effect, FileSystem, Layer, Option, Redacted, Ref, Stream } from "effect";
-import { postgres, type ServiceCreation } from "@supabase/stack/effect";
+import { type ServiceCreation } from "@supabase/stack/effect";
+import { postgres } from "@supabase/stack/commands";
 
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { streamPgDumpWithClient } from "./pg-dump.run.ts";
@@ -11,6 +12,7 @@ import { DockerRun } from "./docker-run.service.ts";
 import { BundledPostgresClient } from "./bundled-postgres-client.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
+import { destroyTestStack } from "../../../../packages/stack/tests/stack-cleanup.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -29,12 +31,7 @@ describe("managed pg_dump against a live stack", { timeout: 180_000 }, () => {
             cacheRoot: `${root}/cache`,
             runtime,
           });
-          yield* Effect.addFinalizer(() =>
-            stack.destroy.pipe(
-              Effect.tapError((error) => Effect.logError(`Failed to destroy test stack: ${error}`)),
-              Effect.ignore,
-            ),
-          );
+          yield* Effect.addFinalizer(() => destroyTestStack(stack));
           const creation: Extract<ServiceCreation, { service: "database" }> = {
             service: "database",
             config: {
@@ -62,7 +59,7 @@ describe("managed pg_dump against a live stack", { timeout: 180_000 }, () => {
             PGPASSWORD: decodeURIComponent(connection.password),
             PGDATABASE: connection.pathname.slice(1),
           };
-          const setupResult = yield* stack.tools.run(postgres.psql({ major: 17 }), {
+          const setupResult = yield* stack.commands.run(postgres.psql({ major: 17 }), {
             args: ["-X", "-v", "ON_ERROR_STOP=1"],
             env,
             stdin: Stream.make(

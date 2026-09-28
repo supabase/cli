@@ -55,6 +55,9 @@ packageExtensions:
       # imports pg and debug without shipping their @types packages.
       "@types/debug": "^4.1.12"
       "@types/pg": "^8.23.1"
+  plpgsql-deparser:
+    dependencies:
+      "@libpg-query/parser": "^17.6.3"
   # vitest lists vite as both a dependency and a peer, so pnpm resolves it as a
   # peer only. These consumers reach vitest through their own `vitest` peer inside a
   # peer cycle, which leaves them a vitest variant with no vite at all — fatal
@@ -107,7 +110,8 @@ minimumReleaseAgeExclude:
   - "@effect/vitest@4.0.0-rc.112"
   - "@supabase/pg-delta@1.0.0-alpha.52"
   - "@supabase/pg-topo@1.0.0-alpha.6"
-  - "@supabase/postgrest-typegen@0.2.2"
+  - "@supabase/postgrest-typegen@0.3.1"
+  - "@supabase/typegen@0.2.1"
   - "effect@4.0.0-rc.112"
   - "turbo@2.10.11"
 
@@ -127,6 +131,8 @@ supportedArchitectures:
     - win32
 
 patchedDependencies:
+  "@effect/platform-node-shared@4.0.0-rc.112": patches/@effect__platform-node-shared@4.0.0-rc.112.patch
+  "@effect/vitest@4.0.0-rc.112": patches/@effect__vitest@4.0.0-rc.112.patch
   "@libpg-query/parser@17.6.10": patches/@libpg-query__parser@17.6.10.patch
 
 virtualStoreType: global

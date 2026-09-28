@@ -9,6 +9,7 @@ import {
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
 import { stackLogs } from "./logs.handler.ts";
+import { destroyTestStack } from "../../../../../../../packages/stack/tests/stack-cleanup.ts";
 
 const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
 const fixture = Effect.fn("StackLogsTest.fixture")(function* (
@@ -111,7 +112,7 @@ describe("stack logs", () => {
             );
             expect(error.message).toBe("No service matches missing.");
           }),
-        (stack) => stack.destroy,
+        destroyTestStack,
       );
     }).pipe(Effect.provide(live)),
   );
@@ -164,7 +165,7 @@ describe("stack logs", () => {
             expect(entries.find(({ line }) => line === "warning")?.stream).toBe("stderr");
             expect(f.telemetry.flushed).toBe(true);
           }),
-        (stack) => stack.destroy,
+        destroyTestStack,
       );
     }).pipe(Effect.provide(live)),
   );
@@ -200,7 +201,7 @@ describe("stack logs", () => {
             expect((yield* f.api.discover(f.locations))[0]?.host).toBeDefined();
             expect(f.telemetry.flushed).toBe(true);
           }),
-        (stack) => stack.destroy,
+        destroyTestStack,
       );
     }).pipe(Effect.provide(live)),
   );

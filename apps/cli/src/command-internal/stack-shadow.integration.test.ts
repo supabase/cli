@@ -456,4 +456,60 @@ describe("stack shadow databases", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     120_000,
   );
+
+  it.live("prints the cleanup commands when a shadow's destroy skips its engine", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-skipped-" });
+      const output = mockOutput();
+      const cleanupCommand = "docker rm --force $(docker ps --all --quiet)";
+      // A real registration whose database creation fails fast and whose destroy reports skipped cleanup.
+      const api = Layer.effect(
+        StackApi,
+        Effect.gen(function* () {
+          const real = yield* StackApi;
+          return StackApi.of({
+            ...real,
+            create: (options) =>
+              real.create(options).pipe(
+                Effect.map((stack) => ({
+                  ...stack,
+                  services: {
+                    ...stack.services,
+                    create: () =>
+                      Effect.fail(new StackError({ operation: "create", message: "injected" })),
+                  },
+                  destroy: Effect.succeed({
+                    runtimeCleanup: "skipped",
+                    engine: "docker",
+                    cleanupCommands: [cleanupCommand],
+                  } as const),
+                })),
+              ),
+          });
+        }),
+      ).pipe(Layer.provide(stackApiLayer), Layer.provide(BunServices.layer));
+
+      yield* stackWithShadowDatabase(input(fs, path, root), () => Effect.void, {
+        runtime: "native",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            api,
+            stackCatalogSetupLayer,
+            dbConnectionLayer,
+            runtimeInfoLayer,
+            mockCommandSettings({ workdir: root, supabaseHome: root }),
+            output.layer,
+          ),
+        ),
+        Effect.flip,
+      );
+
+      expect(output.stderrText).toMatch(
+        /Warning: Docker was unavailable, so Docker resources for shadow stack [0-9a-f]{64} were not removed\. Once it is running, remove them with:\n {2}docker rm --force \$\(docker ps --all --quiet\)\n/u,
+      );
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 });

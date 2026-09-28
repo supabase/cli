@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Exit, FileSystem, Option, Path, Result } from "effect";
+import { Cause, Clock, DateTime, Effect, Exit, FileSystem, Option, Path, Result } from "effect";
 
 import {
   DnsResolverFlag,
@@ -83,7 +83,7 @@ const DEFAULT_SYNC_NAME = "declarative_sync";
 
 /** UTC timestamp format `YYYYMMDDHHmmss`. */
 const formatTimestamp = (millis: number): string =>
-  new Date(millis).toISOString().replace(/\D/g, "").slice(0, 14);
+  DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\D/g, "").slice(0, 14);
 
 export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(function* (
   flags: DbSchemaDeclarativeSyncFlags,
@@ -124,11 +124,9 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     if (Option.isSome(flags.apply)) exclusive.push("apply");
     if (Option.isSome(flags.noApply)) exclusive.push("no-apply");
     if (exclusive.length > 1) {
-      return yield* Effect.fail(
-        new DeclarativeMutuallyExclusiveFlagsError({
-          message: `if any flags in the group [apply no-apply] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
-        }),
-      );
+      return yield* new DeclarativeMutuallyExclusiveFlagsError({
+        message: `if any flags in the group [apply no-apply] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
+      });
     }
 
     // The config value verbatim (already `supabase/`-prefixed when relative) or the relative
@@ -163,7 +161,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       strictCoverage: flags.strictCoverage,
       dnsResolver,
     };
-    const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent();
+    const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent;
     yield* warnFormerDeclarativeDefault(fs, path, cliSettings.workdir, toml.pgDelta);
     const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
 
@@ -186,7 +184,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       const noFiles = new DeclarativeNonInteractiveError({
         message: "no declarative schema found. Run supabase db schema declarative generate first",
       });
-      if (!tty.stdinIsTty && !yes) return yield* Effect.fail(noFiles);
+      if (!tty.stdinIsTty && !yes) return yield* noFiles;
       // `--yes`/`SUPABASE_YES` auto-confirms, but still echoes the `<label> [Y/n] y` stderr line
       // via `promptYesNo` rather than skipping it.
       const ok = yield* promptYesNo(
@@ -195,7 +193,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         "No declarative schema found. Generate a new one ?",
         true,
       );
-      if (!ok) return yield* Effect.fail(noFiles);
+      if (!ok) return yield* noFiles;
       // Delegates to the full smart-generate flow: with migrations present it offers the
       // local/linked/custom target choice plus a local-reset prompt. The presence probe below
       // swallows read errors rather than aborting the bootstrap; the diff path further down
@@ -239,11 +237,9 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       // files go straight into the plan below — warn before diffing against them.
       yield* warnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
       if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
-        return yield* Effect.fail(
-          new DeclarativeNoFilesGeneratedError({
-            message: "declarative schema generation did not produce any files",
-          }),
-        );
+        return yield* new DeclarativeNoFilesGeneratedError({
+          message: "declarative schema generation did not produce any files",
+        });
       }
       // Printed on both the interactive-accept and --yes/SUPABASE_YES bootstrap paths, and
       // regardless of `--no-cache` (only the catalog warm is skipped). Uses the relative dir
@@ -263,11 +259,9 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         stagedRelative === "" ||
         (!stagedRelative.startsWith("..") && !path.isAbsolute(stagedRelative))
       ) {
-        return yield* Effect.fail(
-          new DeclarativeCompatibilityError({
-            message: `${stagedDirRel} is inside the active declarative schema directory; choose a different staging directory.`,
-          }),
-        );
+        return yield* new DeclarativeCompatibilityError({
+          message: `${stagedDirRel} is inside the active declarative schema directory; choose a different staging directory.`,
+        });
       }
       const stagedExists = yield* fs.exists(stagedDir).pipe(Effect.orElseSucceed(() => false));
       if (stagedExists) {
@@ -276,15 +270,13 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
           fs.exists(path.join(stagedDir, ".pgdelta-export.json")),
         ]);
         if (entries.length > 0 && !hasManifest) {
-          return yield* Effect.fail(
-            new DeclarativeCompatibilityError({
-              message: `${stagedDirRel} already contains files without a pg-delta export manifest. Move or remove that directory, then run sync again so the staged export cannot preserve unrelated SQL.`,
-            }),
-          );
+          return yield* new DeclarativeCompatibilityError({
+            message: `${stagedDirRel} already contains files without a pg-delta export manifest. Move or remove that directory, then run sync again so the staged export cannot preserve unrelated SQL.`,
+          });
         }
       }
       yield* ensureLocalPostgresImageCurrent;
-      yield* seam.ensureLocalDatabaseStarted();
+      yield* seam.ensureLocalDatabaseStarted;
       // The staged export snapshots the running local database verbatim, not a shadow built
       // from migrations (what the failed plan compared) — offer the same reset the smart-target
       // local path offers, so stale Studio-made drift doesn't silently become the staged tree.
@@ -365,24 +357,22 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         if ("result" in attempt) return Option.some(attempt.result);
         const error = attempt.error;
         if (!(error instanceof DeclarativeCompatibilityError) || error.loadFindings === undefined) {
-          return yield* Effect.fail(error);
+          return yield* error;
         }
 
         const missingExtensions = [
           ...new Set(error.loadFindings.map((finding) => finding.extension)),
         ].sort();
         if (missingExtensions.includes("pg_net") && !toml.webhooksEnabled) {
-          return yield* Effect.fail(
-            new DeclarativeCompatibilityError({
-              message: [
-                "The declarative schema uses pg_net, but Database Webhooks are not enabled in the local project config.",
-                "",
-                ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
-              ].join("\n"),
-            }),
-          );
+          return yield* new DeclarativeCompatibilityError({
+            message: [
+              "The declarative schema uses pg_net, but Database Webhooks are not enabled in the local project config.",
+              "",
+              ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+            ].join("\n"),
+          });
         }
-        if (!tty.stdinIsTty || yes) return yield* Effect.fail(error);
+        if (!tty.stdinIsTty || yes) return yield* error;
 
         yield* output.raw(`${yellow(error.message)}\n`, "stderr");
         const choice = yield* output.promptSelect("How would you like to continue?", [
@@ -424,15 +414,13 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         !toml.webhooksEnabled &&
         result.removals.extensions.includes("pg_net")
       ) {
-        return yield* Effect.fail(
-          new DeclarativeCompatibilityError({
-            message: [
-              "The migrations state includes pg_net, but Database Webhooks are not enabled in the local project config.",
-              "",
-              ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
-            ].join("\n"),
-          }),
-        );
+        return yield* new DeclarativeCompatibilityError({
+          message: [
+            "The migrations state includes pg_net, but Database Webhooks are not enabled in the local project config.",
+            "",
+            ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+          ].join("\n"),
+        });
       }
       const compatibility = classifyDeclarativeCompatibilityGap({
         manifestPresent: result.manifestPresent,
@@ -454,12 +442,10 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         },
       });
       if (!tty.stdinIsTty || yes) {
-        return yield* Effect.fail(
-          new DeclarativeCompatibilityError({
-            message: gate.message,
-            suggestion: gate.suggestion,
-          }),
-        );
+        return yield* new DeclarativeCompatibilityError({
+          message: gate.message,
+          suggestion: gate.suggestion,
+        });
       }
       yield* output.raw(`${yellow(gate.message)}\n`, "stderr");
 
@@ -675,7 +661,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
             yield* output.raw(`Debug information saved to ${bold(resetDebugDir)}\n`, "stderr");
           }
           yield* output.raw(debugBundleMessage(""), "stderr");
-          return yield* Effect.fail(resetError);
+          return yield* resetError;
         }
         yield* output.raw("Database reset and all migrations applied successfully.\n", "stderr");
         return;
@@ -684,7 +670,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     if (debugDir.length > 0) {
       yield* output.raw(debugBundleMessage(debugDir), "stderr");
     }
-    return yield* Effect.fail(applyError);
+    return yield* applyError;
   }).pipe(
     // Writes the linked-project cache whenever the bootstrap path resolved a linked ref, whether
     // sync succeeds or fails; only the linked bootstrap sets `linkedProjectRef`, so non-linked

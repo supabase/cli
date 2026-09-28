@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 /**
  * Guards the telemetry identity of every CLI error: the string passed to
@@ -166,8 +166,13 @@ function writeFixture(tags: ReadonlySet<string>): void {
 }
 
 describe("error tag stability", () => {
-  it("keeps every Data.TaggedError tag literal identical to the committed snapshot", async () => {
-    const productionDeclarations = await collectProductionDeclarations();
+  let productionDeclarations: Array<TaggedErrorDeclaration>;
+
+  beforeAll(async () => {
+    productionDeclarations = await collectProductionDeclarations();
+  });
+
+  it("keeps every Data.TaggedError tag literal identical to the committed snapshot", () => {
     const currentTagSet = new Set(productionDeclarations.map((declaration) => declaration.tag));
 
     if (process.env["UPDATE_ERROR_TAGS_FIXTURE"] === "1") {
@@ -194,9 +199,7 @@ describe("error tag stability", () => {
     ).toEqual({ added: [], removed: [] });
   });
 
-  it("never lets two unexpectedly-different error classes share the same tag literal", async () => {
-    const productionDeclarations = await collectProductionDeclarations();
-
+  it("never lets two unexpectedly-different error classes share the same tag literal", () => {
     /**
      * Tags shared by more than one production class, keyed on the tag itself rather than
      * today's class names — keying on names would break the first time either class is

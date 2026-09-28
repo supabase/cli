@@ -10,7 +10,9 @@ pending port.
 
 When `[experimental].stack` is on, each shadow is a fresh database in an invocation-owned,
 unique temporary stack namespace. The command applies the catalog and project migrations as needed,
-then destroys its namespace when the Effect scope closes. Stack shadows use the stack baseline
+then destroys its namespace when the Effect scope closes. If its container engine is unreachable
+then, the namespace is still removed and stderr lists the commands that remove its engine
+resources. Stack shadows use the stack baseline
 cache described below. Native artifacts
 are shared through `$SUPABASE_HOME/cache/stack`; shadow state and data use the normal stack registry, so `stack list` and `stack destroy` can
 find a shadow left by an abrupt CLI exit. Each shadow owns a unique temporary project root

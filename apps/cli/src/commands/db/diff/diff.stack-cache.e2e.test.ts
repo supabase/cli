@@ -87,7 +87,7 @@ const composeStack = Effect.fn("DbDiffStackCacheE2e.composeStack")(function* (
           .pipe(
             Effect.catchIf(
               (cause) => Predicate.isTagged(cause.reason, "NotFound"),
-              () => Effect.succeed(undefined),
+              () => Effect.void,
             ),
           );
         if (markerText === undefined) return undefined;
@@ -191,6 +191,7 @@ describe("supabase db diff (stack shadow baseline cache)", () => {
             home,
           );
           assertSuccess(second, `${runtime} warm db diff`);
+          expect(second.stderr).not.toMatch(/baseline (?:unusable|not cached)/iu);
           expect(second.stdout).toMatch(/stack_cache_second/iu);
           expect(second.stdout).not.toMatch(/stack_cache_first/iu);
 

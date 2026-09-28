@@ -1,10 +1,9 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Ref, Schedule, Schema, Stream } from "effect";
-import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
+import { Cause, Effect, FileSystem, Layer, Ref, Schema, Stream } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { makeService } from "../Service.ts";
-import { bundleServeMainTemplate } from "../../tests/serve-main-bundler.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 
 const options = (root: string) => ({
@@ -19,21 +18,6 @@ const dockerOptions = (root: string) => ({
   ...options(root),
   runtime: "docker" as const,
 });
-
-// CI occasionally drops the first connection to a fresh container with no response. The notice
-// goes to stderr because vitest hides console output from passing tests.
-const getFunction = (client: HttpClient.HttpClient, url: string) =>
-  client.execute(HttpClientRequest.get(url)).pipe(
-    Effect.retry(
-      Schedule.recurs(1).pipe(
-        Schedule.setInputType<HttpClientError.HttpClientError>(),
-        Schedule.while(({ input }) => input.reason._tag === "TransportError"),
-        Schedule.tap(({ input }) =>
-          Effect.sync(() => process.stderr.write(`Retrying ${url} after ${input.message}\n`)),
-        ),
-      ),
-    ),
-  );
 
 const dockerInfo = Effect.scoped(
   Effect.gen(function* () {
@@ -60,13 +44,11 @@ describe("service catalog", () => {
           functionsRoot + "/hello/index.ts",
           "Deno.serve(() => Response.json({ custom: Deno.env.get('CUSTOM_ENV'), root: Deno.env.get('SUPABASE_INTERNAL_FUNCTIONS_ROOT'), port: Deno.env.get('EDGE_RUNTIME_PORT'), url: Deno.env.get('SUPABASE_URL'), db: Deno.env.get('SUPABASE_DB_URL'), jwt: Deno.env.get('SUPABASE_INTERNAL_JWT_SECRET'), jwks: Deno.env.get('SUPABASE_JWKS'), anon: Deno.env.get('SUPABASE_ANON_KEY'), service: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'), publishable: Deno.env.get('SUPABASE_PUBLISHABLE_KEYS'), secret: Deno.env.get('SUPABASE_SECRET_KEYS') }));",
         );
-        const bootstrap = yield* bundleServeMainTemplate;
         const recipe = yield* makeServiceRecipe(
           {
             service: "functions",
             config: {
               functionsRoot,
-              bootstrap,
               databaseUrl: "postgres://functions-db",
               apiUrl: "http://functions-api",
               jwtSecret: "functions-jwt-secret",
@@ -101,9 +83,8 @@ describe("service catalog", () => {
         yield* instance.start;
         yield* instance.ready;
         const endpoint = yield* recipe.endpoint("http");
-        const response = yield* getFunction(
-          client,
-          "http://" + endpoint.host + ":" + endpoint.port + "/hello",
+        const response = yield* client.execute(
+          HttpClientRequest.get("http://" + endpoint.host + ":" + endpoint.port + "/hello"),
         );
         expect(response.status).toBe(200);
         expect(yield* response.json).toEqual(
@@ -185,7 +166,6 @@ describe("service catalog", () => {
                 service: "functions",
                 config: {
                   functionsRoot,
-                  bootstrap: yield* bundleServeMainTemplate,
                   verifyJwt: false,
                 },
               },
@@ -264,7 +244,6 @@ for (const runtime of ["native", "docker"] as const) {
               config: {
                 functionsRoot,
                 filesRoot,
-                bootstrap: yield* bundleServeMainTemplate,
                 jwtSecret: "test-function-jwt-with-at-least-32-characters",
                 verifyJwt: true,
                 env: {
@@ -305,10 +284,18 @@ for (const runtime of ["native", "docker"] as const) {
           });
           yield* Effect.gen(function* () {
             yield* instance.start;
-            yield* instance.ready;
+            yield* instance.ready.pipe(
+              Effect.catchCause((cause) =>
+                Ref.get(logs).pipe(
+                  Effect.flatMap((text) =>
+                    Effect.die(`${Cause.pretty(cause)}\nStartup logs:\n${text}`),
+                  ),
+                ),
+              ),
+            );
             const endpoint = yield* recipe.endpoint("http");
             const base = `http://${endpoint.host}:${endpoint.port}`;
-            const response = yield* getFunction(client, `${base}/hello`);
+            const response = yield* client.execute(HttpClientRequest.get(`${base}/hello`));
             const responseText = yield* response.text;
             expect(response.status, responseText).toBe(200);
             const body = yield* Schema.decodeEffect(

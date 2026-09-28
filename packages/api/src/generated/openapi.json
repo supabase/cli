@@ -22826,6 +22826,13 @@
           "presence_enabled": {
             "type": "boolean",
             "description": "Whether to enable presence"
+          },
+          "admin_suspended_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "description": "If set, the Realtime service has been suspended by an admin.",
+            "nullable": true
           }
         },
         "required": [
@@ -22840,7 +22847,8 @@
           "max_presence_events_per_second",
           "max_payload_size_in_kb",
           "suspend",
-          "presence_enabled"
+          "presence_enabled",
+          "admin_suspended_at"
         ]
       },
       "UpdateRealtimeConfigBody": {
@@ -27850,7 +27858,7 @@
                 "properties": {
                   "role": {
                     "type": "string",
-                    "enum": ["owner", "administrator", "developer", "read-only"],
+                    "enum": ["owner", "administrator", "developer", "read-only", "no-access"],
                     "description": "Role name to assign. Must be one of: owner, administrator, developer, read-only. Must be on a Team or Enterprise plan to use the read-only role.",
                     "example": "developer"
                   },
@@ -27986,8 +27994,8 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["owner", "administrator", "developer", "read-only"],
-                      "description": "Role name to assign. Must be on a Team or Enterprise plan to use the read-only role.",
+                      "enum": ["owner", "administrator", "developer", "read-only", "no-access"],
+                      "description": "Role name to assign. Must be on an Enterprise plan to use the read-only or no-access roles. no-access grants no project visibility until project-scoped roles are assigned separately.",
                       "example": "developer"
                     },
                     "projects": {

@@ -1,9 +1,28 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import type { NetConnectOpts } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Exit, Layer, Option } from "effect";
+import { vi } from "vitest";
+
+// Keep reserved `.invalid` fixture hosts from depending on ambient DNS/TCP timing.
+vi.mock("node:net", async (importOriginal) => {
+  const net = await importOriginal<typeof import("node:net")>();
+  return {
+    ...net,
+    connect: (options: NetConnectOpts) => {
+      const host = "host" in options ? options.host : undefined;
+      if (typeof host !== "string" || !host.startsWith("db.") || !host.endsWith(".invalid")) {
+        return net.connect(options);
+      }
+      const socket = new net.Socket();
+      queueMicrotask(() => socket.emit("error", new Error("fixture connection refused")));
+      return socket;
+    },
+  };
+});
 
 import {
   mockAnalytics,

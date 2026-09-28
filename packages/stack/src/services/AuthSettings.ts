@@ -159,6 +159,11 @@ export const Settings = Schema.Struct({
 });
 export interface Settings extends Schema.Schema.Type<typeof Settings> {}
 
+const zeroDuration = /^[+-]?(?:0|(?:(?:0+(?:\.0*)?|\.0+)(?:ns|us|µs|μs|ms|s|m|h))+)$/u;
+
+const sessionLimit = (duration: string | undefined) =>
+  zeroDuration.test(duration ?? "") ? undefined : duration;
+
 /** Converts Auth policy into the upstream process configuration. */
 export const settingsEnvironment = (
   settings: Settings | undefined,
@@ -265,8 +270,8 @@ export const settingsEnvironment = (
     put("GOTRUE_MFA_PHONE_OTP_LENGTH", mfa.phone.otp_length);
     put("GOTRUE_MFA_PHONE_MAX_FREQUENCY", mfa.phone.max_frequency);
   }
-  put("GOTRUE_SESSIONS_TIMEBOX", settings.sessions?.timebox);
-  put("GOTRUE_SESSIONS_INACTIVITY_TIMEOUT", settings.sessions?.inactivity_timeout);
+  put("GOTRUE_SESSIONS_TIMEBOX", sessionLimit(settings.sessions?.timebox));
+  put("GOTRUE_SESSIONS_INACTIVITY_TIMEOUT", sessionLimit(settings.sessions?.inactivity_timeout));
   for (const [name, provider] of Object.entries(settings.external ?? {})) {
     const prefix = `GOTRUE_EXTERNAL_${name.toUpperCase()}`;
     put(`${prefix}_ENABLED`, provider.enabled);
