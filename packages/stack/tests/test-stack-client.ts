@@ -8,7 +8,7 @@ const check = (condition: boolean, message: string) => {
 
 const sql = async (stack: Stack, databaseUrl: string, command: string) => {
   const errors: Array<string> = [];
-  const result = await stack.tools.run(postgres.psql({ major: 17 }), {
+  const result = await stack.commands.run(postgres.psql({ major: 17 }), {
     args: ["--dbname", databaseUrl, "--set", "ON_ERROR_STOP=1", "--command", command],
     stdout: () => {},
     stderr: (bytes) => {

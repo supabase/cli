@@ -8,6 +8,7 @@
     "./effect": "./src/effect.ts",
     "./defaults": "./src/Defaults.ts",
     "./testing": "./src/testing.ts",
+    "./commands": "./src/Commands.ts",
     "./internal/dispatch": "./src/internal/dispatch.ts",
     "./internal/artifacts": "./src/internal/artifacts.ts",
     "./internal/release": "./src/internal/release.ts"

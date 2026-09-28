@@ -14,9 +14,9 @@ import type * as StackEffect from "./effect.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import { StackError } from "./Rpc.ts";
 import { ServiceCreationInput as CreationSchema } from "./services/Catalog.ts";
-import type { PgProveOptions, PostgresTool } from "./Tools.ts";
+import type { InitializationCommand, PgProveOptions, PostgresCommand } from "./Commands.ts";
 
-/** Optional cancellation ends the caller's wait, or its attached tool job. */
+/** Optional cancellation ends the caller's wait, or its attached command job. */
 export interface CallOptions {
   readonly signal?: AbortSignal;
 }
@@ -63,8 +63,8 @@ export type ServiceInstances = {
 };
 /** An individual service; closing the client does not stop this process. */
 export type ServiceInstance<K extends Kind = Kind> = ServiceInstances[K];
-/** Streaming inputs and awaited output sinks for an attached finite tool. */
-export interface ToolOptions {
+/** Streaming inputs and awaited output sinks for a PostgreSQL command. */
+export interface PostgresCommandOptions {
   readonly args?: ReadonlyArray<string>;
   readonly env?: Readonly<Record<string, string>>;
   readonly pgProve?: PgProveOptions;
@@ -72,9 +72,29 @@ export interface ToolOptions {
   readonly stdout: (bytes: Uint8Array) => void | Promise<void>;
   readonly stderr: (bytes: Uint8Array) => void | Promise<void>;
 }
+/** Output sinks for a finite service initialization command. */
+export interface InitializationCommandOptions {
+  readonly stdout?: (bytes: Uint8Array) => void | Promise<void>;
+  readonly stderr?: (bytes: Uint8Array) => void | Promise<void>;
+}
+type CommandOptions = Partial<PostgresCommandOptions>;
+type CommandResult = Effect.Success<ReturnType<StackEffect.Stack["commands"]["run"]>>;
+/** Runs a finite PostgreSQL or service initialization command. */
+interface CommandRunner {
+  (
+    command: PostgresCommand,
+    options: PostgresCommandOptions,
+    callOptions?: CallOptions,
+  ): Promise<CommandResult>;
+  (
+    command: InitializationCommand,
+    options?: InitializationCommandOptions,
+    callOptions?: CallOptions,
+  ): Promise<CommandResult>;
+}
 type DerivedStack = Promised<StackEffect.Stack>;
 /** A Promise client; closing the creating client of a session stack destroys the stack. */
-export interface Stack extends Omit<DerivedStack, "services" | "composition" | "tools"> {
+export interface Stack extends Omit<DerivedStack, "services" | "composition" | "commands"> {
   readonly services: {
     readonly create: <Input extends ServiceCreationInput>(
       creation: Input,
@@ -90,13 +110,7 @@ export interface Stack extends Omit<DerivedStack, "services" | "composition" | "
       ...args: Parameters<DerivedStack["composition"]["supabase"]>
     ) => Promise<ReadonlyArray<ServiceInstance>>;
   };
-  readonly tools: Omit<DerivedStack["tools"], "run"> & {
-    readonly run: (
-      tool: PostgresTool,
-      options: ToolOptions,
-      callOptions?: CallOptions,
-    ) => Promise<Effect.Success<ReturnType<StackEffect.Stack["tools"]["run"]>>>;
-  };
+  readonly commands: Omit<DerivedStack["commands"], "run"> & { readonly run: CommandRunner };
   /** Disposes this client and ends its active observation iterators. */
   readonly close: () => Promise<void>;
 }
@@ -267,11 +281,13 @@ const decodeCreations = (operation: string, creations: ReadonlyArray<unknown>) =
   Effect.forEach(creations, (creation) => decodeCreation(operation, creation));
 const sinkError = (cause: unknown) =>
   new StackError({
-    operation: "tool-stream",
+    operation: "command-stream",
     message: failureMessage(cause),
   });
-const sink = (write: (bytes: Uint8Array) => void | Promise<void>) => (bytes: Uint8Array) =>
-  Effect.tryPromise({ try: () => Promise.resolve(write(bytes)), catch: sinkError });
+const sink = (write?: (bytes: Uint8Array) => void | Promise<void>) => (bytes: Uint8Array) =>
+  write === undefined
+    ? Effect.void
+    : Effect.tryPromise({ try: () => Promise.resolve(write(bytes)), catch: sinkError });
 
 /** Builds the Promise forms of a client's stack and service handles. */
 export const stackAdapter = (client: Client) => {
@@ -333,6 +349,43 @@ export const stackAdapter = (client: Client) => {
         options,
       );
     }
+    function run(
+      command: PostgresCommand,
+      commandOptions: PostgresCommandOptions,
+      options?: CallOptions,
+    ): Promise<CommandResult>;
+    function run(
+      command: InitializationCommand,
+      commandOptions?: InitializationCommandOptions,
+      options?: CallOptions,
+    ): Promise<CommandResult>;
+    function run(
+      command: PostgresCommand | InitializationCommand,
+      commandOptions?: CommandOptions,
+      options?: CallOptions,
+    ): Promise<CommandResult> {
+      if ("type" in command)
+        return client.run(
+          handle.commands.run(command, {
+            stdout: sink(commandOptions?.stdout),
+            stderr: sink(commandOptions?.stderr),
+          }),
+          options,
+        );
+      return client.run(
+        handle.commands.run(command, {
+          args: commandOptions?.args,
+          env: commandOptions?.env,
+          pgProve: commandOptions?.pgProve,
+          ...(commandOptions?.stdin === undefined
+            ? {}
+            : { stdin: Stream.fromAsyncIterable(commandOptions.stdin, sinkError) }),
+          stdout: sink(commandOptions?.stdout),
+          stderr: sink(commandOptions?.stderr),
+        }),
+        options,
+      );
+    }
     return {
       ...derived,
       services: {
@@ -360,23 +413,7 @@ export const stackAdapter = (client: Client) => {
             options,
           ),
       },
-      tools: {
-        ...derived.tools,
-        run: (tool, toolOptions, options) =>
-          client.run(
-            handle.tools.run(tool, {
-              args: toolOptions.args,
-              env: toolOptions.env,
-              pgProve: toolOptions.pgProve,
-              ...(toolOptions.stdin === undefined
-                ? {}
-                : { stdin: Stream.fromAsyncIterable(toolOptions.stdin, sinkError) }),
-              stdout: sink(toolOptions.stdout),
-              stderr: sink(toolOptions.stderr),
-            }),
-            options,
-          ),
-      },
+      commands: { ...derived.commands, run },
       close: client.close,
     };
   };

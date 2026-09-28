@@ -8,11 +8,12 @@ export type {
   ServiceCreationInput,
   ServiceInstance,
   ServiceInstances,
+  InitializationCommandOptions,
+  PostgresCommandOptions,
   Stack,
-  ToolOptions,
 } from "./PromiseClient.ts";
 export type { StackCredentials, StackKeysInput } from "./State.ts";
-export { postgres } from "./Tools.ts";
+export { initialization, postgres } from "./Commands.ts";
 export { StackError } from "./Rpc.ts";
 export type { CompositionConfig } from "./Orchestrator.ts";
 export type { Observation } from "./Rpc.ts";

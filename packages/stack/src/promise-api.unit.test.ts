@@ -1,4 +1,5 @@
 import { describe, expectTypeOf, it } from "vitest";
+import type { InitializationCommand } from "./Commands.ts";
 import type * as StackEffect from "./effect.ts";
 import type * as PromiseApi from "./index.ts";
 import { createTestStack } from "./testing.ts";
@@ -15,8 +16,8 @@ describe("Promise API derived from the Effect API", () => {
     expectTypeOf<keyof PromiseApi.Stack["composition"]>().toEqualTypeOf<
       keyof StackEffect.Stack["composition"]
     >();
-    expectTypeOf<keyof PromiseApi.Stack["tools"]>().toEqualTypeOf<
-      keyof StackEffect.Stack["tools"]
+    expectTypeOf<keyof PromiseApi.Stack["commands"]>().toEqualTypeOf<
+      keyof StackEffect.Stack["commands"]
     >();
   });
 
@@ -46,9 +47,18 @@ describe("Promise API derived from the Effect API", () => {
     expectTypeOf<PromiseApi.Stack["composition"]["plan"]>().returns.resolves.toEqualTypeOf<
       ReadonlyArray<PromiseApi.PlannedInstance>
     >();
-    expectTypeOf<PromiseApi.Stack["tools"]["run"]>()
+    expectTypeOf<PromiseApi.Stack["commands"]["run"]>()
       .parameter(2)
       .toEqualTypeOf<CallOptions | undefined>();
+  });
+
+  it("runs initialization commands with optional output sinks", () => {
+    const initialize = (stack: PromiseApi.Stack, command: InitializationCommand) =>
+      stack.commands.run(command);
+    expectTypeOf<ReturnType<typeof initialize>>().resolves.toEqualTypeOf<{
+      readonly jobId: string;
+      readonly exitCode: number;
+    }>();
   });
 
   it("accepts plain secrets wherever the Effect API takes Redacted configuration", () => {
