@@ -378,8 +378,11 @@ describe("experimental stack start native lifecycle", () => {
               const failedStart = yield* Effect.scoped(Effect.exit(stackStart(flags([]))));
               expect(Exit.isFailure(failedStart)).toBe(true);
               if (!Exit.isFailure(failedStart)) return;
-              expect(Cause.pretty(failedStart.cause)).toContain(
-                `:${occupiedPort}: Cannot bind TCP listener`,
+              // Linux rejects the bind; platforms that allow overlapping binds reject the probe.
+              expect(Cause.pretty(failedStart.cause)).toMatch(
+                new RegExp(
+                  `127\\.0\\.0\\.1:${occupiedPort}(: Cannot bind TCP listener| is already in use)`,
+                ),
               );
               const ownerPid = ownerPids[attempt];
               expect(ownerPid).toBeDefined();

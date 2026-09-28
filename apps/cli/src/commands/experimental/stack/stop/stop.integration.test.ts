@@ -76,6 +76,31 @@ describe("stack stop", () => {
     }).pipe(Effect.provide(live)),
   );
 
+  it.live.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "stop all continues past siblings whose state cannot be decoded or accessed and warns about them",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const broken = path.join(f.locations.stateRoot, "broken");
+        yield* fs.makeDirectory(broken);
+        yield* fs.writeFileString(path.join(broken, "state.json"), "{broken");
+        const locked = path.join(f.locations.stateRoot, "locked");
+        yield* fs.makeDirectory(locked);
+        yield* Effect.acquireRelease(fs.chmod(locked, 0o000), () =>
+          fs.chmod(locked, 0o700).pipe(Effect.orDie),
+        );
+        yield* stackStop({ ...flags(), all: Option.some(true) }).pipe(Effect.provide(f.layer));
+        expect(f.output.stdoutText.match(/workload state is unavailable/g)).toHaveLength(1);
+        expect(f.output.stderrText).toContain("Warning: skipping invalid stack broken");
+        expect(f.output.stderrText).toContain("Warning: skipping invalid stack locked");
+        expect(f.output.stdoutText).not.toContain("Warning");
+        expect(yield* fs.readFileString(path.join(broken, "state.json"))).toBe("{broken");
+        expect(f.telemetry.flushed).toBe(true);
+      }).pipe(Effect.provide(live)),
+  );
+
   it.live("surfaces a shutdown failure after a successful owner preflight", () =>
     Effect.gen(function* () {
       const f = yield* fixture();

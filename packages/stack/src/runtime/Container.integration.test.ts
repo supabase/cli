@@ -8,11 +8,13 @@ import {
   Effect,
   Exit,
   Fiber,
+  Layer,
   Option,
   Ref,
   Sink,
   Stream,
 } from "effect";
+import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { HttpClient } from "effect/unstable/http";
@@ -732,6 +734,47 @@ describe("container process adapter", () => {
       expect(yield* Ref.get(present)).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("bounds a hung docker create and removes the container it may still create", () =>
+    Effect.gen(function* () {
+      const engine = yield* makeHangingCreateSpawner();
+      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+        Effect.provide(engine.layer),
+      );
+      const launch = yield* Effect.scoped(
+        runtime.launch({ image, stackId: "i".repeat(64), instanceId: "hung-create", env: {} }),
+      ).pipe(Effect.provide(engine.layer), Effect.exit, Effect.forkChild);
+      yield* Deferred.await(engine.createStarted);
+      yield* TestClock.adjust("2 minutes");
+      const result = yield* Fiber.join(launch);
+      expect(Exit.isFailure(result)).toBe(true);
+      const failure = Exit.isFailure(result)
+        ? Option.getOrUndefined(Cause.findErrorOption(result.cause))
+        : undefined;
+      expect(failure instanceof ContainerLaunchError).toBe(true);
+      expect(
+        failure instanceof ContainerLaunchError ? failure.failure.message : undefined,
+      ).toContain("did not respond");
+      expect(engine.commands).toContainEqual(["rm", "--force", engine.createdName()]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("removes the container a hung docker create may still create when interrupted", () =>
+    Effect.gen(function* () {
+      const engine = yield* makeHangingCreateSpawner();
+      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+        Effect.provide(engine.layer),
+      );
+      const launch = yield* Effect.scoped(
+        runtime.launch({ image, stackId: "i".repeat(64), instanceId: "interrupted", env: {} }),
+      ).pipe(Effect.provide(engine.layer), Effect.forkChild);
+      yield* Deferred.await(engine.createStarted);
+      yield* Fiber.interrupt(launch);
+      expect(Exit.hasInterrupts(yield* Fiber.await(launch))).toBe(true);
+      expect(engine.createdName()).toMatch(/^supabase-/u);
+      expect(engine.commands).toContainEqual(["rm", "--force", engine.createdName()]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 const repoDigest = (spawner: ChildProcessSpawnerService["Service"], image: string) =>
@@ -1059,6 +1102,44 @@ const successfulHandle = () =>
     getOutputFd: () => Stream.empty,
     unref: Effect.succeed(Effect.void),
   });
+
+const makeHangingCreateSpawner = Effect.fn("ContainerTest.hangingCreateSpawner")(function* () {
+  const commands: string[][] = [];
+  const createStarted = yield* Deferred.make<void>();
+  const spawner = ChildProcessSpawner.make((command) => {
+    if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
+    commands.push([...command.args]);
+    if (command.args[0] !== "create") return Effect.succeed(successfulHandle());
+    // The engine never answers create; the real daemon may or may not have committed it.
+    return Deferred.succeed(createStarted, undefined).pipe(
+      Effect.as(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(0),
+          exitCode: Effect.never,
+          isRunning: Effect.succeed(true),
+          kill: () => Effect.void,
+          stdin: Sink.drain,
+          stdout: Stream.empty,
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+          unref: Effect.succeed(Effect.void),
+        }),
+      ),
+    );
+  });
+  const createdName = () => {
+    const args = commands.find((command) => command[0] === "create") ?? [];
+    return args[args.indexOf("--name") + 1];
+  };
+  return {
+    commands,
+    createStarted,
+    createdName,
+    layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+  };
+});
 
 const ready = (process: ContainerProcess) =>
   Effect.gen(function* () {

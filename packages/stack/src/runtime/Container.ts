@@ -109,6 +109,9 @@ const PULL_MAX_RETRIES = 4;
 
 const pullBackoff = Schedule.exponential("2 seconds").pipe(Schedule.jittered);
 
+/** `docker create` only writes metadata; a healthy daemon answers well within this bound. */
+const CREATE_TIMEOUT: Duration.Input = "2 minutes";
+
 const PublishedPorts = Schema.Record(
   Schema.String,
   Schema.NullOr(
@@ -330,18 +333,40 @@ export const makeContainerRuntime = (options: {
 
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
-          // Creation must settle before cleanup can safely run.
-          const creation = yield* run(args, { timeout: undefined }).pipe(
-            Effect.mapError(
-              (error) =>
-                new ContainerError({
-                  operation: error.operation,
-                  message: `${error.message} (container name ${name})`,
-                  cause: error,
-                }),
+          // Creation must settle before cleanup can safely run. The timeout below needs genuine
+          // interruptibility to bound a hung daemon, so this restores it just for the create
+          // call; either that timeout or an external interrupt reaching this window may still
+          // leave a container needing best-effort removal, handled in both branches below.
+          const creation = yield* restore(
+            run(args, { timeout: undefined }).pipe(
+              Effect.timeout(CREATE_TIMEOUT),
+              Effect.mapError((error) =>
+                error._tag === "TimeoutError"
+                  ? error
+                  : new ContainerError({
+                      operation: error.operation,
+                      message: `${error.message} (container name ${name})`,
+                      cause: error,
+                    }),
+              ),
+              Effect.catchTag("TimeoutError", () =>
+                Effect.uninterruptible(
+                  Effect.gen(function* () {
+                    yield* run(["rm", "--force", name], { timeout: "10 seconds" }).pipe(
+                      Effect.ignore,
+                    );
+                    return yield* errorFor(
+                      "create",
+                      `Engine did not respond to container creation within ${CREATE_TIMEOUT} (container name ${name})`,
+                    );
+                  }),
+                ),
+              ),
+              Effect.onInterrupt(() =>
+                run(["rm", "--force", name], { timeout: "10 seconds" }).pipe(Effect.ignore),
+              ),
             ),
-            Effect.exit,
-          );
+          ).pipe(Effect.exit);
           const stopped = yield* Ref.make(false);
           const removed = yield* Ref.make(false);
           const reconcileAbsent = Effect.fn("Container.reconcileAbsent")(function* (

@@ -638,27 +638,20 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("destroys legacy host data without a storage marker", () =>
+  it.live("refuses to start unmarked data and removes it through the helper on destroy", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
         const helperImage = yield* postgresImage("17");
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-legacy-" });
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-unmarked-" });
         const storageRoot = path.join(root, "state", "stack", "data");
         const cacheRoot = path.join(root, "cache");
-        const instanceRoot = path.join(storageRoot, "legacy");
+        const instanceRoot = path.join(storageRoot, "unmarked");
         const dataRoot = path.join(instanceRoot, "data");
-        yield* fs.makeDirectory(dataRoot, { recursive: true });
-        yield* fs.writeFileString(path.join(dataRoot, "PG_VERSION"), "17\n");
-        yield* fs.writeFileString(path.join(dataRoot, "fixture"), "legacy");
-        yield* fs.writeFileString(
-          path.join(instanceRoot, ".supabase-database-ready.json"),
-          '{"version":"17","runtime":"docker","profile":"supabase"}',
-        );
-        const container = yield* makeContainerRuntime({ engine: "docker", root });
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        yield* fs.makeDirectory(path.join(dataRoot, "base"), { recursive: true });
+        yield* fs.writeFileString(path.join(dataRoot, "base", "fixture"), "unmarked");
         yield* docker([
           "run",
           "--rm",
@@ -667,12 +660,14 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           helperImage,
           "/bin/sh",
           "-c",
-          "chown -R 100:101 /instance/data; chmod 700 /instance/data",
+          "chown -R 100:101 /instance/data; chmod -R 700 /instance/data",
         ]);
+        const container = yield* makeContainerRuntime({ engine: "docker", root });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const storage = yield* makeDockerDatabaseStorage({
           runtime: "docker",
-          stackId: `storage-legacy-${yield* crypto.randomUUIDv4}`,
-          instanceId: "legacy",
+          stackId: `storage-unmarked-${yield* crypto.randomUUIDv4}`,
+          instanceId: "unmarked",
           instanceRoot,
           root: storageRoot,
           cacheRoot,
@@ -682,15 +677,52 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           container,
           spawner,
         });
+        const markerPath = path.join(instanceRoot, ".supabase-database-storage.json");
+
+        const failure = yield* storage.prepare("17").pipe(Effect.flip);
+        expect(failure.message).toContain("without a storage marker");
+        expect(yield* fs.exists(markerPath)).toBe(false);
+
+        yield* storage.destroyData("17");
+        expect(yield* fs.exists(dataRoot)).toBe(false);
+        expect(yield* fs.exists(markerPath)).toBe(false);
+        yield* fs.remove(cacheRoot, { recursive: true, force: true });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("refuses to adopt unmarked Podman data at startup", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "podman-storage-unmarked-" });
+        const storageRoot = path.join(root, "state", "stack", "data");
+        const instanceRoot = path.join(storageRoot, "unmarked");
+        const dataRoot = path.join(instanceRoot, "data");
+        yield* fs.makeDirectory(dataRoot, { recursive: true });
+        yield* fs.writeFileString(path.join(dataRoot, "PG_VERSION"), "17\n");
+        const storage = yield* makeDockerDatabaseStorage({
+          runtime: "podman",
+          stackId: "storage-podman-unmarked",
+          instanceId: "unmarked",
+          instanceRoot,
+          root: storageRoot,
+          cacheRoot: path.join(root, "cache"),
+          fs,
+          path,
+          crypto,
+          container: yield* makeContainerRuntime({ engine: "podman", root }),
+          spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        });
+
+        const failure = yield* storage.prepare("17").pipe(Effect.flip);
+        expect(failure.message).toContain("without a storage marker");
         expect(yield* fs.exists(path.join(instanceRoot, ".supabase-database-storage.json"))).toBe(
           false,
         );
-        yield* storage.destroyData("17");
-        expect(yield* fs.exists(dataRoot)).toBe(false);
-        expect(yield* fs.exists(path.join(instanceRoot, ".supabase-database-ready.json"))).toBe(
-          false,
-        );
-        yield* fs.remove(cacheRoot, { recursive: true, force: true });
+        expect(yield* fs.readFileString(path.join(dataRoot, "PG_VERSION"))).toBe("17\n");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -926,7 +958,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("adopts root-owned host data through helper operations", () =>
+  it.live("handles root-owned host data through helper operations", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -941,6 +973,19 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const dataRoot = path.join(instanceRoot, "data");
         yield* fs.makeDirectory(dataRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
+        // A storage marker always precedes data on disk; write it directly here to set up
+        // a host-backed, initialized instance without going through that normal sequence.
+        const initialMarker = yield* Schema.encodeEffect(Schema.fromJsonString(Marker))({
+          backend: "host",
+          namespace: "instance-storage-host-test-adopted",
+          cacheNamespace: `cache-${"0".repeat(32)}`,
+          initialized: true,
+        });
+        yield* fs.writeFileString(
+          path.join(instanceRoot, ".supabase-database-storage.json"),
+          initialMarker,
+          { mode: 0o600 },
+        );
         yield* fs.writeFileString(path.join(dataRoot, "PG_VERSION"), "17\n");
         yield* fs.writeFileString(path.join(dataRoot, "fixture"), "adopted");
         yield* fs.writeFileString(

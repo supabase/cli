@@ -58,6 +58,13 @@ export const StackCredentials = Schema.Struct({
 });
 export interface StackCredentials extends Schema.Schema.Type<typeof StackCredentials> {}
 
+const PortClaim = Schema.Struct({
+  key: Schema.String,
+  host: Schema.String,
+  port: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
+});
+export interface PortClaim extends Schema.Schema.Type<typeof PortClaim> {}
+
 export const SavedStack = Schema.Struct({
   id: SafeId,
   identity: Schema.Struct({
@@ -69,15 +76,16 @@ export const SavedStack = Schema.Struct({
   instances: Schema.Array(SavedInstance),
   composition: Schema.Unknown,
   credentials: Schema.optionalKey(StackCredentials),
-  ports: Schema.Array(
-    Schema.Struct({
-      key: Schema.String,
-      host: Schema.String,
-      port: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
-    }),
-  ),
+  ports: Schema.Array(PortClaim),
 });
 export interface SavedStack extends Schema.Schema.Type<typeof SavedStack> {}
+
+const ClaimsDocument = Schema.Struct({ ports: Schema.Array(PortClaim) });
+
+export interface StackClaims {
+  readonly id: string;
+  readonly ports: ReadonlyArray<PortClaim>;
+}
 
 export class StateError extends Data.TaggedError("StateError")<{
   readonly operation: string;
@@ -87,7 +95,10 @@ export class StateError extends Data.TaggedError("StateError")<{
 
 export interface Interface {
   readonly read: (id: string) => Effect.Effect<SavedStack | undefined, StateError>;
+  /** Skips each stack entry that stays unreadable after transient retries, reporting it to `onInvalidState`. */
   readonly list: Effect.Effect<ReadonlyArray<SavedStack>, StateError>;
+  /** Decodes only each stack's port claims and silently skips entries that cannot provide them. */
+  readonly claims: Effect.Effect<ReadonlyArray<StackClaims>, StateError>;
   readonly save: (state: SavedStack) => Effect.Effect<void, StateError>;
   readonly remove: (id: string) => Effect.Effect<void, StateError>;
   /** Not reentrant; wrap metadata updates here, while Ports operations acquire this lock themselves. */
@@ -156,25 +167,29 @@ const makeState = (
       ),
       Schedule.upTo({ times: 12 }),
     );
-    const renameErrorCode = (error: unknown): string | undefined => {
+    const errorCode = (error: unknown): string | undefined => {
       if (!Predicate.hasProperty(error, "cause")) return undefined;
       return Predicate.hasProperty(error.cause, "code") && typeof error.cause.code === "string"
         ? error.cause.code
         : undefined;
     };
+    /** Windows reports a file that another process is replacing as a transient sharing violation. */
+    const sharingViolation = (error: unknown) =>
+      (options.platform ?? process.platform) === "win32" &&
+      ["EPERM", "EACCES", "EBUSY"].includes(errorCode(error) ?? "");
+    const retryTransientRead = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.retry({ schedule: publishRetrySchedule, while: sharingViolation }),
+        Effect.mapError((cause) => stateError("read", cause)),
+      );
     const publish = Effect.fn("State.publish")(function* (temporary: string, target: string) {
       yield* fs.rename(temporary, target).pipe(
-        Effect.retry({
-          schedule: publishRetrySchedule,
-          while: (error) =>
-            (options.platform ?? process.platform) === "win32" &&
-            ["EPERM", "EACCES", "EBUSY"].includes(renameErrorCode(error) ?? ""),
-        }),
+        Effect.retry({ schedule: publishRetrySchedule, while: sharingViolation }),
         Effect.mapError(
           (cause) =>
             new StateError({
               operation: "publish",
-              message: `Unable to publish state to ${target}${renameErrorCode(cause) ? ` (${renameErrorCode(cause)})` : ""}: ${cause instanceof Error ? cause.message : String(cause)}`,
+              message: `Unable to publish state to ${target}${errorCode(cause) ? ` (${errorCode(cause)})` : ""}: ${cause instanceof Error ? cause.message : String(cause)}`,
               cause,
             }),
         ),
@@ -198,39 +213,46 @@ const makeState = (
     const read = Effect.fn("State.read")(function* (id: string) {
       yield* checkId(id);
       const target = statePath(id);
-      const exists = yield* fs
-        .exists(target)
-        .pipe(Effect.mapError((cause) => stateError("read", cause)));
+      const exists = yield* fs.exists(target).pipe(retryTransientRead);
       if (!exists) return undefined;
-      const text = yield* fs
-        .readFileString(target)
-        .pipe(Effect.mapError((cause) => stateError("read", cause)));
+      const text = yield* fs.readFileString(target).pipe(retryTransientRead);
       const state = yield* decodeState(text, id, target);
       if (state.id !== id) {
         return yield* stateError("identity", "State document identity does not match its path");
       }
       return state;
     });
-    const list = Effect.fn("State.list")(function* () {
-      const entries = yield* fs
-        .readDirectory(root)
-        .pipe(Effect.mapError((cause) => stateError("list", cause)));
-      const states: Array<SavedStack> = [];
-      for (const entry of entries) {
-        if (!Schema.is(SafeId)(entry)) continue;
-        const id = entry;
-        const value = yield* read(id).pipe(
-          Effect.catch((error) =>
-            options.onInvalidState !== undefined &&
-            (error.operation === "decode" || error.operation === "identity")
-              ? options.onInvalidState(id, error).pipe(Effect.as(undefined))
-              : Effect.fail(error),
-          ),
-        );
-        if (value !== undefined) states.push(value);
-      }
-      return states;
-    });
+    const stackIds = fs.readDirectory(root).pipe(
+      Effect.map((entries) => entries.filter(Schema.is(SafeId))),
+      Effect.mapError((cause) => stateError("list", cause)),
+    );
+    const readEntries = <A>(
+      readEntry: (id: string) => Effect.Effect<A | undefined, StateError>,
+      onSkipped: (id: string, error: StateError) => Effect.Effect<void>,
+    ) =>
+      Effect.gen(function* () {
+        const entries: Array<A> = [];
+        for (const id of yield* stackIds) {
+          const value = yield* readEntry(id).pipe(
+            Effect.catch((error) => onSkipped(id, error).pipe(Effect.as(undefined))),
+          );
+          if (value !== undefined) entries.push(value);
+        }
+        return entries;
+      });
+    const list = Effect.fn("State.list")(() =>
+      readEntries(read, (id, error) => options.onInvalidState?.(id, error) ?? Effect.void),
+    );
+    const decodeClaims = Schema.decodeEffect(Schema.fromJsonString(ClaimsDocument));
+    const readClaims = (id: string) =>
+      fs.readFileString(statePath(id)).pipe(
+        retryTransientRead,
+        Effect.flatMap((text) =>
+          decodeClaims(text).pipe(Effect.mapError((cause) => stateError("decode", cause))),
+        ),
+        Effect.map(({ ports }): StackClaims => ({ id, ports })),
+      );
+    const claims = Effect.fn("State.claims")(() => readEntries(readClaims, () => Effect.void));
     const save = Effect.fn("State.save")(function* (state: SavedStack) {
       yield* checkId(state.id);
       const target = statePath(state.id);
@@ -308,7 +330,7 @@ const makeState = (
           }),
       ),
     );
-    return { read, list: list(), save, remove, withLock };
+    return { read, list: list(), claims: claims(), save, remove, withLock };
   });
 
 export const layer = (options: Options) =>
