@@ -96,16 +96,14 @@ const mapStackError = (error: StackError) =>
     reason:
       error.operation === "open" ||
       error.operation === "discover" ||
-      error.operation === "definition" ||
-      error.operation === "getComposition"
+      error.operation === "definition"
         ? "invalid-config"
         : "runtime",
     message: error.message,
     suggestion:
       error.operation === "open" ||
       error.operation === "discover" ||
-      error.operation === "definition" ||
-      error.operation === "getComposition"
+      error.operation === "definition"
         ? "Inspect the saved stack state under $SUPABASE_HOME/stacks."
         : "Retry the command and use --debug if the stack remains unavailable.",
     cause: error,

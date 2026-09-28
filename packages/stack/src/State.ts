@@ -14,7 +14,9 @@ import {
 import { rmdir } from "node:fs/promises";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no OS-owned cross-process lock primitive.
 import { DatabaseSync } from "node:sqlite";
+import { CompositionConfig } from "./Orchestrator.ts";
 import { restrictDirectoryToOwner } from "./runtime/postgres-user.ts";
+import { ServiceCreation } from "./services/Catalog.ts";
 
 const SafeId = Schema.String.pipe(
   Schema.refine((value): value is string => /^[a-zA-Z0-9_-]+$/u.test(value), {
@@ -23,11 +25,11 @@ const SafeId = Schema.String.pipe(
   }),
 );
 
-export const SavedInstance = Schema.Struct({
+const SavedInstance = Schema.Struct({
   id: SafeId,
-  creation: Schema.Unknown,
+  creation: Schema.toCodecJson(ServiceCreation),
 });
-export interface SavedInstance extends Schema.Schema.Type<typeof SavedInstance> {}
+interface SavedInstance extends Schema.Schema.Type<typeof SavedInstance> {}
 
 export const StackIdentityInput = Schema.Struct({
   publishableKey: Schema.optionalKey(Schema.String),
@@ -73,8 +75,14 @@ export const SavedStack = Schema.Struct({
     stackName: Schema.String,
   }),
   runtime: Schema.Literals(["native", "docker", "podman"]),
-  instances: Schema.Array(SavedInstance),
-  composition: Schema.Unknown,
+  instances: Schema.Array(SavedInstance).check(
+    Schema.makeFilter((instances) =>
+      new Set(instances.map(({ id }) => id)).size === instances.length
+        ? undefined
+        : "Expected unique instance ids",
+    ),
+  ),
+  composition: CompositionConfig,
   credentials: Schema.optionalKey(StackCredentials),
   ports: Schema.Array(PortClaim),
 });
