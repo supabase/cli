@@ -12,7 +12,7 @@ interface SpawnCall {
   readonly env: Readonly<Record<string, string | undefined>> | undefined;
   readonly extendEnv: boolean | undefined;
   readonly shell: boolean | string | undefined;
-  readonly stdin: string;
+  stdin: string;
 }
 
 /** Records what `spawnForTypegen` asks for and answers like a finished process. */
@@ -32,24 +32,16 @@ function fakeSpawner(
       if (!ChildProcess.isStandardCommand(command)) {
         return yield* Effect.die("unexpected command shape");
       }
-      const stdin = command.options.stdin;
-      const stdinText =
-        typeof stdin === "string" || stdin === undefined
-          ? ""
-          : yield* Stream.runFold(
-              stdin as Stream.Stream<Uint8Array>,
-              () => "",
-              (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-            );
-      calls.push({
+      const call: SpawnCall = {
         command: command.command,
         args: command.args,
         cwd: command.options.cwd,
         env: command.options.env,
         extendEnv: command.options.extendEnv,
         shell: command.options.shell,
-        stdin: stdinText,
-      });
+        stdin: "",
+      };
+      calls.push(call);
       if (opts.notFound === true) {
         return yield* PlatformError.systemError({
           _tag: "NotFound",
@@ -65,7 +57,11 @@ function fakeSpawner(
         all: Stream.empty,
         exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(opts.exitCode ?? 0)),
         isRunning: Effect.succeed(false),
-        stdin: Sink.drain,
+        stdin: Sink.forEach((chunk: Uint8Array) =>
+          Effect.sync(() => {
+            call.stdin += decoder.decode(chunk, { stream: true });
+          }),
+        ),
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
         getInputFd: () => Sink.drain,

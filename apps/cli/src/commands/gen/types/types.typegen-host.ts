@@ -61,13 +61,20 @@ const spawnForTypegen = (
           env: request.env,
           extendEnv: true,
           shell,
-          stdin: Stream.make(new TextEncoder().encode(request.stdin)),
+          stdin: "pipe",
           stdout: "pipe",
           stderr: "pipe",
         }),
       );
-      const [stdout, stderr, exitCode] = yield* Effect.all(
+      // Written here rather than handed to the spawner, so a tool that exits before reading its
+      // input fails the write in this fiber, where it is expected, instead of in a forked one.
+      const feedStdin = Stream.run(
+        Stream.make(new TextEncoder().encode(request.stdin)),
+        child.stdin,
+      ).pipe(Effect.ignore);
+      const [, stdout, stderr, exitCode] = yield* Effect.all(
         [
+          feedStdin,
           collectText(child.stdout),
           collectText(child.stderr),
           // A signal-ended process fails `exitCode`; the registry's contract wants `null`.
