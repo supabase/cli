@@ -1706,7 +1706,7 @@ describe("db start stack backend", () => {
       },
       stop: Effect.void,
       destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
-      tools: { run: () => Effect.die("unused") },
+      commands: { run: () => Effect.die("unused") },
     };
     return { stack, state };
   };

@@ -1,10 +1,10 @@
 # Stack package architecture
 
-This document defines the stack package architecture. The package implements the service graph, lifecycle, composition, proxy, tools, and detached owner described here. CLI integration is a separate consumer concern.
+This document defines the stack package architecture. The package implements the service graph, lifecycle, composition, proxy, commands, and detached owner described here. CLI integration is a separate consumer concern.
 
 ## Core model
 
-Use **a graph of service instances, with a small serialized lifecycle for each instance**. Keep application readiness separate from that lifecycle. Add a proxy that starts services on public traffic and sleeps them on public inactivity. Run finite tools with the same identity, artifacts and execution primitives, without treating them as services.
+Use **a graph of service instances, with a small serialized lifecycle for each instance**. Keep application readiness separate from that lifecycle. Add a proxy that starts services on public traffic and sleeps them on public inactivity. Run finite commands with the same identity, artifacts and execution primitives, without treating them as services.
 
 The critical simplification is:
 
@@ -46,22 +46,22 @@ Each long-running service is an individually identified instance with its own ex
 
 ## Implementation organization
 
-Keep the implementation Effect V4 from the domain inward. Promise is the outer facade for package consumers and the boundary for foreign APIs; adapt a foreign Promise once at its leaf with typed errors. Host-owned execution fibers own admitted transitions, while callers may cancel only their wait. Use bounded streams and backpressure for tool and log transport.
+Keep the implementation Effect V4 from the domain inward. Promise is the outer facade for package consumers and the boundary for foreign APIs; adapt a foreign Promise once at its leaf with typed errors. Host-owned execution fibers own admitted transitions, while callers may cancel only their wait. Use bounded streams and backpressure for command and log transport.
 
 Organize by cohesive responsibilities. The package shape is:
 
 - `src/` modules: the instance executor, orchestrator, owner, detached host, networking, persistence, and RPC boundary.
 - `services/`: one definition per service, owning its configuration, endpoints, launch settings, and readiness. `Catalog.ts` validates and dispatches creation; `Recipe.ts` defines their contract and `ProcessRecipe.ts` shares process mechanics.
 - `composition/Supabase.ts`: default Supabase membership, dependency edges, and input wiring.
-- `host/`: endpoint projections, tool execution, and tool attachment transport.
+- `host/`: endpoint projections, command execution, and command attachment transport.
 - `runtime/`: native and container adapters.
-- `Tools.ts`: public finite-tool descriptors.
+- `Commands.ts`: public finite-command descriptors.
 - `effect.ts`: Effect-facing composition and services.
 - `index.ts`: Promise-facing public boundary.
 
 This is navigational guidance, not a required file scaffold. Split modules when a responsibility needs it; avoid one folder or interface per operation. Keep service definitions narrow, with graph edges and input wiring in composition. Do not introduce capabilities, projections, recovery journals, reservations, public sleep APIs, or extra lifecycle states to force this shape.
 
-Application services use Effect `Context.Service` and `Layer.effect`; consumers obtain their dependencies from the Effect context. Each owner receives an isolated orchestrator graph. Tools share the host lifetime alongside the owner. Individual executors, recipes, and process handles remain scoped resources because a stack owns multiple independently identified instances.
+Application services use Effect `Context.Service` and `Layer.effect`; consumers obtain their dependencies from the Effect context. Each owner receives an isolated orchestrator graph. Commands share the host lifetime alongside the owner. Individual executors, recipes, and process handles remain scoped resources because a stack owns multiple independently identified instances.
 
 ## 1. Follow Compose's useful separation
 
@@ -126,7 +126,7 @@ Dependency waits and health waits never hold a lifecycle transition open. Artifa
 | Composition      | Explicit member selection, dependency edges, input wiring and eager/lazy activation policy                                              |
 | Service recipe   | Typed configuration inputs, native/container launch specifications, readiness and optional storage operations; no stack graph knowledge |
 | Service instance | Immutable ID, recipe/configuration, runtime handle, lifecycle and health observations; graph relationships belong to stack composition  |
-| Tool job         | One finite artifact-backed execution belonging to the stack                                                                             |
+| Command job      | One finite artifact-backed execution belonging to the stack                                                                             |
 
 The default Supabase composition is a factory that registers, selects and connects instances. Registration establishes ownership; membership establishes participation in the default application. Registering or starting another instance never implicitly adds it to that composition. A shadow database is an ordinary database instance with its own ID, password, ports and data, owned by the same stack but managed individually.
 
@@ -139,7 +139,7 @@ flowchart TB
         end
         ShadowA["Standalone database A"]
         ShadowB["Standalone database B"]
-        Tool["Temporary tool invocation"]
+        Command["Temporary command invocation"]
     end
 ```
 
@@ -209,9 +209,9 @@ Make operation scope explicit in the proposed API:
 | `instance.start/stop/restart/destroy()`  | That instance, subject to the ordinary graph rules                            |
 | `stack.composition.start/stop/restart()` | Default composition members; start also includes their declared prerequisites |
 | `stack.stop()`                           | All owned service instances, including standalone instances                   |
-| `stack.destroy()`                        | All owned resources, including standalone instances and tool jobs             |
+| `stack.destroy()`                        | All owned resources, including standalone instances and command jobs          |
 
-Namespace stop also cancels and settles attached jobs before StackHost shutdown; composition stop does not reserve services on behalf of tools. Namespace destruction performs shutdown before owned-data removal. The CLI's full stop uses namespace scope; restarting the application composition does not restart shadows. Composition startup never resurrects a standalone instance. Membership and eager/lazy activation are separate: eager means start when the containing composition is started, not include every registered eager instance. The existing stack-wide start convenience, if retained, delegates to default composition startup only.
+Namespace stop also cancels and settles attached jobs before StackHost shutdown; composition stop does not reserve services on behalf of commands. Namespace destruction performs shutdown before owned-data removal. The CLI's full stop uses namespace scope; restarting the application composition does not restart shadows. Composition startup never resurrects a standalone instance. Membership and eager/lazy activation are separate: eager means start when the containing composition is started, not include every registered eager instance. The existing stack-wide start convenience, if retained, delegates to default composition startup only.
 
 For example, REST binds to the primary database; a shadow database has no relationship to it unless the caller asks to copy its initialization profile. Functions may run without PostgreSQL or Auth. An API URL in configuration is not automatically a hard lifecycle dependency.
 
@@ -245,7 +245,7 @@ Cancellation has a limited meaning at each boundary:
 | Preparing artifacts or waiting for execution admission | Abandon this request before its lifecycle operation begins; shared preparation may continue for other callers |
 | Waiting for an executing instance operation            | Stop waiting; the StackHost finishes the operation and its cleanup                                            |
 | Waiting for readiness or following logs                | End the observation without changing lifecycle                                                                |
-| Running an attached tool invocation                    | Terminate and clean up that invocation                                                                        |
+| Running an attached command invocation                 | Terminate and clean up that invocation                                                                        |
 
 A service is stopped by an explicit stop command, not by a disconnected caller. Launch completes at running, so stop during health-starting uses the ordinary stop operation. If the launch ends while a caller awaits readiness, that observation fails rather than attaching to a later launch.
 
@@ -312,7 +312,7 @@ Composition restart is two passes: stop the selected instances in reverse depend
 
 A recipe receives ordinary typed configuration and a context for its own resources. A database URL is just an input value: the recipe does not receive its producer’s identity, another service handle, or the stack graph. It does not receive the entire persisted stack document. The orchestrator owns resolving managed outputs into these configuration values.
 
-The backend provides mechanical operations: launch, observe exit/logs, stop and remove exact resources. Native and container implementations differ in commands, mounts, network setup and cleanup, but share the lifecycle contract. Keep one runtime choice per stack; mixed backends and automatic tool-runtime fallback are unnecessary for the current scope. Preparation validates that the selected service/tool artifact exists for that runtime and platform, and reports an unsupported-platform/artifact error otherwise. A native stack requires native artifacts; Windows native support is not implied by a fallback branch in the current CLI.
+The backend provides mechanical operations: launch, observe exit/logs, stop and remove exact resources. Native and container implementations differ in commands, mounts, network setup and cleanup, but share the lifecycle contract. Keep one runtime choice per stack; mixed backends and automatic command-runtime fallback are unnecessary for the current scope. Preparation validates that the selected service/command artifact exists for that runtime and platform, and reports an unsupported-platform/artifact error otherwise. A native stack requires native artifacts; Windows native support is not implied by a fallback branch in the current CLI.
 
 A successful launch returns an owned runtime handle with readiness observation and cleanup. One shared readiness program belongs to each runtime launch and has a bounded outcome. Readiness timeout or initialization failure leaves the process running with unhealthy status and an actionable error. It does not automatically stop or restart the process. Stop remains available, and traffic/dependent launches do not treat unhealthy as ready. Initialization that requires a running process belongs to that runtime session, not the start transition. For PostgreSQL, healthy means required catalog initialization and credential reconciliation have completed—not merely that TCP accepts a connection. Stopping the running instance closes that session, settling its health probes and initialization helpers as ordinary resource cleanup. There are not two competing lifecycle operations.
 
@@ -353,11 +353,11 @@ Sleep retains the public listener needed to wake. Whole-stack stop closes listen
 
 Composition validation permits lazy activation only for instances with a configured public wake endpoint. A route-less prerequisite, such as pg-meta without its own public endpoint, is eager; it is not implicitly armed through a dependent. This avoids a second wake-permission mechanism. Internal sleep is available only for instances with a supported public wake route and an enabled idle policy. Database and Functions need no automatic idle timer by default. Functions inspector access remains possible while health is starting; ordinary application traffic waits for healthy.
 
-## 6. Tools share execution, not service lifecycle
+## 6. Commands share execution, not service lifecycle
 
 Provide a stack-scoped finite runner for concrete CLI needs such as `pg_dump` and `psql`. Each invocation has a job ID; temp files, logs and runtime resources belong to that stack. Jobs reuse artifact selection and native/container process execution. They have exit results and byte streams, not healthchecks, wake policy or service registrations.
 
-For `pg_dump` and `psql`, container mode launches a temporary tool container from a compatible PostgreSQL image, overriding its entrypoint to run the client command. It may reuse the database service's image, but it creates a separate container without starting another database server or mounting the server's data directory. Native mode launches the corresponding binary from the selected native artifact. The tool definition supplies these two executable forms; the runner supplies stack ownership, arguments, environment, streams and cleanup. Docker supports entrypoint overrides and automatic removal for this execution shape. [Docker run reference](https://docs.docker.com/engine/containers/run/).
+For `pg_dump` and `psql`, container mode launches a temporary command container from a compatible PostgreSQL image, overriding its entrypoint to run the client command. It may reuse the database service's image, but it creates a separate container without starting another database server or mounting the server's data directory. Native mode launches the corresponding binary from the selected native artifact. The command definition supplies these two executable forms; the runner supplies stack ownership, arguments, environment, streams and cleanup. Docker supports entrypoint overrides and automatic removal for this execution shape. [Docker run reference](https://docs.docker.com/engine/containers/run/).
 
 | Invocation                    | Native runtime                               | Container runtime                                                        |
 | ----------------------------- | -------------------------------------------- | ------------------------------------------------------------------------ |
@@ -365,28 +365,28 @@ For `pg_dump` and `psql`, container mode launches a temporary tool container fro
 | Connect to a managed database | Resolved public proxy endpoint               | The same public proxy endpoint, addressed from the container network     |
 | Return the result             | Stream stdout/stderr and collect exit status | Stream stdout/stderr, collect exit status and remove the owned container |
 
-The caller supplies ordinary arguments and environment values, including any connection string. The tool runner treats them as opaque: it does not resolve service references, infer dependencies or rewrite URLs. The caller can obtain execution-reachable connection values through `service.credentials({ from: "runtime" })`; `from: "host"` is the default for ordinary host clients. This extends the existing read operation rather than adding tool-specific inputs. The networking/endpoint renderer supplies these concrete values; `localhost` inside a tool container is not generally the host. Managed tool traffic uses the public proxy so the existing wake/activity rules apply. Tools publish no listening ports. Dump output streams to the CLI's destination; temporary files, when needed, use the stack/job directory. Use a client version compatible with the target; matching the managed database's selected major is the simple default. [PostgreSQL client compatibility](https://www.postgresql.org/docs/17/app-pgdump.html).
+The caller supplies ordinary arguments and environment values, including any connection string. The command runner treats them as opaque: it does not resolve service references, infer dependencies or rewrite URLs. The caller can obtain execution-reachable connection values through `service.credentials({ from: "runtime" })`; `from: "host"` is the default for ordinary host clients. This extends the existing read operation rather than adding command-specific inputs. The networking/endpoint renderer supplies these concrete values; `localhost` inside a command container is not generally the host. Managed command traffic uses the public proxy so the existing wake/activity rules apply. Commands publish no listening ports. Dump output streams to the CLI's destination; temporary files, when needed, use the stack/job directory. Use a client version compatible with the target; matching the managed database's selected major is the simple default. [PostgreSQL client compatibility](https://www.postgresql.org/docs/17/app-pgdump.html).
 
-Managed-local execution uses this temporary-container pattern under stack ownership. Executing a command inside an existing service container is unnecessary for these network clients and need not become a second public tool mechanism.
+Managed-local execution uses this temporary-container pattern under stack ownership. Executing a command inside an existing service container is unnecessary for these network clients and need not become a second public command mechanism.
 
 For the managed local backend, the StackHost owns jobs so it can clean up exact resources after client disconnection. Attached-job cancellation stops that job, not a service transition. Explicit StackHost shutdown cancels and settles attached jobs; finishing the last job does not automatically retire the host. Use bounded, backpressured stdin/stdout/stderr transport; do not buffer entire dumps or confuse output EOF with successful exit.
 
-Tools do not participate in the service dependency graph. Traffic to a public endpoint wakes a sleeping service through the proxy, exactly as traffic from any other client does. An explicitly stopped service remains stopped. There are no tool-specific readiness checks or lifecycle locks: an explicit stop or restart can disrupt the connection and the tool reports its ordinary error. Internal bootstrap helpers use the same low-level runner under their parent service operation.
+Commands do not participate in the service dependency graph. Traffic to a public endpoint wakes a sleeping service through the proxy, exactly as traffic from any other client does. An explicitly stopped service remains stopped. There are no command-specific readiness checks or lifecycle locks: an explicit stop or restart can disrupt the connection and the command reports its ordinary error. Internal bootstrap helpers use the same low-level runner under their parent service operation.
 
-Migrate **managed-local** dump/reset execution first. Linked/remote and legacy compose CLI paths remain outside this package's lifecycle; do not create a stack or reserve ports just to run their tools. An explicitly supplied stack handle may still run a job against an external URL. The identity claim applies to everything executed through that stack.
+Migrate **managed-local** dump/reset execution first. Linked/remote and legacy compose CLI paths remain outside this package's lifecycle; do not create a stack or reserve ports just to run their commands. An explicitly supplied stack handle may still run a job against an external URL. The identity claim applies to everything executed through that stack.
 
 CLI policy remains CLI policy: SQL scripts, migrations, seeds, hosted targets, output files and command flags. The caller chooses a compatible client version; the runner resolves that version to its executable artifact and owns execution.
 
-### Proposed public tool API
+### Proposed public command API
 
-Expose one awaited `stack.tools.run` operation. The Promise facade below has an Effect counterpart for CLI consumers; both use the same owner-side runner.
+Expose one awaited `stack.commands.run` operation. PostgreSQL client commands and one-shot service initialization share the same owner-side runner. Initialization runs a service recipe without registering a service instance or changing the service graph.
 
 ```ts
-import { postgres } from "@supabase/stack/tools";
+import { postgres } from "@supabase/stack/commands";
 
 // Connection values are plain data, rendered for the stack runtime.
 const { databaseUrl } = await database.credentials({ from: "runtime" });
-const result = await stack.tools.run(postgres.pgDump({ major: 17 }), {
+const result = await stack.commands.run(postgres.pgDump({ major: 17 }), {
   args: ["--dbname", databaseUrl, "--schema-only", "--no-owner"],
   stdout: (bytes) => destination.write(bytes),
   stderr: (bytes) => diagnostics.write(bytes),
@@ -394,19 +394,23 @@ const result = await stack.tools.run(postgres.pgDump({ major: 17 }), {
 });
 
 // result: { jobId, exitCode }
+
+await stack.commands.run({ type: "auth.initialize", databaseUrl });
+await stack.commands.run({ type: "storage.initialize", databaseUrl, filePath });
+await stack.commands.run({ type: "realtime.initialize", databaseUrl });
 ```
 
-`postgres.pgDump({ major })` describes the selected client package and how to launch its native and container forms. The caller chooses the version; 17 is illustrative. The stack's runtime chooses the execution form. The invocation supplies ordinary arguments, environment and byte streams. Neither descriptor nor invocation declares managed service dependencies.
+`postgres.pgDump({ major })` describes the selected client package and how to launch its native and container forms. The caller chooses the version; 17 is illustrative. The stack's runtime chooses the execution form. The invocation supplies ordinary arguments, environment and byte streams. Initialization invocations select Auth, Storage, or Realtime, provide the database URL, and provide Storage's file path. They require stack credentials already established by database or composition setup; credential lookup is read-only and fails when no stack identity has been established. They resolve the same service recipe artifact, environment, mounts and working directory as normal service launch while leaving no service instance behind. The CLI awaits selected initialization commands concurrently before applying its catalog overlay.
 
-`databaseUrl` is a plain string. The same invocation can target the primary database, a shadow database or an external database without changing the tool definition or the runner. The proxy handles any wake-up caused by connecting to a sleeping managed service. A URL obtained for container execution is already reachable from that container; endpoint address selection remains outside the generic tool runner. The orchestrator uses the same endpoint renderer when supplying connection values to service instances. It handles the host gateway and the listener binding needed to reach it, not just hostname substitution, and returns an error if the selected networking configuration cannot reach the endpoint. Caller-supplied external URLs remain unchanged.
+`databaseUrl` is a plain string. The same invocation can target the primary database, a shadow database or an external database without changing the command definition or the runner. The proxy handles any wake-up caused by connecting to a sleeping managed service. A URL obtained for container execution is already reachable from that container; endpoint address selection remains outside the generic command runner. The orchestrator uses the same endpoint renderer when supplying connection values to service instances. It handles the host gateway and the listener binding needed to reach it, not just hostname substitution, and returns an error if the selected networking configuration cannot reach the endpoint. Caller-supplied external URLs remain unchanged.
 
 Arguments are passed as an argument vector, not interpreted as shell text. Stdin accepts an optional asynchronous byte stream; stdout/stderr callbacks receive bytes and may return Promises, which the runner awaits for backpressure. All examples use byte sinks whose writes await capacity. `psql` uses the same operation with `postgres.psql({ major })`, optionally supplying stdin. Callers supply stdout/stderr sinks explicitly. Neither facade collects unbounded output into a return value.
 
-The operation settles after process exit, output delivery and owned-resource cleanup. A nonzero tool exit is returned in `exitCode` for CLI-specific handling; preparation, transport, sink and cleanup failures reject with typed execution errors. Cancellation stops and cleans up the attached job and reports cancellation. The StackHost assigns `jobId` and owns the resources. No public job registry, job healthcheck, persistent tool service or separate launch/attach/wait sequence is needed for these use cases.
+The operation settles after process exit, output delivery and owned-resource cleanup. PostgreSQL client commands return a nonzero process exit in `exitCode` for CLI-specific handling; initialization commands reject with a typed error on nonzero exit. Preparation, transport, sink and cleanup failures also reject with typed execution errors. Cancellation stops and cleans up the attached job and reports cancellation. The StackHost assigns `jobId` and owns the resources. No public job registry, job healthcheck, persistent command service or separate launch/attach/wait sequence is needed for these use cases.
 
 ## 7. StackHost owns lifetime; components own behavior
 
-Use `StackHost` for the detached process that owns one stack identity. It hosts the service executors, composition orchestrator, proxy, tool runner and shared resources. A standalone instance needs this owner and its executor without needing composition scheduling. Tools use the runner without entering the service dependency graph.
+Use `StackHost` for the detached process that owns one stack identity. It hosts the service executors, composition orchestrator, proxy, command runner and shared resources. A standalone instance needs this owner and its executor without needing composition scheduling. Commands use the runner without entering the service dependency graph.
 
 The host acquires exclusive ownership, constructs the components, exposes Effect RPC, delegates requests and coordinates explicit shutdown. Domain behavior remains in the components: the host does not understand PostgreSQL archives, decide dependency order or implement another service state machine. Existing dependency checks still apply when individual operations target instances with declared graph relationships.
 
@@ -416,7 +420,7 @@ flowchart TB
     subgraph Host["StackHost — one detached process per stack identity"]
         RPC --> Composition["Composition orchestrator"]
         RPC --> Instances["Service instance executors"]
-        RPC --> Tools["Tool runner"]
+        RPC --> Commands["Command runner"]
         Composition --> Instances
         Proxy["Public proxy"] --> Composition
         Resources["Shared ownership, ports and metadata"]
@@ -435,13 +439,13 @@ Keep Effect RPC as the transport initially. Its handlers should mostly delegate 
 | Instance observation | `service.status`, `service.ready`, `service.followStatus`, `service.logs`, `service.followLogs`, `service.credentials` | Read state, await health and inspect outputs                  |
 | Database snapshots   | `database.saveSnapshot`, `database.restoreSnapshot`                                                                    | Database-specific managed storage operations                  |
 | Composition          | `composition.configure`, `composition.describe`, `composition.start`, `composition.stop`, `composition.restart`        | Define and operate the application selection and dependencies |
-| Tools                | `tools.run`, `tools.writeStdin`, `tools.closeStdin`                                                                    | Execute an attached command with streamed input/output        |
+| Commands             | `runCommand`, `commandInput`                                                                                           | Execute an attached command with streamed input/output        |
 
 These are proposed wire names. Public `shadow.start()` maps to `service.start({ id })`; `stack.stop()` maps to `host.stop`. Public `stack.composition.stop()` leaves the host and independent instances available. `composition.configure` sends validated declarative membership, edges and input wiring, not executable callbacks. Configuration changes use the same graph and lifecycle admission rules as other mutations.
 
 ### Host lifecycle
 
-Launch the host when an operation needs a live owner. Once started, it remains alive until namespace stop or destruction. Client disconnection, completion of a tool, or stopping the final individual instance does not cause automatic retirement. The accepted tradeoff is one resident process for an opened stack until explicitly stopped, even if all its service instances are stopped.
+Launch the host when an operation needs a live owner. Once started, it remains alive until namespace stop or destruction. Client disconnection, completion of a command, or stopping the final individual instance does not cause automatic retirement. The accepted tradeoff is one resident process for an opened stack until explicitly stopped, even if all its service instances are stopped.
 
 ```mermaid
 stateDiagram-v2
@@ -460,18 +464,18 @@ During Starting, acquire the exclusive stack lease, load the instance definition
 
 During Serving, keep the owner alive independently of callers. Sleeping instances still need its public listeners. This is process lifetime management, not automatic service restart or continuous reconciliation.
 
-Where the platform delivers SIGTERM or SIGINT to the host, treat it as the same graceful shutdown request as `host.stop`. Repeated shutdown requests join that shutdown; they do not pre-empt executing transitions. On Unix, native launchers stop their process groups when the host pipe closes. Graceful shutdown stops owned services and tools, then synchronously removes containers labeled with the stack and canonical data root before the host exits. Forced termination may require manual cleanup.
+Where the platform delivers SIGTERM or SIGINT to the host, treat it as the same graceful shutdown request as `host.stop`. Repeated shutdown requests join that shutdown; they do not pre-empt executing transitions. On Unix, native launchers stop their process groups when the host pipe closes. Graceful shutdown stops owned services and commands, then synchronously removes containers labeled with the stack and canonical data root before the host exits. Forced termination may require manual cleanup.
 
 During Draining:
 
 1. Close admission to new mutations and proxy wake requests.
 2. Reject queued work that has not begun.
 3. Let executing instance operations settle.
-4. Cancel and settle attached tools and stop owned services through their existing operations.
+4. Cancel and settle attached commands and stop owned services through their existing operations.
 5. For destruction, remove proven-owned data and metadata after shutdown.
 6. Send the outcome, close the control endpoint and release ownership.
 
-**Successful whole-stack shutdown.** `stack.stop()` reports success only after admitted work settles, every owned live service and tool workload has stopped (including native processes, descendants and containers labeled with this stack and data root), stack listeners close, the shutdown RPC is acknowledged, and the detached host's exit is confirmed. If workload cleanup cannot be confirmed, stop fails and the live host retains ownership for inspection and retry; the stack is not reported stopped. If cleanup succeeds but host exit cannot be confirmed, stop also fails, though the host may already have exited. A delivered SIGTERM or SIGINT follows this cleanup path. Stop preserves stack definitions, service data, caches and saved port assignments. `destroy` follows the same live-workload cleanup, then removes only proven-owned persistent data.
+**Successful whole-stack shutdown.** `stack.stop()` reports success only after admitted work settles, every owned live service and command workload has stopped (including native processes, descendants and containers labeled with this stack and data root), stack listeners close, the shutdown RPC is acknowledged, and the detached host's exit is confirmed. If workload cleanup cannot be confirmed, stop fails and the live host retains ownership for inspection and retry; the stack is not reported stopped. If cleanup succeeds but host exit cannot be confirmed, stop also fails, though the host may already have exited. A delivered SIGTERM or SIGINT follows this cleanup path. Stop preserves stack definitions, service data, caches and saved port assignments. `destroy` follows the same live-workload cleanup, then removes only proven-owned persistent data.
 
 The client captures the live owner PID from the validated identity endpoint or readiness handshake, completes and closes the shutdown RPC, then performs bounded process-existence checks. An absent PID confirms exit; a permission-denied probe remains inconclusive until the deadline. Failure to confirm exit is a `shutdown-exit` error carrying the PID in its message, even when workload cleanup has already succeeded. This does not require persisted PID records or forceful termination. Caller cancellation ends its wait without cancelling admitted owner cleanup.
 
@@ -503,7 +507,7 @@ sequenceDiagram
 
 A lost response does not prove failure. While the host lives, callers can inspect its instance observations and in-memory operation result; never blindly repeat creation or restoration. No operation journal or result history survives host death, and there is no command replay or exactly-once execution promise.
 
-Attached tools have a separate contract. `tools.run` streams `started(jobId)`, stdout/stderr chunks and a terminal exit result. Optional input arrives through bounded `tools.writeStdin` calls and `tools.closeStdin`. These calls are restricted to the originating invocation/session. Cancelling or losing the execution stream terminates and cleans up that job. The public `stack.tools.run()` wrapper handles this exchange behind its stdin/stdout interface; no separate public launch/attach/wait workflow is required. The terminal success response follows output delivery and cleanup, with execution/cleanup failures reported as errors.
+Attached commands have a separate contract. `runCommand` streams `started(jobId)`, stdout/stderr chunks and a terminal exit result. Optional input arrives through bounded `commandInput` calls; a final call closes stdin. These calls are restricted to the originating invocation/session. Cancelling or losing the execution stream terminates and cleans up that job. The public `stack.commands.run()` wrapper handles this exchange behind its stdin/stdout interface; no separate public launch/attach/wait workflow is required. The terminal success response follows output delivery and cleanup, with execution/cleanup failures reported as errors.
 
 ## 8. Keep safety infrastructure at its boundary
 
@@ -584,7 +588,7 @@ A shared listener stays bound while any route is running or armed. When no route
 
 Standalone and composed instances use the same allocator. Two shadow databases have separate IDs, data and dedicated listeners. Composition membership does not change listener ownership. The runtime reports the backend address; the proxy updates its target without altering the public assignment.
 
-The endpoint renderer produces host-facing or stack-runtime-facing connection values for `service.credentials({ from: "host" | "runtime" })` and for composition wiring. This is ordinary networking configuration, not a dependency-aware tool API. In container mode, both the rendered address and configured listener reachability must work from that network; report unsupported network configurations before executing the dependent/tool.
+The endpoint renderer produces host-facing or stack-runtime-facing connection values for `service.credentials({ from: "host" | "runtime" })` and for composition wiring. This is ordinary networking configuration, not a dependency-aware command API. In container mode, both the rendered address and configured listener reachability must work from that network; report unsupported network configurations before executing the dependent/command.
 
 | Owner              | Responsibility                                                                                        |
 | ------------------ | ----------------------------------------------------------------------------------------------------- |
@@ -654,7 +658,7 @@ Keep the contract narrow:
 - Native snapshots copy or clone the host data; container snapshots copy database data through a managed volume and helper. Docker data normally lives in a managed volume, while existing host data can be retained through the host-backed fallback. The host storage marker detects a missing or mismatched Docker volume; deleting that volume loses its database data.
 - Restore transfers compatible database contents, not the source instance's identity, public port claims or composition membership. The target retains its own data location and configuration, with database-specific credentials reconciled before readiness. Snapshots survive destruction of the source instance because their managed storage is separate.
 
-These are physical database snapshots for the cache use case. A `pg_dump` invocation remains an ordinary client tool for logical exports. CLI code owns cache keys, migrations and the decision to fall back to rebuilding a baseline; managed storage owns publication and retention. The snapshot API does not acquire CLI cache policy.
+These are physical database snapshots for the cache use case. A `pg_dump` invocation remains an ordinary client command for logical exports. CLI code owns cache keys, migrations and the decision to fall back to rebuilding a baseline; managed storage owns publication and retention. The snapshot API does not acquire CLI cache policy.
 
 ### Resetting database data
 
@@ -692,7 +696,7 @@ Update actual consumers together:
 | Functions serve      | Launch/restart → await ready → follow logs and status; inspector flags are unsupported                   |
 | Proxy wake           | Launch if sleeping → await ready → forward                                                               |
 | DB reset/cache       | Stop selected dependents → stopped snapshot/restore or DB config work → launch/ready → resume dependents |
-| Tools                | Select identity/artifact → execute/stream → await exit and cleanup                                       |
+| Commands             | Select identity/artifact → execute/stream → await exit and cleanup                                       |
 
 A Functions runtime exit must reach `followStatus` so serve can report it.
 
@@ -704,7 +708,7 @@ When `stack start` includes Functions, the CLI uses the existing package export 
 
 The CLI owns the foreground `functions serve` session. It attaches to an existing composition member and leaves it available on exit. Supported explicit overrides replace its configuration for the session, then restore it on normal cleanup. If Functions is excluded, the CLI creates and later destroys one standalone instance without changing composition. The package needs no session or recovery API: ordinary create, start, restart, status, logs, and destroy suffice. Functions accepts custom environment values and a database URL; its recipe derives default keys, while the composer supplies the runtime database URL without a dependency edge. See the [command lifecycle](../../apps/cli/docs/stack-commands.md) for supported flags and cleanup limits.
 
-PostgreSQL artifact knowledge remains in Stack and is exposed through [`postgres-artifact.ts`](./src/internal/postgres-artifact.ts), including catalog resolution and native artifact preparation and verification. A remote `db dump --db-url` can use those existing helpers and run without creating a local or dummy stack: the CLI owns the external process or container execution, as shown by [`bundled-postgres-client.ts`](../../apps/cli/src/command-internal/bundled-postgres-client.ts), while managed jobs continue to use `stack.tools.run`.
+PostgreSQL artifact knowledge remains in Stack and is exposed through [`postgres-artifact.ts`](./src/internal/postgres-artifact.ts), including catalog resolution and native artifact preparation and verification. A remote `db dump --db-url` can use those existing helpers and run without creating a local or dummy stack: the CLI owns the external process or container execution, as shown by [`bundled-postgres-client.ts`](../../apps/cli/src/command-internal/bundled-postgres-client.ts), while managed jobs continue to use `stack.commands.run`.
 
 Changing internal and public-to-repository contracts is acceptable when callers are updated; preserving valuable data is still required. Keep per-instance configuration replacement through `service.restart({ config })`. Validate the candidate configuration and prepare its artifacts before stopping the existing runtime; invalid input must leave it running. The admitted restart then performs ordinary stop and launch without waiting for application health inside the gate. Adding or removing a companion means explicitly adding or removing an ordinary instance and updating composition edges. Validate the graph using the same rules as registration; do not implement private-child expansion or group replacement logic. Defer live shared configuration changes and config-bearing whole-stack restart.
 
@@ -719,7 +723,7 @@ Changing internal and public-to-repository contracts is acceptable when callers 
 | Durable operation journals and crash reconciliation                              | Remove; persist only normal stop/start definitions and resources                |
 | Separate capability/stack lifecycle projections                                  | Observe instance state directly; composition returns its member observations    |
 | Separate whole-stack behavior                                                    | Selection over the same graph operations                                        |
-| Managed-local CLI tool ownership branches                                        | Shared stack job execution                                                      |
+| Managed-local CLI command ownership branches                                     | Shared stack job execution                                                      |
 
 Before the package is considered complete or integrated with the final CLI, remove superseded package capability, supervisor, projection and journal implementations together with tests and exports that only served those implementations. The final package has one implementation path and no compatibility facade or parallel lifecycle implementation.
 
@@ -738,4 +742,4 @@ Verify through consumed integration flows:
 5. Unexpected exit disables wake and triggers ordinary cleanup of the owned runtime before another launch; Functions can explicitly restart afterward. Traffic cannot restart an exited prerequisite. A stale exit cannot damage a replacement.
 6. Normal snapshot failures do not publish partial entries or overwrite existing data. Client disconnection leaves admitted snapshot work owned by the live host. Host-crash recovery is not an acceptance requirement; unavailable observations must not be presented as current running/healthy/stopped state.
 7. Container-mode service wiring and dumps receive a reachable runtime-facing database URL as plain data. Dumps stream with bounded buffering and exact cleanup; stackless commands create no managed stack. Stopping/destroying REST leaves Auth on the shared API port working; shared port claims survive removal of the final route.
-8. Namespace stop settles executing work and leaves no live runtime resources; failed cleanup cannot report successful stop. Disconnecting a client does not stop admitted lifecycle/snapshot operations. Stopping the last individual instance or finishing the last tool does not retire the StackHost; namespace stop/destroy does.
+8. Namespace stop settles executing work and leaves no live runtime resources; failed cleanup cannot report successful stop. Disconnecting a client does not stop admitted lifecycle/snapshot operations. Stopping the last individual instance or finishing the last command does not retire the StackHost; namespace stop/destroy does.

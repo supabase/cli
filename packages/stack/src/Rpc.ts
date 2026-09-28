@@ -2,7 +2,7 @@ import { Data, Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/unstable/rpc";
 import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
 import { CompositionConfig } from "./Orchestrator.ts";
-import { PgProveOptions, PostgresTool } from "./Tools.ts";
+import { CommandInvocation } from "./Commands.ts";
 import { StackIdentityInput } from "./State.ts";
 
 const Outcome = Schema.Struct({
@@ -61,12 +61,17 @@ const Log = Schema.Struct({
   bytes: Schema.Uint8ArrayFromBase64,
 });
 
-export const ToolEvent = Schema.TaggedUnion({
+export const CommandEvent = Schema.TaggedUnion({
   Attached: { attachmentId: Schema.String },
   Stdout: { bytes: Schema.Uint8ArrayFromBase64 },
   Stderr: { bytes: Schema.Uint8ArrayFromBase64 },
   Completed: { jobId: Schema.String, exitCode: Schema.Int },
 });
+export const RunCommandPayload = Schema.Struct({
+  attachmentId: Schema.String,
+  command: CommandInvocation,
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+export type RunCommandPayload = Schema.Schema.Type<typeof RunCommandPayload>;
 
 /** The private transport contract; lifecycle admission remains in the owner. */
 export const StackRpc = RpcGroup.make(
@@ -124,20 +129,13 @@ export const StackRpc = RpcGroup.make(
   Rpc.make("stopComposition", { success: Schema.Array(Observation), error: StackErrorSchema }),
   Rpc.make("restartComposition", { success: Schema.Array(Observation), error: StackErrorSchema }),
   Rpc.make("shutdown", { payload: { destroy: Schema.Boolean }, error: StackErrorSchema }),
-  Rpc.make("runTool", {
-    payload: {
-      attachmentId: Schema.String,
-      tool: PostgresTool,
-      args: Schema.Array(Schema.String),
-      env: Schema.Record(Schema.String, Schema.String),
-      pgProve: Schema.optionalKey(PgProveOptions),
-      stdin: Schema.Boolean,
-    },
-    success: ToolEvent,
+  Rpc.make("runCommand", {
+    payload: RunCommandPayload,
+    success: CommandEvent,
     error: StackErrorSchema,
     stream: true,
   }),
-  Rpc.make("toolInput", {
+  Rpc.make("commandInput", {
     payload: { attachmentId: Schema.String, bytes: Schema.NullOr(Schema.Uint8ArrayFromBase64) },
     error: StackErrorSchema,
   }),

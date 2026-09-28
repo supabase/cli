@@ -7,7 +7,6 @@ import {
   Effect,
   Exit,
   FileSystem,
-  Option,
   Path,
   PubSub,
   Ref,
@@ -25,6 +24,7 @@ import {
   type ContainerProcess,
   type ContainerRuntime,
 } from "../runtime/Container.ts";
+import { awaitCommandOutput } from "../runtime/CommandOutput.ts";
 import {
   defaultNativeProcessLauncher,
   type NativeProcess,
@@ -47,7 +47,7 @@ interface RecipeMount {
   readonly readOnly: boolean;
 }
 
-interface StartupProcess {
+export interface StartupCommand {
   readonly args: ReadonlyArray<string>;
   readonly nativeExecutable?: string;
   readonly containerEntrypoint?: string;
@@ -81,13 +81,60 @@ export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown
     creation: C,
     context: { readonly container: boolean },
   ) => Effect.Effect<ReadonlyArray<RecipeMount>, ServiceError>;
-  readonly startup: ReadonlyArray<StartupProcess>;
+  readonly startupCommands: ReadonlyArray<StartupCommand>;
   readonly enabledPort?: (creation: C, name: string) => boolean;
   readonly containerPort?: (creation: C, name: string, port: number) => number;
   readonly containerEntrypoint?: (creation: C) => string | undefined;
   readonly prepare?: (creation: C) => Effect.Effect<void, ServiceError>;
   readonly removeData?: (creation: C) => Effect.Effect<void, ServiceError>;
 }
+
+export interface ResolvedStartupCommand {
+  readonly args: ReadonlyArray<string>;
+  readonly executable: string;
+  readonly entrypoint?: string;
+  readonly env: Readonly<Record<string, string>>;
+  readonly mounts: ReadonlyArray<RecipeMount>;
+}
+
+export const startupEndpointsFor = <C extends RecipeCreation<ServiceKind, unknown>>(
+  creation: C,
+  spec: ProcessRecipeSpec<C>,
+  context: { readonly container: boolean },
+): ReadonlyMap<string, ServiceEndpoint> =>
+  new Map(
+    Object.entries(spec.ports)
+      .filter(([name]) => spec.enabledPort === undefined || spec.enabledPort(creation, name))
+      .map(([name, port]) => [
+        name,
+        {
+          kind: "tcp" as const,
+          host: "127.0.0.1" as const,
+          port: context.container ? (spec.containerPort?.(creation, name, port) ?? port) : 0,
+        },
+      ]),
+  );
+
+export const resolveStartupCommand = <C extends RecipeCreation<ServiceKind, unknown>>(
+  creation: C,
+  spec: ProcessRecipeSpec<C>,
+  command: StartupCommand,
+  endpoints: ReadonlyMap<string, ServiceEndpoint>,
+  context: { readonly container: boolean },
+): Effect.Effect<ResolvedStartupCommand, ServiceError> =>
+  Effect.gen(function* () {
+    return {
+      args: command.args,
+      executable: command.nativeExecutable ?? "prepare",
+      ...(command.containerEntrypoint === undefined
+        ? {}
+        : { entrypoint: command.containerEntrypoint }),
+      env: yield* context.container
+        ? spec.env(creation, endpoints, true)
+        : (spec.nativeStartupEnv ?? spec.env)(creation, endpoints, false),
+      mounts: yield* spec.mounts(creation, { container: context.container }),
+    };
+  });
 
 export interface ProcessDependencies {
   readonly fs: FileSystem.FileSystem;
@@ -247,57 +294,23 @@ const awaitStartup = Effect.fn("ProcessRecipe.awaitStartup")(
     Readonly<{ readonly code: number; readonly output: StartupOutput }>,
     ServiceError
   > =>
-    Effect.gen(function* () {
-      const collect = Effect.fnUntraced(function* (
-        stream: Stream.Stream<Uint8Array, NativeProcessError | ContainerError>,
-        name: CatalogLog["stream"],
-        tail: Ref.Ref<ReadonlyArray<string>>,
-      ) {
-        const appendLines = (lines: ReadonlyArray<string>) =>
-          Ref.update(tail, (current) =>
-            [...current, ...lines.filter((line) => line.trim().length > 0).map(clipLine)].slice(
-              -startupOutputTailLines,
-            ),
-          );
-        const partial = yield* Ref.make("");
-        // The unterminated last line is flushed on interruption so a timeout still reports it.
-        yield* stream.pipe(
-          Stream.tap((bytes) => PubSub.publish(logs, { stream: name, bytes })),
-          Stream.decodeText,
-          Stream.runForEach((text) =>
-            Ref.modify(partial, (rest): [ReadonlyArray<string>, string] => {
-              const lines = `${rest}${text}`.split(/\r?\n/);
-              const next = lines.pop() ?? "";
-              return [lines, next.slice(-(startupOutputLineChars + 1))];
-            }).pipe(Effect.flatMap(appendLines)),
-          ),
-          Effect.ensuring(Ref.get(partial).pipe(Effect.flatMap((rest) => appendLines([rest])))),
-        );
-      });
-      const stdout = yield* Ref.make<ReadonlyArray<string>>([]);
-      const stderr = yield* Ref.make<ReadonlyArray<string>>([]);
-      const completed = yield* Effect.all(
-        [
-          collect(process.stdout, "stdout", stdout),
-          collect(process.stderr, "stderr", stderr),
-          process.exitCode,
-        ],
-        { concurrency: "unbounded" },
-      ).pipe(
-        Effect.mapError((cause) => serviceError("launch", cause)),
-        Effect.timeoutOption(Duration.seconds(startupTimeoutSeconds)),
-      );
-      const output = { stdout: yield* Ref.get(stdout), stderr: yield* Ref.get(stderr) };
-      if (Option.isNone(completed))
-        return yield* serviceError(
-          "launch",
-          withRecentOutput(
-            `${service} startup timed out after ${startupTimeoutSeconds} seconds`,
-            output,
-          ),
-        );
-      return { code: Number(completed.value[2]), output };
-    }),
+    awaitCommandOutput(process, {
+      timeout: Duration.seconds(startupTimeoutSeconds),
+      onOutput: (stream, bytes) => PubSub.publish(logs, { stream, bytes }),
+    }).pipe(
+      Effect.mapError((cause) => serviceError("launch", cause)),
+      Effect.flatMap((result) =>
+        result.timedOut
+          ? serviceError(
+              "launch",
+              withRecentOutput(
+                `${service} startup timed out after ${startupTimeoutSeconds} seconds`,
+                result.output,
+              ),
+            )
+          : Effect.succeed({ code: result.exitCode, output: result.output }),
+      ),
+    ),
 );
 
 const startupFailure = (
@@ -506,7 +519,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               readonly endpoints: ReadonlyMap<string, ServiceEndpoint>;
             }
           | undefined;
-        if (spec.startup.length > 0) {
+        if (spec.startupCommands.length > 0) {
           const startupScope = yield* Scope.fork(context.scope, "sequential");
           const reservation =
             spec.nativeStartupEnv === undefined
@@ -514,22 +527,20 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               : yield* reserveEndpoints(context.scope);
           const startupEndpoints =
             reservation?.endpoints ??
-            new Map(
-              portNames.map(([name]) => [
-                name,
-                { kind: "tcp" as const, host: "127.0.0.1", port: 0 },
-              ]),
+            startupEndpointsFor(context.config, spec, { container: false });
+          for (const [index, process] of spec.startupCommands.entries()) {
+            const command = yield* resolveStartupCommand(
+              context.config,
+              spec,
+              process,
+              startupEndpoints,
+              { container: false },
             );
-          for (const [index, process] of spec.startup.entries()) {
             const startupProcess = yield* spawnNativeProcess(
               {
-                executable: `${artifactRoot}/bin/${process.nativeExecutable ?? "prepare"}`,
-                args: process.args,
-                env: yield* (spec.nativeStartupEnv ?? spec.env)(
-                  context.config,
-                  startupEndpoints,
-                  false,
-                ),
+                executable: `${artifactRoot}/bin/${command.executable}`,
+                args: command.args,
+                env: command.env,
                 cwd: artifactRoot,
               },
               defaultNativeProcessLauncher(),
@@ -736,34 +747,31 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         }
         return yield* launchAttempt();
       }
-      const desired = new Map<string, ServiceEndpoint>();
-      for (const [name, port] of portNames)
-        desired.set(name, { kind: "tcp", host: "127.0.0.1", port });
       if (deps.container === undefined)
         return yield* serviceError("launch", "Container runtime unavailable");
       const resolved = yield* resolveArtifact({
         service: context.config.service,
         version: context.config.version,
       }).pipe(Effect.mapError((cause) => serviceError("launch", cause)));
-      const containerDesired = new Map<string, ServiceEndpoint>();
-      for (const [name, endpoint] of desired) {
-        const port =
-          spec.containerPort === undefined
-            ? endpoint.port
-            : spec.containerPort(context.config, name, endpoint.port);
-        containerDesired.set(name, { ...endpoint, port });
-      }
-      for (const process of spec.startup) {
+      const containerDesired = startupEndpointsFor(context.config, spec, { container: true });
+      for (const process of spec.startupCommands) {
         if (process.skipInContainer === true) continue;
+        const command = yield* resolveStartupCommand(
+          context.config,
+          spec,
+          process,
+          containerDesired,
+          { container: true },
+        );
         const startupProcess = yield* deps.container
-          .launchTool({
+          .launchCommand({
             image: resolved.image,
             stackId: options.stackId,
             instanceId: options.instanceId,
-            env: yield* spec.env(context.config, containerDesired, true),
-            entrypoint: process.containerEntrypoint,
-            args: process.args,
-            mounts: yield* spec.mounts(context.config, { container: true }),
+            env: command.env,
+            entrypoint: command.entrypoint,
+            args: command.args,
+            mounts: command.mounts,
           })
           .pipe(
             Effect.catchTag("ContainerLaunchError", ({ failure, process }) =>

@@ -3,7 +3,7 @@ import { ServiceError } from "../Service.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { DEFAULT_SIGNING_KEY } from "../Defaults.ts";
 import { localJwtSecret } from "./ServiceConfig.ts";
-import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
+import { type ProcessRecipeSpec, type StartupCommand } from "./ProcessRecipe.ts";
 
 import { Settings, settingsEnvironment } from "./AuthSettings.ts";
 
@@ -40,6 +40,12 @@ export interface Endpoints extends Schema.Schema.Type<typeof Endpoints> {}
 export const Creation = serviceCreation("auth", Config, Endpoints);
 
 export interface Creation extends Schema.Schema.Type<typeof Creation> {}
+
+export const initializationCommand = {
+  args: ["migrate"],
+  nativeExecutable: "auth",
+  containerEntrypoint: "/usr/local/bin/auth",
+} satisfies StartupCommand & { readonly containerEntrypoint: string };
 
 const smtpEnvironment = Effect.fn("Auth.smtpEnvironment")((value: string) =>
   Effect.try({
@@ -134,7 +140,5 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   },
   args: () => Effect.succeed([]),
   mounts: () => Effect.succeed([]),
-  startup: [
-    { args: ["migrate"], nativeExecutable: "auth", containerEntrypoint: "/usr/local/bin/auth" },
-  ],
+  startupCommands: [initializationCommand],
 });
