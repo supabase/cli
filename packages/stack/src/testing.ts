@@ -10,6 +10,7 @@ import {
   type CallOptions,
   type Plain,
   type Promised,
+  type ServiceHandles,
   type ServiceInstances,
   type Stack,
 } from "./PromiseClient.ts";
@@ -41,8 +42,27 @@ export type TestServiceKind<S> = S extends Kind
     ? K
     : never;
 
-/** Whether a service list's length, and so which kinds it selects, is known statically. */
-type KnownKinds<S extends ReadonlyArray<unknown>> = number extends S["length"] ? false : true;
+type UnionToIntersection<U> = (U extends unknown ? (value: U) => void : never) extends (
+  value: infer I,
+) => void
+  ? I
+  : never;
+/** A kind when it is exactly one kind, not a union a conditional element may pick from. */
+type SingleKind<K> = [K] extends [never] ? never : [K] extends [UnionToIntersection<K>] ? K : never;
+/** Kinds one service list always selects; none when its length is not static. */
+type SelectedKinds<T> =
+  T extends ReadonlyArray<unknown>
+    ? number extends T["length"]
+      ? never
+      : { [I in keyof T]: SingleKind<TestServiceKind<T[I]>> }[number]
+    : never;
+/** Kinds every variant of a service list selects, so their handles are always present. */
+type RequiredKinds<S> =
+  UnionToIntersection<S extends unknown ? { readonly kinds: SelectedKinds<S> } : never> extends {
+    readonly kinds: infer K extends Kind;
+  }
+    ? K
+    : never;
 
 /** Test stack options; omitted roots use shared per-user or temporary locations. */
 export interface TestStackOptions<S> {
@@ -60,12 +80,13 @@ export interface TestStackOptions<S> {
 }
 
 /** A composed, ready session stack that is destroyed when its scope closes. */
-export interface EffectTestStack<K extends Kind = "database", Known extends boolean = true> {
+export interface EffectTestStack<
+  Required extends Kind = "database",
+  Optional extends Kind = never,
+> {
   readonly stack: StackEffect.Stack;
-  /** Handles by kind; a service list whose length is not static may lack any of its kinds. */
-  readonly services: Known extends true
-    ? { readonly [P in K]: StackEffect.ServiceInstances[P] }
-    : { readonly [P in K]?: StackEffect.ServiceInstances[P] };
+  /** Handles by kind; a kind that some variant of the service list omits is optional. */
+  readonly services: ServiceHandles<Required, Optional, StackEffect.ServiceInstances>;
   readonly projectRoot: string;
   /**
    * Saves the database data under `name` as an instance snapshot, which other stacks cannot evict
@@ -81,14 +102,12 @@ export interface EffectTestStack<K extends Kind = "database", Known extends bool
 
 /** A composed, ready session stack; disposal destroys it, then closes its client. */
 export interface TestStack<
-  K extends Kind = "database",
-  Known extends boolean = true,
+  Required extends Kind = "database",
+  Optional extends Kind = never,
 > extends AsyncDisposable {
   readonly stack: Stack;
-  /** Handles by kind; a service list whose length is not static may lack any of its kinds. */
-  readonly services: Known extends true
-    ? { readonly [P in K]: ServiceInstances[P] }
-    : { readonly [P in K]?: ServiceInstances[P] };
+  /** Handles by kind; a kind that some variant of the service list omits is optional. */
+  readonly services: ServiceHandles<Required, Optional, ServiceInstances>;
   readonly projectRoot: string;
   readonly checkpoint: Promised<EffectTestStack["checkpoint"]>;
   readonly reset: Promised<EffectTestStack["reset"]>;
@@ -126,9 +145,9 @@ const localCreation = Effect.fnUntraced(function* (
   return { config, endpoints };
 });
 
-function byKind<K extends Kind>(
+function byKind<Required extends Kind, Optional extends Kind>(
   members: ReadonlyArray<StackEffect.ServiceInstances[Kind]>,
-): { readonly [P in K]: StackEffect.ServiceInstances[P] };
+): ServiceHandles<Required, Optional, StackEffect.ServiceInstances>;
 function byKind(
   members: ReadonlyArray<StackEffect.ServiceInstances[Kind]>,
 ): Readonly<Record<string, StackEffect.ServiceInstances[Kind]>> {
@@ -136,7 +155,7 @@ function byKind(
 }
 
 const make = Effect.fn("TestStack.make")(
-  function* <K extends Kind, Known extends boolean = true>(
+  function* <Required extends Kind, Optional extends Kind = never>(
     options: TestStackOptions<ReadonlyArray<TestService | PlainTestService>>,
     decode: (creation: unknown) => Effect.Effect<StackEffect.ServiceCreationInput, StackError>,
   ) {
@@ -264,9 +283,9 @@ const make = Effect.fn("TestStack.make")(
             // Signal aborts and test timeouts interrupt; the shared stack must not stay stopped.
             Effect.onInterrupt(() => start(operation)),
           );
-    const testStack: EffectTestStack<K, Known> = {
+    const testStack: EffectTestStack<Required, Optional> = {
       stack,
-      services: byKind<K>(members),
+      services: byKind<Required, Optional>(members),
       projectRoot,
       checkpoint: (name) =>
         whileStopped("checkpoint", (current) =>
@@ -323,7 +342,7 @@ const decodePlainCreation = (creation: unknown) =>
 /** Creates, composes and readies a session stack that the enclosing scope destroys. */
 export const makeTestStack = <const S extends ReadonlyArray<TestService> = readonly ["database"]>(
   options: TestStackOptions<S> = {},
-) => make<TestServiceKind<S[number]>, KnownKinds<S>>(options, decodeCreation);
+) => make<RequiredKinds<S>, TestServiceKind<S[number]>>(options, decodeCreation);
 
 /** Creates, composes and readies a session stack for `await using`. */
 export const createTestStack = <
@@ -331,17 +350,18 @@ export const createTestStack = <
 >(
   options: TestStackOptions<S> = {},
   callOptions?: CallOptions,
-): Promise<TestStack<TestServiceKind<S[number]>, KnownKinds<S>>> =>
-  acquire(make<TestServiceKind<S[number]>>(options, decodePlainCreation), callOptions).then(
-    ({ value, client }) => {
-      const adapter = stackAdapter(client);
-      return {
-        stack: adapter.stack(value.stack),
-        services: adapter.services(value.services),
-        projectRoot: value.projectRoot,
-        checkpoint: (name, runOptions) => client.run(value.checkpoint(name), runOptions),
-        reset: (name, runOptions) => client.run(value.reset(name), runOptions),
-        [Symbol.asyncDispose]: client.close,
-      };
-    },
-  );
+): Promise<TestStack<RequiredKinds<S>, TestServiceKind<S[number]>>> =>
+  acquire(
+    make<RequiredKinds<S>, TestServiceKind<S[number]>>(options, decodePlainCreation),
+    callOptions,
+  ).then(({ value, client }) => {
+    const adapter = stackAdapter(client);
+    return {
+      stack: adapter.stack(value.stack),
+      services: adapter.services<RequiredKinds<S>, TestServiceKind<S[number]>>(value.services),
+      projectRoot: value.projectRoot,
+      checkpoint: (name, runOptions) => client.run(value.checkpoint(name), runOptions),
+      reset: (name, runOptions) => client.run(value.reset(name), runOptions),
+      [Symbol.asyncDispose]: client.close,
+    };
+  });

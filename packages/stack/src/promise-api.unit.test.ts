@@ -112,6 +112,33 @@ describe("Promise API derived from the Effect API", () => {
     }>();
   });
 
+  it("types a test stack kind as present only when every list variant selects it", () => {
+    const branches = (flag: boolean) =>
+      createTestStack({ services: flag ? ["database", "auth"] : ["database"] }).then(
+        (test) => test.services,
+      );
+    expectTypeOf<Awaited<ReturnType<typeof branches>>>().toEqualTypeOf<{
+      readonly database: PromiseApi.DatabaseInstance;
+      readonly auth?: PromiseApi.ServiceInstances["auth"];
+    }>();
+    const element = (flag: boolean) =>
+      createTestStack({ services: ["database", flag ? "auth" : "rest"] }).then(
+        (test) => test.services,
+      );
+    expectTypeOf<Awaited<ReturnType<typeof element>>>().toEqualTypeOf<{
+      readonly database: PromiseApi.DatabaseInstance;
+      readonly auth?: PromiseApi.ServiceInstances["auth"];
+      readonly rest?: PromiseApi.ServiceInstances["rest"];
+    }>();
+    const effect = (flag: boolean) =>
+      makeTestStack({ services: ["database", flag ? "auth" : "rest"] });
+    expectTypeOf<Effect.Success<ReturnType<typeof effect>>["services"]>().toEqualTypeOf<{
+      readonly database: StackEffect.DatabaseInstance;
+      readonly auth?: StackEffect.ServiceInstances["auth"];
+      readonly rest?: StackEffect.ServiceInstances["rest"];
+    }>();
+  });
+
   it("types test stack services from a list without a static length as optional", () => {
     const services: ReadonlyArray<"database" | "rest"> = ["database"];
     const selectPromise = () => createTestStack({ services }).then((test) => test.services);

@@ -51,6 +51,17 @@ export type Promised<T> = T extends Effectful
         : T;
 
 type Kind = StackEffect.ServiceCreationInput["service"];
+type Flatten<T> = { [P in keyof T]: T[P] };
+/** Handles by kind: always present for a required kind, possibly absent for an optional one. */
+export type ServiceHandles<
+  Required extends Kind,
+  Optional extends Kind,
+  Instances extends { readonly [P in Kind]: unknown },
+> = Flatten<
+  { readonly [P in Required]: Instances[P] } & {
+    readonly [P in Exclude<Optional, Required>]?: Instances[P];
+  }
+>;
 /** Plain service configuration accepted by non-Effect callers. */
 export type ServiceCreationInput = Plain<StackEffect.ServiceCreationInput>;
 /** A database instance with stopped-data snapshot operations. */
@@ -322,9 +333,9 @@ export const stackAdapter = (client: Client) => {
         ),
     };
   }
-  function services<K extends Kind>(handles: {
-    readonly [P in K]: StackEffect.ServiceInstances[P];
-  }): { readonly [P in K]: ServiceInstances[P] };
+  function services<Required extends Kind, Optional extends Kind>(
+    handles: ServiceHandles<Required, Optional, StackEffect.ServiceInstances>,
+  ): ServiceHandles<Required, Optional, ServiceInstances>;
   function services(
     handles: Readonly<Record<string, StackEffect.ServiceInstances[Kind]>>,
   ): Readonly<Record<string, unknown>> {
