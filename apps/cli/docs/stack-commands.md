@@ -5,6 +5,10 @@ command interface may change, and it is excluded from the CLI compatibility prom
 available when the `experimental.stack` feature flag is enabled and supports both Docker and
 native runtimes.
 
+Native PostgreSQL requires passwords for every role except `supabase_admin`. Its local bootstrap
+and password-reconciliation connection uses that administrative role, so a native
+`supabase_admin` connection is not password-checked.
+
 | Command                  | Purpose                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------- |
 | `supabase stack destroy` | Permanently delete one stack and its data.                                        |

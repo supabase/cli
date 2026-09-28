@@ -183,13 +183,14 @@ export const openNativePostgresInstance = Effect.fn("NativePostgresUser.openInst
 /** The bundle's first-boot init runs `chmod +x` on this script, which only its owner may do. */
 const GETKEY_SCRIPT = "share/supabase-cli/config/pgsodium_getkey.sh";
 
-/** Hands the instance data, key, socket, and the bundle's getkey script to the PostgreSQL user. */
+/** Hands the instance data, key, socket, HBA file, and the bundle's getkey script to the PostgreSQL user. */
 export const handOverNativePostgresFiles = Effect.fn("NativePostgresUser.handOverFiles")(function* (
   user: PasswdEntry,
   paths: {
     readonly dataPath: string;
     readonly rootKeyPath: string;
     readonly socketPath: string;
+    readonly hbaPath: string;
     readonly bundleRoot: string;
     readonly executable: string;
   },
@@ -199,7 +200,7 @@ export const handOverNativePostgresFiles = Effect.fn("NativePostgresUser.handOve
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const getkey = path.join(paths.bundleRoot, GETKEY_SCRIPT);
   const hasGetkey = yield* fs.exists(getkey);
-  const targets = [paths.dataPath, paths.rootKeyPath, paths.socketPath];
+  const targets = [paths.dataPath, paths.rootKeyPath, paths.socketPath, paths.hbaPath];
   if (hasGetkey) {
     yield* requireOwnedByRootOr(user, getkey);
     targets.push(getkey);

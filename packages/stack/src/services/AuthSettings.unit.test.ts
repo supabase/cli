@@ -98,4 +98,20 @@ describe("Auth settings environment", () => {
     expect(env["GOTRUE_MAILER_NOTIFICATIONS_PASSWORD_CHANGED_ENABLED"]).toBeUndefined();
     expect(env["GOTRUE_MAILER_SUBJECTS_PASSWORD_CHANGED_NOTIFICATION"]).toBeUndefined();
   });
+
+  it("omits zero session limits and forwards every other value", () => {
+    const env = (sessions: { timebox: string; inactivity_timeout: string }) =>
+      settingsEnvironment(Schema.decodeSync(Settings)({ sessions }), "https://issuer.example");
+
+    const unlimited = env({ timebox: "0s", inactivity_timeout: "0h0m0s" });
+    const limited = env({ timebox: "24h", inactivity_timeout: "8h" });
+    const invalid = env({ timebox: "never", inactivity_timeout: "-1h" });
+
+    expect(unlimited["GOTRUE_SESSIONS_TIMEBOX"]).toBeUndefined();
+    expect(unlimited["GOTRUE_SESSIONS_INACTIVITY_TIMEOUT"]).toBeUndefined();
+    expect(limited["GOTRUE_SESSIONS_TIMEBOX"]).toBe("24h");
+    expect(limited["GOTRUE_SESSIONS_INACTIVITY_TIMEOUT"]).toBe("8h");
+    expect(invalid["GOTRUE_SESSIONS_TIMEBOX"]).toBe("never");
+    expect(invalid["GOTRUE_SESSIONS_INACTIVITY_TIMEOUT"]).toBe("-1h");
+  });
 });
