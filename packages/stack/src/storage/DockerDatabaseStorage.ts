@@ -773,11 +773,19 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         .remove(readyMarkerPath, { force: true })
         .pipe(Effect.mapError((cause) => errorFor("reset", cause)));
       /** Unmarked data cannot start, so removal is its only in-product recovery. */
-      const removeUnmarkedData = (version: string) =>
+      const removeUnmarkedData = (
+        version: string,
+        { checkpoints }: { readonly checkpoints: boolean },
+      ) =>
         Effect.gen(function* () {
-          if (!(yield* hasUnmarkedData)) return;
+          const removeCheckpoints =
+            checkpoints &&
+            (yield* options.fs
+              .exists(options.path.join(options.instanceRoot, instanceSnapshotsDirectory))
+              .pipe(Effect.mapError((cause) => errorFor("data", cause))));
+          if (!removeCheckpoints && !(yield* hasUnmarkedData)) return;
           yield* runHelper(
-            "set -eu; rm -rf /instance/data /instance/.supabase-restore",
+            `set -eu; rm -rf /instance/data /instance/.supabase-restore${removeCheckpoints ? ` ${shellQuote(`/instance/${instanceSnapshotsDirectory}`)}` : ""}`,
             [{ source: options.instanceRoot, target: "/instance", readOnly: false }],
             version,
             true,
@@ -883,7 +891,8 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       const removeData = Effect.fn("DockerDatabaseStorage.removeData")((version: string) =>
         Effect.gen(function* () {
           const markerOption = yield* getMarkerForRemoval;
-          if (Option.isNone(markerOption)) return yield* removeUnmarkedData(version);
+          if (Option.isNone(markerOption))
+            return yield* removeUnmarkedData(version, { checkpoints: false });
           const marker = markerOption.value;
           if (marker.backend === "host") {
             yield* runHelper(
@@ -908,7 +917,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         Effect.gen(function* () {
           const markerOption = yield* getMarkerIfPresent;
           if (Option.isNone(markerOption)) {
-            yield* removeUnmarkedData(version);
+            yield* removeUnmarkedData(version, { checkpoints: true });
             return yield* removeHelper();
           }
           const marker = markerOption.value;

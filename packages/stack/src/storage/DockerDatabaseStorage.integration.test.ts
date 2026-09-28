@@ -650,8 +650,16 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const cacheRoot = path.join(root, "cache");
         const instanceRoot = path.join(storageRoot, "unmarked");
         const dataRoot = path.join(instanceRoot, "data");
+        const checkpointsRoot = path.join(instanceRoot, ".supabase-snapshots");
         yield* fs.makeDirectory(path.join(dataRoot, "base"), { recursive: true });
         yield* fs.writeFileString(path.join(dataRoot, "base", "fixture"), "unmarked");
+        yield* fs.makeDirectory(path.join(checkpointsRoot, "entries", "checkpoint", "data"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(checkpointsRoot, "entries", "checkpoint", "data", "PG_VERSION"),
+          "17",
+        );
         yield* docker([
           "run",
           "--rm",
@@ -660,7 +668,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           helperImage,
           "/bin/sh",
           "-c",
-          "chown -R 100:101 /instance/data; chmod -R 700 /instance/data",
+          "chown -R 100:101 /instance/data /instance/.supabase-snapshots; chmod -R 700 /instance/data /instance/.supabase-snapshots",
         ]);
         const container = yield* makeContainerRuntime({ engine: "docker", root });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -685,6 +693,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
 
         yield* storage.destroyData("17");
         expect(yield* fs.exists(dataRoot)).toBe(false);
+        expect(yield* fs.exists(checkpointsRoot)).toBe(false);
         expect(yield* fs.exists(markerPath)).toBe(false);
         yield* fs.remove(cacheRoot, { recursive: true, force: true });
       }),
