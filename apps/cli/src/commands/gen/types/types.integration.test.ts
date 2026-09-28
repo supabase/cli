@@ -52,9 +52,11 @@ import { genTypes } from "./types.handler.ts";
 import { localDbContainerId, parseQueryTimeoutMillis, rootCaBundle } from "./types.shared.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import {
+  type GenTypesGenerateError,
   GenTypesGenerationError,
   GenTypesGenerator,
   type GenTypesGenerateInput,
+  GenTypesToolFailedError,
 } from "./types.generator.service.ts";
 
 const path = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
@@ -113,7 +115,7 @@ function defaultFlags(overrides: Partial<GenTypesFlags> = {}): GenTypesFlags {
     projectId: Option.none(),
     lang: "typescript" as const,
     schema: [],
-    swiftAccessControl: "internal" as const,
+    "swift-access-control": Option.none(),
     postgrestV9Compat: false,
     queryTimeout: "15s",
     ...overrides,
@@ -185,7 +187,7 @@ function mockGenTypesGenerator(
     readonly generate?: (
       input: GenTypesGenerateInput,
       callIndex: number,
-    ) => Effect.Effect<string, GenTypesGenerationError | DbConnectError>;
+    ) => Effect.Effect<string, GenTypesGenerateError | DbConnectError>;
     readonly output?: string;
   } = {},
 ) {
@@ -209,7 +211,7 @@ function mockGenTypesGenerator(
 
 /** One `GenTypesGenerator.generate` outcome per attempt — models a failing then a retried call. */
 function sequentialGenerator(
-  steps: ReadonlyArray<() => Effect.Effect<string, GenTypesGenerationError | DbConnectError>>,
+  steps: ReadonlyArray<() => Effect.Effect<string, GenTypesGenerateError | DbConnectError>>,
 ) {
   return mockGenTypesGenerator({
     generate: (_input, index) =>
@@ -260,6 +262,18 @@ function enotfoundFailure(): DbConnectError {
 function nonIpv6Failure(lang = "go") {
   return new GenTypesGenerationError({
     message: `failed to generate ${lang} types: permission denied for schema public`,
+  });
+}
+
+/**
+ * A tool failure whose stderr reads like a DNS miss. The message-text fallback of
+ * `isIPv6ConnectivityErrorCause` would classify it as IPv6-retryable, but the tool ran after the
+ * database connection had already succeeded.
+ */
+function toolFailureNamingAHost() {
+  return new GenTypesToolFailedError({
+    message:
+      "failed to generate dart types: dart run supabase_typegen exited with code 1: Failed host lookup: 'pub.dev' (OS Error: No address associated with hostname, errno = 7)",
   });
 }
 
@@ -941,7 +955,11 @@ describe("gen types", () => {
           args: ["gen", "types", "--linked", "--swift-access-control", "public", "--lang", "swift"],
         });
         const exit = yield* genTypes(
-          defaultFlags({ linked: true, lang: "swift", swiftAccessControl: "public" }),
+          defaultFlags({
+            linked: true,
+            lang: "swift",
+            "swift-access-control": Option.some("public"),
+          }),
         ).pipe(Effect.provide(layer), Effect.exit);
 
         expect(Exit.isFailure(exit)).toBe(true);
@@ -971,7 +989,7 @@ describe("gen types", () => {
           defaultFlags({
             projectId: Option.some(VALID_REF),
             lang: "swift",
-            swiftAccessControl: "public",
+            "swift-access-control": Option.some("public"),
           }),
         ).pipe(Effect.provide(layer), Effect.exit);
 
@@ -1441,12 +1459,16 @@ describe("gen types", () => {
             projectId: Option.some(VALID_REF),
           });
           yield* genTypes(
-            defaultFlags({ lang: "go", queryTimeout: "20s", swiftAccessControl: "public" }),
+            defaultFlags({
+              lang: "go",
+              queryTimeout: "20s",
+              "swift-access-control": Option.some("public"),
+            }),
           ).pipe(Effect.provide(layer));
 
           expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(false);
           const call = generator.calls[0];
-          expect(call?.swiftAccessControl).toBe("public");
+          expect(call?.options["swift-access-control"]).toBe("public");
           expect(call?.conn.runtimeParams?.["statement_timeout"]).toBe("20000");
           expect(call?.conn.connectTimeoutSeconds).toBe(20);
         }).pipe(Effect.provide(BunServices.layer)),
@@ -1850,6 +1872,41 @@ describe("gen types", () => {
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    it.live("does not retry through the pooler when an out-of-process tool fails", () =>
+      Effect.gen(function* () {
+        const generator = sequentialGenerator([() => Effect.fail(toolFailureNamingAHost())]);
+        const { layer, out, dbConfig } = yield* setup({
+          args: ["gen", "types", "--lang", "dart", "--project-id", VALID_REF],
+          generator,
+          dbConfigResolve: () =>
+            Effect.succeed(
+              remoteResolvedConfig({
+                host: `db.${VALID_REF}.supabase.co`,
+                port: 5432,
+                user: "postgres",
+                password: "direct-password",
+                database: "postgres",
+              }),
+            ),
+          poolerFallback: Option.some({
+            host: "aws-0-us-east-1.pooler.supabase.com",
+            port: 5432,
+            user: `postgres.${VALID_REF}`,
+            password: "pooler-password",
+            database: "postgres",
+          }),
+        });
+        const exit = yield* genTypes(
+          defaultFlags({ projectId: Option.some(VALID_REF), lang: "dart" }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(generator.calls).toHaveLength(1);
+        expect(dbConfig.poolerFallbacks).toHaveLength(0);
+        expect(out.stderrText).not.toContain("Retrying via the IPv4 connection pooler.");
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.live("preserves the original generation error when pooler fallback resolution fails", () =>
       Effect.gen(function* () {
         const generator = sequentialGenerator([() => Effect.fail(ipv6Failure())]);
@@ -2188,7 +2245,7 @@ describe("gen types", () => {
           });
           expect(call?.isLocal).toBe(true);
           expect(call?.includedSchemas).toEqual(["public", "custom"]);
-          expect(call?.detectOneToOneRelationships).toBe(true);
+          expect(call?.options["detect-one-to-one-relationships"]).toBe(true);
           expect(call?.conn.sslmode).toBeUndefined();
           expect(call?.conn.sslrootcertInline).toBeUndefined();
           expect(linkedProjectCache.cached).toBe(false);
@@ -2277,7 +2334,7 @@ describe("gen types", () => {
         const { layer, generator } = yield* setup({ workdir });
         yield* genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
 
-        expect(generator.calls[0]?.detectOneToOneRelationships).toBe(false);
+        expect(generator.calls[0]?.options["detect-one-to-one-relationships"]).toBe(false);
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2301,7 +2358,7 @@ describe("gen types", () => {
         const { layer, generator } = yield* setup({ workdir });
         yield* genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
 
-        expect(generator.calls[0]?.detectOneToOneRelationships).toBe(true);
+        expect(generator.calls[0]?.options["detect-one-to-one-relationships"]).toBe(true);
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2349,11 +2406,15 @@ describe("gen types", () => {
           args: ["gen", "types", "--local", "--lang", "python", "--swift-access-control", "public"],
         });
         yield* genTypes(
-          defaultFlags({ local: true, lang: "python", swiftAccessControl: "public" }),
+          defaultFlags({
+            local: true,
+            lang: "python",
+            "swift-access-control": Option.some("public"),
+          }),
         ).pipe(Effect.provide(layer));
 
         expect(generator.calls[0]?.lang).toBe("python");
-        expect(generator.calls[0]?.swiftAccessControl).toBe("public");
+        expect(generator.calls[0]?.options["swift-access-control"]).toBe("public");
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2774,7 +2835,7 @@ describe("gen types", () => {
               dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:5432/postgres"),
               lang: "swift",
               schema: ["public"],
-              swiftAccessControl: "public",
+              "swift-access-control": Option.some("public"),
               postgrestV9Compat: true,
               queryTimeout: "20s",
             }),
@@ -2782,25 +2843,32 @@ describe("gen types", () => {
 
           const call = generator.calls[0];
           expect(call?.lang).toBe("swift");
-          expect(call?.swiftAccessControl).toBe("public");
-          expect(call?.detectOneToOneRelationships).toBe(false);
+          expect(call?.options["swift-access-control"]).toBe("public");
+          expect(call?.options["detect-one-to-one-relationships"]).toBe(false);
           expect(call?.conn.runtimeParams?.["statement_timeout"]).toBe("20000");
           expect(call?.conn.connectTimeoutSeconds).toBe(20);
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("allows --postgrest-v9-compat together with --db-url", () =>
-      Effect.gen(function* () {
-        const { layer, generator } = yield* setup();
-        yield* genTypes(
-          defaultFlags({
-            dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:5432/postgres"),
-            postgrestV9Compat: true,
-          }),
-        ).pipe(Effect.provide(layer));
+    it.live(
+      "allows --postgrest-v9-compat together with --db-url and prints its deprecation line",
+      () =>
+        Effect.gen(function* () {
+          const { layer, generator, out } = yield* setup({
+            args: ["gen", "types", "--db-url", "postgresql://x", "--postgrest-v9-compat"],
+          });
+          yield* genTypes(
+            defaultFlags({
+              dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:5432/postgres"),
+              postgrestV9Compat: true,
+            }),
+          ).pipe(Effect.provide(layer));
 
-        expect(generator.calls[0]?.detectOneToOneRelationships).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+          expect(generator.calls[0]?.options["detect-one-to-one-relationships"]).toBe(false);
+          expect(out.stderrText).toContain(
+            "Flag --postgrest-v9-compat has been deprecated, PostgREST 9 reached end of life; the flag still disables one-to-one relationship detection.",
+          );
+        }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.live("allows legacy positional non-typescript when --lang is explicitly set", () =>
