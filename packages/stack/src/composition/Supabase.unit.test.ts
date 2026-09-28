@@ -153,9 +153,14 @@ it.live(
         expect((yield* studio.core.get).lifecycle).toBe("running");
         expect((yield* pgmeta.core.get).lifecycle).toBe("running");
 
+        // One second before studio's 5-minute idle deadline, measured from the request.
+        yield* TestClock.adjust("208 seconds");
+        expect((yield* studio.core.get).lifecycle).toBe("running");
+        expect((yield* pgmeta.core.get).lifecycle).toBe("running");
+
         const studioStopped = yield* stopped(studio).pipe(Effect.forkChild);
         const pgmetaStopped = yield* stopped(pgmeta).pipe(Effect.forkChild);
-        yield* TestClock.adjust("5 minutes");
+        yield* TestClock.adjust("2 seconds");
         yield* Fiber.join(studioStopped);
         yield* Fiber.join(pgmetaStopped);
       }),

@@ -211,7 +211,8 @@ Host listener assignment for `supabase stack` is documented in [Port intents](./
 ## Service selection and shutdown
 
 With the current defaults, enabled non-database services with endpoints are lazy and stop after
-60 seconds without traffic; Functions has no automatic idle stop. An active HTTP request keeps a
+60 seconds without traffic, Studio after 5 minutes; Functions has no automatic idle stop. A service
+that a running service depends on stays up until that dependent stops. An active HTTP request keeps a
 capability running; an idle HTTP keep-alive socket does not. Open WebSocket or TCP connections
 keep a capability running during idle periods. Use `supabase stack start --eager` to activate all
 enabled capabilities and disable automatic idle stops. A request arriving while a capability is
