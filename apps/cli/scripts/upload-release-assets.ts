@@ -117,8 +117,34 @@ export async function uploadedAssetNames(tag: string, io: ReleaseIo): Promise<st
   if (result.exitCode !== 0) {
     throw new Error(`Could not read assets of ${tag} (${describeFailure(result, 60_000)}).`);
   }
-  const { assets } = JSON.parse(result.stdout) as { assets: ReleaseAssetView[] };
-  return assets.filter((asset) => asset.state === "uploaded").map((asset) => asset.name);
+  return parseAssetView(result.stdout, tag)
+    .filter((asset) => asset.state === "uploaded")
+    .map((asset) => asset.name);
+}
+
+function isAssetView(value: unknown): value is ReleaseAssetView {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { name?: unknown }).name === "string" &&
+    typeof (value as { state?: unknown }).state === "string"
+  );
+}
+
+function parseAssetView(stdout: string, tag: string): ReleaseAssetView[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`Could not read assets of ${tag}: gh returned invalid JSON.`);
+  }
+  const assets = (parsed as { assets?: unknown } | null)?.assets;
+  if (!Array.isArray(assets) || !assets.every(isAssetView)) {
+    throw new Error(
+      `Could not read assets of ${tag}: gh output has no assets array with name and state.`,
+    );
+  }
+  return assets;
 }
 
 /** Expected asset names that are absent from the uploaded set, sorted. */

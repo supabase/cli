@@ -156,6 +156,24 @@ describe("uploadedAssetNames", () => {
       "Could not read assets of v1.0.0 (exit 1: release not found).",
     );
   });
+
+  test("names the release when gh prints something other than JSON", async () => {
+    const { io } = fakeIo({ "v1.0.0": [{ ...ok, stdout: "gh: rate limited\n" }] });
+
+    await expect(uploadedAssetNames("v1.0.0", io)).rejects.toThrow(
+      "Could not read assets of v1.0.0: gh returned invalid JSON.",
+    );
+  });
+
+  test("names the release when the JSON has no usable assets array", async () => {
+    const { io } = fakeIo({
+      "v1.0.0": [{ ...ok, stdout: JSON.stringify({ assets: [{ name: "install" }] }) }],
+    });
+
+    await expect(uploadedAssetNames("v1.0.0", io)).rejects.toThrow(
+      "Could not read assets of v1.0.0: gh output has no assets array with name and state.",
+    );
+  });
 });
 
 describe("missingAssets", () => {
