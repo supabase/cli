@@ -22,8 +22,6 @@ export const compileOptions = {
  */
 export const stackReleaseDefine = async () => ({
   SUPABASE_STACK_BUILD_ID: JSON.stringify(
-    await Effect.runPromise(
-      stackSourceDigest.pipe(Effect.provide(BunServices.layer)),
-    ),
+    await Effect.runPromise(stackSourceDigest.pipe(Effect.provide(BunServices.layer))),
   ),
 });
