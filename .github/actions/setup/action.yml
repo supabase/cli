@@ -52,6 +52,24 @@ runs:
         restore-keys: |
           pnpm-store-files-${{ runner.os }}-${{ runner.arch }}-
 
+    - name: Resolve pnpm cache path
+      if: inputs.dependency-cache == 'true'
+      id: pnpm-cache
+      shell: bash
+      run: echo "path=$(pnpm cache path)" >> "$GITHUB_OUTPUT"
+
+    # pnpm stores the lockfile's supply-chain verdict in lockfile-verified.jsonl;
+    # without it every job re-verifies all entries against registry metadata,
+    # which dominates a warm-store install. The verdict is bound to the policy.
+    - name: Configure pnpm verification cache
+      if: inputs.dependency-cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm-cache.outputs.path }}/lockfile-verified.jsonl
+        key: pnpm-verify-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml') }}
+        restore-keys: |
+          pnpm-verify-${{ runner.os }}-
+
     - name: Resolve Go cache paths
       if: inputs.dependency-cache == 'true'
       id: go-cache
