@@ -19,8 +19,11 @@ const program = Effect.try({
     try {
       connection.exec("BEGIN IMMEDIATE");
     } catch (cause) {
-      // macOS SQLite reports a lock file that its releasing holder unlinked.
-      if (!(Predicate.hasProperty(cause, "errcode") && cause.errcode === 6922)) throw cause;
+      // A lock file its releasing holder unlinked: IOERR_VNODE on macOS, IOERR_FSTAT on Linux.
+      if (
+        !(Predicate.hasProperty(cause, "errcode") && [6922, 1802].includes(Number(cause.errcode)))
+      )
+        throw cause;
     }
     connection.close();
     writeSync(1, "free\n");
