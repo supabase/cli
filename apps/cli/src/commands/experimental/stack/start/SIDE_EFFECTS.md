@@ -35,8 +35,8 @@ use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project dir
 
 For a new stack, `--runtime auto` selects native on Linux x64/arm64 and macOS arm64, and Docker
 elsewhere. An existing stack keeps its saved runtime. Explicit runtime selection has no fallback.
-When Docker is unreachable, the reported failure suggests `--runtime native` on platforms where
-native is the default runtime.
+When Docker is unreachable, the reported failure suggests `--runtime native` for a new stack on
+platforms where native is the default runtime.
 
 Native startup refuses root because PostgreSQL `initdb` cannot run as root, unless a Claude Code
 or Modal Sandbox is detected or `SUPABASE_NATIVE_POSTGRES_USER` names a non-root user. PostgreSQL then runs

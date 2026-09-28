@@ -230,7 +230,7 @@ Excluding `rest` while Studio remains selected is rejected; excluding `analytics
 Studio. The effective configuration is
 retained in stack state, so starting without `--exclude` restores the project's configured services.
 When Docker is unreachable, the failure suggests
-`--runtime native` on platforms where native is the default.
+`--runtime native` for a new stack on platforms where native is the default.
 
 `supabase stack stop --all` stops every managed stack while preserving data. Registry entries that
 cannot be read or decoded are skipped with a warning on stderr; only a failure to read the stacks
