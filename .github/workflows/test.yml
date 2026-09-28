@@ -106,8 +106,12 @@ jobs:
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
-    name: Run integration tests
+    name: Run integration tests (attempt ${{ matrix.attempt }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -240,13 +244,19 @@ jobs:
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
-    name: Run stack end-to-end tests (${{ matrix.runtime }}, ${{ matrix.suite }})
+    name: Run stack end-to-end tests (${{ matrix.runtime }}, ${{ matrix.suite }}, attempt ${{ matrix.attempt }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
         runtime: [native, docker]
         suite: [lifecycle, idle-parallel]
+        attempt: [1]
+        include:
+          - { runtime: native, suite: idle-parallel, attempt: 2 }
+          - { runtime: native, suite: idle-parallel, attempt: 3 }
+          - { runtime: docker, suite: idle-parallel, attempt: 2 }
+          - { runtime: docker, suite: idle-parallel, attempt: 3 }
     steps:
       - name: Checkout
         uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
