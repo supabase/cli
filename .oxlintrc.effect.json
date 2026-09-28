@@ -9,6 +9,7 @@
     "!packages/stack/**",
     "!apps/cli/src/commands/**",
     "!apps/cli/src/shared/compute/**",
+    "!apps/cli/src/shared/config/**",
     "!apps/cli/src/shared/functions/functions-docker.ts",
     "!apps/cli/src/shared/functions/functions-docker.unit.test.ts",
     "!apps/cli/src/shared/functions/serve.ts",

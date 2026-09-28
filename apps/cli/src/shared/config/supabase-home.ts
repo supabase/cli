@@ -1,5 +1,4 @@
-import { join } from "node:path";
-import { Option } from "effect";
+import { Option, type Path } from "effect";
 
 /**
  * Resolves the global Supabase CLI state root.
@@ -9,18 +8,24 @@ import { Option } from "effect";
  * defaults to `<homeDir>/.supabase`. A pure function, so every caller resolves through it with
  * its own environment and home directory, keeping the contract in one place.
  */
-export const resolveSupabaseHomeValue = (value: Option.Option<string>, homeDir: string): string => {
+export const resolveSupabaseHomeValue = (
+  path: Path.Path,
+  value: Option.Option<string>,
+  homeDir: string,
+): string => {
   const configured = Option.isSome(value) ? value.value.trim() : undefined;
   return configured !== undefined && configured.length > 0
     ? configured
-    : join(homeDir, ".supabase");
+    : path.join(homeDir, ".supabase");
 };
 
 export const resolveSupabaseHome = (
+  path: Path.Path,
   env: Readonly<Record<string, string | undefined>>,
   homeDir: string,
 ): string =>
   resolveSupabaseHomeValue(
+    path,
     env["SUPABASE_HOME"] === undefined ? Option.none() : Option.some(env["SUPABASE_HOME"]),
     homeDir,
   );

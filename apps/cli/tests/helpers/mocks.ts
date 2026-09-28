@@ -699,6 +699,7 @@ export function emptyEnv() {
       Layer.provide(runtimeInfoLayer),
       Layer.provide(cliProjectContextLayer),
       Layer.provide(envLayer),
+      Layer.provide(BunServices.layer),
     ),
   );
 }

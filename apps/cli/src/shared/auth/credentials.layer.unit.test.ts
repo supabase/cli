@@ -79,6 +79,7 @@ function makeLayer(
       Layer.provide(runtimeInfoLayer),
       Layer.provide(cliProjectContextLayer),
       Layer.provide(envLayer),
+      Layer.provide(BunServices.layer),
     ),
   );
   return credentialsLayer.pipe(
@@ -273,6 +274,7 @@ describe("Credentials", () => {
             Layer.provide(runtimeInfoLayer),
             Layer.provide(cliProjectContextLayer),
             Layer.provide(envLayer),
+            Layer.provide(BunServices.layer),
           ),
         ),
       );
