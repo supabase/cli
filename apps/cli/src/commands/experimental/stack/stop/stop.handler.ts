@@ -79,7 +79,31 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
                 }),
             ),
           );
-    if (!all && target?.id === undefined) {
+    const locations = {
+      stateRoot: path.join(settings.supabaseHome, "stacks"),
+      cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
+    };
+    const selected =
+      target === undefined
+        ? yield* api
+            .discover({
+              ...locations,
+              onInvalidState: (id, error) =>
+                output.raw(`Warning: skipping invalid stack ${id}: ${error.message}\n`, "stderr"),
+            })
+            .pipe(
+              Effect.map((discovered) =>
+                discovered.map(({ definition, host }) => ({
+                  id: definition.id,
+                  hostRunning: host !== undefined,
+                })),
+              ),
+              Effect.mapError(stopError),
+            )
+        : target.id === undefined
+          ? undefined
+          : [{ id: target.id, hostRunning: target.hostRunning }];
+    if (selected === undefined) {
       if (Option.isSome(flags.stack))
         return yield* new StackCommandStopError({
           reason: "flags",
@@ -88,42 +112,23 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
       yield* output.success("No managed stack found for this context.", { found: false });
       return;
     }
-    const locations = {
-      stateRoot: path.join(settings.supabaseHome, "stacks"),
-      cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
-    };
-    const discovered = yield* api
-      .discover({
-        ...locations,
-        onInvalidState: (id, error) =>
-          output.raw(`Warning: skipping invalid stack ${id}: ${error.message}\n`, "stderr"),
-      })
-      .pipe(Effect.mapError(stopError));
-    const selected = all
-      ? discovered
-      : discovered.filter(({ definition }) => definition.id === target?.id);
-    if (!all && selected.length === 0)
-      return yield* new StackCommandStopError({
-        reason: "flags",
-        message: "The selected stack no longer exists.",
-      });
     const results = yield* Effect.forEach(
       selected,
       ({
-        definition,
-        host,
+        id,
+        hostRunning,
       }): Effect.Effect<{
         readonly id: string;
         readonly result: Result.Result<"stopped" | "unavailable", StackError>;
       }> =>
-        host === undefined
-          ? Effect.succeed({ id: definition.id, result: Result.succeed("unavailable" as const) })
-          : api.open({ ...locations, id: definition.id }).pipe(
+        !hostRunning
+          ? Effect.succeed({ id, result: Result.succeed("unavailable" as const) })
+          : api.open({ ...locations, id }).pipe(
               Effect.flatMap((stack) => stack.stop),
               Effect.scoped,
               Effect.as("stopped" as const),
               Effect.result,
-              Effect.map((result) => ({ id: definition.id, result })),
+              Effect.map((result) => ({ id, result })),
             ),
     );
     const failures = results.flatMap(({ id, result }) =>

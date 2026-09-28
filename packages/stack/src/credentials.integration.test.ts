@@ -61,7 +61,7 @@ it.live("resolves composition credentials before creating services", () =>
       const created = yield* stack.composition.supabase([
         {
           service: "auth",
-          config: { databaseUrl: "postgresql://placeholder" },
+          config: {},
           endpoints: { http: { port: "auto" } },
         },
         {

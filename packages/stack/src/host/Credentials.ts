@@ -5,7 +5,7 @@ import {
   DEFAULT_POSTGRES_ROOT_KEY,
 } from "../Defaults.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
-import { resolveStackIdentity } from "../services/ServiceConfig.ts";
+import { resolveStackKeys } from "../services/ServiceConfig.ts";
 import type { SavedStack, StackCredentials, StackIdentityInput } from "../State.ts";
 
 export class CredentialError extends Data.TaggedError("CredentialError")<{
@@ -82,7 +82,7 @@ export const withoutUnusedCredentials = (saved: SavedStack): SavedStack => {
   return withoutCredentials;
 };
 
-const identityChanged = (saved: StackCredentials, next: StackCredentials) =>
+const credentialsChanged = (saved: StackCredentials, next: StackCredentials) =>
   next.jwtSecret !== saved.jwtSecret ||
   next.publishableKey !== saved.publishableKey ||
   next.secretKey !== saved.secretKey ||
@@ -101,7 +101,7 @@ const identityChanged = (saved: StackCredentials, next: StackCredentials) =>
 export const nextCredentials = Effect.fn("Credentials.next")(function* (
   current: Pick<SavedStack, "credentials" | "instances">,
   overrides: Overrides,
-  identity: StackIdentityInput | undefined,
+  keys: StackIdentityInput | undefined,
 ) {
   const saved = current.credentials;
   if (saved === undefined) {
@@ -114,7 +114,7 @@ export const nextCredentials = Effect.fn("Credentials.next")(function* (
       jwtSecret,
       postgresRootKey: overrides.postgresRootKey ?? DEFAULT_POSTGRES_ROOT_KEY,
       databasePassword: overrides.databasePassword ?? DEFAULT_LOCAL_DATABASE_PASSWORD,
-      ...(yield* resolveStackIdentity(jwtSecret, identity, undefined)),
+      ...(yield* resolveStackKeys(jwtSecret, keys, undefined)),
     } satisfies StackCredentials;
   }
   const conflict =
@@ -124,7 +124,7 @@ export const nextCredentials = Effect.fn("Credentials.next")(function* (
     (overrides.databasePassword !== undefined &&
       overrides.databasePassword !== saved.databasePassword &&
       "databasePassword") ||
-    (identity === undefined &&
+    (keys === undefined &&
       overrides.jwtSecret !== undefined &&
       overrides.jwtSecret !== saved.jwtSecret &&
       "jwtSecret");
@@ -133,71 +133,77 @@ export const nextCredentials = Effect.fn("Credentials.next")(function* (
       message: `Credential override ${conflict} conflicts with the saved stack value`,
     });
   const jwtSecret =
-    identity === undefined ? saved.jwtSecret : (overrides.jwtSecret ?? DEFAULT_LOCAL_JWT_SECRET);
+    keys === undefined ? saved.jwtSecret : (overrides.jwtSecret ?? DEFAULT_LOCAL_JWT_SECRET);
   const next: StackCredentials = {
     ...saved,
     jwtSecret,
-    ...(yield* resolveStackIdentity(jwtSecret, identity, saved)),
+    ...(yield* resolveStackKeys(jwtSecret, keys, saved)),
   };
-  return identityChanged(saved, next) ? next : saved;
+  return credentialsChanged(saved, next) ? next : saved;
 });
 
-/** Completes a creation with the stack credentials it consumes. */
+type CredentialValue = {
+  [K in keyof StackCredentials]: StackCredentials[K] extends string ? K : never;
+}[keyof StackCredentials];
+
+/** Config inputs each service receives from the stack credential record, by input name. */
+const credentialInputs: {
+  readonly [K in ServiceCreation["service"]]: Readonly<Record<string, CredentialValue>>;
+} = {
+  database: {
+    databasePassword: "databasePassword",
+    jwtSecret: "jwtSecret",
+    rootKey: "postgresRootKey",
+  },
+  rest: { jwtSecret: "jwtSecret", jwks: "jwks" },
+  auth: { jwtSecret: "jwtSecret", gotrueJwtKeys: "gotrueJwtKeys" },
+  realtime: { jwtSecret: "jwtSecret", jwks: "jwks" },
+  storage: {
+    jwtSecret: "jwtSecret",
+    jwks: "jwks",
+    anonKey: "anonKey",
+    serviceRoleKey: "serviceRoleKey",
+  },
+  functions: {
+    jwtSecret: "jwtSecret",
+    jwks: "jwks",
+    anonKey: "anonKey",
+    serviceRoleKey: "serviceRoleKey",
+    publishableKey: "publishableKey",
+    secretKey: "secretKey",
+  },
+  studio: {
+    jwtSecret: "jwtSecret",
+    anonKey: "anonKey",
+    serviceRoleKey: "serviceRoleKey",
+    publishableKey: "publishableKey",
+    secretKey: "secretKey",
+  },
+  pooler: { jwtSecret: "jwtSecret" },
+  imgproxy: {},
+  pgmeta: {},
+  mail: {},
+  analytics: {},
+  vector: {},
+};
+
+/** Names the config inputs the owner fills from the stack credential record. */
+export const credentialInputNames = (service: ServiceCreation["service"]): ReadonlyArray<string> =>
+  Object.keys(credentialInputs[service]);
+
+/**
+ * Completes a creation with the stack credentials it consumes. The JWT secret and database
+ * credentials always come from the record; other inputs keep an explicit value.
+ */
 export const withCredentials = (
   creation: ServiceCreationInput,
   credentials: StackCredentials,
 ): Effect.Effect<ServiceCreation, Schema.SchemaError> => {
   const config: Record<string, unknown> = { ...creation.config };
-  switch (creation.service) {
-    case "database":
-      Object.assign(config, {
-        databasePassword: Redacted.make(credentials.databasePassword),
-        jwtSecret: Redacted.make(credentials.jwtSecret),
-        rootKey: Redacted.make(credentials.postgresRootKey),
-      });
-      break;
-    case "auth":
-      Object.assign(config, {
-        jwtSecret: credentials.jwtSecret,
-        gotrueJwtKeys: creation.config.gotrueJwtKeys ?? credentials.gotrueJwtKeys,
-      });
-      break;
-    case "rest":
-    case "realtime":
-      Object.assign(config, {
-        jwtSecret: credentials.jwtSecret,
-        jwks: creation.config.jwks ?? credentials.jwks,
-      });
-      break;
-    case "storage":
-      Object.assign(config, {
-        jwtSecret: credentials.jwtSecret,
-        jwks: creation.config.jwks ?? credentials.jwks,
-        anonKey: creation.config.anonKey ?? credentials.anonKey,
-        serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
-      });
-      break;
-    case "functions":
-      Object.assign(config, {
-        jwtSecret: credentials.jwtSecret,
-        jwks: creation.config.jwks ?? credentials.jwks,
-        anonKey: creation.config.anonKey ?? credentials.anonKey,
-        serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
-        publishableKey: creation.config.publishableKey ?? credentials.publishableKey,
-        secretKey: creation.config.secretKey ?? credentials.secretKey,
-      });
-      break;
-    case "studio":
-      Object.assign(config, {
-        jwtSecret: credentials.jwtSecret,
-        anonKey: creation.config.anonKey ?? credentials.anonKey,
-        serviceRoleKey: creation.config.serviceRoleKey ?? credentials.serviceRoleKey,
-        publishableKey: creation.config.publishableKey ?? credentials.publishableKey,
-        secretKey: creation.config.secretKey ?? credentials.secretKey,
-      });
-      break;
-    default:
-      Object.assign(config, { jwtSecret: credentials.jwtSecret });
+  for (const [input, source] of Object.entries(credentialInputs[creation.service])) {
+    const value = credentials[source];
+    if (creation.service === "database") config[input] = Redacted.make(value);
+    else if (input === "jwtSecret" || config[input] === undefined) config[input] = value;
   }
   return Schema.decodeUnknownEffect(ServiceCreation)({ ...creation, config });
 };
