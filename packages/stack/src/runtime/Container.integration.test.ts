@@ -174,6 +174,32 @@ describe("container process adapter", () => {
       ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("stops a container with its configured stop signal", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+      yield* runtime.prepare(image);
+      const process = yield* runtime.launch({
+        image,
+        stackId: "r".repeat(64),
+        instanceId: "stop-signal",
+        env: {},
+        args: [
+          "-e",
+          "process.on('SIGINT', () => process.exit(3)); setInterval(() => {}, 1000); console.log('ready')",
+        ],
+        stopSignal: "SIGINT",
+        stopGraceSeconds: 20,
+      });
+      const logs = yield* ready(process);
+
+      yield* process.stop;
+      expect(yield* process.exitCode).toBe(3);
+
+      yield* process.remove;
+      yield* Fiber.interrupt(logs);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("waits until a discarded container stops before returning", () =>
     Effect.gen(function* () {
       const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });

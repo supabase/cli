@@ -44,6 +44,8 @@ interface ContainerSpec {
   readonly ports?: ReadonlyArray<number>;
   /** Seconds `docker stop` waits before SIGKILL. Omitted means 10. */
   readonly stopGraceSeconds?: number;
+  /** Signal `docker stop` sends first; omitted uses the image's stop signal. */
+  readonly stopSignal?: "SIGINT" | "SIGTERM";
 }
 
 export interface ContainerProcess {
@@ -319,6 +321,7 @@ export const makeContainerRuntime = (options: {
           ].join(","),
         ]),
         ...(spec.workingDir === undefined ? [] : ["--workdir", spec.workingDir]),
+        ...(spec.stopSignal === undefined ? [] : ["--stop-signal", spec.stopSignal]),
         ...(spec.ports ?? []).flatMap((port) => ["--publish", `127.0.0.1::${port}`]),
         ...(spec.entrypoint === undefined ? [] : ["--entrypoint", spec.entrypoint]),
         image,
