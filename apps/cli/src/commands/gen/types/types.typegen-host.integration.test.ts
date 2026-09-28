@@ -5,7 +5,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { makeTypegenHost } from "./types.typegen-host.ts";
 
 describe.skipIf(process.platform === "win32")("makeTypegenHost with the real spawner", () => {
-  it.effect("survives a tool that exits before reading a large stdin", () =>
+  const spawnInto = (tool: string, stdin: string) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
@@ -17,17 +17,26 @@ describe.skipIf(process.platform === "win32")("makeTypegenHost with the real spa
         runPromise,
       });
       if (host.spawn === undefined) throw new Error("the typegen host must supply spawn");
-      // Far more than a pipe buffer holds, so the write meets the closed pipe for certain.
-      const result = yield* Effect.promise(() =>
-        host.spawn!({
-          command: "sh",
-          args: ["-c", "exit 3"],
-          cwd: process.cwd(),
-          env: {},
-          stdin: "x".repeat(4 * 1024 * 1024),
-        }),
+      return yield* Effect.promise(() =>
+        host.spawn!({ command: "sh", args: ["-c", tool], cwd: process.cwd(), env: {}, stdin }),
       );
+    }).pipe(Effect.provide(BunServices.layer));
+
+  // A write this small completes before the tool exits, so the pipe's EPIPE arrives after the
+  // sink has stopped listening; only the patched stdin error listener keeps it from crashing
+  // the process (seen on Linux, never on macOS).
+  it.effect("survives a tool that exits before reading a small stdin", () =>
+    Effect.gen(function* () {
+      const result = yield* spawnInto("exit 3", "x".repeat(1024));
       expect(result.exitCode).toBe(3);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }),
+  );
+
+  // Far more than a pipe buffer holds, so the write itself meets the closed pipe for certain.
+  it.effect("survives a tool that exits before reading a large stdin", () =>
+    Effect.gen(function* () {
+      const result = yield* spawnInto("exit 3", "x".repeat(4 * 1024 * 1024));
+      expect(result.exitCode).toBe(3);
+    }),
   );
 });

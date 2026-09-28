@@ -1,7 +1,7 @@
 import type { LoadedCliConfig } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, FileSystem, Option, Path, Predicate, Stdio, Stream } from "effect";
+import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import { getDomain } from "tldts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -310,11 +310,21 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
    * `toConnectError` classifies the IPv6-unreachable dial failure at the connection boundary and
    * exposes it via `DbConnectError.ipv6Unreachable`, so a `DbConnectError` no longer carries the
    * raw driver cause `isIPv6ConnectivityErrorCause` needs; fall back to it for any other error.
+   * An out-of-process tool runs after the connection succeeded, and its errors carry the tool's
+   * stderr in the message, which could name a host the tool itself failed to reach; they are
+   * never a database connectivity failure, so they never earn the pooler retry.
    */
-  const classifyGenerateError = (error: DbConnectError | GenTypesGenerateError): boolean =>
-    Predicate.isTagged(error, "DbConnectError")
-      ? (error.ipv6Unreachable ?? false)
-      : isIPv6ConnectivityErrorCause(error);
+  const classifyGenerateError = (error: DbConnectError | GenTypesGenerateError): boolean => {
+    switch (error._tag) {
+      case "DbConnectError":
+        return error.ipv6Unreachable ?? false;
+      case "GenTypesToolNotInstalledError":
+      case "GenTypesToolFailedError":
+        return false;
+      case "GenTypesGenerationError":
+        return isIPv6ConnectivityErrorCause(error);
+    }
+  };
 
   const runGenerate = (input: {
     readonly conn: PgConnInput;

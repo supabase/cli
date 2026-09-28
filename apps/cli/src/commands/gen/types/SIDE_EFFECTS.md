@@ -67,10 +67,12 @@ workdir). `--local` and `--db-url` do not call the Management API.
 
 Any other `--lang` whose registry entry is out-of-process runs its own tool
 the same way: stdout is the output, stderr is folded into the error on
-failure. Introspection and the in-process languages never shell out. On a
-native or Docker-based managed stack (`[experimental].stack` on), `--local`
-never inspects a container; it resolves the stack's database connection
-through `DbConfigResolver` the same way `--db-url` does.
+failure. The tool inherits the CLI's entire environment, so a `PUB_CACHE` or
+proxy setting reaches it unchanged. Introspection and the in-process
+languages never shell out. On a native or Docker-based managed stack
+(`[experimental].stack` on), `--local` never inspects a container; it
+resolves the stack's database connection through `DbConfigResolver` the same
+way `--db-url` does.
 
 ## Environment Variables
 
@@ -87,6 +89,7 @@ through `DbConfigResolver` the same way `--db-url` does.
 | `SUPABASE_DB_PASSWORD`                                                                                                                                                                           | database password for `--local` and the `--linked` workdir project                               | no (defaults to `postgres`; **ignored** for ad-hoc `--project-id`, which always mints a temporary login role)                                                                |
 | `SUPABASE_SERVICES_HOSTNAME`                                                                                                                                                                     | host used to reach the local database on the legacy Docker Compose stack                         | no (defaults to `127.0.0.1`)                                                                                                                                                 |
 | `SUPABASE_WORKDIR`                                                                                                                                                                               | working directory `supabase/config.toml`/`config.json` is read from (`--workdir` takes priority) | no — when unset, the CLI walks up from cwd looking for `supabase/config.toml`; when SET (flag or env) the directory is used exactly as given and **no ancestor is searched** |
+| `PATH`, `PATHEXT`, `ComSpec`                                                                                                                                                                     | find the tool of an out-of-process `--lang`; `PATHEXT` and `ComSpec` matter on Windows only      | no (`PATHEXT` defaults to `.COM;.EXE;.BAT;.CMD`, `ComSpec` to `cmd.exe`; without `PATH` the tool is reported as not installed)                                               |
 
 ## Exit Codes
 

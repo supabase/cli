@@ -52,9 +52,11 @@ import { genTypes } from "./types.handler.ts";
 import { localDbContainerId, parseQueryTimeoutMillis, rootCaBundle } from "./types.shared.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import {
+  type GenTypesGenerateError,
   GenTypesGenerationError,
   GenTypesGenerator,
   type GenTypesGenerateInput,
+  GenTypesToolFailedError,
 } from "./types.generator.service.ts";
 
 const path = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
@@ -185,7 +187,7 @@ function mockGenTypesGenerator(
     readonly generate?: (
       input: GenTypesGenerateInput,
       callIndex: number,
-    ) => Effect.Effect<string, GenTypesGenerationError | DbConnectError>;
+    ) => Effect.Effect<string, GenTypesGenerateError | DbConnectError>;
     readonly output?: string;
   } = {},
 ) {
@@ -209,7 +211,7 @@ function mockGenTypesGenerator(
 
 /** One `GenTypesGenerator.generate` outcome per attempt — models a failing then a retried call. */
 function sequentialGenerator(
-  steps: ReadonlyArray<() => Effect.Effect<string, GenTypesGenerationError | DbConnectError>>,
+  steps: ReadonlyArray<() => Effect.Effect<string, GenTypesGenerateError | DbConnectError>>,
 ) {
   return mockGenTypesGenerator({
     generate: (_input, index) =>
@@ -260,6 +262,18 @@ function enotfoundFailure(): DbConnectError {
 function nonIpv6Failure(lang = "go") {
   return new GenTypesGenerationError({
     message: `failed to generate ${lang} types: permission denied for schema public`,
+  });
+}
+
+/**
+ * A tool failure whose stderr reads like a DNS miss. The message-text fallback of
+ * `isIPv6ConnectivityErrorCause` would classify it as IPv6-retryable, but the tool ran after the
+ * database connection had already succeeded.
+ */
+function toolFailureNamingAHost() {
+  return new GenTypesToolFailedError({
+    message:
+      "failed to generate dart types: dart run supabase_typegen exited with code 1: Failed host lookup: 'pub.dev' (OS Error: No address associated with hostname, errno = 7)",
   });
 }
 
@@ -1856,6 +1870,41 @@ describe("gen types", () => {
           expect(dbConfig.poolerFallbacks).toHaveLength(0);
           expect(out.stderrText).not.toContain("Retrying via the IPv4 connection pooler.");
         }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("does not retry through the pooler when an out-of-process tool fails", () =>
+      Effect.gen(function* () {
+        const generator = sequentialGenerator([() => Effect.fail(toolFailureNamingAHost())]);
+        const { layer, out, dbConfig } = yield* setup({
+          args: ["gen", "types", "--lang", "dart", "--project-id", VALID_REF],
+          generator,
+          dbConfigResolve: () =>
+            Effect.succeed(
+              remoteResolvedConfig({
+                host: `db.${VALID_REF}.supabase.co`,
+                port: 5432,
+                user: "postgres",
+                password: "direct-password",
+                database: "postgres",
+              }),
+            ),
+          poolerFallback: Option.some({
+            host: "aws-0-us-east-1.pooler.supabase.com",
+            port: 5432,
+            user: `postgres.${VALID_REF}`,
+            password: "pooler-password",
+            database: "postgres",
+          }),
+        });
+        const exit = yield* genTypes(
+          defaultFlags({ projectId: Option.some(VALID_REF), lang: "dart" }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(generator.calls).toHaveLength(1);
+        expect(dbConfig.poolerFallbacks).toHaveLength(0);
+        expect(out.stderrText).not.toContain("Retrying via the IPv4 connection pooler.");
+      }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.live("preserves the original generation error when pooler fallback resolution fails", () =>
