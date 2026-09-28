@@ -23,10 +23,10 @@ import * as RpcServer from "effect/unstable/rpc/RpcServer";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import { acquireHost, HostEndpoint } from "./HostProcess.ts";
 import * as Owner from "./Owner.ts";
-import { StackError, stackError, StackRpc } from "./Rpc.ts";
+import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
 import * as State from "./State.ts";
-import { makeToolAttachments, type ToolAttachmentPayload } from "./host/ToolAttachments.ts";
-import * as ToolRunner from "./host/ToolRunner.ts";
+import { makeCommandAttachments } from "./host/CommandAttachments.ts";
+import * as CommandRunner from "./host/CommandRunner.ts";
 
 export interface StackHostOptions {
   readonly stateRoot: string;
@@ -99,13 +99,33 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
     endpoint: HostEndpoint,
     server: HttpServer.HttpServer["Service"],
     closeConnections: Effect.Effect<void>,
-  ): Effect.Effect<StackHostRuntime, never, Scope.Scope | ToolRunner.Service> =>
+  ): Effect.Effect<StackHostRuntime, never, Scope.Scope | CommandRunner.Service> =>
     Effect.gen(function* () {
       const scope = yield* Scope.Scope;
-      const runner = yield* ToolRunner.Service;
-      const attachments = yield* makeToolAttachments({
+      const runner = yield* CommandRunner.Service;
+      const attachments = yield* makeCommandAttachments({
         admit: owner.getServing.pipe(Effect.flatMap(isOpen)),
-        run: runner.run,
+        run: (input) =>
+          "stdin" in input
+            ? runner.run({
+                command: input.command,
+                stdin: input.stdin,
+                stdout: input.stdout,
+                stderr: input.stderr,
+              })
+            : owner.getStackCredentials.pipe(
+                Effect.mapError(
+                  (cause) => new CommandRunner.CommandError({ message: cause.message, cause }),
+                ),
+                Effect.flatMap((credentials) =>
+                  runner.run({
+                    command: input.command,
+                    credentials,
+                    stdout: input.stdout,
+                    stderr: input.stderr,
+                  }),
+                ),
+              ),
         toError: stackError,
       });
       const exit = yield* Deferred.make<void>();
@@ -252,14 +272,14 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
               onSome: (value) => shutdown(destroy, NodeHttpServerRequest.toServerResponse(value)),
             });
           }).pipe(Effect.mapError((cause) => stackError("shutdown", cause))),
-        runTool: (input: ToolAttachmentPayload) => attachments.run(input),
-        toolInput: ({
+        runCommand: (input: RunCommandPayload) => attachments.run(input),
+        commandInput: ({
           attachmentId,
           bytes,
         }: {
           readonly attachmentId: string;
           readonly bytes: Uint8Array | null;
-        }) => attachments.input(attachmentId, true, bytes),
+        }) => attachments.input(attachmentId, bytes),
       });
       const rpc = yield* RpcServer.toHttpEffect(StackRpc, { streamBufferSize: 16 }).pipe(
         Effect.provide(Layer.merge(StackRpc.toLayer(handlers), RpcSerialization.layerNdjson)),
@@ -322,7 +342,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
                 root: dataRoot,
                 cacheRoot: options.cacheRoot,
               }),
-              ToolRunner.layer({
+              CommandRunner.layer({
                 stackId: saved.id,
                 root: dataRoot,
                 cacheRoot: options.cacheRoot,
@@ -343,7 +363,10 @@ export const runStackHost = Effect.fn("StackHost.run")(
             acquired.server,
             acquired.closeConnections,
           ).pipe(
-            Effect.provideService(ToolRunner.Service, Context.get(services, ToolRunner.Service)),
+            Effect.provideService(
+              CommandRunner.Service,
+              Context.get(services, CommandRunner.Service),
+            ),
           );
           yield* runtime.serve;
           yield* options.onReady?.(endpoint) ?? Effect.void;

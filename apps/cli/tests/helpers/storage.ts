@@ -263,7 +263,7 @@ export function buildStorageStackApi(
     },
     stop: Effect.die("unused"),
     destroy: Effect.die("unused"),
-    tools: { run: () => Effect.die("unused") },
+    commands: { run: () => Effect.die("unused") },
   };
   const definition = {
     id: STORAGE_STACK_ID,

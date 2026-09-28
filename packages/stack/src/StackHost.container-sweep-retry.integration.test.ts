@@ -6,7 +6,7 @@ import { StackRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
 import { acquireHost } from "./HostProcess.ts";
 import * as Owner from "./Owner.ts";
-import * as ToolRunner from "./host/ToolRunner.ts";
+import * as CommandRunner from "./host/CommandRunner.ts";
 import { makeRuntime } from "./StackHost.ts";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 
@@ -84,7 +84,7 @@ it.live("retains saved state when destroy sweep fails and retries after engine r
       const owner = baseOwner;
       const acquired = yield* acquireHost(state, saved.id);
       const runnerLayer = yield* Layer.build(
-        ToolRunner.layer({
+        CommandRunner.layer({
           stackId: saved.id,
           root: `${root}/data`,
           cacheRoot: `${root}/cache`,
@@ -102,7 +102,10 @@ it.live("retains saved state when destroy sweep fails and retries after engine r
         acquired.server,
         acquired.closeConnections,
       ).pipe(
-        Effect.provideService(ToolRunner.Service, Context.get(runnerLayer, ToolRunner.Service)),
+        Effect.provideService(
+          CommandRunner.Service,
+          Context.get(runnerLayer, CommandRunner.Service),
+        ),
       );
       yield* runtime.serve;
       const client = yield* clientFor(runtime.endpoint.port);

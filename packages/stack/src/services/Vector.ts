@@ -105,7 +105,7 @@ const makeSpec = (
         { source: pipelinePath(creation), target: containerPipelinePath, readOnly: true },
         { source: apiConfigPath, target: containerApiPath, readOnly: true },
       ]),
-    startup: [],
+    startupCommands: [],
     prepare: (creation) =>
       Effect.gen(function* () {
         yield* ownedInstance("prepare");
