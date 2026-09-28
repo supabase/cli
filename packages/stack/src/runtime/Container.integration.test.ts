@@ -306,6 +306,13 @@ describe("container process adapter", () => {
           args: ["-e", "setInterval(() => {}, 1000)"],
         });
         yield* Deferred.await(released).pipe(Effect.timeout("10 seconds"));
+        expect(
+          yield* process.stderr.pipe(
+            Stream.decodeText,
+            Stream.mkString,
+            Effect.timeout("10 seconds"),
+          ),
+        ).toContain("injected log stream failure");
         expect(yield* running(process.id)).toBe(true);
         yield* process.discard;
       }),
