@@ -21,6 +21,8 @@ import { HttpClient } from "effect/unstable/http";
 import { ContainerLaunchError, makeContainerRuntime, type ContainerProcess } from "./Container.ts";
 
 const image = "oven/bun:1.4.1-slim";
+const stoppableIdleScript =
+  "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)";
 
 class ContainerTestError extends Data.TaggedError("ContainerTestError")<{
   readonly message: string;
@@ -297,7 +299,7 @@ describe("container process adapter", () => {
               stackId: "x".repeat(64),
               instanceId,
               env: {},
-              args: ["-e", "setInterval(() => {}, 1000)"],
+              args: ["-e", stoppableIdleScript],
             });
             yield* removeExternally(process.id);
             yield* process.stop;
@@ -329,7 +331,7 @@ describe("container process adapter", () => {
                 stackId: "k".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               yield* process.remove;
@@ -366,7 +368,7 @@ describe("container process adapter", () => {
                 stackId: "l".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               const removeResult = yield* process.remove.pipe(Effect.exit);
@@ -408,7 +410,7 @@ describe("container process adapter", () => {
                 stackId: "m".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               const removeResult = yield* process.remove.pipe(Effect.exit);
@@ -452,7 +454,7 @@ describe("container process adapter", () => {
                 stackId: "n".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               yield* process.remove;
@@ -491,7 +493,7 @@ describe("container process adapter", () => {
                 stackId: "p".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               const removeResult = yield* process.remove.pipe(Effect.exit);
@@ -538,7 +540,7 @@ describe("container process adapter", () => {
                 stackId: "o".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               const remover = yield* process.remove.pipe(
