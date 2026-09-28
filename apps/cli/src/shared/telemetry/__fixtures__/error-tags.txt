@@ -526,7 +526,6 @@ SsoUpdateUnexpectedStatusError
 StackBootstrapError
 StackCatalogSetupError
 StackConfigError
-StackFunctionsBundleError
 StackFunctionsEnvError
 StackNativeEngineError
 StackRoutingError

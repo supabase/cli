@@ -57,8 +57,12 @@
       "entry": ["scripts/*.ts"],
     },
     "packages/stack": {
-      // Source-mode NativeProcess resolves this standalone launcher by URL.
-      "entry": ["src/runtime/native-launcher.ts"],
+      "entry": [
+        // Source-mode NativeProcess resolves this standalone launcher by URL.
+        "src/runtime/native-launcher.ts",
+        // scripts/generate-functions-bootstrap.ts bundles the Functions main service by path.
+        "src/functions/serve.main.ts",
+      ],
       // Used by the raw WebSocket integration fixture; Knip excludes that test-only import.
       "ignoreDependencies": ["@types/ws", "ws"],
     },

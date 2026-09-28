@@ -3,7 +3,7 @@ import { Data, Deferred, Effect, Exit, FileSystem, Path, Schema, Stream } from "
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { bundleServeMainTemplate } from "../../tests/serve-main-bundler.ts";
+import { defaultFunctionsBootstrap } from "./generated/serve-main-bundle.ts";
 
 type ServeOptions = {
   readonly handler: (request: Request) => Promise<Response>;
@@ -24,7 +24,7 @@ const serveSandboxed = (functionsConfig: string, createWorker: () => TestWorker)
       SUPABASE_INTERNAL_FUNCTIONS_ROOT: "/functions",
       SUPABASE_INTERNAL_FUNCTIONS_CONFIG: functionsConfig,
     };
-    const bundled = yield* bundleServeMainTemplate;
+    const bundled = defaultFunctionsBootstrap;
     let serveOptions: ServeOptions | undefined;
     const sandbox = {
       Deno: {
@@ -138,7 +138,7 @@ describe("stack-owned functions bootstrap", () => {
       let pendingCreation: Promise<TestWorker> | undefined;
       const workerReady = yield* Deferred.make<TestWorker>();
       const createStarted = yield* Deferred.make<void>();
-      const bundled = yield* bundleServeMainTemplate;
+      const bundled = defaultFunctionsBootstrap;
       const sandbox = {
         Deno: {
           env: {
@@ -297,7 +297,7 @@ describe("stack-owned functions bootstrap", () => {
 
   it.live("starts with malformed optional functions config", () =>
     Effect.gen(function* () {
-      const bundled = yield* bundleServeMainTemplate;
+      const bundled = defaultFunctionsBootstrap;
       const envRecord: Record<string, string> = { SUPABASE_INTERNAL_FUNCTIONS_CONFIG: "{" };
       let serveOptions: ServeOptions | undefined;
       const sandbox = {
@@ -373,7 +373,7 @@ describe("stack-owned functions bootstrap", () => {
           .setProtectedHeader({ alg: "ES256", kid: "test-key" })
           .sign(privateKey),
       );
-      const bundled = yield* bundleServeMainTemplate;
+      const bundled = defaultFunctionsBootstrap;
       const envRecord: Record<string, string> = {
         SUPABASE_INTERNAL_FUNCTIONS_ROOT: "/functions",
         SUPABASE_INTERNAL_JWT_SECRET: "secret",
