@@ -6,7 +6,7 @@ import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { skippedRuntimeCleanupWarning, StackApi } from "./stack-api.ts";
 import { initializeStackDatabase } from "./stack-bootstrap.ts";
 import { stackProjectRuntime } from "./stack-local-database.ts";
-import { defaultStackRuntime } from "./stack-runtime.ts";
+import { selectStackRuntime } from "./stack-runtime.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
 import { toPostgresURL } from "./postgres-url.ts";
 import {
@@ -49,13 +49,25 @@ const shadowError = (cause: { readonly message: string }) =>
 const causeMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
+/** Selects the shadow runtime: the project stack's saved runtime, otherwise automatic selection. */
+export const stackShadowRuntime = Effect.gen(function* () {
+  return yield* selectStackRuntime(yield* stackProjectRuntime).pipe(
+    Effect.mapError(
+      (error) =>
+        new ShadowDbError({
+          message: `${error.message} ${error.suggestion}`,
+          reason: "docker_daemon",
+        }),
+    ),
+  );
+});
+
 const acquireNamespace = Effect.fn("StackShadow.acquireNamespace")(function* (opts: ShadowOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const api = yield* StackApi;
   const settings = yield* CommandSettings;
-  const runtimeInfo = yield* RuntimeInfo;
-  const runtime = opts.runtime ?? (yield* stackProjectRuntime) ?? defaultStackRuntime(runtimeInfo);
+  const runtime = opts.runtime ?? (yield* stackShadowRuntime);
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-shadow-" });
   const stack = yield* api.create({
     projectRoot: root,
