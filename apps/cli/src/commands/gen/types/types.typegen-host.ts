@@ -1,6 +1,8 @@
 import {
-  resolveWindowsCommand,
   type Host,
+  isWindowsScript,
+  quoteForCmd,
+  resolveWindowsCommand,
   type SpawnRequest,
   type SpawnResult,
 } from "@supabase/typegen";
@@ -28,12 +30,6 @@ type TypegenSpawnOutcome =
   | { readonly _tag: "NotFound" }
   | { readonly _tag: "Failed"; readonly error: unknown };
 
-const WINDOWS_SCRIPT = /\.(bat|cmd)$/i;
-
-/** cmd.exe metacharacters and whitespace are literal inside double quotes; `%VAR%` still expands. */
-export const quoteForCmd = (token: string): string =>
-  /[\s&|<>^()!"]/.test(token) ? `"${token}"` : token;
-
 const isNotFound = (error: unknown): boolean =>
   Predicate.hasProperty(error, "reason") && Predicate.isTagged(error.reason, "NotFound");
 
@@ -51,7 +47,7 @@ const spawnForTypegen = (
         // `spawn` cannot start the `.bat` Flutter ships `dart` as without a shell.
         const resolved = resolveWindowsCommand(request.command, request.env);
         if (resolved === undefined) return { _tag: "NotFound" } as const;
-        shell = WINDOWS_SCRIPT.test(resolved);
+        shell = isWindowsScript(resolved);
         command = shell ? quoteForCmd(resolved) : resolved;
         if (shell) args = request.args.map(quoteForCmd);
       }

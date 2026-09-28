@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import type { SpawnRequest, SpawnResult } from "@supabase/typegen";
 import { Data, Effect, FileSystem, Path, PlatformError, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { makeTypegenHost, quoteForCmd } from "./types.typegen-host.ts";
+import { makeTypegenHost } from "./types.typegen-host.ts";
 
 interface SpawnCall {
   readonly command: string;
@@ -93,25 +93,6 @@ const host = (
     spawner,
     runPromise: (effect, options) => Effect.runPromise(effect, options),
   });
-
-describe("quoteForCmd", () => {
-  it("leaves plain tokens alone", () => {
-    expect(quoteForCmd("run")).toBe("run");
-    expect(quoteForCmd("--output")).toBe("--output");
-    expect(quoteForCmd("C:\\flutter\\bin\\dart.bat")).toBe("C:\\flutter\\bin\\dart.bat");
-  });
-
-  it("quotes whitespace and cmd.exe metacharacters", () => {
-    expect(quoteForCmd("C:\\Users\\Jane Doe\\dart.bat")).toBe('"C:\\Users\\Jane Doe\\dart.bat"');
-    expect(quoteForCmd("C:\\tools & more\\dart.bat")).toBe('"C:\\tools & more\\dart.bat"');
-    expect(quoteForCmd("a|b")).toBe('"a|b"');
-    expect(quoteForCmd("(x)")).toBe('"(x)"');
-  });
-
-  it("leaves percent signs alone, since cmd.exe expands them even inside quotes", () => {
-    expect(quoteForCmd("%PATH%")).toBe("%PATH%");
-  });
-});
 
 describe("makeTypegenHost", () => {
   const spawnOf = (

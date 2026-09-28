@@ -343,8 +343,8 @@ importers:
         specifier: 'catalog:'
         version: 2.112.4
       '@supabase/typegen':
-        specifier: 0.1.2
-        version: 0.1.2(oxfmt@0.66.0)
+        specifier: 0.2.0
+        version: 0.2.0(oxfmt@0.66.0)
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
@@ -2935,8 +2935,8 @@ packages:
       '@opentelemetry/api':
         optional: true
 
-  '@supabase/typegen@0.1.2':
-    resolution: {integrity: sha512-5S9VNDm8jnAcRbHVbqigLAcLUGof1ytddztxOKwjzPGmVqyQdQoRfqUs9g4Q/odieU9PCNrjJrHL1Ru5WVj5eA==}
+  '@supabase/typegen@0.2.0':
+    resolution: {integrity: sha512-vQMV6EWHC8s21fZ/0FopPF5wJ9CN+PjrDs/KDmL+j+uU5b+57yv+GwJXVgHwggrvuwu2lp0y5sU+fjwoFMnYLg==}
     engines: {node: '>=22.12.0'}
     peerDependencies:
       oxfmt: 0.66.0
@@ -8718,7 +8718,7 @@ snapshots:
       '@supabase/realtime-js': 2.112.4
       '@supabase/storage-js': 2.112.4
 
-  '@supabase/typegen@0.1.2(oxfmt@0.66.0)':
+  '@supabase/typegen@0.2.0(oxfmt@0.66.0)':
     dependencies:
       '@supabase/postgrest-typegen': 0.3.0(oxfmt@0.66.0)
     optionalDependencies:
