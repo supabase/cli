@@ -49,5 +49,5 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
     }),
   args: () => Effect.succeed(["start"]),
   mounts: () => Effect.succeed([]),
-  startup: [{ args: [], nativeExecutable: "prepare", skipInContainer: true }],
+  startupCommands: [{ args: [], nativeExecutable: "prepare", skipInContainer: true }],
 });

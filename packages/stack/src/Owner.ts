@@ -120,6 +120,7 @@ export interface Interface {
     id: string,
     from: "host" | "runtime",
   ) => Effect.Effect<Readonly<Record<string, string>>, OwnerError>;
+  readonly getStackCredentials: Effect.Effect<StackCredentials, OwnerError>;
   readonly snapshots: {
     readonly saveSnapshot: (id: string, key: string) => Effect.Effect<void, OwnerError>;
     readonly restoreSnapshot: (id: string, key: string) => Effect.Effect<boolean, OwnerError>;
@@ -392,6 +393,18 @@ const makeOwnerWithDependencies = (
       Object.assign(routeKeys, credentials);
       return credentials;
     });
+
+    const getStackCredentials = options.state.read(options.saved.id).pipe(
+      Effect.mapError((cause) => errorFor("credentials", cause)),
+      Effect.flatMap((current) =>
+        current === undefined
+          ? errorFor("credentials", "Saved stack is missing")
+          : current.credentials === undefined
+            ? errorFor("credentials", "Stack credentials have not been established")
+            : Effect.succeed(current.credentials),
+      ),
+      Effect.withSpan("Owner.getStackCredentials"),
+    );
 
     const resolveCredentials = Effect.fn("Owner.resolveCredentials")(function* (input: unknown) {
       const creation = yield* Schema.decodeUnknownEffect(ServiceCreationInput)(input).pipe(
@@ -1402,6 +1415,7 @@ const makeOwnerWithDependencies = (
         restart: compositionRestart,
       },
       credentials,
+      getStackCredentials,
       snapshots: {
         saveSnapshot,
         restoreSnapshot,

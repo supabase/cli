@@ -105,7 +105,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   containerPort: (creation, name, port) =>
     name === "sql" && creation.config.poolMode === "session" ? 5432 : port,
   containerEntrypoint: () => "/usr/bin/tini",
-  startup: [
+  startupCommands: [
     {
       args: [],
       nativeExecutable: "prepare",

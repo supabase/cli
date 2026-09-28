@@ -142,20 +142,22 @@ const serviceError = (operation: string, cause: unknown) =>
 const widen = <C extends { readonly service: ServiceKind }>(
   isCreation: (value: unknown) => value is C,
   definition: ServiceDefinition<C>,
-): ServiceDefinition<ServiceCreation> => ({
-  prepare: (candidate) =>
-    isCreation(candidate)
-      ? (definition.prepare?.(candidate) ?? Effect.void)
-      : Effect.fail(serviceError("prepare", "Service kind cannot change during restart")),
-  launch: (context) =>
-    isCreation(context.config)
-      ? definition.launch({ ...context, config: context.config })
-      : Effect.fail(serviceError("launch", "Service kind cannot change during restart")),
-  removeData: (context) =>
-    isCreation(context.config)
-      ? definition.removeData({ ...context, config: context.config })
-      : Effect.fail(serviceError("destroy", "Service kind cannot change during restart")),
-});
+): ServiceDefinition<ServiceCreation> => {
+  return {
+    prepare: (candidate) =>
+      isCreation(candidate)
+        ? (definition.prepare?.(candidate) ?? Effect.void)
+        : Effect.fail(serviceError("prepare", "Service kind cannot change during restart")),
+    launch: (context) =>
+      isCreation(context.config)
+        ? definition.launch({ ...context, config: context.config })
+        : Effect.fail(serviceError("launch", "Service kind cannot change during restart")),
+    removeData: (context) =>
+      isCreation(context.config)
+        ? definition.removeData({ ...context, config: context.config })
+        : Effect.fail(serviceError("destroy", "Service kind cannot change during restart")),
+  };
+};
 
 const catalogRecipe = <C extends ServiceCreation>(
   creation: C,

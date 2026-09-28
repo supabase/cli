@@ -289,7 +289,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
       hostDestroyed += 1;
       return { runtimeCleanup: "complete" as const };
     }),
-    tools: { run: () => Effect.die("tool not used") },
+    commands: { run: () => Effect.die("command not used") },
   };
   return {
     stack,

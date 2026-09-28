@@ -4,7 +4,8 @@ import { Effect, FileSystem, Layer, Path, Redacted, Schema, Stream } from "effec
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import { tmpdir } from "node:os";
-import { open, postgres } from "./effect.ts";
+import { open } from "./effect.ts";
+import { postgres } from "./Commands.ts";
 import * as PromiseStack from "./index.ts";
 import { assertOwnerExited, captureOwnerPid } from "../tests/owner.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
@@ -110,7 +111,7 @@ it.live(
       expect((yield* mail.credentials()).url).toBe(credentials.url);
 
       const stdoutChunks: Array<Uint8Array> = [];
-      const tool = yield* stack.tools.run(postgres.psql({ major: 17 }), {
+      const tool = yield* stack.commands.run(postgres.psql({ major: 17 }), {
         args: ["--version"],
         stdout: (bytes) =>
           Effect.sync(() => {
@@ -145,14 +146,14 @@ it.live(
         path.join(pgProveRoot, "nested.sql"),
         "SELECT plan(1);\nSELECT pass('public pgProve');\nSELECT * FROM finish();\n",
       );
-      const extension = yield* stack.tools.run(postgres.psql({ major: 17 }), {
+      const extension = yield* stack.commands.run(postgres.psql({ major: 17 }), {
         args: ["--dbname", databaseUrl, "-c", "CREATE EXTENSION IF NOT EXISTS pgtap"],
         stdout: () => Effect.void,
         stderr: () => Effect.void,
       });
       expect(extension.exitCode).toBe(0);
       const pgProveOutput: Array<Uint8Array> = [];
-      const pgProve = yield* stack.tools.run(postgres.pgProve({ major: 17 }), {
+      const pgProve = yield* stack.commands.run(postgres.pgProve({ major: 17 }), {
         args: ["--dbname", databaseUrl, "--ext", ".sql", "main.sql", "--verbose"],
         pgProve: {
           mounts: [{ source: pgProveRoot, target: "/tests" }],
@@ -206,7 +207,7 @@ it.live(
             const databaseUrl = urls.databaseUrl;
             if (databaseUrl === undefined) return yield* Effect.die("Database URL missing");
             const promiseExtension = yield* Effect.tryPromise(() =>
-              client.tools.run(postgres.psql({ major: 17 }), {
+              client.commands.run(postgres.psql({ major: 17 }), {
                 args: ["--dbname", databaseUrl, "-c", "CREATE EXTENSION IF NOT EXISTS pgtap"],
                 stdout: () => {},
                 stderr: () => {},
@@ -216,7 +217,7 @@ it.live(
             const promiseProveOutput: Array<Uint8Array> = [];
             const promiseProveError: Array<Uint8Array> = [];
             const promiseProve = yield* Effect.tryPromise(() =>
-              client.tools.run(postgres.pgProve({ major: 17 }), {
+              client.commands.run(postgres.pgProve({ major: 17 }), {
                 args: ["--dbname", databaseUrl, "--ext", ".sql", "main.sql", "--verbose"],
                 pgProve: {
                   mounts: [{ source: pgProveRoot, target: "/tests" }],
@@ -240,7 +241,7 @@ it.live(
             ).toContain("public pgProve");
             const sqlOutput: Array<Uint8Array> = [];
             const sql = yield* Effect.tryPromise(() =>
-              client.tools.run(postgres.psql({ major: 17 }), {
+              client.commands.run(postgres.psql({ major: 17 }), {
                 args: ["--dbname", databaseUrl, "-At"],
                 stdin: Stream.toAsyncIterable(
                   Stream.make(new TextEncoder().encode("SELECT 42;\n")),
@@ -265,7 +266,7 @@ it.live(
               return yield* Effect.die("Snapshot source URL missing");
             const sourceUrl = sourceCredentials.databaseUrl;
             const seed = yield* Effect.tryPromise(() =>
-              client.tools.run(postgres.psql({ major: 17 }), {
+              client.commands.run(postgres.psql({ major: 17 }), {
                 args: [
                   "--dbname",
                   sourceUrl,
@@ -306,7 +307,7 @@ it.live(
             const restoredUrl = restoredCredentials.databaseUrl;
             const restoredOutput: Array<Uint8Array> = [];
             const restoredQuery = yield* Effect.tryPromise(() =>
-              client.tools.run(postgres.psql({ major: 17 }), {
+              client.commands.run(postgres.psql({ major: 17 }), {
                 args: ["--dbname", restoredUrl, "-Atc", "SELECT value FROM snapshot_rows"],
                 stdout: (bytes) => {
                   restoredOutput.push(bytes);

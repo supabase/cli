@@ -5,7 +5,7 @@ import {
   DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
   DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
 } from "../Defaults.ts";
-import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
+import { type ProcessRecipeSpec, type StartupCommand } from "./ProcessRecipe.ts";
 
 export const Config = Schema.Struct({
   databaseUrl: Schema.String,
@@ -27,6 +27,11 @@ export interface Endpoints extends Schema.Schema.Type<typeof Endpoints> {}
 export const Creation = serviceCreation("realtime", Config, Endpoints);
 
 export interface Creation extends Schema.Schema.Type<typeof Creation> {}
+
+export const initializationCommand = {
+  args: [],
+  containerEntrypoint: "/app/bin/prepare",
+} satisfies StartupCommand & { readonly containerEntrypoint: string };
 
 export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   service: "realtime",
@@ -76,6 +81,6 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   args: (_creation, _endpoints, context) =>
     Effect.succeed(context.container ? ["-s", "-g", "--", "/app/bin/server"] : []),
   mounts: () => Effect.succeed([]),
-  startup: [{ args: [], containerEntrypoint: "/app/bin/prepare" }],
+  startupCommands: [initializationCommand],
   containerEntrypoint: () => "/usr/bin/tini",
 });
