@@ -61,15 +61,16 @@ describe("CLI --help (text)", () => {
 
 describe("CLI --version (text)", () => {
   test("CLI prints bare semver on stdout", async () => {
+    const version = "2.99.0-beta.1";
     const logs = await captureLogs(() =>
       Effect.runPromise(
-        Command.runWith(rootCommand, { version: "2.99.0-beta.1" })(["--version"]).pipe(
+        Command.runWith(rootCommand, { version })(["--version"]).pipe(
           Effect.provide(builtinLayer(["--version"])),
         ) as Effect.Effect<void>,
       ),
     );
     expect(logs.length).toBeGreaterThanOrEqual(1);
-    expect(logs[0]).toMatch(/^\d+\.\d+\.\d+/);
+    expect(logs[0]).toBe(version);
     expect(logs[0]).not.toMatch(/supabase\s+v/i);
   });
 
