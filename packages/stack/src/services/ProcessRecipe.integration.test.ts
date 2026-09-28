@@ -74,7 +74,7 @@ const spec: ProcessRecipeSpec<TestCreation> = {
   args: () => Effect.succeed([]),
   env: () => Effect.succeed({}),
   mounts: () => Effect.succeed([]),
-  startup: [{ args: [] }],
+  startupCommands: [{ args: [] }],
 };
 
 const isPortOccupied = (port: number): Effect.Effect<boolean> =>
@@ -135,7 +135,7 @@ describe("ProcessRecipe launch cleanup", () => {
           const container: ContainerRuntime = {
             prepare: () => Effect.void,
             prepareImage: (image) => Effect.succeed(image),
-            launchTool: () =>
+            launchCommand: () =>
               Effect.gen(function* () {
                 const launch = yield* Ref.updateAndGet(startupLaunches, (value) => value + 1);
                 if (launch === 1) {
@@ -254,7 +254,7 @@ describe("ProcessRecipe launch cleanup", () => {
         };
         const nativeSpec: ProcessRecipeSpec<TestCreation> = {
           ...spec,
-          startup: [{ nativeExecutable: "postgrest", args: ["--version"] }],
+          startupCommands: [{ nativeExecutable: "postgrest", args: ["--version"] }],
         };
         const dependencies = {
           fs,
@@ -365,7 +365,7 @@ describe("ProcessRecipe launch cleanup", () => {
               }
               return { PORT: String(port) };
             }),
-          startup: [
+          startupCommands: [
             {
               nativeExecutable: path.relative(path.join(artifact.root, "bin"), process.execPath),
               args: [
@@ -419,7 +419,7 @@ const startupContainer = (tool: {
   prepare: () => Effect.void,
   prepareImage: (image) => Effect.succeed(image),
   launch: () => Effect.die("the main process must not launch after a failed startup"),
-  launchTool: () =>
+  launchCommand: () =>
     Effect.succeed({
       id: "startup-tool",
       ports: {},
@@ -650,7 +650,7 @@ const nativeRestRecipe = Effect.fn(function* (
       ...spec,
       env: (_creation, endpoints) =>
         Effect.succeed({ ...env, PORT: String(endpoints.get("http")?.port) }),
-      startup: [],
+      startupCommands: [],
       ...(nativeReadinessOutput === undefined ? {} : { nativeReadinessOutput }),
     },
   );
@@ -674,6 +674,7 @@ describe("process recipe startup", () => {
 
         const error = yield* Effect.flip(realtime.start);
 
+        expect(error).toMatchObject({ operation: "launch" });
         expect(error.message).toContain("realtime startup exited with 1");
         expect(error.message).toContain(postgrexFailure);
         expect(error.message).toContain(poolTimeout);

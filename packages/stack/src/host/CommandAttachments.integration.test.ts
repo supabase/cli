@@ -1,17 +1,17 @@
 import { expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Ref, Stream } from "effect";
 import { StackError } from "../Rpc.ts";
-import { postgres } from "../Tools.ts";
-import { makeToolAttachments } from "./ToolAttachments.ts";
+import { postgres } from "../Commands.ts";
+import { makeCommandAttachments } from "./CommandAttachments.ts";
 
-it.live("stopAll waits for an admitted tool to register and interrupt its runner", () =>
+it.live("stopAll waits for an admitted command to register and interrupt its runner", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const admissionStarted = yield* Deferred.make<void>();
       const releaseAdmission = yield* Deferred.make<void>();
       const runnerStarted = yield* Deferred.make<void>();
       const runnerFinalized = yield* Deferred.make<void>();
-      const attachments = yield* makeToolAttachments({
+      const attachments = yield* makeCommandAttachments({
         admit: Deferred.succeed(admissionStarted, undefined).pipe(
           Effect.andThen(Deferred.await(releaseAdmission)),
         ),
@@ -30,10 +30,13 @@ it.live("stopAll waits for an admitted tool to register and interrupt its runner
         attachments
           .run({
             attachmentId: "admitted",
-            tool: postgres.psql({ major: 17 }),
-            args: [],
-            env: {},
-            stdin: false,
+            command: {
+              type: "postgres",
+              command: postgres.psql({ major: 17 }),
+              args: [],
+              env: {},
+              stdin: false,
+            },
           })
           .pipe(Stream.runDrain),
       );

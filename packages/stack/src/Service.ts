@@ -490,6 +490,7 @@ export const makeService = <Config>(
       wake = false,
       guard: Effect.Effect<void, ServiceError> = Effect.void,
     ) {
+      yield* Effect.annotateCurrentSpan({ member_id: options.id });
       let existing = yield* SubscriptionRef.get(observations);
       if (!existing.registered) return yield* new ServiceDestroyed({ id: options.id });
       if (existing.lifecycle === "running") return;
@@ -645,6 +646,7 @@ export const makeService = <Config>(
     });
 
     const ready = Effect.fn("Service.ready")(function* () {
+      yield* Effect.annotateCurrentSpan({ member_id: options.id });
       const initial = yield* SubscriptionRef.get(observations);
       if (!initial.registered) return yield* new ServiceDestroyed({ id: options.id });
       const expectedRevision = yield* Ref.get(revision);

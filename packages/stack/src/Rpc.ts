@@ -2,7 +2,7 @@ import { Exit, Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/unstable/rpc";
 import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
 import { causeMessage, CompositionConfig, OrchestratorError } from "./Orchestrator.ts";
-import { PgProveOptions, PostgresTool } from "./Tools.ts";
+import { CommandInvocation } from "./Commands.ts";
 import { StackIdentityInput } from "./State.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 
@@ -75,12 +75,17 @@ const Log = Schema.Struct({
   bytes: Schema.Uint8ArrayFromBase64,
 });
 
-export const ToolEvent = Schema.TaggedUnion({
+export const CommandEvent = Schema.TaggedUnion({
   Attached: { attachmentId: Schema.String },
   Stdout: { bytes: Schema.Uint8ArrayFromBase64 },
   Stderr: { bytes: Schema.Uint8ArrayFromBase64 },
   Completed: { jobId: Schema.String, exitCode: Schema.Int },
 });
+export const RunCommandPayload = Schema.Struct({
+  attachmentId: Schema.String,
+  command: CommandInvocation,
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+export type RunCommandPayload = Schema.Schema.Type<typeof RunCommandPayload>;
 
 /** Instance and composition operations served by the owner. */
 export const OwnerRpc = RpcGroup.make(
@@ -139,20 +144,13 @@ export const OwnerRpc = RpcGroup.make(
 /** The private transport contract; lifecycle admission remains in the owner. */
 export const StackRpc = OwnerRpc.add(
   Rpc.make("shutdown", { payload: { destroy: Schema.Boolean }, error: StackError }),
-  Rpc.make("runTool", {
-    payload: {
-      attachmentId: Schema.String,
-      tool: PostgresTool,
-      args: Schema.Array(Schema.String),
-      env: Schema.Record(Schema.String, Schema.String),
-      pgProve: Schema.optionalKey(PgProveOptions),
-      stdin: Schema.Boolean,
-    },
-    success: ToolEvent,
+  Rpc.make("runCommand", {
+    payload: RunCommandPayload,
+    success: CommandEvent,
     error: StackError,
     stream: true,
   }),
-  Rpc.make("toolInput", {
+  Rpc.make("commandInput", {
     payload: { attachmentId: Schema.String, bytes: Schema.NullOr(Schema.Uint8ArrayFromBase64) },
     error: StackError,
   }),

@@ -2,7 +2,8 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { FetchHttpClient } from "effect/unstable/http";
 import { Effect, FileSystem, Layer, Option, Redacted, Ref, Stream } from "effect";
-import { postgres, type ServiceCreation } from "@supabase/stack/effect";
+import { type ServiceCreation } from "@supabase/stack/effect";
+import { postgres } from "@supabase/stack/commands";
 
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { streamPgDumpWithClient } from "./pg-dump.run.ts";
@@ -58,7 +59,7 @@ describe("managed pg_dump against a live stack", { timeout: 180_000 }, () => {
             PGPASSWORD: decodeURIComponent(connection.password),
             PGDATABASE: connection.pathname.slice(1),
           };
-          const setupResult = yield* stack.tools.run(postgres.psql({ major: 17 }), {
+          const setupResult = yield* stack.commands.run(postgres.psql({ major: 17 }), {
             args: ["-X", "-v", "ON_ERROR_STOP=1"],
             env,
             stdin: Stream.make(
