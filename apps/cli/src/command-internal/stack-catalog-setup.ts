@@ -1,10 +1,6 @@
 import { Context, Data, Effect, FileSystem, Layer, Path } from "effect";
-import {
-  type DatabaseInstance,
-  type ServiceCreationInput,
-  type ServiceInstance,
-  type Stack,
-} from "@supabase/stack/effect";
+import { type DatabaseInstance, type Stack } from "@supabase/stack/effect";
+import { initialization, type InitializationCommand } from "@supabase/stack/commands";
 import { Output } from "../shared/output/output.service.ts";
 import {
   actionability,
@@ -31,11 +27,6 @@ interface ServiceCredentials {
   readonly authDatabaseUrl: string;
   readonly storageDatabaseUrl: string;
 }
-
-type TemporaryServiceInstance =
-  | ServiceInstance<"auth">
-  | ServiceInstance<"storage">
-  | ServiceInstance<"realtime">;
 
 export class StackCatalogSetupError extends Data.TaggedError("StackCatalogSetupError")<{
   readonly message: string;
@@ -78,16 +69,6 @@ type StackCatalogSetupFailure =
   | MigrationVaultError
   | DbConnectError;
 
-const temporaryServiceError = (
-  operation: "start" | "destroy",
-  instance: TemporaryServiceInstance,
-  cause: unknown,
-): StackCatalogSetupError =>
-  new StackCatalogSetupError({
-    message: `temporary ${instance.service} service ${instance.id} failed to ${operation}: ${cause instanceof Error ? cause.message : String(cause)}`,
-    cause,
-  });
-
 const credential = (
   credentials: Readonly<Record<string, string>>,
   name: string,
@@ -98,54 +79,27 @@ const credential = (
     : Effect.succeed(value);
 };
 
-const serviceDefinition = (
+const serviceCommand = (
   service: DatabaseService,
   credentials: ServiceCredentials,
   storagePath: string,
-): Extract<ServiceCreationInput, { readonly service: DatabaseService }> => {
+): InitializationCommand => {
   switch (service) {
     case "auth":
-      return {
-        service,
-        config: {
-          databaseUrl: credentials.authDatabaseUrl,
-        },
-        endpoints: {},
-      };
+      return initialization.auth({
+        databaseUrl: credentials.authDatabaseUrl,
+      });
     case "storage":
-      return {
-        service,
-        config: {
-          databaseUrl: credentials.storageDatabaseUrl,
-          filePath: storagePath,
-        },
-        endpoints: {},
-      };
+      return initialization.storage({
+        databaseUrl: credentials.storageDatabaseUrl,
+        filePath: storagePath,
+      });
     case "realtime":
-      return {
-        service,
-        config: {
-          databaseUrl: credentials.databaseUrl,
-        },
-        endpoints: {},
-      };
+      return initialization.realtime({
+        databaseUrl: credentials.databaseUrl,
+      });
   }
 };
-
-const startTemporaryService = (
-  instance: TemporaryServiceInstance,
-): Effect.Effect<void, StackCatalogSetupError> =>
-  instance.start.pipe(
-    Effect.andThen(instance.ready),
-    Effect.mapError((cause) => temporaryServiceError("start", instance, cause)),
-  );
-
-const destroyTemporaryService = (
-  instance: TemporaryServiceInstance,
-): Effect.Effect<void, StackCatalogSetupError> =>
-  instance.destroy.pipe(
-    Effect.mapError((cause) => temporaryServiceError("destroy", instance, cause)),
-  );
 
 const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
   input: StackCatalogSetupInput,
@@ -177,14 +131,16 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
       yield* Effect.forEach(
         input.target.databaseServices,
         (service) =>
-          Effect.acquireUseRelease(
-            input.target.stack.services
-              .create(serviceDefinition(service, serviceCredentials, storagePath))
-              .pipe(Effect.mapError(catalogError)),
-            startTemporaryService,
-            destroyTemporaryService,
-          ),
-        { discard: true },
+          input.target.stack.commands
+            .run(serviceCommand(service, serviceCredentials, storagePath))
+            .pipe(
+              Effect.asVoid,
+              Effect.mapError(catalogError),
+              Effect.withSpan("StackCatalogSetup.initializeCatalogService", {
+                attributes: { service, operation: "initialize" },
+              }),
+            ),
+        { concurrency: "unbounded", discard: true },
       );
 
       const connection = parseConnectionString(hostDatabaseUrl);

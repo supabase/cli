@@ -4,7 +4,7 @@ import { Context, Deferred, Effect, FileSystem, Layer, Sink, Stream } from "effe
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as State from "./State.ts";
 import * as Owner from "./Owner.ts";
-import * as ToolRunner from "./host/ToolRunner.ts";
+import * as CommandRunner from "./host/CommandRunner.ts";
 import { bindControl, makeRuntime } from "./StackHost.ts";
 import { shutdownOwner } from "../tests/owner.ts";
 
@@ -74,7 +74,7 @@ it.live("retains saved state when destroy sweep fails and retries after engine r
       const owner = baseOwner;
       const acquired = yield* bindControl();
       const runnerLayer = yield* Layer.build(
-        ToolRunner.layer({
+        CommandRunner.layer({
           stackId: saved.id,
           root: `${root}/data`,
           cacheRoot: `${root}/cache`,
@@ -96,7 +96,10 @@ it.live("retains saved state when destroy sweep fails and retries after engine r
         acquired.server,
         acquired.closeConnections,
       ).pipe(
-        Effect.provideService(ToolRunner.Service, Context.get(runnerLayer, ToolRunner.Service)),
+        Effect.provideService(
+          CommandRunner.Service,
+          Context.get(runnerLayer, CommandRunner.Service),
+        ),
       );
       yield* runtime.serve;
       const failure = yield* shutdownOwner(runtime.access, true).pipe(Effect.flip);

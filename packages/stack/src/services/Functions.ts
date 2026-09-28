@@ -200,7 +200,7 @@ const makeSpec = (
           : [{ source: override, target: "/__supabase_bootstrap", readOnly: true }]),
       ];
     }),
-  startup: [],
+  startupCommands: [],
   prepare: (creation) =>
     bootstrap.write({ content: creation.config.bootstrap }).pipe(
       Effect.flatMap((target) => Ref.set(functionsRoot, path.dirname(target))),
