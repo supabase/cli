@@ -34,8 +34,9 @@ caching, preparation, and cancellation; the CLI owns the temporary instance clea
 
 ## Flags and output
 
-`--stack` and `--stack-id` are mutually exclusive. `--runtime` defaults to `auto` for new stacks;
-existing stacks reuse their persisted runtime, and an explicit mismatch fails. With no
+`--stack` and `--stack-id` are mutually exclusive. `--runtime` defaults to `auto` for new stacks,
+which selects the same runtime as `stack start` (Docker, then Podman, then native);
+existing stacks reuse their persisted runtime without probing, and an explicit mismatch fails. With no
 `--capability`, every enabled creation from the effective project configuration is prepared.
 Repeated `--capability` includes each capability's configured companion services (Storage/Imgproxy,
 Studio/Pgmeta, Analytics/Vector); requesting a disabled service fails before instance preparation. The legacy `-o/--output` flag is rejected; use

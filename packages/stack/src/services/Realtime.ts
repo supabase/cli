@@ -1,14 +1,14 @@
 import { Effect, Schema } from "effect";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
-import { databaseConnection, localJwtSecret } from "./ServiceConfig.ts";
+import { databaseConnection, requiredInput, localJwtSecret } from "./ServiceConfig.ts";
 import {
   DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
   DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
 } from "../Defaults.ts";
-import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
+import { type ProcessRecipeSpec, type StartupCommand } from "./ProcessRecipe.ts";
 
 export const Config = Schema.Struct({
-  databaseUrl: Schema.String,
+  databaseUrl: Schema.optionalKey(Schema.String),
   jwtSecret: Schema.optionalKey(Schema.String),
   jwks: Schema.optionalKey(Schema.String),
   dbEncryptionKey: Schema.optionalKey(Schema.String),
@@ -28,6 +28,11 @@ export const Creation = serviceCreation("realtime", Config, Endpoints);
 
 export interface Creation extends Schema.Schema.Type<typeof Creation> {}
 
+export const initializationCommand = {
+  args: [],
+  containerEntrypoint: "/app/bin/prepare",
+} satisfies StartupCommand & { readonly containerEntrypoint: string };
+
 export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   service: "realtime",
   executable: "bin/server",
@@ -35,14 +40,19 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   healthPath: "/healthcheck",
   env: (creation, endpoints, container) =>
     Effect.gen(function* () {
-      const db = yield* databaseConnection(creation.config.databaseUrl);
+      const databaseUrl = yield* requiredInput(
+        "realtime",
+        "databaseUrl",
+        creation.config.databaseUrl,
+      );
+      const db = yield* databaseConnection(databaseUrl);
       const http = endpoints.get("http");
       const rpc = endpoints.get("rpc");
       const jwt = creation.config.jwtSecret ?? localJwtSecret;
       return {
-        DATABASE_URL: creation.config.databaseUrl,
+        DATABASE_URL: databaseUrl,
         ...(http === undefined ? {} : { PORT: String(http.port) }),
-        DB_URL: creation.config.databaseUrl,
+        DB_URL: databaseUrl,
         DB_HOST: db.host,
         DB_PORT: db.port,
         DB_USER: db.username ?? "supabase_admin",
@@ -76,6 +86,6 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   args: (_creation, _endpoints, context) =>
     Effect.succeed(context.container ? ["-s", "-g", "--", "/app/bin/server"] : []),
   mounts: () => Effect.succeed([]),
-  startup: [{ args: [], containerEntrypoint: "/app/bin/prepare" }],
+  startupCommands: [initializationCommand],
   containerEntrypoint: () => "/usr/bin/tini",
 });

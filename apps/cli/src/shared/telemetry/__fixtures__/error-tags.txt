@@ -292,6 +292,8 @@ GenTypesMissingProjectConfigError
 GenTypesNetworkError
 GenTypesNetworkIdUnsupportedError
 GenTypesParseConfigError
+GenTypesToolFailedError
+GenTypesToolNotInstalledError
 GenTypesUnexpectedStatusError
 GenTypesWorkdirError
 GoChildExitError
@@ -524,10 +526,10 @@ SsoUpdateUnexpectedStatusError
 StackBootstrapError
 StackCatalogSetupError
 StackConfigError
-StackFunctionsBundleError
 StackFunctionsEnvError
 StackNativeEngineError
 StackRoutingError
+StackRuntimeSelectionError
 StackRuntimeUnavailableError
 StackStorageCapabilityError
 StackStorageUnavailableError
