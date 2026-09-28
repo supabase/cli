@@ -33,10 +33,14 @@ Secrets needed by enabled services are passed to the runtime. State and service 
 use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project directory
 `supabase/.temp/stack-uploads/<stack-id>/`. Functions preparation may build the project's source.
 
-For a new stack, `--runtime auto` selects native on Linux x64/arm64 and macOS arm64, and Docker
-elsewhere. An existing stack keeps its saved runtime. Explicit runtime selection has no fallback.
-When Docker is unreachable, the reported failure suggests `--runtime native` for a new stack on
-platforms where native is the default runtime.
+For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
+Podman when `podman info` reaches its engine, then native on Linux x64/arm64 and macOS arm64. Each
+probe is bounded by 10 seconds. Without a reachable engine on other platforms, the command fails and
+asks the user to start Docker or Podman. When auto selection skips Docker, an info line names the
+saved Podman or native runtime and how to switch to Docker. An existing stack keeps its saved
+runtime and runs no probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
+When a requested Docker runtime is unreachable, the reported failure suggests starting Docker, and
+`--runtime native` for a new stack on platforms that support native.
 
 Native startup refuses root because PostgreSQL `initdb` cannot run as root, unless a Claude Code
 or Modal Sandbox is detected or `SUPABASE_NATIVE_POSTGRES_USER` names a non-root user. PostgreSQL then runs

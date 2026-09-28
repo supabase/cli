@@ -12,7 +12,6 @@ import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { parseGoDuration } from "./go-duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
 
-declare const SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 import {
   decryptAuthSecret,
   resolveJwtSecret,
@@ -1136,26 +1135,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const createCreations = (
         stackId: string,
       ): Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError> =>
-        Effect.gen(function* () {
-          const bootstrap = validatedConfig.edge_runtime.enabled
-            ? yield* typeof SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
-                ? Effect.succeed(SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE)
-                : Effect.tryPromise({
-                    try: () => import("./stack-functions-bundler.ts"),
-                    catch: (cause) =>
-                      new StackConfigError({
-                        message: `Unable to load Functions bundler: ${String(cause)}`,
-                      }),
-                  }).pipe(
-                    Effect.flatMap(({ bundleStackFunctionsServeMainTemplate }) =>
-                      bundleStackFunctionsServeMainTemplate().pipe(
-                        Effect.mapError(
-                          (cause) => new StackConfigError({ message: cause.message }),
-                        ),
-                      ),
-                    ),
-                  )
-            : undefined;
+        Effect.sync(() => {
           return [
             {
               service: "database",
@@ -1304,7 +1284,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   } satisfies ServiceCreationType,
                 ]
               : []),
-            ...(validatedConfig.edge_runtime.enabled && bootstrap !== undefined
+            ...(validatedConfig.edge_runtime.enabled
               ? [
                   {
                     service: "functions" as const,
@@ -1313,7 +1293,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       filesRoot: projectRoot,
                       functions,
                       env: functionsEnv,
-                      bootstrap,
                       policy: validatedConfig.edge_runtime.policy,
                       verifyJwt: true,
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),

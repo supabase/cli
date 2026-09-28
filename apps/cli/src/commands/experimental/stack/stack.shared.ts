@@ -11,6 +11,7 @@ import {
   StackApi,
   stackApiLayer,
 } from "../../../command-internal/stack-api.ts";
+import type { StackRuntime } from "../../../command-internal/stack-runtime.ts";
 
 export { skippedRuntimeCleanupWarning, StackApi, stackApiLayer };
 
@@ -22,7 +23,7 @@ export interface StackTarget {
   readonly projectRoot: string;
   readonly id?: StackId;
   readonly name?: string;
-  readonly runtime?: "native" | "docker" | "podman";
+  readonly runtime?: StackRuntime;
   readonly hostRunning: boolean;
 }
 
@@ -42,7 +43,7 @@ interface StackTargetResolverShape {
     readonly projectRoot: string;
     readonly name?: string;
     readonly id?: string;
-    readonly runtime: "auto" | "docker" | "native";
+    readonly runtime: "auto" | StackRuntime;
   }) => Effect.Effect<StackTarget, StackTargetError>;
 }
 
@@ -88,10 +89,8 @@ export const rejectStackOutput = (
       )
     : Effect.void;
 
-const runtimeForFlag = (
-  runtime: "auto" | "docker" | "native",
-): StackTarget["runtime"] | undefined =>
-  runtime === "auto" ? undefined : runtime === "docker" ? "docker" : "native";
+const runtimeForFlag = (runtime: "auto" | StackRuntime): StackTarget["runtime"] =>
+  runtime === "auto" ? undefined : runtime;
 
 const runtimeMatches = (
   saved: StackTarget["runtime"],
@@ -109,7 +108,7 @@ export const stackTargetResolverLayer = Layer.effect(
       readonly projectRoot: string;
       readonly name?: string;
       readonly id?: string;
-      readonly runtime: "auto" | "docker" | "native";
+      readonly runtime: "auto" | StackRuntime;
     }) {
       const id = input.id === undefined ? undefined : yield* validateStackId(input.id);
       const requestedRuntime = runtimeForFlag(input.runtime);

@@ -6,7 +6,6 @@ import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { homedir, tmpdir } from "node:os";
 
 import { spawnSupabase } from "../../../../tests/helpers/cli.ts";
-import { bundleStackFunctionsServeMainTemplate } from "../../../command-internal/stack-functions-bundler.ts";
 import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { destroyTestStack } from "../../../../../../packages/stack/tests/stack-cleanup.ts";
 
@@ -66,7 +65,6 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
     runtime,
   });
   yield* Effect.addFinalizer(() => destroyTestStack(stack));
-  const bootstrap = yield* bundleStackFunctionsServeMainTemplate();
   yield* stack.composition.supabase([
     {
       service: "database",
@@ -89,7 +87,6 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
             service: "functions" as const,
             config: {
               functionsRoot,
-              bootstrap,
               jwtSecret,
               verifyJwt: true,
               env: { CUSTOM_VALUE: "original" },
@@ -116,7 +113,6 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
       service: "functions",
       config: {
         functionsRoot,
-        bootstrap,
         jwtSecret,
         verifyJwt: true,
         env: { CUSTOM_VALUE: "excluded" },
