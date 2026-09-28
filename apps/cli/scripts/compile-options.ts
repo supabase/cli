@@ -11,6 +11,9 @@ export const compileOptions = {
   bytecode: true,
   bytecodeDepth: 2,
   format: "esm" as const,
+  // `oxfmt` is an optional peer of `@supabase/postgrest-typegen`, loaded only by the default
+  // TypeScript formatter; `gen types` supplies its own, so the binary ships without it.
+  external: ["oxfmt"],
 };
 
 /**
