@@ -49,12 +49,9 @@ const shadowError = (cause: { readonly message: string }) =>
 const causeMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-const acquireNamespace = Effect.fn("StackShadow.acquireNamespace")(function* (opts: ShadowOptions) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const api = yield* StackApi;
-  const settings = yield* CommandSettings;
-  const runtime = yield* selectStackRuntime(opts.runtime ?? (yield* stackProjectRuntime)).pipe(
+/** Selects the shadow runtime: the project stack's saved runtime, otherwise automatic selection. */
+export const stackShadowRuntime = Effect.gen(function* () {
+  return yield* selectStackRuntime(yield* stackProjectRuntime).pipe(
     Effect.mapError(
       (error) =>
         new ShadowDbError({
@@ -63,6 +60,14 @@ const acquireNamespace = Effect.fn("StackShadow.acquireNamespace")(function* (op
         }),
     ),
   );
+});
+
+const acquireNamespace = Effect.fn("StackShadow.acquireNamespace")(function* (opts: ShadowOptions) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const api = yield* StackApi;
+  const settings = yield* CommandSettings;
+  const runtime = opts.runtime ?? (yield* stackShadowRuntime);
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-shadow-" });
   const stack = yield* api.create({
     projectRoot: root,

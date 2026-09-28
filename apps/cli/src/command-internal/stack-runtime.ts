@@ -40,6 +40,7 @@ const engineReachable = (
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
+        forceKillAfter: "1 second",
       }),
     )
     .pipe(
