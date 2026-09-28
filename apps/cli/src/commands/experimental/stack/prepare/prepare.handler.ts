@@ -2,7 +2,6 @@ import { Cause, Effect, Exit, Option, Path } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import {
@@ -15,7 +14,7 @@ import {
 } from "../stack.shared.ts";
 import type { StackPrepareFlags } from "./prepare.command.ts";
 import { StackCommandPrepareError, stackPrepareError } from "./prepare.errors.ts";
-import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
+import { selectStackRuntime } from "../../../../command-internal/stack-runtime.ts";
 
 type PreparedCapability = {
   readonly capability: string;
@@ -52,7 +51,6 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
     const output = yield* Output;
     const settings = yield* CommandSettings;
     const path = yield* Path.Path;
-    const runtime = yield* RuntimeInfo;
     const resolver = yield* StackTargetResolver;
     const api = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
@@ -88,7 +86,17 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
               projectRoot: target.projectRoot,
               stateRoot,
               cacheRoot,
-              runtime: target.runtime ?? defaultStackRuntime(runtime),
+              runtime: yield* selectStackRuntime(target.runtime).pipe(
+                Effect.mapError(
+                  (error) =>
+                    new StackCommandPrepareError({
+                      reason: "runtime",
+                      message: error.message,
+                      suggestion: error.suggestion,
+                      cause: error,
+                    }),
+                ),
+              ),
               ...(target.name === undefined ? {} : { name: target.name }),
             })
             .pipe(Effect.mapError(stackPrepareError))

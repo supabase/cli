@@ -6,7 +6,7 @@ import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { skippedRuntimeCleanupWarning, StackApi } from "./stack-api.ts";
 import { StackCatalogSetup } from "./stack-catalog-setup.ts";
 import { stackProjectRuntime } from "./stack-local-database.ts";
-import { defaultStackRuntime } from "./stack-runtime.ts";
+import { selectStackRuntime } from "./stack-runtime.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
 import { toPostgresURL } from "./postgres-url.ts";
 import {
@@ -54,8 +54,15 @@ const acquireNamespace = Effect.fn("StackShadow.acquireNamespace")(function* (op
   const path = yield* Path.Path;
   const api = yield* StackApi;
   const settings = yield* CommandSettings;
-  const runtimeInfo = yield* RuntimeInfo;
-  const runtime = opts.runtime ?? (yield* stackProjectRuntime) ?? defaultStackRuntime(runtimeInfo);
+  const runtime = yield* selectStackRuntime(opts.runtime ?? (yield* stackProjectRuntime)).pipe(
+    Effect.mapError(
+      (error) =>
+        new ShadowDbError({
+          message: `${error.message} ${error.suggestion}`,
+          reason: "docker_daemon",
+        }),
+    ),
+  );
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-shadow-" });
   const stack = yield* api.create({
     projectRoot: root,

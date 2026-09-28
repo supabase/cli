@@ -1,6 +1,6 @@
 import { endpointReports } from "../stack-endpoints.format.ts";
 import { readStackFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
-import { defaultStackRuntime } from "../../../../command-internal/stack-runtime.ts";
+import { selectStackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
 import {
   resolveNativePostgresUser,
@@ -18,7 +18,6 @@ import {
 } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { readDbToml } from "../../../../command-internal/db-config.toml-read.ts";
 import { StackCatalogSetup } from "../../../../command-internal/stack-catalog-setup.ts";
 import {
@@ -253,7 +252,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
   const body = Effect.gen(function* () {
     const output = yield* Output;
     const settings = yield* CommandSettings;
-    const runtime = yield* RuntimeInfo;
     const resolver = yield* StackTargetResolver;
     const stackApi = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
@@ -273,7 +271,17 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         runtime: flags.runtime,
       })
       .pipe(Effect.mapError(mapTargetError));
-    const selectedRuntime = target.runtime ?? defaultStackRuntime(runtime);
+    const selectedRuntime = yield* selectStackRuntime(target.runtime).pipe(
+      Effect.mapError(
+        (error) =>
+          new StackCommandStartError({
+            reason: "runtime",
+            message: error.message,
+            suggestion: error.suggestion,
+            cause: error,
+          }),
+      ),
+    );
     const postgresUser = yield* resolveNativePostgresUser(selectedRuntime);
     const ensurePostgresUser =
       postgresUser._tag === "Unavailable"

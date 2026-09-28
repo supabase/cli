@@ -528,6 +528,7 @@ StackFunctionsBundleError
 StackFunctionsEnvError
 StackNativeEngineError
 StackRoutingError
+StackRuntimeSelectionError
 StackRuntimeUnavailableError
 StackStorageCapabilityError
 StackStorageUnavailableError

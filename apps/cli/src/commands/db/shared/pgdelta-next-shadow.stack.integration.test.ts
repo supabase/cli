@@ -4,6 +4,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { Effect, FileSystem, Layer, Option } from "effect";
 
 import { mockCommandSettings, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import { containerEngineSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
@@ -109,6 +110,10 @@ describe("pg-delta next stack shadow provisioning", () => {
           Layer.provide(Layer.succeed(ExperimentalFlag, false)),
           Layer.provide(Layer.succeed(NetworkIdFlag, Option.none())),
           Layer.provide(Layer.succeed(CliArgs, { args: [] })),
+          // Without a reachable container engine, automatic selection keeps the shadows native.
+          Layer.provide(
+            containerEngineSpawner({ docker: "missing", podman: "missing" }).hidingLayer,
+          ),
           Layer.provide(BunServices.layer),
         );
         const services = Layer.mergeAll(

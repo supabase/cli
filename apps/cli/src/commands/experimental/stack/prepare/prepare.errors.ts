@@ -7,7 +7,7 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 export class StackCommandPrepareError extends Data.TaggedError("ExperimentalStackPrepareError")<{
-  readonly reason: "flags" | "invalid-config" | "artifact" | "lifecycle" | "unknown";
+  readonly reason: "flags" | "invalid-config" | "runtime" | "artifact" | "lifecycle" | "unknown";
   readonly message: string;
   readonly suggestion?: string;
   readonly cause?: unknown;
@@ -19,6 +19,8 @@ export class StackCommandPrepareError extends Data.TaggedError("ExperimentalStac
       case "invalid-config":
       case "lifecycle":
         return actionability.invalidConfig;
+      case "runtime":
+        return actionability.dockerNotRunning;
       case "artifact":
         return actionability.externalNetwork;
       case "unknown":

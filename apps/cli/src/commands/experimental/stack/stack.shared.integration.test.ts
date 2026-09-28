@@ -15,7 +15,7 @@ type TargetInput = {
   readonly projectRoot: string;
   readonly name?: string;
   readonly id?: string;
-  readonly runtime: "auto" | "docker" | "native";
+  readonly runtime: "auto" | "docker" | "podman" | "native";
 };
 
 type DiscoveredStack = Effect.Success<
@@ -115,6 +115,20 @@ describe("stack target resolver", () => {
           }
         }
       }
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("carries an explicit Podman runtime onto a new stack target", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-target-podman-" });
+      const target = yield* resolveTarget(resolverLayer([], root, path.join(root, ".supabase")), {
+        projectRoot: root,
+        runtime: "podman",
+      });
+      expect(target).toMatchObject({ runtime: "podman", hostRunning: false });
+      expect(target.id).toBeUndefined();
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

@@ -16,9 +16,8 @@ import { readDbToml } from "./db-config.toml-read.ts";
 import { StackCatalogSetup } from "./stack-catalog-setup.ts";
 import { resolveExperimentalWithProjectEnv } from "./global-flags.ts";
 import { applyStackMigrateAndSeed, applyStackWebhooksOnly } from "./stack-bootstrap.ts";
-import { defaultStackRuntime } from "./stack-runtime.ts";
+import { selectStackRuntime } from "./stack-runtime.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import type { PgConnInput } from "./db-connection.service.ts";
 
 type Settings = CommandSettings["Service"];
@@ -220,7 +219,6 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
   const api = yield* StackApi;
   const settings = yield* CommandSettings;
   const path = yield* Path.Path;
-  const runtime = yield* RuntimeInfo;
   const fs = yield* FileSystem.FileSystem;
   const output = yield* Output;
   const config = yield* loadStackConfig(settings.workdir).pipe(Effect.mapError(startFailed));
@@ -236,7 +234,16 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
             projectRoot: settings.workdir,
             stateRoot: stateRoot(settings, path),
             cacheRoot: cacheRoot(settings, path),
-            runtime: defaultStackRuntime(runtime),
+            runtime: yield* selectStackRuntime(undefined).pipe(
+              Effect.mapError(
+                (error) =>
+                  new LocalDbRunningError({
+                    message: `failed to start local database: ${error.message}`,
+                    daemonDown: true,
+                    suggestion: error.suggestion,
+                  }),
+              ),
+            ),
           })
           .pipe(Effect.mapError(startFailed))
       : yield* api
