@@ -51,7 +51,8 @@ Lazy services with idle policies stop after 60 seconds without traffic, Studio a
 service that a running service depends on, such as pg-meta for Studio, stays up until that
 dependent stops. Functions has no automatic idle stop. `--eager` makes all selected services eager.
 Changes to activation policy take effect after stopping and starting the stack, including when a
-later invocation omits an earlier `--eager` flag. `--preparation` selects on-demand or background artifact preparation.
+later invocation omits an earlier `--eager` flag. `--preparation` selects on-demand or background
+artifact preparation.
 
 When Functions is selected, the CLI reads and validates `supabase/functions/.env`, ignoring reserved
 `SUPABASE_*` entries. `edge_runtime.secrets` overrides that file, while `functions.<name>.env`
