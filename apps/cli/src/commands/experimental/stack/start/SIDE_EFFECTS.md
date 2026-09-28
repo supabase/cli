@@ -9,11 +9,12 @@ It creates or resumes the stack for the project and optional `--stack` name, or 
 For a new stack or a stopped existing stack, the CLI loads the target project's
 `supabase/config.toml`, supported environment overrides, and project dotenv files. It validates the
 supported configuration before creating service definitions. When every member of the existing
-composition is running and healthy, or armed to wake, start reports its current endpoints and
-returns without reading or applying project configuration. When the database is running and every
-other member is running with any health, starting, or armed to wake, start notes that configuration
-changes apply after stop and start, then waits for readiness through the saved composition, again
-without reading project configuration.
+composition is running and healthy, or armed to wake and not already starting, start reports its
+current endpoints and returns without reading or applying project configuration. When the database
+is running and every other member is running with any health, starting, or armed to wake, start
+notes that configuration changes apply after stop and start, starts the saved composition, and waits
+until every member that was running or starting is ready, again without reading project
+configuration.
 
 If the stack is otherwise in a partial lifecycle state, start fails with guidance to stop the stack
 and start it again before applying configuration.
