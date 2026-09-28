@@ -427,7 +427,17 @@ flowchart TB
     end
 ```
 
-Keep Effect RPC as the transport initially. Its handlers should mostly delegate to the same operations used by internal components. Composition startup calls the executors directly, not RPC back into its own host. Replacing RPC with handwritten messages would still require framing, validation, errors and stream transport; that replacement is not part of this simplification.
+Keep Effect RPC as the transport initially. Composition startup calls the executors directly, not RPC back into its own host. Replacing RPC with handwritten messages would still require framing, validation, errors and stream transport; that replacement is not part of this simplification.
+
+| Module         | Responsibility                                                                                                                                                                     |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `StackHost`    | Process lifetime: signals, control-port claim, startup container sweep, shutdown state machine, `/identity` and `/rpc`; serves the owner's handlers plus shutdown and command RPCs |
+| `Owner`        | Builds the instance and composition RPC handlers, maps domain failures to `StackError` once, persists definitions and adapts recipes, listeners and the Supabase composition       |
+| `Orchestrator` | The single in-memory registry of instance entries and the composition: admission, start plans, activity, idle sleep and exit watchers                                              |
+| `Network`      | Public listeners, the shared API proxy and port claims                                                                                                                             |
+| `host/*`       | Service-specific endpoint routes, rendered connection values and stack credential rules                                                                                            |
+
+Definition changes (service creation and destruction, composition configuration and Supabase composition) run one at a time in the owner's scope, and a caller that disconnects stops waiting. Creation saves the instance before registering it and removes the saved instance again if registration fails. Until registration completes, a concurrent `get` or `list` can already return the new id, while `start` or `status` for it fails with an unknown-instance error.
 
 ### Proposed RPC surface
 
@@ -600,7 +610,7 @@ The endpoint renderer produces host-facing or stack-runtime-facing connection va
 
 Mutable files live under the stack namespace; container resources carry equivalent identity labels. Each managed container is addressed by its unique preassigned launch name for its whole owned lifetime; renaming a managed container is outside the lifecycle contract. Shared immutable artifact caches and host-wide port coordination are justified exceptions. User-requested exports can live at their chosen destination.
 
-The StackHost serializes updates to saved instance definitions, composition wiring and resource assignments. Lifecycle, health, active operations, runtime handles and errors remain in the live instance observation. There is no durable lifecycle/operation journal, projected capability state or duplicate stack lifecycle state.
+The owner serializes updates to saved instance definitions, composition wiring and resource assignments. Lifecycle, health, active operations, runtime handles and errors remain in the live instance observation. There is no durable lifecycle/operation journal, projected capability state or duplicate stack lifecycle state.
 
 Persistence supports reopening normally stopped instances, not reconstructing interrupted execution after owner loss. Do not infer current runtime state from saved configuration. When the host is absent or unreachable, expose the saved definitions and ports separately from unavailable live observations. Container cleanup after owner loss uses live daemon labels, not persisted process state; service recovery, resource adoption, interrupted-operation replay and private-format migration machinery are outside scope.
 

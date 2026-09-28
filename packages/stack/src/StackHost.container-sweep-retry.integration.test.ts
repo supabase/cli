@@ -81,11 +81,6 @@ it.live("retains saved state when destroy sweep fails and retries after engine r
       const baseOwner = yield* Layer.build(ownerLayer).pipe(
         Effect.map((context) => Context.get(context, Owner.Service)),
       );
-      const ownership = {
-        engine: "docker" as const,
-        stackId: saved.id,
-        root: `${root}/data`,
-      };
       const owner = baseOwner;
       const acquired = yield* acquireHost(state, saved.id);
       const runnerLayer = yield* Layer.build(
@@ -106,13 +101,11 @@ it.live("retains saved state when destroy sweep fails and retries after engine r
         },
         acquired.server,
         acquired.closeConnections,
-        ownership,
       ).pipe(
         Effect.provideService(
           CommandRunner.Service,
           Context.get(runnerLayer, CommandRunner.Service),
         ),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, engine),
       );
       yield* runtime.serve;
       const client = yield* clientFor(runtime.endpoint.port);

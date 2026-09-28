@@ -1,28 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import {
-  Cause,
-  Context,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  Layer,
-  Option,
-  Ref,
-  Schema,
-  Scope,
-  Stream,
-} from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Scope, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { RegisteredInstance } from "./Orchestrator.ts";
 import { makeService, ServiceError } from "./Service.ts";
 
 const failure = (message: string) => new ServiceError({ operation: "fixture", message });
-const makeTestOrchestrator = () =>
-  Layer.build(Layer.fresh(Orchestrator.layer)).pipe(
-    Effect.map((context) => Context.get(context, Orchestrator.Service)),
-  );
+const makeTestOrchestrator = () => Orchestrator.make<RegisteredInstance>();
 const makeInstance = (
   orchestrator: Orchestrator.Interface,
   id: string,
