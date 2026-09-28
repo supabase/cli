@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Redacted, Stream } from "effect";
+import { Deferred, Effect, Fiber, FileSystem, Layer, Option, Redacted, Stream } from "effect";
 import {
   DEFAULT_LOCAL_DATABASE_PASSWORD,
   DEFAULT_LOCAL_JWT_SECRET,
@@ -68,6 +68,7 @@ const instance = (
   wakeEnabled: () => boolean,
   health: () => "starting" | "healthy" | "unhealthy" | undefined = () =>
     lifecycle() === "running" ? "healthy" : undefined,
+  ready: () => Effect.Effect<void, StackError> = () => Effect.void,
 ): ServiceInstances[ServiceCreation["service"]] => {
   const status = (config: ServiceCreation) => ({
     id,
@@ -90,7 +91,7 @@ const instance = (
   const base = {
     id,
     start: Effect.void,
-    ready: Effect.void,
+    ready: Effect.suspend(ready),
     stop: Effect.void,
     restart: () => Effect.void,
     destroy: Effect.void,
@@ -190,6 +191,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   let lifecycle: "stopped" | "running" = "stopped";
   let activations = new Map<string, "eager" | "lazy">();
   const memberStatuses = new Map<string, MemberStatus>();
+  const memberReadiness = new Map<string, Effect.Effect<void, StackError>>();
   let savedCredentials: StackCredentials = {
     jwtSecret: DEFAULT_LOCAL_JWT_SECRET,
     postgresRootKey: DEFAULT_POSTGRES_ROOT_KEY,
@@ -271,6 +273,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
                 if (status?.health !== undefined) return status.health;
                 return (status?.lifecycle ?? lifecycle) === "running" ? "healthy" : undefined;
               },
+              () => memberReadiness.get(id) ?? Effect.void,
             );
           });
           activations = new Map(members.map(({ id }) => [id, "eager"]));
@@ -335,6 +338,10 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     },
     setMemberStatus(id: string, status: MemberStatus) {
       memberStatuses.set(id, status);
+    },
+    /** Readiness survives composition start, which awaits only eager members. */
+    setMemberReadiness(id: string, ready: Effect.Effect<void, StackError>) {
+      memberReadiness.set(id, ready);
     },
   };
 };
@@ -784,37 +791,98 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("resumes a running stack with unhealthy or booting members through readiness", () =>
+  it.live(
+    "reports a resumed stack ready only after its unhealthy and booting members are ready",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-resume-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "resume"\n');
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        const rest = fixture.members.find(({ service }) => service === "rest");
+        const auth = fixture.members.find(({ service }) => service === "auth");
+        if (rest === undefined || auth === undefined)
+          return yield* Effect.die("Expected REST and Auth members");
+        fixture.setMemberStatus(rest.id, { lifecycle: "running", health: "unhealthy" });
+        fixture.setMemberStatus(auth.id, { lifecycle: "starting", health: "starting" });
+        const gate = yield* Deferred.make<void>();
+        const awaited = yield* Effect.forEach([rest.id, auth.id], (id) =>
+          Deferred.make<void>().pipe(
+            Effect.tap((waiting) =>
+              Effect.sync(() =>
+                fixture.setMemberReadiness(
+                  id,
+                  Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(gate))),
+                ),
+              ),
+            ),
+          ),
+        );
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "resume"\n[auth]\nsigning_keys_path = "missing-keys.json"\n',
+        );
+        const output = mockOutput();
+
+        const resuming = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture, output)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const firstSettled = yield* Effect.raceFirst(
+          Fiber.join(resuming).pipe(Effect.as("reported" as const)),
+          Effect.forEach(awaited, Deferred.await, { discard: true }).pipe(
+            Effect.as("awaiting readiness" as const),
+          ),
+        );
+        expect(firstSettled).toBe("awaiting readiness");
+        expect(fixture.compositionStarts).toBe(2);
+        expect(output.messages).not.toContainEqual({ type: "success", message: "Stack is ready." });
+        yield* Deferred.succeed(gate, undefined);
+        yield* Fiber.join(resuming);
+
+        expect(fixture.composed).toBe(1);
+        expect(fixture.stopped).toBe(0);
+        expect(output.messages).toContainEqual({
+          type: "info",
+          message:
+            "Resuming the saved stack services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
+        });
+        expect(output.messages).toContainEqual({ type: "success", message: "Stack is ready." });
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("fails a start while a woken lazy member is still booting and never becomes ready", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-resume-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-booting-" });
       yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "resume"\n');
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "booting"\n');
       const fixture = fakeStack();
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-      const rest = fixture.members.find(({ service }) => service === "rest");
       const auth = fixture.members.find(({ service }) => service === "auth");
-      if (rest === undefined || auth === undefined)
-        return yield* Effect.die("Expected REST and Auth members");
-      fixture.setMemberStatus(rest.id, { lifecycle: "running", health: "unhealthy" });
+      if (auth === undefined) return yield* Effect.die("Expected an Auth member");
       fixture.setMemberStatus(auth.id, { lifecycle: "starting", health: "starting" });
-      yield* fs.writeFileString(
-        `${root}/supabase/config.toml`,
-        'project_id = "resume"\n[auth]\nsigning_keys_path = "missing-keys.json"\n',
+      fixture.setMemberReadiness(
+        auth.id,
+        Effect.fail(
+          new StackError({ operation: "service.ready", message: "auth HTTP readiness timed out" }),
+        ),
       );
       const output = mockOutput();
 
-      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture, output)));
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture, output)),
+        Effect.flip,
+      );
 
-      expect(fixture.compositionStarts).toBe(2);
-      expect(fixture.composed).toBe(1);
-      expect(fixture.stopped).toBe(0);
-      expect(output.messages).toContainEqual({
-        type: "info",
-        message:
-          "Resuming the saved stack services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
-      });
-      expect(output.messages).toContainEqual({ type: "success", message: "Stack is ready." });
+      expect(error).toBeInstanceOf(StackCommandStartError);
+      expect(error).toMatchObject({ message: "auth HTTP readiness timed out" });
+      expect(output.messages.map(({ message }) => message)).not.toContain("Stack is ready.");
+      expect(output.messages.map(({ message }) => message)).not.toContain(
+        "Stack is already running with its current services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
+      );
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
