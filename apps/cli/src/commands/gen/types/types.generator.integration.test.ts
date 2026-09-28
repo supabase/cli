@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Path } from "effect";
 import type { DbSession } from "../../../command-internal/db-connection.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -16,7 +16,7 @@ const unused = (what: string) => () => Effect.die(`${what} is not part of this t
 
 /** A connection whose every introspection query returns no rows: a valid, empty database. */
 const emptyDatabase = Layer.succeed(DbConnection, {
-  connect: (_cfg, options) =>
+  connect: () =>
     Effect.succeed<DbSession>({
       exec: unused("exec"),
       execBatch: unused("execBatch"),
@@ -24,8 +24,6 @@ const emptyDatabase = Layer.succeed(DbConnection, {
       queryRaw: unused("queryRaw"),
       extensionExists: unused("extensionExists"),
       copyToCsv: unused("copyToCsv"),
-      isLocal: options.isLocal,
-      dnsResolver: options.dnsResolver,
     }),
 });
 
@@ -57,7 +55,7 @@ const input = (lang: string): GenTypesGenerateInput => ({
     database: "postgres",
   },
   isLocal: true,
-  dnsResolver: Option.none(),
+  dnsResolver: "native",
   lang,
   includedSchemas: ["public"],
   options: {},
@@ -140,8 +138,9 @@ describe.skipIf(process.platform === "win32")(
           expect(error.message).toContain("exited with code 78");
           expect(error.message).toContain("needs Dart 3.8.0 or newer");
         }).pipe(
-          Effect.provide(layerIn(cwd, { PATH: `${bin}:/usr/bin:/bin` })),
-          Effect.provide(BunServices.layer),
+          Effect.provide(
+            Layer.merge(layerIn(cwd, { PATH: `${bin}:/usr/bin:/bin` }), BunServices.layer),
+          ),
         ),
       ),
     );

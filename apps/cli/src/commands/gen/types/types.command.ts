@@ -65,7 +65,7 @@ const GEN_TYPES_RESERVED_FLAG_NAMES: ReadonlyArray<string> = [
   "s",
   "postgrest-v9-compat",
   "query-timeout",
-  ...GLOBAL_FLAGS.map((flag) => flag.name),
+  ...GLOBAL_FLAGS.map((flag) => flag.id),
   ...PERSISTENT_VALUE_FLAG_NAMES,
   ...PERSISTENT_VALUE_FLAG_SHORTHANDS.keys(),
   "help",
