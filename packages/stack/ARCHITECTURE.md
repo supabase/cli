@@ -437,7 +437,7 @@ Keep Effect RPC as the transport initially. Composition startup calls the execut
 | `Network`      | Public listeners, the shared API proxy and port claims                                                                                                                       |
 | `host/*`       | Service-specific endpoint routes, rendered connection values and stack credential rules                                                                                      |
 
-Definition changes (service creation and destruction, composition configuration and Supabase composition) run one at a time in the owner's scope. A caller that disconnects stops waiting; the owner persists and registers together or rolls back, so saved definitions never outlive or precede their registered instances.
+Definition changes (service creation and destruction, composition configuration and Supabase composition) run one at a time in the owner's scope, and a caller that disconnects stops waiting. Creation saves the instance before registering it and removes the saved instance again if registration fails. Until registration completes, a concurrent `get` or `list` can already return the new id, while `start` or `status` for it fails with an unknown-instance error.
 
 ### Proposed RPC surface
 

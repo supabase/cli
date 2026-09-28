@@ -309,25 +309,26 @@ describe("durable stack state", () => {
   }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const target = (yield* Path.Path).join(options.root, initial.id, "state.json");
       const remaining = yield* Ref.make(options.failures);
       const firstFailure = yield* Deferred.make<void>();
       const reported = yield* Ref.make<ReadonlyArray<string>>([]);
       const injectedFs = Layer.succeed(FileSystem.FileSystem, {
         ...fs,
-        readFileString: (path: string, encoding?: string) =>
+        readFileString: (file: string, encoding?: string) =>
           Effect.gen(function* () {
-            if (path.endsWith(`${initial.id}/state.json`) && (yield* Ref.get(remaining)) > 0) {
+            if (file === target && (yield* Ref.get(remaining)) > 0) {
               yield* Ref.update(remaining, (count) => count - 1);
               yield* Deferred.succeed(firstFailure, undefined);
               return yield* PlatformError.systemError({
                 _tag: "Unknown",
                 module: "FileSystem",
                 method: "readFile",
-                pathOrDescriptor: path,
+                pathOrDescriptor: file,
                 cause: Object.assign(new Error("injected read failure"), { code: options.code }),
               });
             }
-            return yield* fs.readFileString(path, encoding);
+            return yield* fs.readFileString(file, encoding);
           }),
       });
       const store = yield* Layer.build(
@@ -441,7 +442,12 @@ describe("durable stack state", () => {
         yield* fs.writeFileString(path.join(root, "stray-file"), "");
 
         expect((yield* store.list).map(({ id }) => id)).toEqual([initial.id]);
-        expect(reported.toSorted()).toEqual(["directory", "malformed", "mismatched", "stray-file"]);
+        // Windows resolves a path below a regular file as missing rather than unreadable.
+        expect(reported.toSorted()).toEqual(
+          process.platform === "win32"
+            ? ["directory", "malformed", "mismatched"]
+            : ["directory", "malformed", "mismatched", "stray-file"],
+        );
       }),
     ),
   );
