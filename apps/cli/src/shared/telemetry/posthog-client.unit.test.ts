@@ -217,7 +217,12 @@ describe("scopedPosthogClient", () => {
         // The SDK's drain keeps running past the shutdown deadline; without
         // cancellation it starts the queued request AFTER scope release and
         // keeps the process alive for that request's own timeout.
-        yield* Deferred.await(drainSettled);
+        yield* Deferred.await(drainSettled).pipe(
+          Effect.timeoutOrElse({
+            duration: "6 seconds",
+            orElse: () => Effect.die(new Error("SDK drain never settled after shutdown")),
+          }),
+        );
         expect(yield* Ref.get(activeRequests)).toBe(0);
       }),
     10_000,
