@@ -2,14 +2,8 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted, Schema } from "effect";
 import { tmpdir } from "node:os";
-import {
-  create,
-  discover,
-  open,
-  postgres,
-  type DatabaseInstance,
-  type ServiceInstance,
-} from "./effect.ts";
+import { create, discover, open, type DatabaseInstance, type ServiceInstance } from "./effect.ts";
+import { initialization, postgres } from "./Commands.ts";
 import * as PromiseApi from "./index.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
 
@@ -257,6 +251,17 @@ const resetDataStory = (runtime: "native" | "docker") =>
           if (targetUrl === undefined || siblingUrl === undefined)
             return yield* Effect.die("database credentials missing");
 
+          if (runtime === "native") {
+            const existingServices = yield* current.services.list;
+            const initialized = yield* current.commands.run(
+              initialization.realtime({ databaseUrl: targetUrl }),
+            );
+            expect(initialized.exitCode).toBe(0);
+            expect((yield* current.services.list).map((service) => service.id)).toEqual(
+              existingServices.map((service) => service.id),
+            );
+          }
+
           const runSql = Effect.fn("ResetData.runSql")((
             client: typeof current,
             url: string,
@@ -264,7 +269,7 @@ const resetDataStory = (runtime: "native" | "docker") =>
           ) => {
             const stdout: Array<string> = [];
             const stderr: Array<string> = [];
-            return client.tools
+            return client.commands
               .run(postgres.psql({ major: 17 }), {
                 args: ["--dbname", url, "-Atc", sql],
                 stdout: (bytes) => Effect.sync(() => stdout.push(new TextDecoder().decode(bytes))),

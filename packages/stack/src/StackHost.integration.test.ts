@@ -12,9 +12,10 @@ import {
   Layer,
   Redacted,
   Ref,
+  Schema,
   Stream,
 } from "effect";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import { Rpc, RpcClient, RpcGroup, RpcSerialization } from "effect/unstable/rpc";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import { ChildProcessSpawner } from "effect/unstable/process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration observes exact listener closure.
@@ -23,11 +24,11 @@ import { acquireHost, launchHost } from "./HostProcess.ts";
 import * as Owner from "./Owner.ts";
 import { OwnerError } from "./Owner.ts";
 import { OrchestratorError } from "./Orchestrator.ts";
-import { StackRpc } from "./Rpc.ts";
+import { CommandEvent, StackErrorSchema, StackRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
 import { makeRuntime } from "./StackHost.ts";
-import { postgres } from "./Tools.ts";
-import * as ToolRunner from "./host/ToolRunner.ts";
+import { postgres } from "./Commands.ts";
+import * as CommandRunner from "./host/CommandRunner.ts";
 
 class HostTestError extends Data.TaggedError("HostTestError")<{ readonly message: string }> {}
 
@@ -57,6 +58,24 @@ const ownerFor = (options: {
 
 const clientFor = (port: number) =>
   RpcClient.make(StackRpc).pipe(
+    Effect.provide(
+      RpcClient.layerProtocolHttp({ url: `http://127.0.0.1:${port}/rpc` }).pipe(
+        Layer.provide(RpcSerialization.layerNdjson),
+      ),
+    ),
+  );
+
+const permissiveCommandClientFor = (port: number) =>
+  RpcClient.make(
+    RpcGroup.make(
+      Rpc.make("runCommand", {
+        payload: Schema.Unknown,
+        success: CommandEvent,
+        error: StackErrorSchema,
+        stream: true,
+      }),
+    ),
+  ).pipe(
     Effect.provide(
       RpcClient.layerProtocolHttp({ url: `http://127.0.0.1:${port}/rpc` }).pipe(
         Layer.provide(RpcSerialization.layerNdjson),
@@ -124,7 +143,7 @@ const inProcessRuntime = (
   Effect.gen(function* () {
     const acquired = yield* acquireHost(state, "stack");
     const toolContext = yield* Layer.build(
-      ToolRunner.layer({
+      CommandRunner.layer({
         stackId: "stack",
         root,
         cacheRoot: "/tmp/supabase-stack-artifacts",
@@ -142,7 +161,9 @@ const inProcessRuntime = (
       acquired.server,
       acquired.closeConnections,
       options?.container,
-    ).pipe(Effect.provideService(ToolRunner.Service, Context.get(toolContext, ToolRunner.Service)));
+    ).pipe(
+      Effect.provideService(CommandRunner.Service, Context.get(toolContext, CommandRunner.Service)),
+    );
     const runtime = yield* options?.spawner === undefined
       ? runtimeEffect
       : runtimeEffect.pipe(
@@ -488,6 +509,34 @@ it.live(
         const identity = yield* http.get(`http://127.0.0.1:${endpoint.port}/identity`);
         expect(identity.status).toBe(200);
         const client = yield* clientFor(endpoint.port);
+        const permissiveClient = yield* permissiveCommandClientFor(endpoint.port);
+        for (const override of ["args", "env", "pgProve", "stdin"] as const) {
+          const rejected = yield* permissiveClient
+            .runCommand({
+              attachmentId: `invalid-${override}`,
+              command: { type: "auth.initialize", databaseUrl: "postgres://localhost/postgres" },
+              [override]: override === "args" ? [] : {},
+            })
+            .pipe(Stream.runDrain, Effect.exit);
+          expect(Exit.isFailure(rejected)).toBe(true);
+          if (Exit.isFailure(rejected))
+            expect(Cause.pretty(rejected.cause)).toContain("Expected no excess property");
+        }
+        for (const override of ["args", "env", "pgProve", "stdin"] as const) {
+          const rejected = yield* permissiveClient
+            .runCommand({
+              attachmentId: `invalid-command-${override}`,
+              command: {
+                type: "auth.initialize",
+                databaseUrl: "postgres://localhost/postgres",
+                [override]: override === "args" ? [] : {},
+              },
+            })
+            .pipe(Stream.runDrain, Effect.exit);
+          expect(Exit.isFailure(rejected)).toBe(true);
+          if (Exit.isFailure(rejected))
+            expect(Cause.pretty(rejected.cause)).toContain("Expected no excess property");
+        }
         const stopped = yield* Ref.make(false);
         yield* Effect.addFinalizer(() =>
           Ref.get(stopped).pipe(
@@ -506,22 +555,25 @@ it.live(
         expect(mail.creation.service).toBe("mail");
         expect((yield* client.listServices()).length).toBe(1);
         const toolAttachment = "early-stdin";
-        const toolEvents = yield* client
-          .runTool({
+        const commandEvents = yield* client
+          .runCommand({
             attachmentId: toolAttachment,
-            tool: postgres.psql({ major: 17 }),
-            args: ["--version"],
-            env: {},
-            stdin: true,
+            command: {
+              type: "postgres",
+              command: postgres.psql({ major: 17 }),
+              args: ["--version"],
+              env: {},
+              stdin: true,
+            },
           })
           .pipe(Stream.runCollect);
-        expect(Array.from(toolEvents).some((event) => event._tag === "Completed")).toBe(true);
+        expect(Array.from(commandEvents).some((event) => event._tag === "Completed")).toBe(true);
         const closedInput = yield* client
-          .toolInput({ attachmentId: toolAttachment, bytes: null })
+          .commandInput({ attachmentId: toolAttachment, bytes: null })
           .pipe(Effect.flip);
         expect("operation" in closedInput).toBe(true);
         if (!("operation" in closedInput)) return yield* Effect.die("Unexpected RPC error");
-        expect(closedInput.operation).toBe("tool-input-closed");
+        expect(closedInput.operation).toBe("command-input-closed");
         yield* client.startService({ id: mail.id });
         yield* client.readyService({ id: mail.id });
         expect((yield* client.status({ id: mail.id })).lifecycle).toBe("running");
@@ -555,20 +607,23 @@ it.live(
         const ready = yield* Deferred.make<void>();
         const drainingTool = yield* Effect.forkScoped(
           client
-            .runTool({
+            .runCommand({
               attachmentId: "draining-stdin",
-              tool: postgres.psql({ major: 17 }),
-              args: [
-                "-X",
-                "-t",
-                "-A",
-                "-c",
-                "SELECT 'stack-host-tool-ready'",
-                "-c",
-                "SELECT pg_sleep(600)",
-              ],
-              env: databaseEnv,
-              stdin: true,
+              command: {
+                type: "postgres",
+                command: postgres.psql({ major: 17 }),
+                args: [
+                  "-X",
+                  "-t",
+                  "-A",
+                  "-c",
+                  "SELECT 'stack-host-command-ready'",
+                  "-c",
+                  "SELECT pg_sleep(600)",
+                ],
+                env: databaseEnv,
+                stdin: true,
+              },
             })
             .pipe(
               Stream.filter((event) => event._tag === "Stdout"),
@@ -576,7 +631,9 @@ it.live(
               Stream.decodeText,
               Stream.splitLines,
               Stream.runForEach((line) =>
-                line === "stack-host-tool-ready" ? Deferred.succeed(ready, undefined) : Effect.void,
+                line === "stack-host-command-ready"
+                  ? Deferred.succeed(ready, undefined)
+                  : Effect.void,
               ),
             ),
         );
