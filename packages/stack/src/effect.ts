@@ -432,12 +432,24 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         }),
       ),
     );
+  /** Whether the lease is held by the owner this connection reached, not a successor or sweeper. */
+  const stillOwned = ({ access }: Connection) =>
+    Effect.gen(function* () {
+      if (!(yield* state.leased(saved.id))) return false;
+      const holder = yield* state.readHolder(saved.id);
+      return (
+        holder?.role === "owner" &&
+        holder.pid === access.endpoint.pid &&
+        holder.port === access.endpoint.port &&
+        holder.secret === access.secret
+      );
+    });
   const connection = (reach: Reach) =>
     Effect.gen(function* () {
       const existing = yield* Ref.get(cached);
       if (existing !== undefined) {
-        // Another process can bind a dead owner's port, so reuse needs the owner's live lease.
-        if (yield* state.leased(saved.id)) return existing;
+        // Another process can bind a departed owner's port, so reuse needs that owner's lease.
+        if (yield* stillOwned(existing)) return existing;
         yield* retire(existing);
       }
       // A spawned session owner's lifeline belongs to the handle, not to this call.
