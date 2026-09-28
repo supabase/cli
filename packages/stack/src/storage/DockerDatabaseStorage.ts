@@ -777,7 +777,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         Effect.gen(function* () {
           if (!(yield* hasUnmarkedData)) return;
           yield* runHelper(
-            "set -eu; rm -rf /instance/data /instance/.supabase-restore*",
+            "set -eu; rm -rf /instance/data /instance/.supabase-restore",
             [{ source: options.instanceRoot, target: "/instance", readOnly: false }],
             version,
             true,
@@ -887,7 +887,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           const marker = markerOption.value;
           if (marker.backend === "host") {
             yield* runHelper(
-              `set -eu; rm -rf /instance/data /instance/.supabase-restore*; mkdir -p /instance/data; chown 100:101 /instance/data`,
+              `set -eu; rm -rf /instance/data /instance/.supabase-restore; mkdir -p /instance/data; chown 100:101 /instance/data`,
               snapshotPaths(marker).mounts,
               version,
               true,
@@ -914,7 +914,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           const marker = markerOption.value;
           if (marker.backend === "host") {
             yield* runHelper(
-              `set -eu; rm -rf /instance/data /instance/.supabase-restore* ${shellQuote(`/instance/${instanceSnapshotsDirectory}`)}`,
+              `set -eu; rm -rf /instance/data /instance/.supabase-restore ${shellQuote(`/instance/${instanceSnapshotsDirectory}`)}`,
               snapshotPaths(marker).mounts,
               version,
               true,
