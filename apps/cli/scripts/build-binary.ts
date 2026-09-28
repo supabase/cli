@@ -1,5 +1,4 @@
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
-import { oxfmtStubPlugin } from "./bundle-externals.ts";
 import { compileOptions, stackReleaseDefine } from "./compile-options.ts";
 
 /**
@@ -21,7 +20,6 @@ const result = await Bun.build({
   entrypoints: [entrypoint],
   compile: { outfile },
   ...compileOptions,
-  plugins: [oxfmtStubPlugin],
   define: {
     SUPABASE_CLI_VERSION: JSON.stringify(packageJson.version),
     ...(await stackReleaseDefine()),

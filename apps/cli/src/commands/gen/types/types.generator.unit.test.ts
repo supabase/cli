@@ -1,56 +1,79 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
 import {
-  generateGo,
-  generatePython,
-  generateSwift,
-  generateTypescript,
-  introspect,
-  sortGeneratorMetadata,
-  type GeneratorMetadata,
-} from "@supabase/postgrest-typegen";
+  findLanguage,
+  InvalidOptionError,
+  ToolFailedError,
+  ToolNotInstalledError,
+} from "@supabase/typegen";
+import { declaredOptions, mapRegistryError } from "./types.generator.layer.ts";
+import {
+  GenTypesGenerationError,
+  GenTypesToolFailedError,
+  GenTypesToolNotInstalledError,
+} from "./types.generator.service.ts";
 
-const emptyMetadata: GeneratorMetadata = {
-  version: 1,
-  schemas: [{ id: 1, name: "public", owner: "postgres" }],
-  tables: [],
-  views: [],
-  materializedViews: [],
-  foreignTables: [],
-  columns: [],
-  primaryKeys: [],
-  relationships: [],
-  functions: [],
-  types: [],
-};
-
-/**
- * `tsconfig.types.json` type-checks this package against its published `dist/*.d.ts`, while Bun
- * resolves its `bun` exports condition to `src/*.ts` at runtime. These assertions run against the
- * Bun-resolved module, so a drift between the two views fails here rather than at generation time.
- */
-describe("postgrest-typegen runtime contract", () => {
-  it("exposes the introspection and generation entry points the generator layer calls", () => {
-    expect(typeof introspect).toBe("function");
-    expect(typeof sortGeneratorMetadata).toBe("function");
-    expect(typeof generateTypescript).toBe("function");
-    expect(typeof generateGo).toBe("function");
-    expect(typeof generatePython).toBe("function");
-    expect(typeof generateSwift).toBe("function");
+describe("registry error mapping", () => {
+  it("keeps the registry's message, install hint included, for a missing toolchain", () => {
+    const hint = "Install the Dart SDK.";
+    const mapped = mapRegistryError(
+      "dart",
+      new ToolNotInstalledError({
+        language: "dart",
+        tool: "dart",
+        installHint: hint,
+        message: `Generating dart types needs \`dart\`, which was not found on PATH. ${hint}`,
+      }),
+    );
+    expect(mapped).toBeInstanceOf(GenTypesToolNotInstalledError);
+    expect(mapped.message).toBe(
+      `Generating dart types needs \`dart\`, which was not found on PATH. ${hint}`,
+    );
   });
 
-  it.effect("renders every supported language from metadata alone", () =>
-    Effect.gen(function* () {
-      const metadata = sortGeneratorMetadata(emptyMetadata);
+  it("keeps the tool's stderr when it fails", () => {
+    const mapped = mapRegistryError(
+      "dart",
+      new ToolFailedError({
+        language: "dart",
+        command: ["dart", "run"],
+        exitCode: 78,
+        stderr: "needs Dart 3.8",
+        message: "`dart run` exited with code 78.\nneeds Dart 3.8",
+      }),
+    );
+    expect(mapped).toBeInstanceOf(GenTypesToolFailedError);
+    expect(mapped.message).toContain("needs Dart 3.8");
+  });
 
-      expect(
-        yield* Effect.promise(() =>
-          generateTypescript(metadata, { format: (code) => Promise.resolve(code) }),
-        ),
-      ).toContain("public");
-      expect(generateGo(metadata)).toContain("package");
-      expect(generatePython(metadata)).toContain("import");
-      expect(generateSwift(metadata, { accessControl: "internal" })).toContain("import Supabase");
-    }),
-  );
+  it("reports a rejected option and any other failure as a generation error", () => {
+    const invalid = mapRegistryError(
+      "swift",
+      new InvalidOptionError({ language: "swift", option: "x", message: "no option x" }),
+    );
+    expect(invalid).toBeInstanceOf(GenTypesGenerationError);
+    expect(invalid.message).toBe("no option x");
+    const other = mapRegistryError("go", new Error("boom"));
+    expect(other).toBeInstanceOf(GenTypesGenerationError);
+    expect(other.message).toBe("failed to generate go types: boom");
+  });
+});
+
+describe("declaredOptions", () => {
+  it("forwards only the options the language declares", () => {
+    const swift = findLanguage("swift")!;
+    expect(
+      declaredOptions(swift, {
+        "swift-access-control": "public",
+        "detect-one-to-one-relationships": false,
+        unknown: true,
+      }),
+    ).toEqual({ "swift-access-control": "public" });
+    expect(
+      declaredOptions(findLanguage("typescript")!, {
+        "swift-access-control": "public",
+        "detect-one-to-one-relationships": false,
+      }),
+    ).toEqual({ "detect-one-to-one-relationships": false });
+    expect(declaredOptions(findLanguage("go")!, { "swift-access-control": "public" })).toEqual({});
+  });
 });
