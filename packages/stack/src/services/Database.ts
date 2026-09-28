@@ -720,6 +720,7 @@ export const makeDatabase = (
           image: image.image,
           stackId: String(options.stackId),
           instanceId: options.instanceId,
+          service: "database",
           env: {
             PGDATA: "/var/lib/postgresql/data",
             PGSODIUM_KEY_FILE: "/etc/postgresql-custom/pgsodium_root.key",

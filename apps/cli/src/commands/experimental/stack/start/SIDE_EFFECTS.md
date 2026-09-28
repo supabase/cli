@@ -67,8 +67,11 @@ it again to apply those changes.
 `storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`. Database cannot be excluded.
 Storage includes its Imgproxy companion, Studio includes Pgmeta, and Analytics includes Vector.
 Studio requires REST; excluding REST while keeping Studio fails before stopping the composition.
-Vector runs a stack-owned default configuration that enables its health API and forwards no service
-logs; log collection into Analytics is not implemented yet.
+Vector runs a stack-owned default configuration that enables its health API. With Docker or Podman,
+Vector mounts the engine socket read-only (or reaches a TCP `DOCKER_HOST` through
+`host.docker.internal`) and ships the stack's Auth, REST, Realtime, Storage, Functions, and database
+container logs to Analytics. The native runtime keeps service output in memory, so native Vector
+forwards no service logs.
 
 After an explicit stop, start compares the project configuration with the saved composition through
 the stack package's composition plan, ignoring values the composition and stack credentials supply.

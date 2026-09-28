@@ -30,6 +30,10 @@ interface ContainerSpec {
   readonly image: string;
   readonly stackId: string;
   readonly instanceId: string;
+  /** Labels the container with its service kind so stack log collectors can route it. */
+  readonly service?: string;
+  /** Exposes the engine API at the Docker-compatible default socket or `DOCKER_HOST`. */
+  readonly engineApi?: boolean;
   readonly env: Readonly<Record<string, string>>;
   readonly args?: ReadonlyArray<string>;
   readonly entrypoint?: string;
@@ -123,6 +127,49 @@ const PublishedPorts = Schema.Record(
     ),
   ),
 );
+
+interface EngineApiAccess {
+  readonly env: Readonly<Record<string, string>>;
+  readonly mounts: NonNullable<ContainerSpec["mounts"]>;
+  readonly securityOpt: ReadonlyArray<string>;
+}
+
+const DEFAULT_ENGINE_SOCKET = "/var/run/docker.sock";
+
+// Docker Desktop and Colima expose a per-user socket on the host but serve the rootful daemon
+// socket at the default path inside their VM, which is the only one bind mounts can reach.
+const vmDefaultSocket = (socket: string) =>
+  /\/\.docker\/(run|desktop)\/docker\.sock$/u.test(socket) ||
+  (socket.includes("/.colima/") && socket.endsWith("/docker.sock"));
+
+const engineApiAccess = (endpoint: string): Effect.Effect<EngineApiAccess, ContainerError> => {
+  if (endpoint.startsWith("unix://")) {
+    const socket = endpoint.slice("unix://".length);
+    const vmDefault = vmDefaultSocket(socket);
+    return Effect.succeed({
+      env: {},
+      mounts: [
+        {
+          source: vmDefault ? DEFAULT_ENGINE_SOCKET : socket,
+          target: DEFAULT_ENGINE_SOCKET,
+          readOnly: true,
+        },
+      ],
+      securityOpt: vmDefault ? [] : ["label=disable"],
+    });
+  }
+  const tcp = /^tcp:\/\/[^/]*?(?::(\d+))?(?:\/.*)?$/u.exec(endpoint);
+  // A named pipe cannot be mounted, so containers reach it only through a TCP-exposed daemon.
+  const port =
+    tcp === null ? (endpoint.startsWith("npipe://") ? "2375" : undefined) : (tcp[1] ?? "2375");
+  if (port !== undefined)
+    return Effect.succeed({
+      env: { DOCKER_HOST: `http://host.docker.internal:${port}` },
+      mounts: [],
+      securityOpt: [],
+    });
+  return Effect.fail(errorFor("engine-api", `Unsupported engine endpoint ${endpoint}`));
+};
 
 const mountField = (key: string, value: string) => {
   const field = `${key}=${value}`;
@@ -258,13 +305,41 @@ export const makeContainerRuntime = (options: {
       prepareImage(image).pipe(Effect.asVoid),
     );
 
+    const engineApi = Effect.gen(function* () {
+      if (options.engine === "podman") {
+        // Podman runs containers without its API service, but reports the socket path regardless.
+        const [socket = "", exists] = (yield* run([
+          "info",
+          "--format",
+          "{{.Host.RemoteSocket.Path}} {{.Host.RemoteSocket.Exists}}",
+        ])).split(" ");
+        if (socket.length === 0 || exists !== "true")
+          return yield* errorFor(
+            "engine-api",
+            "Podman's API socket is not active; enable it with `systemctl --user enable --now podman.socket`",
+          );
+        return socket.includes("://") ? socket : `unix://${socket}`;
+      }
+      // Reports DOCKER_HOST when set, otherwise the current context's endpoint.
+      const endpoint = yield* run([
+        "context",
+        "inspect",
+        "--format",
+        "{{.Endpoints.docker.Host}}",
+      ]).pipe(Effect.orElseSucceed(() => ""));
+      return endpoint.length > 0 ? endpoint : `unix://${DEFAULT_ENGINE_SOCKET}`;
+    }).pipe(Effect.flatMap(engineApiAccess));
+
     const launch = Effect.fn("Container.launch")(function* (
       spec: ContainerSpec,
       interactive = false,
     ) {
       const owner = yield* Scope.Scope;
       const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
-      for (const [key, value] of Object.entries(spec.env)) {
+      const access = spec.engineApi === true ? yield* engineApi : undefined;
+      const env = { ...spec.env, ...access?.env };
+      const mounts = [...(spec.mounts ?? []), ...(access?.mounts ?? [])];
+      for (const [key, value] of Object.entries(env)) {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || /[\0\r\n]/u.test(value)) {
           return yield* errorFor(
             "environment",
@@ -283,7 +358,7 @@ export const makeContainerRuntime = (options: {
       yield* fs
         .writeFileString(
           envPath,
-          Object.entries(spec.env)
+          Object.entries(env)
             .map(([key, value]) => `${key}=${value}`)
             .join("\n"),
           { mode: 0o600 },
@@ -309,9 +384,11 @@ export const makeContainerRuntime = (options: {
         `com.supabase.instance=${spec.instanceId}`,
         "--label",
         `com.supabase.stack-root=${stackRoot}`,
+        ...(spec.service === undefined ? [] : ["--label", `com.supabase.service=${spec.service}`]),
+        ...(access?.securityOpt ?? []).flatMap((option) => ["--security-opt", option]),
         "--env-file",
         envPath,
-        ...(spec.mounts ?? []).flatMap((mount) => [
+        ...mounts.flatMap((mount) => [
           "--mount",
           [
             `type=${mount.type ?? "bind"}`,

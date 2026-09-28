@@ -94,6 +94,7 @@ export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown
   readonly enabledPort?: (creation: C, name: string) => boolean;
   readonly containerPort?: (creation: C, name: string, port: number) => number;
   readonly containerEntrypoint?: (creation: C) => string | undefined;
+  readonly engineApi?: boolean;
   readonly prepare?: (creation: C) => Effect.Effect<void, ServiceError>;
   readonly removeData?: (creation: C) => Effect.Effect<void, ServiceError>;
 }
@@ -780,6 +781,8 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           image: resolved.image,
           stackId: options.stackId,
           instanceId: options.instanceId,
+          service: spec.service,
+          engineApi: spec.engineApi === true,
           env: yield* spec.env(context.config, containerDesired, true),
           entrypoint: spec.containerEntrypoint?.(context.config),
           args: yield* spec.args(context.config, containerDesired, { container: true }),
