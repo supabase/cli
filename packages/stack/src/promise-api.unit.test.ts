@@ -1,8 +1,9 @@
+import type { Effect } from "effect";
 import { describe, expectTypeOf, it } from "vitest";
 import type { InitializationCommand } from "./Commands.ts";
 import type * as StackEffect from "./effect.ts";
 import type * as PromiseApi from "./index.ts";
-import { createTestStack } from "./testing.ts";
+import { createTestStack, makeTestStack } from "./testing.ts";
 
 type Kind = StackEffect.ServiceCreationInput["service"];
 type CallOptions = PromiseApi.CallOptions;
@@ -108,6 +109,21 @@ describe("Promise API derived from the Effect API", () => {
     expectTypeOf<Awaited<ReturnType<typeof selectMany>>>().toEqualTypeOf<{
       readonly database: PromiseApi.DatabaseInstance;
       readonly rest: PromiseApi.ServiceInstances["rest"];
+    }>();
+  });
+
+  it("types test stack services from a list without a static length as optional", () => {
+    const services: ReadonlyArray<"database" | "rest"> = ["database"];
+    const selectPromise = () => createTestStack({ services }).then((test) => test.services);
+    expectTypeOf<Awaited<ReturnType<typeof selectPromise>>>().toEqualTypeOf<{
+      readonly database?: PromiseApi.DatabaseInstance;
+      readonly rest?: PromiseApi.ServiceInstances["rest"];
+    }>();
+    expectTypeOf<
+      Effect.Success<ReturnType<typeof makeTestStack<typeof services>>>["services"]
+    >().toEqualTypeOf<{
+      readonly database?: StackEffect.DatabaseInstance;
+      readonly rest?: StackEffect.ServiceInstances["rest"];
     }>();
   });
 });

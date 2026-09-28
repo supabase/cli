@@ -216,7 +216,7 @@ await Effect.runPromise(
 );
 ```
 
-The Promise entrypoint is derived from this one: each Effect becomes a call that accepts `{ signal }`, each Effect-returning function takes the same arguments plus a trailing `{ signal }`, each Stream becomes an async iterable, and `Redacted` configuration values become plain strings. `commands.run` takes Promise-returning sinks and an async-iterable `stdin`.
+The Promise entrypoint is derived from this one: each Effect becomes a call that accepts `{ signal }`, each Effect-returning function takes the same arguments plus a trailing `{ signal }` (a `signal` inside any other options object, such as command or composition options, is ignored), each Stream becomes an async iterable, and `Redacted` configuration values become plain strings. `commands.run` takes Promise-returning sinks and an async-iterable `stdin`.
 
 Cancelling an admitted lifecycle caller ends its wait; the owner finishes the operation. Cancelling an attached command ends that job and cleans up its resources. Command input and output stream with backpressure; the result contains a job ID and exit code, not collected output. Promise command sinks should return a Promise when the destination requires waiting for capacity.
 

@@ -108,17 +108,18 @@ it.live(
       expect(owners).toHaveLength(1);
       const ownerFile = path.join(root, owners[0]!);
       const originalMarker = yield* fs.readFileString(ownerFile);
-      yield* fs.writeFileString(
-        ownerFile,
-        `{"stackId":"not-this-stack","instanceId":"not-this-instance"}`,
+      // Released before the stack's teardown, which destroys only data carrying its own marker.
+      yield* Effect.acquireRelease(
+        fs.writeFileString(
+          ownerFile,
+          `{"stackId":"not-this-stack","instanceId":"not-this-instance"}`,
+        ),
+        () => fs.writeFileString(ownerFile, originalMarker).pipe(Effect.orDie),
       );
 
       const failure = yield* test.reset("0").pipe(Effect.flip);
       expect(failure.message).toContain("the database data may have been partially reset");
       expect(failure.message).not.toContain("was reset without restoring checkpoint");
-
-      // Restore the real marker so destroying the stack during test cleanup succeeds.
-      yield* fs.writeFileString(ownerFile, originalMarker);
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),

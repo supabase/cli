@@ -41,6 +41,9 @@ export type TestServiceKind<S> = S extends Kind
     ? K
     : never;
 
+/** Whether a service list's length, and so which kinds it selects, is known statically. */
+type KnownKinds<S extends ReadonlyArray<unknown>> = number extends S["length"] ? false : true;
+
 /** Test stack options; omitted roots use shared per-user or temporary locations. */
 export interface TestStackOptions<S> {
   /** Defaults to `["database"]`. */
@@ -57,9 +60,12 @@ export interface TestStackOptions<S> {
 }
 
 /** A composed, ready session stack that is destroyed when its scope closes. */
-export interface EffectTestStack<K extends Kind = "database"> {
+export interface EffectTestStack<K extends Kind = "database", Known extends boolean = true> {
   readonly stack: StackEffect.Stack;
-  readonly services: { readonly [P in K]: StackEffect.ServiceInstances[P] };
+  /** Handles by kind; a service list whose length is not static may lack any of its kinds. */
+  readonly services: Known extends true
+    ? { readonly [P in K]: StackEffect.ServiceInstances[P] }
+    : { readonly [P in K]?: StackEffect.ServiceInstances[P] };
   readonly projectRoot: string;
   /**
    * Saves the database data under `name` as an instance snapshot, which other stacks cannot evict
@@ -74,9 +80,15 @@ export interface EffectTestStack<K extends Kind = "database"> {
 }
 
 /** A composed, ready session stack; disposal destroys it, then closes its client. */
-export interface TestStack<K extends Kind = "database"> extends AsyncDisposable {
+export interface TestStack<
+  K extends Kind = "database",
+  Known extends boolean = true,
+> extends AsyncDisposable {
   readonly stack: Stack;
-  readonly services: { readonly [P in K]: ServiceInstances[P] };
+  /** Handles by kind; a service list whose length is not static may lack any of its kinds. */
+  readonly services: Known extends true
+    ? { readonly [P in K]: ServiceInstances[P] }
+    : { readonly [P in K]?: ServiceInstances[P] };
   readonly projectRoot: string;
   readonly checkpoint: Promised<EffectTestStack["checkpoint"]>;
   readonly reset: Promised<EffectTestStack["reset"]>;
@@ -124,7 +136,7 @@ function byKind(
 }
 
 const make = Effect.fn("TestStack.make")(
-  function* <K extends Kind>(
+  function* <K extends Kind, Known extends boolean = true>(
     options: TestStackOptions<ReadonlyArray<TestService | PlainTestService>>,
     decode: (creation: unknown) => Effect.Effect<StackEffect.ServiceCreationInput, StackError>,
   ) {
@@ -252,7 +264,7 @@ const make = Effect.fn("TestStack.make")(
             // Signal aborts and test timeouts interrupt; the shared stack must not stay stopped.
             Effect.onInterrupt(() => start(operation)),
           );
-    const testStack: EffectTestStack<K> = {
+    const testStack: EffectTestStack<K, Known> = {
       stack,
       services: byKind<K>(members),
       projectRoot,
@@ -311,7 +323,7 @@ const decodePlainCreation = (creation: unknown) =>
 /** Creates, composes and readies a session stack that the enclosing scope destroys. */
 export const makeTestStack = <const S extends ReadonlyArray<TestService> = readonly ["database"]>(
   options: TestStackOptions<S> = {},
-) => make<TestServiceKind<S[number]>>(options, decodeCreation);
+) => make<TestServiceKind<S[number]>, KnownKinds<S>>(options, decodeCreation);
 
 /** Creates, composes and readies a session stack for `await using`. */
 export const createTestStack = <
@@ -319,7 +331,7 @@ export const createTestStack = <
 >(
   options: TestStackOptions<S> = {},
   callOptions?: CallOptions,
-): Promise<TestStack<TestServiceKind<S[number]>>> =>
+): Promise<TestStack<TestServiceKind<S[number]>, KnownKinds<S>>> =>
   acquire(make<TestServiceKind<S[number]>>(options, decodePlainCreation), callOptions).then(
     ({ value, client }) => {
       const adapter = stackAdapter(client);
