@@ -1,4 +1,4 @@
-import { Crypto, Effect, FileSystem, Schema } from "effect";
+import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { InvalidProjectRootError, InvalidStackIdentityError } from "./Errors.ts";
 import { StackIdSchema } from "./StackId.ts";
@@ -110,3 +110,12 @@ export const resolveStackIdentity = Effect.fn("Identity.resolveStackIdentity")(f
     ),
   );
 });
+
+/**
+ * Names a stack for container grouping labels: the project root's folder name, falling back to
+ * the stack name when the root has none (for example the filesystem root).
+ */
+export const projectSegmentFor = (identity: StackIdentity, path: Path.Path): string => {
+  const base = path.basename(identity.projectRoot);
+  return base.trim().length > 0 ? base : identity.stackName;
+};

@@ -30,6 +30,10 @@ interface ContainerSpec {
   readonly image: string;
   readonly stackId: string;
   readonly instanceId: string;
+  /** Labels the container with its service kind so stack log collectors can route it. */
+  readonly service?: string;
+  /** Groups this stack's containers under one name in Docker Desktop/OrbStack. */
+  readonly project?: string;
   readonly env: Readonly<Record<string, string>>;
   readonly args?: ReadonlyArray<string>;
   readonly entrypoint?: string;
@@ -104,6 +108,29 @@ const engineUnreachable = (error: ContainerError) =>
   );
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+
+const NAME_UNSAFE = /[^a-zA-Z0-9_.-]+/gu;
+/** Keeps a name segment within docker's `[a-zA-Z0-9_.-]` alphabet and a readable length. */
+const sanitizeNameSegment = (value: string): string =>
+  value.replaceAll(NAME_UNSAFE, "-").slice(0, 40);
+
+/** Names the container and sets compose grouping labels; one-shots get a `-task` segment and `oneoff`. */
+const identifyContainer = (
+  spec: Pick<ContainerSpec, "stackId" | "service" | "project">,
+  token: string,
+  oneOff: boolean,
+) => {
+  const stackShort = spec.stackId.slice(0, 12);
+  const project = spec.project === undefined ? undefined : sanitizeNameSegment(spec.project);
+  const service = spec.service === undefined ? undefined : sanitizeNameSegment(spec.service);
+  const shortToken = token.replaceAll("-", "").slice(0, 12);
+  const name = ["supabase", project, service, oneOff ? "task" : undefined, shortToken]
+    .filter((segment): segment is string => segment !== undefined && segment.length > 0)
+    .join("-");
+  const composeProject = `supabase-${project ?? "stack"}-${stackShort}`.toLowerCase();
+  const composeService = service ?? "task";
+  return { name, composeProject, composeService };
+};
 
 const PULL_MAX_RETRIES = 4;
 
@@ -261,6 +288,7 @@ export const makeContainerRuntime = (options: {
     const launch = Effect.fn("Container.launch")(function* (
       spec: ContainerSpec,
       interactive = false,
+      oneOff = false,
     ) {
       const owner = yield* Scope.Scope;
       const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
@@ -292,7 +320,7 @@ export const makeContainerRuntime = (options: {
       const token = yield* crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) => errorFor("identity", cause)),
       );
-      const name = `supabase-${token}`;
+      const { name, composeProject, composeService } = identifyContainer(spec, token, oneOff);
       const args = [
         "create",
         "--pull",
@@ -309,6 +337,12 @@ export const makeContainerRuntime = (options: {
         `com.supabase.instance=${spec.instanceId}`,
         "--label",
         `com.supabase.stack-root=${stackRoot}`,
+        ...(spec.service === undefined ? [] : ["--label", `com.supabase.service=${spec.service}`]),
+        "--label",
+        `com.docker.compose.project=${composeProject}`,
+        "--label",
+        `com.docker.compose.service=${composeService}`,
+        ...(oneOff ? ["--label", "com.docker.compose.oneoff=True"] : []),
         "--env-file",
         envPath,
         ...(spec.mounts ?? []).flatMap((mount) => [
@@ -549,7 +583,12 @@ export const makeContainerRuntime = (options: {
         }),
       );
     });
-    return { prepare, prepareImage, launch, launchCommand: (spec) => launch(spec, true) };
+    return {
+      prepare,
+      prepareImage,
+      launch,
+      launchCommand: (spec) => launch(spec, true, true),
+    };
   });
 
 export const removeStackContainers = Effect.fn("Container.removeStackContainers")(

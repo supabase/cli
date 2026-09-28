@@ -45,6 +45,8 @@ export const serviceCreation = <
 export interface CatalogOptions {
   readonly stackId: string;
   readonly instanceId: string;
+  /** Sanitized stack project name; groups this stack's containers in Docker Desktop/OrbStack. */
+  readonly project?: string;
   readonly root: string;
   readonly cacheRoot: string;
   readonly runtime: CatalogRuntime;
