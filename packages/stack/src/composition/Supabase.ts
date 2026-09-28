@@ -7,6 +7,12 @@ import type { SavedStack, StackIdentityInput } from "../State.ts";
 import { credentialInputNames } from "../host/Credentials.ts";
 import { apiRoute, endpointNames, endpointPort } from "../host/Endpoints.ts";
 
+const DEFAULT_IDLE_MILLIS = 60_000;
+/** Studio idles slower than its peers: a background tab shouldn't cold-start it every minute. */
+const STUDIO_IDLE_MILLIS = 300_000;
+const idleMillisFor = (service: ServiceCreation["service"]): number =>
+  service === "studio" ? STUDIO_IDLE_MILLIS : DEFAULT_IDLE_MILLIS;
+
 const managedBindings: ReadonlyArray<{
   readonly sourceKind: ServiceCreation["service"];
   readonly sourceEndpoint: string;
@@ -611,7 +617,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           return lazy
             ? creation.service === "functions"
               ? { id, activation: "lazy" as const }
-              : { id, activation: "lazy" as const, idleMillis: 60_000 }
+              : { id, activation: "lazy" as const, idleMillis: idleMillisFor(creation.service) }
             : { id, activation: "eager" as const };
         });
         yield* operations.configure({

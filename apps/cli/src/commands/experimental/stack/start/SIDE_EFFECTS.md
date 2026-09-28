@@ -47,8 +47,8 @@ root's home directory. Later commands that restrict the artifact cache and stack
 their owner keep that grant.
 
 Database is eager by default. Other services are lazy; traffic wakes them through their listeners.
-Lazy services with idle policies stop after 60 seconds without traffic; Functions has no automatic
-idle stop. `--eager` makes all selected services eager. Changes to activation policy take effect
+Lazy services with idle policies stop after 60 seconds without traffic, Studio after 5 minutes;
+Functions has no automatic idle stop. `--eager` makes all selected services eager. Changes to activation policy take effect
 after stopping and starting the stack, including when a later invocation omits an earlier `--eager`
 flag. `--preparation` selects on-demand or background artifact preparation.
 
