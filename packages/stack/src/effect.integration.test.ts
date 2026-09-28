@@ -953,3 +953,56 @@ it.live("plans requested creations against the saved composition and honours eag
     );
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
+
+it.live("plans a Studio public API URL the project sets but not the one the stack derives", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-plan-studio-" });
+    const stack = yield* create({
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    });
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        const studio = {
+          service: "studio",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        } as const;
+        const members = yield* stack.composition.supabase([
+          {
+            service: "database",
+            config: {
+              version: "17",
+              databasePassword: Redacted.make("plan-database-password"),
+              jwtSecret: Redacted.make("plan-database-jwt-secret-at-least-32-chars"),
+              jwtExpiry: 3600,
+            },
+            endpoints: { sql: { port: "auto" } },
+          },
+          { service: "rest", config: {}, endpoints: { http: { port: FIXED_API_PORT } } },
+          studio,
+        ]);
+        const studioId = members.find(({ service }) => service === "studio")?.id;
+        const planStudio = (config: { readonly publicApiUrl?: string }) =>
+          stack.composition.plan([{ ...studio, config }]);
+
+        expect(yield* planStudio({})).toEqual([
+          { id: studioId, service: "studio", member: true, change: "unchanged" },
+        ]);
+        expect(yield* planStudio({ publicApiUrl: "https://studio-api.example.test" })).toEqual([
+          {
+            id: studioId,
+            service: "studio",
+            member: true,
+            change: "changed",
+            paths: ["config.publicApiUrl"],
+          },
+        ]);
+      }),
+      destroyTestStack(stack),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
