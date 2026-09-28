@@ -1055,8 +1055,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           cacheRoot,
           runtime: "native",
           version: "17",
-          stackId: "native-interoperability",
-          instanceId: "database",
         });
         yield* nativeSnapshots.saveSnapshot("native");
         yield* fs.remove(path.join(nativeRoot, "data"), { recursive: true });
