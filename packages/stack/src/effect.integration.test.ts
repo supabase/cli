@@ -13,6 +13,8 @@ import {
   Scope,
   Stream,
 } from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- the test binds a dead owner's exact port.
+import * as Net from "node:net";
 import { tmpdir } from "node:os";
 import {
   create,
@@ -27,7 +29,7 @@ import { fileURLToPath } from "node:url";
 import { launchHost } from "./HostProcess.ts";
 import * as PromiseApi from "./index.ts";
 import * as State from "./State.ts";
-import { assertOwnerExited } from "../tests/owner.ts";
+import { assertOwnerExited, watchLeaseRelease } from "../tests/owner.ts";
 import { foreignRelease } from "../tests/release-owner-fixture.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
@@ -554,6 +556,63 @@ it.live("reports a stopped owner as unavailable to attach-only calls", () =>
 
     const unavailable = yield* Effect.flip(mail.status);
 
+    expect(unavailable.reason).toBe("owner-unavailable");
+    yield* destroyTestStack(stack);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+/** Binds a loopback port and resets every connection it accepts, counting them. */
+const countConnectionsOn = (port: number) =>
+  Effect.acquireRelease(
+    Effect.callback<{ readonly server: Net.Server; readonly accepted: { count: number } }>(
+      (resume) => {
+        const accepted = { count: 0 };
+        const server = Net.createServer((socket) => {
+          accepted.count++;
+          socket.destroy();
+        });
+        server.once("error", (cause) => resume(Effect.die(cause)));
+        server.listen(port, "127.0.0.1", () => resume(Effect.succeed({ server, accepted })));
+      },
+    ),
+    ({ server }) =>
+      Effect.callback<void>((resume) => {
+        server.close(() => resume(Effect.void));
+      }),
+  ).pipe(
+    Effect.map(
+      ({ accepted }) =>
+        () =>
+          accepted.count,
+    ),
+  );
+
+it.live("sends no call to a process that took a dead owner's port", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-dead-owner-port-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* create(options);
+    const mail = yield* stack.services.create({ service: "mail", config: {} });
+    yield* mail.status;
+    const state = yield* State.Service.pipe(
+      Effect.provide(State.layer({ root: options.stateRoot })),
+    );
+    const holder = yield* state.readHolder(stack.id);
+    if (holder?.role !== "owner") return yield* Effect.die("Expected a live owner record");
+    const released = yield* watchLeaseRelease(options.stateRoot, stack.id);
+    yield* Effect.sync(() => process.kill(holder.pid, "SIGKILL"));
+    yield* released;
+    const accepted = yield* countConnectionsOn(holder.port);
+
+    const unavailable = yield* Effect.flip(mail.status);
+
+    expect(accepted(), "connections reaching the dead owner's port").toBe(0);
     expect(unavailable.reason).toBe("owner-unavailable");
     yield* destroyTestStack(stack);
   }).pipe(Effect.scoped, Effect.provide(layer)),
