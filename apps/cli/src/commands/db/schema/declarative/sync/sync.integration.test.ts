@@ -156,6 +156,7 @@ function syncStackApi(workdir: string, port: number) {
     },
     credentials: { get: unusedSync },
     composition: {
+      plan: () => Effect.succeed([]),
       describe: Effect.succeed(composition),
       supabase: unusedSyncFn,
       configure: unusedSyncFn,
@@ -165,27 +166,28 @@ function syncStackApi(workdir: string, port: number) {
     },
     stop: unusedSync,
     destroy: unusedSync,
-    tools: { run: unusedSyncFn },
+    commands: { run: unusedSyncFn },
   };
   const identity = { projectRoot: workdir, branchContext: "main", stackName: "default" };
   return Layer.succeed(StackApi, {
     create: unusedSyncFn,
     open: () => Effect.succeed(stack),
-    resolveIdentity: () => Effect.succeed(identity),
-    discover: () =>
-      Effect.succeed([
-        {
+    discover: () => Effect.die("unused"),
+    find: () =>
+      Effect.succeed(
+        Option.some({
           definition: {
             id: stack.id,
             identity,
             runtime: "native",
             instances: [],
             composition,
+            lifetime: "detached" as const,
             ports: [],
           },
           host: undefined,
-        },
-      ]),
+        }),
+      ),
   });
 }
 

@@ -1,3 +1,4 @@
+import { languages } from "@supabase/typegen";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Clock, Config, Data, Effect, FileSystem, Option, Path, Schedule } from "effect";
@@ -15,8 +16,10 @@ import {
   resolveDeadline,
 } from "../../../../tests/helpers/docker-image.ts";
 
-const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
-type TypegenLang = (typeof TYPEGEN_LANGS)[number];
+const TYPEGEN_LANGS: ReadonlyArray<string> = languages
+  .filter((language) => language.inProcess)
+  .map((language) => language.name);
+type TypegenLang = string;
 
 const LOCAL_POSTGRES_IMAGE = dockerfileServiceImage("pg");
 const LOCAL_POSTGRES_TIMEOUT_MS = 120_000;
@@ -297,6 +300,8 @@ function expectLanguageShape(lang: TypegenLang, stdout: string) {
     case "python":
       expect(stdout).toContain("from __future__ import annotations");
       break;
+    default:
+      throw new Error(`no shape assertion for the registry language ${lang}`);
   }
 }
 

@@ -9,7 +9,7 @@ export const unusedStackServices = Layer.mergeAll(
     create: unused,
     open: unused,
     discover: unused,
-    resolveIdentity: unused,
+    find: unused,
   }),
   Layer.succeed(StackCatalogSetup, { apply: unused }),
 );

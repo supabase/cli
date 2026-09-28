@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
 import {
+  Crypto,
   Duration,
   Effect,
   FileSystem,
@@ -11,7 +11,12 @@ import {
   Schema,
 } from "effect";
 import { CliSettings } from "../config/cli-settings.service.ts";
-import { type ConsentState, TelemetryConfigSchema, type TelemetryConfig } from "./types.ts";
+import {
+  type ConsentState,
+  PersistedNumberSchema,
+  TelemetryConfigSchema,
+  type TelemetryConfig,
+} from "./types.ts";
 
 export const getConfigDir = CliSettings.useSync((cliSettings) => cliSettings.supabaseHome);
 
@@ -22,7 +27,7 @@ const LegacyTelemetryConfigSchema = Schema.Struct({
   session_id: Schema.String,
   session_last_active: Schema.String,
   distinct_id: Schema.optionalKey(Schema.String),
-  schema_version: Schema.optionalKey(Schema.declare(Predicate.isNumber)),
+  schema_version: Schema.optionalKey(PersistedNumberSchema),
 });
 type LegacyTelemetryConfig = Schema.Schema.Type<typeof LegacyTelemetryConfigSchema>;
 
@@ -84,6 +89,7 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
   configDir: string,
   platform: NodeJS.Platform = process.platform,
 ) {
+  const crypto = yield* Crypto.Crypto;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(configDir, { recursive: true, mode: 0o700 });
@@ -91,7 +97,7 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
   // Random suffix, not a timestamp: concurrent writers (parallel test files,
   // two CLI processes) in the same millisecond would otherwise share a tmp
   // path and race the rename into ENOENT.
-  const tmpPath = `${configPath}.tmp.${randomUUID()}`;
+  const tmpPath = `${configPath}.tmp.${yield* crypto.randomUUIDv4}`;
   const retrySchedule = Schedule.exponential("10 millis", 2).pipe(
     Schedule.modifyDelay(({ duration }) =>
       Effect.succeed(Duration.min(duration, Duration.millis(100))),

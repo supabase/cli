@@ -5,7 +5,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { fileURLToPath } from "node:url";
 import * as PromiseStack from "./index.ts";
 import { HostEndpoint } from "./HostProcess.ts";
-import { StackErrorSchema } from "./Rpc.ts";
+import { StackError } from "./Rpc.ts";
 import * as State from "./State.ts";
 import { open as openEffect } from "./effect.ts";
 
@@ -58,13 +58,14 @@ const withHeldOwner = <A, E, R>(
       runtime: "native",
       identity: { projectRoot: root, branchContext: "main", stackName: "shutdown-held" },
       instances: [],
+      lifetime: "detached",
       composition: { members: [], dependencies: [] },
       ports: [],
     });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     return yield* Effect.acquireUseRelease(
       spawner.spawn(
-        ChildProcess.make(process.execPath, [fixturePath, stateRoot, cacheRoot, id, "rpc-held"], {
+        ChildProcess.make(process.execPath, [fixturePath, stateRoot, cacheRoot, id, "held"], {
           cwd: process.cwd(),
           detached: true,
           stdin: "ignore",
@@ -120,9 +121,8 @@ it.live("Effect stop reports shutdown-exit when the acknowledged owner remains a
           return yield* Effect.flip(stack.stop);
         }),
       );
-      expect(Schema.is(StackErrorSchema)(error)).toBe(true);
-      if (!Schema.is(StackErrorSchema)(error))
-        return yield* Effect.die("unexpected shutdown error");
+      expect(Schema.is(StackError)(error)).toBe(true);
+      if (!Schema.is(StackError)(error)) return yield* Effect.die("unexpected shutdown error");
       expect(error.operation).toBe("shutdown-exit");
       expect(error.message).toContain("shutdown acknowledgement");
     }),
@@ -145,9 +145,8 @@ it.live("Promise destroy waits for owner disappearance after the RPC acknowledge
           (stack) => Effect.tryPromise(() => stack.close()),
         ),
       );
-      expect(Schema.is(StackErrorSchema)(error)).toBe(true);
-      if (!Schema.is(StackErrorSchema)(error))
-        return yield* Effect.die("unexpected shutdown error");
+      expect(Schema.is(StackError)(error)).toBe(true);
+      if (!Schema.is(StackError)(error)) return yield* Effect.die("unexpected shutdown error");
       expect(error).toMatchObject({ operation: "shutdown-exit" });
       expect(error.message).toContain("shutdown acknowledgement");
     }),

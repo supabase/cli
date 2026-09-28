@@ -89,9 +89,11 @@ no separate command that rewrites it, and no second project-level pinned-version
 
 Raw `supabase/config.toml` values and their origins are loaded before defaults are applied. Explicit
 sticky values are persisted as `exact` intents in each managed document. Omitted values remain
-`automatic`; sibling worktrees have independent stack identities and allocations, while live exact
-port conflicts are rejected by the manager. Runtime-only service ports are selected by the managed
-supervisor and are not written to the document.
+`automatic`; sibling worktrees and branches have independent stack identities and allocations.
+Automatic allocation avoids ports saved by any stack, so stopped stacks keep their URLs. An exact
+port is rejected only when a listener already answers on it or the port cannot be bound; another
+stack's saved claim alone never blocks it, and a conflict names the stack that saved the port. Runtime-only service ports are
+selected by the managed supervisor and are not written to the document.
 
 ## Command behavior
 

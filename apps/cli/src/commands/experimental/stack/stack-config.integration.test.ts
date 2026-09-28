@@ -54,11 +54,11 @@ enabled = true
       for (const service of services) yield* Schema.decodeEffect(ServiceCreationInput)(service);
 
       const recipes = byService(services);
-      const identity = yield* config.identity;
-      expect(identity.anonKey).toBeUndefined();
-      expect(identity.serviceRoleKey).toBeUndefined();
-      expect(identity.gotrueJwtKeys).toBeUndefined();
-      expect(identity.publicSigningKeys).toBeUndefined();
+      const keys = yield* config.keys;
+      expect(keys.anonKey).toBeUndefined();
+      expect(keys.serviceRoleKey).toBeUndefined();
+      expect(keys.gotrueJwtKeys).toBeUndefined();
+      expect(keys.publicSigningKeys).toBeUndefined();
       const database = recipes.get("database");
       expect(
         database?.service === "database" ? database.config.rootKey : undefined,
@@ -184,9 +184,9 @@ signing_keys_path = "./keys.json"
 `);
       yield* fs.writeFileString(path.join(enabled, "supabase", "keys.json"), "[]");
       const enabledConfig = yield* load(enabled);
-      const identity = yield* enabledConfig.identity;
-      expect(identity.gotrueJwtKeys).toBe("[]");
-      expect(identity.publicSigningKeys).toBe("[]");
+      const keys = yield* enabledConfig.keys;
+      expect(keys.gotrueJwtKeys).toBe("[]");
+      expect(keys.publicSigningKeys).toBe("[]");
 
       const disabled = yield* project(`project_id = "stack-config-disabled-signing-keys"
 [auth]
@@ -194,19 +194,19 @@ enabled = false
 signing_keys_path = "./missing-keys.json"
 `);
       const disabledConfig = yield* load(disabled);
-      const disabledIdentity = yield* disabledConfig.identity;
+      const disabledKeys = yield* disabledConfig.keys;
       const jwks = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(publicJwkSchema)))(
-        disabledIdentity.publicSigningKeys ?? "[]",
+        disabledKeys.publicSigningKeys ?? "[]",
       );
       expect(jwks).toHaveLength(1);
       expect(jwks[0]?.kid).toBe(DEFAULT_SIGNING_KEY.kid);
-      expect(disabledIdentity.publicSigningKeys).not.toContain('"d"');
+      expect(disabledKeys.publicSigningKeys).not.toContain('"d"');
       const publicJwk = jwks[0];
       if (publicJwk === undefined) return yield* Effect.die("The default public JWK is missing.");
       const publicKey = yield* Effect.promise(() => importJWK(publicJwk, "ES256"));
       for (const [token, role] of [
-        [disabledIdentity.anonKey, "anon"],
-        [disabledIdentity.serviceRoleKey, "service_role"],
+        [disabledKeys.anonKey, "anon"],
+        [disabledKeys.serviceRoleKey, "service_role"],
       ] as const) {
         expect(token).toBeDefined();
         const verified = yield* Effect.promise(() =>
@@ -219,10 +219,10 @@ signing_keys_path = "./missing-keys.json"
         `project_id = "stack-config-env-disabled-signing-keys"\n[auth]\nenabled = false\n`,
         { supabaseEnv: "SUPABASE_AUTH_SIGNING_KEYS_PATH=./missing-keys.json\n" },
       );
-      const envIdentity = yield* (yield* load(envDisabled)).identity;
-      expect(envIdentity.publicSigningKeys).toBe(disabledIdentity.publicSigningKeys);
-      expect(envIdentity.anonKey).toBeDefined();
-      expect(envIdentity.serviceRoleKey).toBeDefined();
+      const envKeys = yield* (yield* load(envDisabled)).keys;
+      expect(envKeys.publicSigningKeys).toBe(disabledKeys.publicSigningKeys);
+      expect(envKeys.anonKey).toBeDefined();
+      expect(envKeys.serviceRoleKey).toBeDefined();
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -254,10 +254,10 @@ signing_keys_path = "./missing-keys.json"
         },
       );
       const config = yield* load(root);
-      const identity = yield* config.identity;
+      const keys = yield* config.keys;
       const remoteJwks = yield* Schema.decodeEffect(
         Schema.fromJsonString(Schema.Array(remoteJwkSchema)),
-      )(identity.remoteJwks ?? "[]");
+      )(keys.remoteJwks ?? "[]");
       expect(remoteJwks).toEqual([remoteKey]);
       expect(paths).toEqual(["/.well-known/openid-configuration", "/jwks"]);
 
@@ -268,8 +268,8 @@ enabled = false
 enabled = true
 issuer_url = ""
 `);
-      const emptyIssuerIdentity = yield* (yield* load(emptyIssuer)).identity;
-      expect(emptyIssuerIdentity.remoteJwks).toBeUndefined();
+      const emptyIssuerKeys = yield* (yield* load(emptyIssuer)).keys;
+      expect(emptyIssuerKeys.remoteJwks).toBeUndefined();
       expect(paths).toEqual(["/.well-known/openid-configuration", "/jwks"]);
     }).pipe(Effect.provide(BunServices.layer)),
   );

@@ -57,7 +57,8 @@ describe("service catalog", () => {
             identity: { projectRoot: root, branchContext: "test", stackName: "catalog" },
             runtime: "docker",
             instances: [],
-            composition: {},
+            lifetime: "detached",
+            composition: { members: [], dependencies: [] },
             ports: [],
           });
           const network = yield* makeTestNetwork({ stackId, runtime: "docker", state });

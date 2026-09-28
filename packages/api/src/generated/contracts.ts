@@ -5282,6 +5282,13 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   presence_enabled: Schema.Boolean.annotate({ description: "Whether to enable presence" }),
+  admin_suspended_at: Schema.Union([
+    Schema.String.annotate({
+      description: "If set, the Realtime service has been suspended by an admin.",
+      format: "date-time",
+    }),
+    Schema.Null,
+  ]),
 });
 export const V1GetRestorePointInput = Schema.Struct({
   ref: Schema.String.check(
@@ -9914,7 +9921,13 @@ export const V2AssignOrganizationMemberRoleInput = Schema.Struct({
   data: Schema.Struct({
     type: Schema.Literal("organization_member_role").annotate({ description: "Resource type." }),
     attributes: Schema.Struct({
-      role: Schema.Literals(["owner", "administrator", "developer", "read-only"]).annotate({
+      role: Schema.Literals([
+        "owner",
+        "administrator",
+        "developer",
+        "read-only",
+        "no-access",
+      ]).annotate({
         description:
           "Role name to assign. Must be one of: owner, administrator, developer, read-only. Must be on a Team or Enterprise plan to use the read-only role.",
       }),
@@ -10711,9 +10724,15 @@ export const V2CreateOrganizationInvitationsInput = Schema.Struct({
               "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
           }),
         ),
-        role: Schema.Literals(["owner", "administrator", "developer", "read-only"]).annotate({
+        role: Schema.Literals([
+          "owner",
+          "administrator",
+          "developer",
+          "read-only",
+          "no-access",
+        ]).annotate({
           description:
-            "Role name to assign. Must be on a Team or Enterprise plan to use the read-only role.",
+            "Role name to assign. Must be on an Enterprise plan to use the read-only or no-access roles. no-access grants no project visibility until project-scoped roles are assigned separately.",
         }),
         projects: Schema.optionalKey(
           Schema.Array(
