@@ -121,6 +121,11 @@ const derivedInputs: Partial<Record<ServiceCreation["service"], ReadonlyArray<st
   functions: ["apiUrl", "databaseUrl"],
 };
 
+/** Derived inputs a project may set itself; a plan compares one whenever the request sets it. */
+const overridableInputs: Partial<Record<ServiceCreation["service"], ReadonlyArray<string>>> = {
+  studio: ["publicApiUrl"],
+};
+
 /** Names every config input the package supplies to a composition member of this kind. */
 const managedInputs = (service: ServiceCreation["service"]): ReadonlySet<string> =>
   new Set([
@@ -237,10 +242,14 @@ const withSharedApiPort = (creation: ServiceCreationInput, sharedPort: number | 
     ? creation.endpoints
     : { ...(isRecord(creation.endpoints) ? creation.endpoints : {}), http: { port: sharedPort } };
 
-const comparable = (creation: ServiceCreationInput, sharedPort: number | undefined) => {
+const comparable = (
+  creation: ServiceCreationInput,
+  sharedPort: number | undefined,
+  compared: ReadonlySet<string>,
+) => {
   const managed = managedInputs(creation.service);
   const config: Record<string, unknown> = Object.fromEntries(
-    Object.entries(creation.config).filter(([key]) => !managed.has(key)),
+    Object.entries(creation.config).filter(([key]) => compared.has(key) || !managed.has(key)),
   );
   if (creation.service === "database") config.version = postgresVersion(creation.config.version);
   return { version: creation.version, endpoints: withSharedApiPort(creation, sharedPort), config };
@@ -252,7 +261,17 @@ const compareCreation = (
   requested: ServiceCreationInput,
   sharedPort: number | undefined,
 ): CreationChange => {
-  const paths = differences(comparable(saved, undefined), comparable(requested, sharedPort), "");
+  const overridable = overridableInputs[requested.service] ?? [];
+  const compared = new Set(
+    Object.entries(requested.config)
+      .filter(([key, value]) => value !== undefined && overridable.includes(key))
+      .map(([key]) => key),
+  );
+  const paths = differences(
+    comparable(saved, undefined, compared),
+    comparable(requested, sharedPort, compared),
+    "",
+  );
   const incompatible = paths.filter(
     (path) =>
       path === "version" ||
