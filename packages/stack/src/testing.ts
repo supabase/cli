@@ -264,8 +264,8 @@ const make = Effect.fn("TestStack.make")(
         ? Effect.fail(
             new StackError({ operation, message: "Test stack checkpoints require a database" }),
           )
-        : stack.composition.stop.pipe(
-            Effect.andThen(database.stop),
+        : // The owner completes a stop its caller abandons, so the restart must follow its reply.
+          Effect.uninterruptible(stack.composition.stop).pipe(
             Effect.andThen(work(database)),
             Effect.matchEffect({
               onSuccess: () => start(operation),
