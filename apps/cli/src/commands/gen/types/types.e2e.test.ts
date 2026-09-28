@@ -16,8 +16,10 @@ import {
   resolveDeadline,
 } from "../../../../tests/helpers/docker-image.ts";
 
-const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
-type TypegenLang = (typeof TYPEGEN_LANGS)[number];
+const TYPEGEN_LANGS: ReadonlyArray<string> = languages
+  .filter((language) => language.inProcess)
+  .map((language) => language.name);
+type TypegenLang = string;
 
 const LOCAL_POSTGRES_IMAGE = dockerfileServiceImage("pg");
 const LOCAL_POSTGRES_TIMEOUT_MS = 120_000;
@@ -298,6 +300,8 @@ function expectLanguageShape(lang: TypegenLang, stdout: string) {
     case "python":
       expect(stdout).toContain("from __future__ import annotations");
       break;
+    default:
+      throw new Error(`no shape assertion for the registry language ${lang}`);
   }
 }
 
@@ -310,14 +314,6 @@ function expectLocalSmokeTable(lang: TypegenLang, stdout: string) {
 }
 
 describe("gen types e2e", () => {
-  it("covers every in-process language the registry offers", () => {
-    const inProcess = languages
-      .filter((language) => language.inProcess)
-      .map((language) => language.name)
-      .sort();
-    expect(inProcess).toEqual([...TYPEGEN_LANGS].sort());
-  });
-
   it.live(
     "generates all supported languages from a tokenless local stack",
     () =>

@@ -4,7 +4,7 @@ Generates PostgREST client types against a direct PostgreSQL connection.
 Introspection runs in-process via `@supabase/postgrest-typegen`; the language
 comes from the `@supabase/typegen` registry, which lists every `--lang` value and
 either calls that language's generator in-process (TypeScript, Go, Python,
-Swift today) or runs the language's own tool in the working directory with the
+Swift today) or runs the language's own tool in the directory the command was run from, with the
 introspected document on stdin (`--lang dart` runs `dart run supabase_typegen
 --output -`). A bump of that dependency can add a `--lang` value or a language
 flag; the CLI names no language itself. `--linked`/`--project-id` TypeScript
@@ -63,7 +63,7 @@ workdir). `--local` and `--db-url` do not call the Management API.
 | Command                                                      | When                                                                                                      | Purpose                                                       |
 | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | `docker`/`podman container inspect supabase_db_<project_id>` | `--local`, only when the selected backend is the legacy Docker Compose stack (`[experimental].stack` off) | assert `supabase start` is running                            |
-| `dart run supabase_typegen --output -`                       | `--lang dart` on every target, in the working directory                                                   | generate the types from the `GeneratorMetadata` JSON on stdin |
+| `dart run supabase_typegen --output -`                       | `--lang dart` on every target, in the directory the command was run from                                  | generate the types from the `GeneratorMetadata` JSON on stdin |
 
 Any other `--lang` whose registry entry is out-of-process runs its own tool
 the same way: stdout is the output, stderr is folded into the error on
@@ -105,7 +105,7 @@ through `DbConfigResolver` the same way `--db-url` does.
 | `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` holds no project config on a schema-selecting path (`GenTypesMissingProjectConfigError`) — a DEFAULTED workdir keeps the embedded-default fallback instead |
 | `1`  | a resolved preview branch config has no `db_user`/`db_pass` (`GenTypesBranchCredentialsUnavailableError`)                                                                                             |
 | `1`  | API error or database connection/introspection/generation failure (`GenTypesGenerationError`)                                                                                                         |
-| `1`  | an out-of-process language's toolchain or package is missing from the working directory; `suggestion` carries the registry's install hint (`GenTypesToolNotInstalledError`)                           |
+| `1`  | an out-of-process language's toolchain or package is missing from the current directory; the message carries the registry's install hint (`GenTypesToolNotInstalledError`)                            |
 | `1`  | an out-of-process language's tool exited unsuccessfully or rejected the metadata document; the message carries its stderr (`GenTypesToolFailedError`)                                                 |
 
 ## Output

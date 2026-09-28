@@ -3,6 +3,11 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
+import { GLOBAL_FLAGS } from "../../../command-internal/global-flags.ts";
+import {
+  PERSISTENT_VALUE_FLAG_NAMES,
+  PERSISTENT_VALUE_FLAG_SHORTHANDS,
+} from "../../../shared/cli/cobra-flag-groups.ts";
 import { genTypes } from "./types.handler.ts";
 import { GEN_TYPES_LANGUAGES, genTypesLanguageFlags } from "./types.languages.ts";
 import { genTypesRuntimeLayer } from "./types.layers.ts";
@@ -49,8 +54,8 @@ const config = {
   ),
 } as const;
 
-/** Long flag names (and the `-s` alias) `gen types` defines itself; registry flags may not reuse them. */
-export const GEN_TYPES_CORE_FLAG_NAMES: ReadonlyArray<string> = [
+/** Every flag name `gen types` already answers to: its own, the globals, and Effect's built-ins. */
+const GEN_TYPES_RESERVED_FLAG_NAMES: ReadonlyArray<string> = [
   "local",
   "linked",
   "db-url",
@@ -60,9 +65,19 @@ export const GEN_TYPES_CORE_FLAG_NAMES: ReadonlyArray<string> = [
   "s",
   "postgrest-v9-compat",
   "query-timeout",
+  ...GLOBAL_FLAGS.map((flag) => flag.name),
+  ...PERSISTENT_VALUE_FLAG_NAMES,
+  ...PERSISTENT_VALUE_FLAG_SHORTHANDS.keys(),
+  "help",
+  "h",
+  "version",
+  "v",
+  "wizard",
+  "completions",
+  "log-level",
 ];
 
-const flagsConfig = { ...config, ...genTypesLanguageFlags(GEN_TYPES_CORE_FLAG_NAMES) };
+const flagsConfig = { ...config, ...genTypesLanguageFlags(GEN_TYPES_RESERVED_FLAG_NAMES) };
 
 const commandConfig = {
   ...flagsConfig,

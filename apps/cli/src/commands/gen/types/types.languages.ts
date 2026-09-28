@@ -1,20 +1,122 @@
 import { languages, type OptionSpec, type OptionValue, type OptionValues } from "@supabase/typegen";
-import { Flag } from "effect/unstable/cli";
 import { Option } from "effect";
+import { Flag } from "effect/unstable/cli";
 
-/** `--lang` values, in the registry's display order. */
+/** A user-facing registry option as one CLI flag, merged across the languages that declare it. */
+export interface LanguageFlagSpec {
+  readonly name: string;
+  readonly kind: OptionSpec["kind"];
+  readonly help: string;
+  /** Every declaring language's choices; `undefined` for other kinds. */
+  readonly choices?: ReadonlyArray<string>;
+  /** Shown in help and docs only when every declaring language agrees; never sent. */
+  readonly default?: OptionValue;
+}
+
+export type GenTypesLanguageFlagValue = Option.Option<string | boolean>;
+
+/**
+ * One flag per option name. The flag carries no default: the registry applies each language's
+ * own default to the values the user did not set.
+ */
+export const mergeUserOptions = (
+  specs: ReadonlyArray<OptionSpec>,
+): ReadonlyArray<LanguageFlagSpec> => {
+  const byName = new Map<string, LanguageFlagSpec>();
+  for (const spec of specs) {
+    if (spec.audience !== "user") continue;
+    const existing = byName.get(spec.name);
+    if (existing === undefined) {
+      byName.set(spec.name, {
+        name: spec.name,
+        kind: spec.kind,
+        help: spec.help,
+        choices: spec.kind === "choice" ? [...spec.choices] : undefined,
+        default: spec.default,
+      });
+      continue;
+    }
+    if (existing.kind !== spec.kind) {
+      throw new Error(
+        `@supabase/typegen declares --${spec.name} as both ${existing.kind} and ${spec.kind}`,
+      );
+    }
+    byName.set(spec.name, {
+      ...existing,
+      choices:
+        existing.choices !== undefined && spec.kind === "choice"
+          ? [...new Set([...existing.choices, ...spec.choices])]
+          : existing.choices,
+      default: existing.default === spec.default ? existing.default : undefined,
+    });
+  }
+  return [...byName.values()];
+};
+
+const languageFlag = (spec: LanguageFlagSpec): Flag.Flag<GenTypesLanguageFlagValue> => {
+  const help =
+    spec.default === undefined ? spec.help : `${spec.help} (default ${String(spec.default)})`;
+  switch (spec.kind) {
+    case "boolean":
+      return Flag.boolean(spec.name).pipe(Flag.withDescription(help), Flag.optional);
+    case "choice":
+      return Flag.choice(spec.name, spec.choices ?? []).pipe(
+        Flag.withDescription(help),
+        Flag.optional,
+      );
+    case "string":
+      return Flag.string(spec.name).pipe(Flag.withDescription(help), Flag.optional);
+  }
+};
+
+/** Throws when a registry option reuses a flag name the command or the CLI already defines. */
+export const languageFlagsFor = (
+  specs: ReadonlyArray<LanguageFlagSpec>,
+  reservedFlagNames: Iterable<string>,
+): Readonly<Record<string, Flag.Flag<GenTypesLanguageFlagValue>>> => {
+  const reserved = new Set(reservedFlagNames);
+  const collisions = specs.map((spec) => spec.name).filter((name) => reserved.has(name));
+  if (collisions.length > 0) {
+    throw new Error(
+      `@supabase/typegen declares language flags that collide with CLI flags: ${collisions.join(", ")}`,
+    );
+  }
+  return Object.fromEntries(specs.map((spec) => [spec.name, languageFlag(spec)]));
+};
+
+/** The values the user set, keyed by option name; unset flags are absent. */
+export const optionValuesFor = (
+  specs: ReadonlyArray<LanguageFlagSpec>,
+  flags: Readonly<Record<string, unknown>>,
+): OptionValues => {
+  const values: Record<string, OptionValue> = {};
+  for (const spec of specs) {
+    const value = flags[spec.name];
+    if (!Option.isOption(value) || Option.isNone(value)) continue;
+    if (typeof value.value === "string" || typeof value.value === "boolean") {
+      values[spec.name] = value.value;
+    }
+  }
+  return values;
+};
+
+/** Documented defaults keyed the way `DOCS_DEFAULT_OVERRIDES` expects. */
+export const flagDefaultsFor = (
+  specs: ReadonlyArray<LanguageFlagSpec>,
+): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    specs.flatMap((spec) =>
+      spec.default === undefined ? [] : [[`supabase-gen-types ${spec.name}`, String(spec.default)]],
+    ),
+  );
+
 export const GEN_TYPES_LANGUAGES: ReadonlyArray<string> = languages.map(
   (language) => language.name,
 );
 
-/** User-facing language options, one entry per flag name. */
-const GEN_TYPES_LANGUAGE_OPTIONS: ReadonlyArray<OptionSpec> = [
-  ...new Map(
-    languages
-      .flatMap((language) => language.options.filter((option) => option.audience === "user"))
-      .map((option) => [option.name, option] as const),
-  ).values(),
-];
+const GEN_TYPES_LANGUAGE_OPTIONS = mergeUserOptions(
+  languages.flatMap((language) => language.options),
+);
 
 export const GEN_TYPES_LANGUAGE_FLAG_NAMES: ReadonlyArray<string> = GEN_TYPES_LANGUAGE_OPTIONS.map(
   (option) => option.name,
@@ -26,69 +128,11 @@ export const GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES: ReadonlyArray<string> =
     (option) => option.name,
   );
 
-export type GenTypesLanguageFlagValue = string | boolean | Option.Option<string>;
+export const genTypesLanguageFlags = (reservedFlagNames: Iterable<string>) =>
+  languageFlagsFor(GEN_TYPES_LANGUAGE_OPTIONS, reservedFlagNames);
 
-const languageFlag = (spec: OptionSpec): Flag.Flag<GenTypesLanguageFlagValue> => {
-  switch (spec.kind) {
-    case "boolean":
-      return Flag.boolean(spec.name).pipe(
-        Flag.withDescription(spec.help),
-        Flag.withDefault(spec.default),
-      );
-    case "choice":
-      return Flag.choice(spec.name, spec.choices).pipe(
-        Flag.withDescription(`${spec.help} (default ${spec.default})`),
-        Flag.withDefault(spec.default),
-      );
-    case "string":
-      return spec.default === undefined
-        ? Flag.string(spec.name).pipe(Flag.withDescription(spec.help), Flag.optional)
-        : Flag.string(spec.name).pipe(
-            Flag.withDescription(`${spec.help} (default ${spec.default})`),
-            Flag.withDefault(spec.default),
-          );
-  }
-};
-
-/**
- * One flag per user-facing language option, keyed by the flag name. Throws when a registry
- * option reuses one of the command's own flag names, since Effect would otherwise register the
- * flag twice or the spread would silently replace the core flag.
- */
-export const genTypesLanguageFlags = (
-  reservedFlagNames: ReadonlyArray<string>,
-): Readonly<Record<string, Flag.Flag<GenTypesLanguageFlagValue>>> => {
-  const collisions = GEN_TYPES_LANGUAGE_FLAG_NAMES.filter((name) =>
-    reservedFlagNames.includes(name),
-  );
-  if (collisions.length > 0) {
-    throw new Error(
-      `@supabase/typegen declares language flags that collide with gen types flags: ${collisions.join(", ")}`,
-    );
-  }
-  return Object.fromEntries(
-    GEN_TYPES_LANGUAGE_OPTIONS.map((spec) => [spec.name, languageFlag(spec)]),
-  );
-};
-
-/** Documented defaults of the language flags, keyed the way `DOCS_DEFAULT_OVERRIDES` expects. */
 export const genTypesLanguageFlagDefaults = (): Readonly<Record<string, string>> =>
-  Object.fromEntries(
-    GEN_TYPES_LANGUAGE_OPTIONS.flatMap((spec) =>
-      spec.default === undefined ? [] : [[`supabase-gen-types ${spec.name}`, String(spec.default)]],
-    ),
-  );
+  flagDefaultsFor(GEN_TYPES_LANGUAGE_OPTIONS);
 
-/** Reads the parsed language flags back into registry option values. */
-export const languageOptionValues = (flags: Readonly<Record<string, unknown>>): OptionValues => {
-  const values: Record<string, OptionValue> = {};
-  for (const name of GEN_TYPES_LANGUAGE_FLAG_NAMES) {
-    const value = flags[name];
-    if (Option.isOption(value)) {
-      if (Option.isSome(value) && typeof value.value === "string") values[name] = value.value;
-    } else if (typeof value === "string" || typeof value === "boolean") {
-      values[name] = value;
-    }
-  }
-  return values;
-};
+export const languageOptionValues = (flags: Readonly<Record<string, unknown>>): OptionValues =>
+  optionValuesFor(GEN_TYPES_LANGUAGE_OPTIONS, flags);

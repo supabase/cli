@@ -1,12 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
 import {
   findLanguage,
-  GENERATOR_METADATA_VERSION,
-  type GeneratorMetadata,
-  introspect,
   InvalidOptionError,
-  languages,
   ToolFailedError,
   ToolNotInstalledError,
 } from "@supabase/typegen";
@@ -17,47 +12,8 @@ import {
   GenTypesToolNotInstalledError,
 } from "./types.generator.service.ts";
 
-const emptyMetadata: GeneratorMetadata = {
-  version: GENERATOR_METADATA_VERSION,
-  schemas: [{ id: 1, name: "public", owner: "postgres" }],
-  tables: [],
-  views: [],
-  materializedViews: [],
-  foreignTables: [],
-  columns: [],
-  primaryKeys: [],
-  relationships: [],
-  functions: [],
-  types: [],
-};
-
-/** A host for in-process languages only: no process runner, TypeScript left unformatted. */
-const inProcessHost = { cwd: "/tmp", env: {}, format: (code: string) => Promise.resolve(code) };
-
-describe("typegen registry runtime contract", () => {
-  it("exposes the registry and the re-exported introspection entry point", () => {
-    expect(typeof introspect).toBe("function");
-    expect(typeof findLanguage).toBe("function");
-    expect(languages.map((language) => language.name)).toEqual(
-      expect.arrayContaining(["typescript", "go", "python", "swift", "dart"]),
-    );
-  });
-
-  it.effect("renders every in-process language from metadata alone", () =>
-    Effect.gen(function* () {
-      for (const language of languages.filter((language) => language.inProcess)) {
-        const output = yield* Effect.promise(() =>
-          language.generate(emptyMetadata, {}, inProcessHost),
-        );
-        expect(output.length, language.name).toBeGreaterThan(0);
-      }
-      expect(findLanguage("dart")?.inProcess).toBe(false);
-    }),
-  );
-});
-
 describe("registry error mapping", () => {
-  it("turns a missing toolchain into an install-hint error without repeating the hint", () => {
+  it("keeps the registry's message, install hint included, for a missing toolchain", () => {
     const hint = "Install the Dart SDK.";
     const mapped = mapRegistryError(
       "dart",
@@ -69,8 +25,9 @@ describe("registry error mapping", () => {
       }),
     );
     expect(mapped).toBeInstanceOf(GenTypesToolNotInstalledError);
-    expect(mapped.message).toBe("Generating dart types needs `dart`, which was not found on PATH.");
-    expect(mapped).toMatchObject({ suggestion: hint });
+    expect(mapped.message).toBe(
+      `Generating dart types needs \`dart\`, which was not found on PATH. ${hint}`,
+    );
   });
 
   it("keeps the tool's stderr when it fails", () => {

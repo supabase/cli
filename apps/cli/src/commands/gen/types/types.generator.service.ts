@@ -44,12 +44,11 @@ export class GenTypesGenerationError extends Data.TaggedError("GenTypesGeneratio
   }
 }
 
-/** An out-of-process language's toolchain is missing; `suggestion` carries the install hint. */
+/** An out-of-process language's toolchain is missing; the message carries the install hint. */
 export class GenTypesToolNotInstalledError extends Data.TaggedError(
   "GenTypesToolNotInstalledError",
 )<{
   readonly message: string;
-  readonly suggestion: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.toolNotInstalled;

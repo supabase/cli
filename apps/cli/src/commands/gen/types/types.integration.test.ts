@@ -113,7 +113,7 @@ function defaultFlags(overrides: Partial<GenTypesFlags> = {}): GenTypesFlags {
     projectId: Option.none(),
     lang: "typescript" as const,
     schema: [],
-    "swift-access-control": "internal" as const,
+    "swift-access-control": Option.none(),
     postgrestV9Compat: false,
     queryTimeout: "15s",
     ...overrides,
@@ -941,7 +941,11 @@ describe("gen types", () => {
           args: ["gen", "types", "--linked", "--swift-access-control", "public", "--lang", "swift"],
         });
         const exit = yield* genTypes(
-          defaultFlags({ linked: true, lang: "swift", "swift-access-control": "public" }),
+          defaultFlags({
+            linked: true,
+            lang: "swift",
+            "swift-access-control": Option.some("public"),
+          }),
         ).pipe(Effect.provide(layer), Effect.exit);
 
         expect(Exit.isFailure(exit)).toBe(true);
@@ -971,7 +975,7 @@ describe("gen types", () => {
           defaultFlags({
             projectId: Option.some(VALID_REF),
             lang: "swift",
-            "swift-access-control": "public",
+            "swift-access-control": Option.some("public"),
           }),
         ).pipe(Effect.provide(layer), Effect.exit);
 
@@ -1441,7 +1445,11 @@ describe("gen types", () => {
             projectId: Option.some(VALID_REF),
           });
           yield* genTypes(
-            defaultFlags({ lang: "go", queryTimeout: "20s", "swift-access-control": "public" }),
+            defaultFlags({
+              lang: "go",
+              queryTimeout: "20s",
+              "swift-access-control": Option.some("public"),
+            }),
           ).pipe(Effect.provide(layer));
 
           expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(false);
@@ -2349,7 +2357,11 @@ describe("gen types", () => {
           args: ["gen", "types", "--local", "--lang", "python", "--swift-access-control", "public"],
         });
         yield* genTypes(
-          defaultFlags({ local: true, lang: "python", "swift-access-control": "public" }),
+          defaultFlags({
+            local: true,
+            lang: "python",
+            "swift-access-control": Option.some("public"),
+          }),
         ).pipe(Effect.provide(layer));
 
         expect(generator.calls[0]?.lang).toBe("python");
@@ -2774,7 +2786,7 @@ describe("gen types", () => {
               dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:5432/postgres"),
               lang: "swift",
               schema: ["public"],
-              "swift-access-control": "public",
+              "swift-access-control": Option.some("public"),
               postgrestV9Compat: true,
               queryTimeout: "20s",
             }),

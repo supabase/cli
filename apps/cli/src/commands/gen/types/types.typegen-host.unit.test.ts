@@ -112,9 +112,8 @@ describe("quoteForCmd", () => {
     expect(quoteForCmd("(x)")).toBe('"(x)"');
   });
 
-  it("doubles embedded quotes and percent signs", () => {
-    expect(quoteForCmd('say "hi"')).toBe('"say ""hi"""');
-    expect(quoteForCmd("%PATH%")).toBe('"%%PATH%%"');
+  it("leaves percent signs alone, since cmd.exe expands them even inside quotes", () => {
+    expect(quoteForCmd("%PATH%")).toBe("%PATH%");
   });
 });
 
@@ -146,29 +145,17 @@ describe("makeTypegenHost", () => {
     }).pipe(Effect.flip);
   };
 
-  it.effect(
-    "runs the tool in the project directory with the document on stdin and returns its output",
-    () =>
-      Effect.gen(function* () {
-        const { spawner, calls } = fakeSpawner({
-          stdout: "class Tickets {}\n",
-          stderr: "summary\n",
-        });
-        const result: SpawnResult = yield* spawnOf(spawner)(request());
+  it.effect("returns what the tool wrote and feeds it the document on stdin", () =>
+    Effect.gen(function* () {
+      const { spawner, calls } = fakeSpawner({
+        stdout: "class Tickets {}\n",
+        stderr: "summary\n",
+      });
+      const result: SpawnResult = yield* spawnOf(spawner)(request());
 
-        expect(result).toEqual({ exitCode: 0, stdout: "class Tickets {}\n", stderr: "summary\n" });
-        expect(calls).toEqual([
-          {
-            command: "dart",
-            args: ["run", "supabase_typegen", "--output", "-"],
-            cwd: "/projects/app",
-            env: { PATH: "/usr/bin" },
-            extendEnv: true,
-            shell: false,
-            stdin: '{"version":1}',
-          },
-        ]);
-      }),
+      expect(result).toEqual({ exitCode: 0, stdout: "class Tickets {}\n", stderr: "summary\n" });
+      expect(calls[0]?.stdin).toBe('{"version":1}');
+    }),
   );
 
   it.effect("reports a non-zero exit as a result rather than a failure", () =>

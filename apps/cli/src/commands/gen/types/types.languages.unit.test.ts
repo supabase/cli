@@ -1,44 +1,88 @@
 import { describe, expect, it } from "@effect/vitest";
+import type { OptionSpec } from "@supabase/typegen";
 import { Option } from "effect";
-import { GEN_TYPES_CORE_FLAG_NAMES } from "./types.command.ts";
 import {
-  GEN_TYPES_LANGUAGE_FLAG_NAMES,
-  GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
-  GEN_TYPES_LANGUAGES,
-  genTypesLanguageFlagDefaults,
-  genTypesLanguageFlags,
-  languageOptionValues,
+  flagDefaultsFor,
+  languageFlagsFor,
+  mergeUserOptions,
+  optionValuesFor,
 } from "./types.languages.ts";
 
-describe("registry-derived gen types flags", () => {
-  it("lists every registry language and keeps typescript first", () => {
-    expect(GEN_TYPES_LANGUAGES[0]).toBe("typescript");
-    expect(GEN_TYPES_LANGUAGES).toEqual(expect.arrayContaining(["go", "python", "swift", "dart"]));
+const level = (choices: ReadonlyArray<string>, fallback: string): OptionSpec => ({
+  name: "level",
+  audience: "user",
+  kind: "choice",
+  choices,
+  default: fallback,
+  help: "Access level.",
+});
+
+describe("mergeUserOptions", () => {
+  it("skips consumer options and keeps one flag per name", () => {
+    const merged = mergeUserOptions([
+      level(["a", "b"], "a"),
+      { name: "version", audience: "consumer", kind: "string", help: "" },
+      level(["b", "c"], "a"),
+    ]);
+    expect(merged).toEqual([
+      {
+        name: "level",
+        kind: "choice",
+        help: "Access level.",
+        choices: ["a", "b", "c"],
+        default: "a",
+      },
+    ]);
   });
 
-  it("exposes swift-access-control as the only user flag today", () => {
-    expect(GEN_TYPES_LANGUAGE_FLAG_NAMES).toEqual(["swift-access-control"]);
-    expect(GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES).toEqual(["swift-access-control"]);
-    expect(genTypesLanguageFlagDefaults()).toEqual({
-      "supabase-gen-types swift-access-control": "internal",
-    });
+  it("drops the default when the declaring languages disagree", () => {
+    const [merged] = mergeUserOptions([level(["a", "b"], "a"), level(["a", "b"], "b")]);
+    expect(merged?.default).toBeUndefined();
   });
 
-  it("does not let a registry flag reuse a core flag name", () => {
-    expect(() => genTypesLanguageFlags(GEN_TYPES_CORE_FLAG_NAMES)).not.toThrow();
-    expect(() => genTypesLanguageFlags(["swift-access-control"])).toThrow(
-      /collide with gen types flags: swift-access-control/,
+  it("refuses one name declared with two kinds", () => {
+    expect(() =>
+      mergeUserOptions([
+        level(["a"], "a"),
+        { name: "level", audience: "user", kind: "boolean", default: false, help: "" },
+      ]),
+    ).toThrow(/--level as both choice and boolean/);
+  });
+});
+
+describe("languageFlagsFor", () => {
+  const specs = mergeUserOptions([level(["a", "b"], "a")]);
+
+  it("refuses a registry flag that reuses a reserved name", () => {
+    expect(() => languageFlagsFor(specs, ["lang", "level"])).toThrow(
+      /collide with CLI flags: level/,
     );
+    expect(Object.keys(languageFlagsFor(specs, ["lang"]))).toEqual(["level"]);
   });
+});
 
-  it("reads parsed language flags back into registry option values", () => {
-    expect(languageOptionValues({ "swift-access-control": "public", lang: "swift" })).toEqual({
-      "swift-access-control": "public",
+describe("optionValuesFor", () => {
+  const specs = mergeUserOptions([
+    level(["a", "b"], "a"),
+    { name: "verbose", audience: "user", kind: "boolean", default: false, help: "" },
+  ]);
+
+  it("forwards only the flags the user set, so each language applies its own default", () => {
+    expect(optionValuesFor(specs, { level: Option.some("b"), verbose: Option.none() })).toEqual({
+      level: "b",
     });
-    expect(languageOptionValues({ "swift-access-control": Option.some("package") })).toEqual({
-      "swift-access-control": "package",
+    expect(optionValuesFor(specs, { level: Option.none(), verbose: Option.some(true) })).toEqual({
+      verbose: true,
     });
-    expect(languageOptionValues({ "swift-access-control": Option.none() })).toEqual({});
-    expect(languageOptionValues({})).toEqual({});
+    expect(optionValuesFor(specs, { lang: "swift" })).toEqual({});
+  });
+});
+
+describe("flagDefaultsFor", () => {
+  it("documents a default only when it is unambiguous", () => {
+    expect(flagDefaultsFor(mergeUserOptions([level(["a"], "a")]))).toEqual({
+      "supabase-gen-types level": "a",
+    });
+    expect(flagDefaultsFor(mergeUserOptions([level(["a"], "a"), level(["b"], "b")]))).toEqual({});
   });
 });

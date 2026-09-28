@@ -16,8 +16,8 @@ import {
 describe("GenTypesToolNotInstalledError actionability", () => {
   it("classifies a missing language toolchain as user-actionable without a canonical remedy", () => {
     const error = new GenTypesToolNotInstalledError({
-      message: "Generating dart types needs `dart`, which was not found on PATH.",
-      suggestion: "Install the Dart SDK.",
+      message:
+        "Generating dart types needs `dart`, which was not found on PATH. Install the Dart SDK.",
     });
 
     const result = classifyCliErrorActionability(error);

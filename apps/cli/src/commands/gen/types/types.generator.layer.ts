@@ -12,7 +12,6 @@ import {
 import { Config, Effect, Layer, Option } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import {
@@ -43,14 +42,7 @@ const generationError = (lang: string, cause: unknown): GenTypesGenerationError 
 /** The CLI error for whatever `TypegenLanguage.generate` rejected with. */
 export const mapRegistryError = (lang: string, cause: unknown): GenTypesGenerateError => {
   if (cause instanceof ToolNotInstalledError) {
-    return new GenTypesToolNotInstalledError({
-      message: cause.message
-        .replace(cause.installHint, "")
-        .replace(/ +\n/g, "\n")
-        .replace(/ {2,}/g, " ")
-        .trim(),
-      suggestion: cause.installHint,
-    });
+    return new GenTypesToolNotInstalledError({ message: cause.message });
   }
   if (cause instanceof ToolFailedError) {
     return new GenTypesToolFailedError({ message: cause.message, cause });
@@ -74,7 +66,6 @@ export const genTypesGeneratorLayer = Layer.effect(
   Effect.gen(function* () {
     const dbConn = yield* DbConnection;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const settings = yield* CommandSettings;
     const runtime = yield* RuntimeInfo;
     const lookupEnv = {
       PATH: yield* optionalEnv("PATH"),
@@ -90,30 +81,38 @@ export const genTypesGeneratorLayer = Layer.effect(
               message: `failed to generate ${input.lang} types: unknown language`,
             });
           }
-          const session = yield* dbConn.connect(input.conn, {
-            isLocal: input.isLocal,
-            dnsResolver: input.dnsResolver,
-          });
           // Both Promise bridges run through the current fiber's context (rather than a bare
           // detached `Effect.runPromise`) so they stay anchored to this generator effect instead
           // of a disconnected top-level runtime.
           const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
           const toGenerationError = (cause: unknown) => generationError(input.lang, cause);
-          const metadata = yield* Effect.tryPromise({
-            try: (signal) => {
-              // `signal` aborts when this generate call is interrupted, so forwarding it to
-              // every query stops an in-flight introspection query instead of leaving it
-              // detached from the fiber that started it.
-              const queryable: Queryable = {
-                query: (sql) =>
-                  runPromise(session.query(sql), { signal }).then((rows) => ({ rows: [...rows] })),
-              };
-              return introspect(queryable, { includedSchemas: [...input.includedSchemas] });
-            },
-            catch: toGenerationError,
-          });
+          // The session closes before an out-of-process tool starts, so no connection idles
+          // while, say, `dart run` compiles.
+          const metadata = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const session = yield* dbConn.connect(input.conn, {
+                isLocal: input.isLocal,
+                dnsResolver: input.dnsResolver,
+              });
+              return yield* Effect.tryPromise({
+                try: (signal) => {
+                  // `signal` aborts when this generate call is interrupted, so forwarding it to
+                  // every query stops an in-flight introspection query instead of leaving it
+                  // detached from the fiber that started it.
+                  const queryable: Queryable = {
+                    query: (sql) =>
+                      runPromise(session.query(sql), { signal }).then((rows) => ({
+                        rows: [...rows],
+                      })),
+                  };
+                  return introspect(queryable, { includedSchemas: [...input.includedSchemas] });
+                },
+                catch: toGenerationError,
+              });
+            }),
+          );
           const host = makeTypegenHost({
-            cwd: settings.workdir,
+            cwd: runtime.cwd,
             env: lookupEnv,
             platform: runtime.platform,
             spawner,
