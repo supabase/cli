@@ -53,6 +53,18 @@ const nativeSupported = (platform: string, arch: string): boolean =>
   (platform === "darwin" && arch === "arm64");
 
 /**
+ * Notice for a new stack whose automatic selection skipped Docker, since that runtime is saved with
+ * the stack; `undefined` when the runtime was requested, saved, or Docker.
+ */
+export const automaticRuntimeNotice = (
+  requested: StackRuntime | undefined,
+  selected: StackRuntime,
+): string | undefined =>
+  requested !== undefined || selected === "docker"
+    ? undefined
+    : `Docker didn't answer, so this new stack uses the ${selected === "podman" ? "Podman" : "native"} runtime, which is saved with the stack. To use Docker, start it, then run \`supabase stack destroy\` and start again, or choose a different --stack name with --runtime docker.`;
+
+/**
  * Returns the requested or saved runtime unchanged; otherwise the first of Docker, Podman, or
  * native that is usable on this host.
  */

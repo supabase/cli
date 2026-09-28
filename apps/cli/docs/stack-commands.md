@@ -25,8 +25,9 @@ Use each command's `--help` for its available targeting and runtime options.
 A new stack created with `--runtime auto` uses Docker when its daemon answers, otherwise Podman
 when its engine answers, and otherwise native on Linux x64/arm64 and macOS arm64. On other
 platforms without a reachable engine, the command fails and asks you to start Docker or Podman. The
-selected runtime is saved with the stack and reused without probing; to switch, destroy the stack or
-choose a different `--stack` name. Project stacks created by database commands, and shadow stacks
+selected runtime is saved with the stack and reused without probing; when auto selection skips
+Docker, the command prints a notice saying so. To switch, destroy the stack or choose a different
+`--stack` name. Project stacks created by database commands, and shadow stacks
 created without a project stack, use the same selection.
 
 `supabase stack prepare` downloads or pulls artifacts for the selected stack without starting

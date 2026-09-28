@@ -202,6 +202,13 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
     get openCount() {
       return openCount;
     },
+    get runtimeNotices() {
+      return output.messages
+        .filter(
+          ({ type, message }) => type === "info" && message?.startsWith("Docker didn't answer"),
+        )
+        .map(({ message }) => message);
+    },
     get probes() {
       return engines.spawned.map(({ command }) => command);
     },
@@ -346,6 +353,7 @@ describe("stack prepare automatic runtime selection", () => {
         Effect.sync(() => {
           expect(fixture.createdRuntimes).toEqual(["docker"]);
           expect(fixture.probes).toEqual(["docker"]);
+          expect(fixture.runtimeNotices).toEqual([]);
         }),
       ),
     ),
@@ -360,6 +368,9 @@ describe("stack prepare automatic runtime selection", () => {
         Effect.sync(() => {
           expect(fixture.createdRuntimes).toEqual(["podman"]);
           expect(fixture.probes).toEqual(["docker", "podman"]);
+          expect(fixture.runtimeNotices).toHaveLength(1);
+          expect(fixture.runtimeNotices[0]).toContain("uses the Podman runtime");
+          expect(fixture.runtimeNotices[0]).toContain("supabase stack destroy");
         }),
       ),
     ),
@@ -376,6 +387,8 @@ describe("stack prepare automatic runtime selection", () => {
           Effect.sync(() => {
             expect(fixture.createdRuntimes).toEqual(["native"]);
             expect(fixture.probes).toEqual(["docker", "podman"]);
+            expect(fixture.runtimeNotices).toHaveLength(1);
+            expect(fixture.runtimeNotices[0]).toContain("uses the native runtime");
           }),
         ),
       ),
@@ -422,6 +435,7 @@ describe("stack prepare automatic runtime selection", () => {
           expect(fixture.openCount).toBe(1);
           expect(fixture.createdRuntimes).toEqual([]);
           expect(fixture.probes).toEqual([]);
+          expect(fixture.runtimeNotices).toEqual([]);
         }),
       ),
     ),
@@ -437,6 +451,7 @@ describe("stack prepare automatic runtime selection", () => {
             Effect.sync(() => {
               expect(fixture.createdRuntimes).toEqual(["podman"]);
               expect(fixture.probes).toEqual([]);
+              expect(fixture.runtimeNotices).toEqual([]);
             }),
           ),
         );

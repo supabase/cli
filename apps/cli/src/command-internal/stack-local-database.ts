@@ -16,7 +16,7 @@ import { readDbToml } from "./db-config.toml-read.ts";
 import { StackCatalogSetup } from "./stack-catalog-setup.ts";
 import { resolveExperimentalWithProjectEnv } from "./global-flags.ts";
 import { applyStackMigrateAndSeed, applyStackWebhooksOnly } from "./stack-bootstrap.ts";
-import { selectStackRuntime } from "./stack-runtime.ts";
+import { automaticRuntimeNotice, selectStackRuntime } from "./stack-runtime.ts";
 import { Output } from "../shared/output/output.service.ts";
 import type { PgConnInput } from "./db-connection.service.ts";
 
@@ -227,25 +227,32 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
   const existing = yield* stackForProject(api, settings, path).pipe(Effect.mapError(startFailed));
   const identity =
     existing === undefined ? yield* config.identity.pipe(Effect.mapError(startFailed)) : undefined;
+  const createStack = Effect.gen(function* () {
+    const runtime = yield* selectStackRuntime(undefined).pipe(
+      Effect.mapError(
+        (error) =>
+          new LocalDbRunningError({
+            message: `failed to start local database: ${error.message}`,
+            daemonDown: true,
+            suggestion: error.suggestion,
+          }),
+      ),
+    );
+    const created = yield* api
+      .create({
+        projectRoot: settings.workdir,
+        stateRoot: stateRoot(settings, path),
+        cacheRoot: cacheRoot(settings, path),
+        runtime,
+      })
+      .pipe(Effect.mapError(startFailed));
+    const notice = automaticRuntimeNotice(undefined, runtime);
+    if (notice !== undefined) yield* output.info(notice);
+    return created;
+  });
   const stack =
     existing === undefined
-      ? yield* api
-          .create({
-            projectRoot: settings.workdir,
-            stateRoot: stateRoot(settings, path),
-            cacheRoot: cacheRoot(settings, path),
-            runtime: yield* selectStackRuntime(undefined).pipe(
-              Effect.mapError(
-                (error) =>
-                  new LocalDbRunningError({
-                    message: `failed to start local database: ${error.message}`,
-                    daemonDown: true,
-                    suggestion: error.suggestion,
-                  }),
-              ),
-            ),
-          })
-          .pipe(Effect.mapError(startFailed))
+      ? yield* createStack
       : yield* api
           .open({
             id: existing.definition.id,

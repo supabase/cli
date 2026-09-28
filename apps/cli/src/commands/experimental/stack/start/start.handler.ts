@@ -1,6 +1,9 @@
 import { endpointReports } from "../stack-endpoints.format.ts";
 import { readStackFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
-import { selectStackRuntime } from "../../../../command-internal/stack-runtime.ts";
+import {
+  automaticRuntimeNotice,
+  selectStackRuntime,
+} from "../../../../command-internal/stack-runtime.ts";
 import { Effect, Equal, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
 import {
   resolveNativePostgresUser,
@@ -326,6 +329,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           ),
         ),
     ).pipe(Effect.mapError(stackError));
+    const runtimeNotice =
+      target.id === undefined ? automaticRuntimeNotice(target.runtime, selectedRuntime) : undefined;
+    if (runtimeNotice !== undefined) yield* output.info(runtimeNotice);
     const existingServices = yield* stack.services.list.pipe(Effect.mapError(stackError));
     const composition = yield* stack.composition.describe.pipe(Effect.mapError(stackError));
     const currentInstances = yield* Effect.forEach(composition.members, ({ id }) =>

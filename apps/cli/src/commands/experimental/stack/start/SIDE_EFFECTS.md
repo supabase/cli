@@ -36,8 +36,9 @@ use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project dir
 For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
 Podman when `podman info` reaches its engine, then native on Linux x64/arm64 and macOS arm64. Each
 probe is bounded by 10 seconds. Without a reachable engine on other platforms, the command fails and
-asks the user to start Docker or Podman. An existing stack keeps its saved runtime and runs no
-probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
+asks the user to start Docker or Podman. When auto selection skips Docker, an info line names the
+saved Podman or native runtime and how to switch to Docker. An existing stack keeps its saved
+runtime and runs no probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
 Native startup refuses root because PostgreSQL `initdb` cannot run as root, unless a Claude Code
 sandbox is detected or `SUPABASE_NATIVE_POSTGRES_USER` names a non-root user. PostgreSQL then runs
 as that user: the CLI chowns the instance data, root key, socket directory, and the cached bundle's

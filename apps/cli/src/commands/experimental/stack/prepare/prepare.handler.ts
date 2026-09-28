@@ -14,7 +14,10 @@ import {
 } from "../stack.shared.ts";
 import type { StackPrepareFlags } from "./prepare.command.ts";
 import { StackCommandPrepareError, stackPrepareError } from "./prepare.errors.ts";
-import { selectStackRuntime } from "../../../../command-internal/stack-runtime.ts";
+import {
+  automaticRuntimeNotice,
+  selectStackRuntime,
+} from "../../../../command-internal/stack-runtime.ts";
 
 type PreparedCapability = {
   readonly capability: string;
@@ -79,27 +82,34 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
     );
     const stateRoot = path.join(settings.supabaseHome, "stacks");
     const cacheRoot = path.join(settings.supabaseHome, "cache", "stack");
+    const createStack = Effect.gen(function* () {
+      const runtime = yield* selectStackRuntime(target.runtime).pipe(
+        Effect.mapError(
+          (error) =>
+            new StackCommandPrepareError({
+              reason: "runtime",
+              message: error.message,
+              suggestion: error.suggestion,
+              cause: error,
+            }),
+        ),
+      );
+      const created = yield* api
+        .create({
+          projectRoot: target.projectRoot,
+          stateRoot,
+          cacheRoot,
+          runtime,
+          ...(target.name === undefined ? {} : { name: target.name }),
+        })
+        .pipe(Effect.mapError(stackPrepareError));
+      const notice = automaticRuntimeNotice(target.runtime, runtime);
+      if (notice !== undefined) yield* output.info(notice);
+      return created;
+    });
     const stack =
       target.id === undefined
-        ? yield* api
-            .create({
-              projectRoot: target.projectRoot,
-              stateRoot,
-              cacheRoot,
-              runtime: yield* selectStackRuntime(target.runtime).pipe(
-                Effect.mapError(
-                  (error) =>
-                    new StackCommandPrepareError({
-                      reason: "runtime",
-                      message: error.message,
-                      suggestion: error.suggestion,
-                      cause: error,
-                    }),
-                ),
-              ),
-              ...(target.name === undefined ? {} : { name: target.name }),
-            })
-            .pipe(Effect.mapError(stackPrepareError))
+        ? yield* createStack
         : yield* api
             .open({ id: target.id, stateRoot, cacheRoot })
             .pipe(Effect.mapError(stackPrepareError));
