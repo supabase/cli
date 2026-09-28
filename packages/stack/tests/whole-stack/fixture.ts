@@ -11,7 +11,7 @@ import {
   Ref,
   Stream,
 } from "effect";
-import { postgres } from "../../src/Tools.ts";
+import { postgres } from "../../src/Commands.ts";
 import { homedir, tmpdir } from "node:os";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { create, type Stack } from "../../src/effect.ts";
@@ -333,7 +333,7 @@ export const sql = Effect.fn("WholeStack.sql")((fixture: WholeStack, statement: 
     if (databaseUrl === undefined) return yield* Effect.die("Database URL missing");
     const output: Array<Uint8Array> = [];
     const errors: Array<Uint8Array> = [];
-    const result = yield* fixture.stack.tools.run(postgres.psql({ major: 17 }), {
+    const result = yield* fixture.stack.commands.run(postgres.psql({ major: 17 }), {
       args: ["--set", "ON_ERROR_STOP=1", "--dbname", databaseUrl, "-At"],
       stdin: Stream.make(new TextEncoder().encode(`${statement}\n`)),
       stdout: (bytes) => Effect.sync(() => output.push(bytes)),

@@ -21,5 +21,5 @@ export const ownerFor = (options: {
     const rpc = yield* RpcTest.makeClient(OwnerRpc).pipe(
       Effect.provide(OwnerRpc.toLayer(owner.handlers)),
     );
-    return { rpc, namespace: owner.namespace };
+    return { rpc, namespace: owner.namespace, getStackCredentials: owner.getStackCredentials };
   });

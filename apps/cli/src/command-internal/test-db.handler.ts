@@ -1,6 +1,7 @@
 import * as nodePath from "node:path";
 import { Effect, FileSystem, Option, Path } from "effect";
-import { postgres, type DatabaseInstance, type Stack } from "@supabase/stack/effect";
+import { type DatabaseInstance, type Stack } from "@supabase/stack/effect";
+import { postgres } from "@supabase/stack/commands";
 
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
@@ -296,7 +297,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
               : nodePath.extname(hostPath) !== ""
                 ? nodePath.dirname(hostPath)
                 : hostPath;
-          return yield* managedStack.stack.tools
+          return yield* managedStack.stack.commands
             .run(postgres.pgProve({ major: managedStack.major }), {
               args: args.cmd.slice(1),
               env: runEnv,

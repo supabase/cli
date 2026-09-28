@@ -63,7 +63,7 @@ import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
-import type { SavedStack, StackIdentityInput } from "./State.ts";
+import type { SavedStack, StackCredentials, StackIdentityInput } from "./State.ts";
 import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
 
 export interface OwnerOptions {
@@ -100,6 +100,7 @@ type NamespaceError =
 
 export interface Interface {
   readonly handlers: Handlers;
+  readonly getStackCredentials: Effect.Effect<StackCredentials, State.StateError | CredentialError>;
   readonly namespace: {
     /** Stops every instance after in-flight definition changes settle, then removes containers. */
     readonly stop: Effect.Effect<void, NamespaceError>;
@@ -658,8 +659,20 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   };
 
   const sweep = sweepContainers(options.saved, options.root).pipe(Effect.provideContext(services));
+  const getStackCredentials = readSaved.pipe(
+    Effect.flatMap(({ credentials }) =>
+      credentials === undefined
+        ? Effect.fail(
+            new CredentialError({ message: "Stack credentials have not been established" }),
+          )
+        : Effect.succeed(credentials),
+    ),
+    Effect.withSpan("Owner.getStackCredentials"),
+  );
+
   return {
     handlers,
+    getStackCredentials,
     namespace: {
       stop: orchestrator.stopNamespace.pipe(
         Effect.andThen(sweep),

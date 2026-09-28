@@ -106,7 +106,7 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
           yield* runtime.prepare(image);
-          const process = yield* runtime.launchTool({
+          const process = yield* runtime.launchCommand({
             image,
             stackId: "e".repeat(64),
             instanceId: "tool-input",

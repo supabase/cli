@@ -85,5 +85,5 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
             },
           ],
     ),
-  startup: [],
+  startupCommands: [],
 });
