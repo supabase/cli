@@ -14,10 +14,7 @@ export function assignShards(
   });
 
   for (const path of ordered) {
-    let target = 0;
-    for (let index = 1; index < count; index++) {
-      if ((loads[index] ?? 0) < (loads[target] ?? 0)) target = index;
-    }
+    const target = loads.indexOf(Math.min(...loads));
     shards[target]?.push(path);
     loads[target] = (loads[target] ?? 0) + (secondsByPath[path] ?? 1);
   }
@@ -25,7 +22,7 @@ export function assignShards(
   return shards;
 }
 
-// Seconds per file from CI run 36436524145; unlisted files count as 1; refresh when shard times drift.
+// Approximate CI seconds per e2e file; unlisted files count as 1. Refresh when shard times drift.
 const secondsByPath: Readonly<Record<string, number>> = {
   "src/commands/start/start.lifecycle.e2e.test.ts": 168,
   "src/commands/db/schema/declarative/sync/sync.e2e.test.ts": 96,

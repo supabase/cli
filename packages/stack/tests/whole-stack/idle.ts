@@ -19,7 +19,7 @@ class IdleProbeError extends Schema.TaggedError<IdleProbeError>()("IdleProbeErro
   cause: Schema.optionalKey(Schema.Unknown),
 }) {}
 
-// Kept above 5s so a service can't idle out between back-to-back requests on a slow runner.
+// At least 5s, so a service can't idle out between back-to-back requests on a slow runner.
 const idleMillis = 5_000;
 
 const signServiceToken = Effect.fn("WholeStack.signServiceToken")((secret: string) =>
