@@ -387,6 +387,20 @@ export const actionability = {
     has_suggestion: true,
     suggestion_type: CliSuggestionType.RerunDebug,
   },
+  /** A toolchain the command shells out to is missing; the remedy varies per tool. */
+  toolNotInstalled: {
+    error_kind: CliErrorKind.UserActionable,
+    error_category: CliErrorCategory.InvalidConfig,
+    has_suggestion: false,
+    suggestion_type: CliSuggestionType.None,
+  },
+  /** A tool the command shells out to exited unsuccessfully; its stderr is in the message. */
+  toolFailed: {
+    error_kind: CliErrorKind.Unknown,
+    error_category: CliErrorCategory.Unknown,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.RerunDebug,
+  },
   apiStatus: {
     error_kind: CliErrorKind.ExternalService,
     error_category: CliErrorCategory.ApiStatus,
