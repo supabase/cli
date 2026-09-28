@@ -1,6 +1,5 @@
 import { Exit, Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/unstable/rpc";
-import { HostFailureReason } from "./HostProcess.ts";
 import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
 import { causeMessage, CompositionConfig, OrchestratorError } from "./Orchestrator.ts";
 import { CommandInvocation } from "./Commands.ts";
@@ -18,7 +17,14 @@ export class StackError extends Schema.TaggedError<StackError>()("StackError", {
   operation: Schema.String,
   message: Schema.String,
   outcomes: Schema.optionalKey(Schema.Array(Outcome)),
-  reason: Schema.optionalKey(HostFailureReason),
+  /**
+   * Why the client could not use an owner: none serves the stack (`owner-unavailable`), one of
+   * another release does (`release-mismatch`), or its container engine is unreachable
+   * (`runtime-unavailable`).
+   */
+  reason: Schema.optionalKey(
+    Schema.Literals(["owner-unavailable", "release-mismatch", "runtime-unavailable"]),
+  ),
 }) {}
 
 /** Maps an owner failure to the RPC error, preserving per-member composition outcomes. */
@@ -145,7 +151,6 @@ export const OwnerRpc = RpcGroup.make(
 
 /** The private transport contract; lifecycle admission remains in the owner. */
 export const StackRpc = OwnerRpc.add(
-  Rpc.make("shutdown", { payload: { destroy: Schema.Boolean }, error: StackError }),
   Rpc.make("runCommand", {
     payload: RunCommandPayload,
     success: CommandEvent,

@@ -139,12 +139,9 @@ export const makePorts = (state: State.Interface, platform: NodeJS.Platform = pr
         !(yield* loopbackOccupied(requested))
       )
         return;
-      const message = `Public port ${requested} for ${request.key} at ${request.host}:${requested} is already in use`;
       return yield* new PortError({
         key: request.key,
-        message: `${message}${yield* claimedBy(yield* state.claims, request.stackId, requested)}`,
-        // Owners classify an occupied port by this errno, as they do for a failed bind.
-        cause: Object.assign(new Error(message), { code: "EADDRINUSE" }),
+        message: `Public port ${requested} for ${request.key} at ${request.host}:${requested} is already in use${yield* claimedBy(yield* state.claims, request.stackId, requested)}`,
       });
     });
 

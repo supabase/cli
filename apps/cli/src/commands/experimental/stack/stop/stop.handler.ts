@@ -120,6 +120,7 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
           ? Effect.succeed({ id: definition.id, result: Result.succeed("unavailable" as const) })
           : api.open({ ...locations, id: definition.id }).pipe(
               Effect.flatMap((stack) => stack.stop),
+              Effect.scoped,
               Effect.as("stopped" as const),
               Effect.result,
               Effect.map((result) => ({ id: definition.id, result })),

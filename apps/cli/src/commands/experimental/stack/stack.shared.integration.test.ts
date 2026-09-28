@@ -31,6 +31,7 @@ const stack = (
   identity,
   runtime,
   instances: [],
+  lifetime: "detached",
   composition: { members: [], dependencies: [] },
   ports: [],
 });

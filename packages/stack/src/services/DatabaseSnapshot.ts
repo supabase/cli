@@ -13,376 +13,494 @@ import {
   Schedule,
   Schema,
 } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { postgresVersion } from "../Artifacts.ts";
-import { copyDirectory } from "../storage/DirectoryCopy.ts";
+import { failureMessage } from "../internal/failure-message.ts";
+import { copyDirectory, type DirectoryCopyError } from "../storage/DirectoryCopy.ts";
 import type { DatabaseRuntime } from "./Database.ts";
 
-const SnapshotDescriptor = Schema.Struct({
-  format: Schema.Literal("supabase-database-snapshot-v1"),
+export class DatabaseSnapshotError extends Schema.TaggedError<DatabaseSnapshotError>()(
+  "DatabaseSnapshotError",
+  { operation: Schema.String, message: Schema.String, cause: Schema.optionalKey(Schema.Defect()) },
+) {}
+
+const errorFor = (operation: string, cause: unknown) =>
+  Schema.is(DatabaseSnapshotError)(cause)
+    ? cause
+    : new DatabaseSnapshotError({
+        operation,
+        message: failureMessage(cause),
+        cause,
+      });
+
+const SnapshotStop = Schema.Literals(["nonempty", "miss", "descriptor", "major", "running"]);
+/** Names the guard that stopped a snapshot program. */
+type SnapshotStop = typeof SnapshotStop.Type;
+/** Decodes a stop name reported by a backend outside this process. */
+export const decodeSnapshotStop = Schema.decodeUnknownEffect(SnapshotStop);
+
+/**
+ * One filesystem operation of a snapshot program. Guards stop the program with an outcome
+ * instead of failing. `Rename` creates the destination's parent and refuses to replace
+ * anything but an empty directory; an optional rename runs only when its source exists and
+ * its destination does not. `Recover` moves each `retired-<digest>-<token>` stage back to
+ * its entry when that entry is missing.
+ */
+export type SnapshotStep = Data.TaggedEnum<{
+  Ensure: { readonly directory: string };
+  Clear: { readonly directory: string };
+  Recover: { readonly stages: string; readonly entries: string };
+  Expect: { readonly path: string; readonly present: boolean; readonly otherwise: SnapshotStop };
+  ExpectEmpty: { readonly directory: string; readonly otherwise: SnapshotStop };
+  ExpectText: { readonly file: string; readonly text: string; readonly otherwise: SnapshotStop };
+  Copy: { readonly from: string; readonly to: string };
+  Adopt: { readonly directory: string };
+  Write: { readonly file: string; readonly text: string };
+  Rename: { readonly from: string; readonly to: string; readonly optional: boolean };
+  Remove: { readonly path: string };
+  Touch: { readonly path: string };
+  Prune: { readonly directory: string; readonly keep: number; readonly except: string };
+}>;
+export const SnapshotStep = Data.taggedEnum<SnapshotStep>();
+
+/** Result of a snapshot program; a stopped `ExpectText` carries the file's actual text. */
+export type SnapshotRun = Data.TaggedEnum<{
+  Completed: {};
+  Stopped: { readonly outcome: SnapshotStop; readonly text: string };
+}>;
+export const SnapshotRun = Data.taggedEnum<SnapshotRun>();
+
+/** Filesystem namespace in which one engine stores snapshots and database data. */
+export interface SnapshotBackend {
+  /** Identifies the snapshot store for the host-side lock. */
+  readonly lockKey: string;
+  readonly entries: string;
+  readonly stages: string;
+  /** Holds restore stages on the filesystem that holds `data`. */
+  readonly restoreStages: string;
+  readonly data: string;
+  readonly join: (...parts: ReadonlyArray<string>) => string;
+  /** Runs every step in order, in one round trip where the backend is remote. */
+  readonly run: (
+    steps: ReadonlyArray<SnapshotStep>,
+  ) => Effect.Effect<SnapshotRun, DatabaseSnapshotError>;
+}
+
+/** Snapshot entries kept besides the one just saved. */
+const retainedPrevious = 2;
+const format = "supabase-database-snapshot-v1" as const;
+const runtimes = Schema.Literals(["native", "docker", "podman"]);
+const SnapshotIdentity = Schema.Struct({
+  format: Schema.Literal(format),
   version: Schema.String,
-  runtime: Schema.Literals(["native", "docker", "podman"]),
+  runtime: runtimes,
   platform: Schema.String,
   arch: Schema.String,
   profile: Schema.Literal("supabase"),
   logicalKey: Schema.String,
-  keyDigest: Schema.String,
 });
-
-export class DatabaseSnapshotError extends Data.TaggedError("DatabaseSnapshotError")<{
-  readonly operation: string;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-const errorFor = (operation: string, cause: unknown) =>
-  cause instanceof DatabaseSnapshotError
-    ? cause
-    : new DatabaseSnapshotError({
-        operation,
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      });
-
+const SnapshotDescriptor = Schema.Struct({ ...SnapshotIdentity.fields, keyDigest: Schema.String });
 const ReadyMarker = Schema.Struct({
   version: Schema.String,
-  runtime: Schema.Literals(["native", "docker", "podman"]),
+  runtime: runtimes,
   profile: Schema.Literal("supabase"),
 });
 
-const markerText = (version: string, runtime: DatabaseRuntime) =>
-  Schema.encodeEffect(Schema.fromJsonString(ReadyMarker))({
-    version,
-    runtime,
-    profile: "supabase",
-  });
+const withStoreLock = <A, E>(lockFile: string, effect: Effect.Effect<A, E>) =>
+  Effect.acquireUseRelease(
+    Effect.try({
+      try: () => new DatabaseSync(lockFile),
+      catch: (cause) => errorFor("lock", cause),
+    }),
+    (connection) =>
+      Effect.gen(function* () {
+        yield* Effect.try({
+          try: () => connection.exec("PRAGMA busy_timeout = 0"),
+          catch: (cause) => errorFor("lock", cause),
+        });
+        yield* Effect.try({
+          try: () => connection.exec("BEGIN IMMEDIATE"),
+          catch: (cause) => errorFor("lock", cause),
+        }).pipe(
+          Effect.retry({
+            schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ duration: "120 seconds" })),
+            while: (cause) =>
+              Predicate.hasProperty(cause.cause, "errcode") && cause.cause.errcode === 5,
+          }),
+        );
+        return yield* effect;
+      }),
+    (connection) =>
+      Effect.try({
+        try: () => connection.close(),
+        catch: (cause) => errorFor("unlock", cause),
+      }),
+  );
 
-export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function* (options: {
-  readonly instanceRoot: string;
+/** Saves and restores database data through the snapshot protocol on one backend. */
+export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(function* (options: {
+  readonly backend: SnapshotBackend;
   readonly cacheRoot: string;
+  readonly instanceRoot: string;
   readonly runtime: DatabaseRuntime;
   readonly version: string;
-  readonly stackId: string;
-  readonly instanceId: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const version = postgresVersion(options.version);
-  const root = path.join(options.cacheRoot, "stack-database-snapshots");
-  const entries = path.join(root, "entries");
-  const stages = path.join(root, "stages");
-  const lockFile = path.join(root, ".lock.sqlite");
-  const base = {
-    format: "supabase-database-snapshot-v1" as const,
-    version,
-    runtime: options.runtime,
-    platform: process.platform,
-    arch: process.arch,
-    profile: "supabase" as const,
-  };
+  const { backend, runtime, version } = options;
+  const { Adopt, Clear, Copy, Ensure, Expect, ExpectEmpty, ExpectText } = SnapshotStep;
+  const { Prune, Recover, Remove, Rename, Touch, Write } = SnapshotStep;
+  const major = version.split(".")[0] ?? version;
+  const markerPath = path.join(options.instanceRoot, ".supabase-database-ready.json");
+  const locks = path.join(options.cacheRoot, "stack-database-snapshots", "locks");
   const mapError = <A, E>(operation: string, effect: Effect.Effect<A, E>) =>
     effect.pipe(Effect.mapError((cause) => errorFor(operation, cause)));
-  const ensureStore = mapError(
-    "storage",
-    fs
-      .makeDirectory(root, { recursive: true, mode: 0o700 })
-      .pipe(Effect.andThen(fs.makeDirectory(entries, { recursive: true, mode: 0o700 }))),
+
+  const describe = Effect.fnUntraced(
+    function* (logicalKey: string) {
+      const identity = {
+        format,
+        version,
+        runtime,
+        platform: process.platform,
+        arch: process.arch,
+        profile: "supabase" as const,
+        logicalKey,
+      };
+      const bytes = yield* Schema.encodeEffect(Schema.fromJsonString(SnapshotIdentity))(
+        identity,
+      ).pipe(
+        Effect.flatMap((encoded) => crypto.digest("SHA-256", new TextEncoder().encode(encoded))),
+      );
+      const keyDigest = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const descriptor = yield* Schema.encodeEffect(Schema.fromJsonString(SnapshotDescriptor))({
+        ...identity,
+        keyDigest,
+      });
+      return { keyDigest, descriptor };
+    },
+    Effect.mapError((cause) => errorFor("descriptor", cause)),
   );
 
-  const withLock = <A>(effect: Effect.Effect<A, DatabaseSnapshotError>) =>
-    Effect.acquireUseRelease(
-      Effect.try({
-        try: () => new DatabaseSync(lockFile),
-        catch: (cause) => errorFor("lock", cause),
-      }),
-      (connection) =>
-        Effect.gen(function* () {
-          yield* Effect.try({
-            try: () => connection.exec("PRAGMA busy_timeout = 0"),
-            catch: (cause) => errorFor("lock", cause),
-          });
-          yield* Effect.try({
-            try: () => connection.exec("BEGIN IMMEDIATE"),
-            catch: (cause) => errorFor("lock", cause),
-          }).pipe(
-            Effect.retry({
-              schedule: Schedule.spaced("50 millis").pipe(
-                Schedule.upTo({ duration: "120 seconds" }),
+  const locked = <A>(effect: Effect.Effect<A, DatabaseSnapshotError>) =>
+    mapError("lock", fs.makeDirectory(locks, { recursive: true, mode: 0o700 })).pipe(
+      Effect.andThen(withStoreLock(path.join(locks, `${backend.lockKey}.sqlite`), effect)),
+    );
+  const token = mapError("stage", crypto.randomUUIDv4);
+  // Compensation also runs after an interrupt; a failed compensation must not hide the
+  // failure it follows.
+  const compensate =
+    (steps: ReadonlyArray<SnapshotStep>) =>
+    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : Effect.uninterruptible(
+                backend.run(steps).pipe(Effect.catch(Effect.logWarning), Effect.asVoid),
               ),
-              while: (cause) =>
-                Predicate.hasProperty(cause.cause, "errcode") && cause.cause.errcode === 5,
-            }),
-            Effect.mapError((cause) => errorFor("lock", cause)),
-          );
-          return yield* effect;
-        }),
-      (connection) =>
-        Effect.try({
-          try: () => connection.close(),
-          catch: (cause) => errorFor("unlock", cause),
-        }),
-    );
-
-  const keyDescriptor = (key: string) => ({ ...base, logicalKey: key });
-  const digest = (key: string) =>
-    Schema.encodeEffect(
-      Schema.fromJsonString(
-        Schema.Struct({
-          format: Schema.Literal("supabase-database-snapshot-v1"),
-          version: Schema.String,
-          runtime: Schema.Literals(["native", "docker", "podman"]),
-          platform: Schema.String,
-          arch: Schema.String,
-          profile: Schema.Literal("supabase"),
-          logicalKey: Schema.String,
-        }),
-      ),
-    )(keyDescriptor(key)).pipe(
-      Effect.flatMap((encoded) => crypto.digest("SHA-256", new TextEncoder().encode(encoded))),
-      Effect.map((bytes) =>
-        Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""),
-      ),
-      Effect.mapError((cause) => errorFor("key", cause)),
-    );
-
-  const copy = (source: string, destination: string) =>
-    copyDirectory(source, destination).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.mapError((cause) => errorFor("copy", cause)),
-    );
-
-  const readReady = mapError(
-    "ready",
-    fs
-      .readFileString(path.join(options.instanceRoot, ".supabase-database-ready.json"))
-      .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ReadyMarker)))),
-  );
-
-  const sourceData = Effect.gen(function* () {
-    const ready = yield* readReady;
-    if (ready.version !== version || ready.runtime !== options.runtime)
-      return yield* errorFor("ready", "Database readiness marker does not match the instance");
-    const data = path.join(options.instanceRoot, "data");
-    if (!(yield* mapError("data", fs.exists(data))))
-      return yield* errorFor("data", "Data is absent");
-    if (yield* mapError("data", fs.exists(path.join(data, "postmaster.pid"))))
-      return yield* errorFor("data", "Database must be stopped before snapshotting");
-    const pgVersion = yield* mapError("data", fs.readFileString(path.join(data, "PG_VERSION")));
-    if (pgVersion.trim() !== version.split(".")[0])
-      return yield* errorFor("data", "Database PostgreSQL major version is incompatible");
-    return data;
-  });
-
-  const cleanupChildren = (directory: string, predicate: (name: string) => boolean) =>
-    Effect.gen(function* () {
-      const names = yield* mapError("cleanup", fs.readDirectory(directory));
-      for (const name of names) {
-        if (predicate(name))
-          yield* mapError("cleanup", fs.remove(path.join(directory, name), { recursive: true }));
-      }
-    });
-
-  const cleanupStaleStages = Effect.gen(function* () {
-    yield* cleanupChildren(stages, (name) => name !== "." && name !== "..");
-    yield* cleanupChildren(options.instanceRoot, (name) => name.startsWith(".supabase-restore-"));
-  });
-
-  const touch = (target: string) =>
-    Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      yield* mapError("touch", fs.utimes(target, now / 1_000, now / 1_000));
-    });
-
-  const retention = (current: string) =>
-    Effect.gen(function* () {
-      const names = yield* mapError("retention", fs.readDirectory(entries));
-      const values: Array<{ readonly name: string; readonly mtime: number }> = [];
-      for (const name of names) {
-        if (name === current) continue;
-        const info = yield* mapError("retention", fs.stat(path.join(entries, name)));
-        values.push({
-          name,
-          mtime: Option.match(info.mtime, {
-            onNone: () => 0,
-            onSome: (mtime) => mtime.getTime(),
-          }),
-        });
-      }
-      values.sort((left, right) => left.mtime - right.mtime || left.name.localeCompare(right.name));
-      for (const value of values.slice(0, Math.max(0, values.length - 2)))
-        yield* mapError(
-          "retention",
-          fs.remove(path.join(entries, value.name), { recursive: true }),
-        );
-    });
+        ),
+      );
+  const reclaimStages = [
+    Recover({ stages: backend.stages, entries: backend.entries }),
+    Clear({ directory: backend.stages }),
+    ...(backend.restoreStages === backend.stages
+      ? []
+      : [Clear({ directory: backend.restoreStages })]),
+  ];
 
   const saveSnapshot = Effect.fn("DatabaseSnapshot.save")(function* (logicalKey: string) {
-    const source = yield* sourceData;
-    const keyDigest = yield* digest(logicalKey);
-    const descriptor = { ...keyDescriptor(logicalKey), keyDigest };
-    const encoded = yield* mapError(
-      "descriptor",
-      Schema.encodeEffect(Schema.fromJsonString(SnapshotDescriptor))(descriptor),
+    const ready = yield* mapError(
+      "ready",
+      fs
+        .readFileString(markerPath)
+        .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ReadyMarker)))),
     );
-    const target = path.join(entries, keyDigest);
-    yield* ensureStore;
-    yield* withLock(
+    if (ready.version !== version || ready.runtime !== runtime)
+      return yield* errorFor("ready", "Database readiness marker does not match the instance");
+    const { keyDigest, descriptor } = yield* describe(logicalKey);
+    yield* locked(
       Effect.gen(function* () {
-        yield* mapError("storage", fs.makeDirectory(stages, { recursive: true, mode: 0o700 }));
-        yield* cleanupStaleStages;
-        const token = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => errorFor("stage", cause)),
-        );
-        const stage = path.join(stages, token);
-        const retired = path.join(stages, "retired-" + token);
-        yield* mapError("stage", fs.makeDirectory(stage, { recursive: true, mode: 0o700 }));
-        yield* Effect.acquireUseRelease(
-          Effect.succeed(stage),
-          () =>
-            Effect.gen(function* () {
-              yield* copy(source, path.join(stage, "data"));
-              yield* mapError(
-                "descriptor",
-                fs.writeFileString(path.join(stage, "descriptor.json"), encoded, { mode: 0o600 }),
-              );
-              const hadTarget = yield* mapError("publish", fs.exists(target));
-              if (hadTarget) yield* mapError("publish", fs.rename(target, retired));
-              const publication = yield* Effect.exit(mapError("publish", fs.rename(stage, target)));
-              if (Exit.isFailure(publication)) {
-                if (hadTarget) yield* mapError("rollback", fs.rename(retired, target));
-                return yield* Effect.failCause(publication.cause);
-              }
-              yield* mapError("publish", fs.remove(retired, { recursive: true, force: true }));
-              yield* touch(target);
-              yield* retention(keyDigest);
+        const id = yield* token;
+        const stage = backend.join(backend.stages, id);
+        const retired = backend.join(backend.stages, `retired-${keyDigest}-${id}`);
+        const target = backend.join(backend.entries, keyDigest);
+        const result = yield* backend
+          .run([
+            Ensure({ directory: backend.entries }),
+            ...reclaimStages,
+            Expect({
+              path: backend.join(backend.data, "postmaster.pid"),
+              present: false,
+              otherwise: "running",
             }),
-          () => mapError("cleanup", fs.remove(stage, { recursive: true, force: true })),
-        );
+            ExpectText({
+              file: backend.join(backend.data, "PG_VERSION"),
+              text: major,
+              otherwise: "major",
+            }),
+            Ensure({ directory: stage }),
+            Copy({ from: backend.data, to: backend.join(stage, "data") }),
+            Write({ file: backend.join(stage, "descriptor.json"), text: descriptor }),
+            Rename({ from: target, to: retired, optional: true }),
+            Rename({ from: stage, to: target, optional: false }),
+            Remove({ path: retired }),
+            Touch({ path: target }),
+            Prune({ directory: backend.entries, keep: retainedPrevious, except: keyDigest }),
+          ])
+          .pipe(
+            compensate([
+              Rename({ from: retired, to: target, optional: true }),
+              Remove({ path: stage }),
+            ]),
+          );
+        if (result._tag === "Stopped")
+          return yield* result.outcome === "running"
+            ? errorFor("data", "Database must be stopped before snapshotting")
+            : errorFor("data", "Database data is missing or has another PostgreSQL major version");
       }),
     );
   });
 
+  const publishReadyMarker = Effect.fnUntraced(
+    function* (id: string) {
+      const staged = `${markerPath}.${id}`;
+      const marker = yield* Schema.encodeEffect(Schema.fromJsonString(ReadyMarker))({
+        version,
+        runtime,
+        profile: "supabase",
+      });
+      yield* fs.writeFileString(staged, marker, { mode: 0o600 });
+      yield* fs
+        .rename(staged, markerPath)
+        .pipe(Effect.onError(() => fs.remove(staged, { force: true }).pipe(Effect.ignore)));
+    },
+    Effect.mapError((cause) => errorFor("ready", cause)),
+  );
+
   const restoreSnapshot = Effect.fn("DatabaseSnapshot.restore")(function* (logicalKey: string) {
-    const data = path.join(options.instanceRoot, "data");
-    const keyDigest = yield* digest(logicalKey);
-    const target = path.join(entries, keyDigest);
-    yield* ensureStore;
-    return yield* withLock(
+    const { keyDigest, descriptor } = yield* describe(logicalKey);
+    return yield* locked(
       Effect.gen(function* () {
-        yield* mapError("storage", fs.makeDirectory(stages, { recursive: true, mode: 0o700 }));
-        yield* cleanupStaleStages;
-        if (yield* mapError("restore", fs.exists(data))) {
-          if ((yield* mapError("restore", fs.readDirectory(data))).length > 0)
-            return yield* errorFor("restore", "Restore target data directory must be empty");
-        }
-        if (!(yield* mapError("restore", fs.exists(target)))) return false;
-
-        const descriptor = yield* mapError(
-          "descriptor",
-          fs
-            .readFileString(path.join(target, "descriptor.json"))
-            .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(SnapshotDescriptor)))),
-        );
-        if (descriptor.keyDigest !== keyDigest || descriptor.logicalKey !== logicalKey)
-          return yield* errorFor("descriptor", "Snapshot manifest does not match its key");
-        if (
-          descriptor.version !== version ||
-          descriptor.runtime !== options.runtime ||
-          descriptor.platform !== process.platform ||
-          descriptor.arch !== process.arch
-        )
-          return false;
-
-        const token = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => errorFor("stage", cause)),
-        );
-        const stage = path.join(options.instanceRoot, ".supabase-restore-" + token);
-        const retired = path.join(options.instanceRoot, ".supabase-restore-retired-" + token);
-        const marker = path.join(options.instanceRoot, ".supabase-database-ready.json");
-        const retiredMarker = path.join(
-          options.instanceRoot,
-          ".supabase-restore-retired-marker-" + token,
-        );
-        const stagedMarker = path.join(stage, "ready.json");
-        yield* mapError("stage", fs.makeDirectory(stage, { recursive: true, mode: 0o700 }));
-        yield* Effect.acquireUseRelease(
-          Effect.succeed(stage),
-          () =>
-            Effect.gen(function* () {
-              yield* copy(path.join(target, "data"), path.join(stage, "data"));
-              const stagedData = path.join(stage, "data");
-              const stagedVersion = yield* mapError(
-                "validate",
-                fs.readFileString(path.join(stagedData, "PG_VERSION")),
-              );
-              if (stagedVersion.trim() !== version.split(".")[0])
-                return yield* errorFor(
-                  "validate",
-                  "Snapshot PostgreSQL major version is incompatible",
-                );
-              if (yield* mapError("validate", fs.exists(path.join(stagedData, "postmaster.pid"))))
-                return yield* errorFor("validate", "Snapshot contains a running database");
-              const markerContents = yield* markerText(version, options.runtime).pipe(
-                Effect.mapError((cause) => errorFor("ready", cause)),
-              );
-              yield* mapError(
-                "ready",
-                fs.writeFileString(stagedMarker, markerContents, { mode: 0o600 }),
-              );
-
-              // The handoff is short and uninterruptible. If marker publication fails, the old
-              // complete data tree and marker are restored before the error escapes.
-              yield* Effect.uninterruptible(
-                Effect.gen(function* () {
-                  const hadData = yield* mapError("publish", fs.exists(data));
-                  const hadMarker = yield* mapError("publish", fs.exists(marker));
-                  if (hadData) yield* mapError("publish", fs.rename(data, retired));
-                  const dataPublication = yield* Effect.exit(
-                    mapError("publish", fs.rename(path.join(stage, "data"), data)),
-                  );
-                  if (Exit.isFailure(dataPublication)) {
-                    if (hadData) yield* mapError("rollback", fs.rename(retired, data));
-                    return yield* Effect.failCause(dataPublication.cause);
-                  }
-                  if (hadMarker) {
-                    const markerRetirement = yield* Effect.exit(
-                      mapError("publish", fs.rename(marker, retiredMarker)),
-                    );
-                    if (Exit.isFailure(markerRetirement)) {
-                      yield* mapError(
-                        "rollback",
-                        fs.remove(data, { recursive: true, force: true }),
-                      );
-                      if (hadData) yield* mapError("rollback", fs.rename(retired, data));
-                      return yield* Effect.failCause(markerRetirement.cause);
-                    }
-                  }
-                  const markerPublication = yield* Effect.exit(
-                    mapError("ready", fs.rename(stagedMarker, marker)),
-                  );
-                  if (Exit.isFailure(markerPublication)) {
-                    if (hadMarker) yield* mapError("rollback", fs.rename(retiredMarker, marker));
-                    yield* mapError("rollback", fs.remove(data, { recursive: true, force: true }));
-                    if (hadData) yield* mapError("rollback", fs.rename(retired, data));
-                    return yield* Effect.failCause(markerPublication.cause);
-                  }
-                  yield* mapError("publish", fs.remove(retired, { recursive: true, force: true }));
-                  if (hadMarker)
-                    yield* mapError("publish", fs.remove(retiredMarker, { force: true }));
+        const id = yield* token;
+        const stage = backend.join(backend.restoreStages, id);
+        const published = backend.join(backend.restoreStages, `${id}.published`);
+        const entry = backend.join(backend.entries, keyDigest);
+        // Once the published record exists the target was empty, so rollback may clear it.
+        const rollback = [
+          Remove({ path: stage }),
+          Expect({ path: published, present: true, otherwise: "miss" }),
+          Clear({ directory: backend.data }),
+        ];
+        return yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const result = yield* restore(
+              backend.run([
+                Ensure({ directory: backend.entries }),
+                ...reclaimStages,
+                ExpectEmpty({ directory: backend.data, otherwise: "nonempty" }),
+                Expect({ path: entry, present: true, otherwise: "miss" }),
+                ExpectText({
+                  file: backend.join(entry, "descriptor.json"),
+                  text: descriptor,
+                  otherwise: "descriptor",
                 }),
-              );
-              yield* touch(target);
-            }),
-          () => mapError("cleanup", fs.remove(stage, { recursive: true, force: true })),
-        );
-        return true;
+                ExpectText({
+                  file: backend.join(entry, "data", "PG_VERSION"),
+                  text: major,
+                  otherwise: "major",
+                }),
+                Expect({
+                  path: backend.join(entry, "data", "postmaster.pid"),
+                  present: false,
+                  otherwise: "running",
+                }),
+                Copy({ from: backend.join(entry, "data"), to: stage }),
+                Adopt({ directory: stage }),
+                Touch({ path: entry }),
+                Write({ file: published, text: id }),
+                Rename({ from: stage, to: backend.data, optional: false }),
+              ]),
+            );
+            if (result._tag === "Stopped") {
+              switch (result.outcome) {
+                case "miss":
+                  return false;
+                case "descriptor":
+                  // A well-formed descriptor for another identity is a miss; anything else is corrupt.
+                  return yield* Schema.decodeEffect(Schema.fromJsonString(SnapshotDescriptor))(
+                    result.text,
+                  ).pipe(
+                    Effect.as(false),
+                    Effect.mapError((cause) => errorFor("descriptor", cause)),
+                  );
+                case "nonempty":
+                  return yield* errorFor("restore", "Restore target data directory must be empty");
+                case "major":
+                  return yield* errorFor(
+                    "validate",
+                    "Snapshot PostgreSQL major version is incompatible",
+                  );
+                case "running":
+                  return yield* errorFor("validate", "Snapshot contains a running database");
+              }
+            }
+            yield* publishReadyMarker(id);
+            return true;
+          }),
+        ).pipe(compensate(rollback));
       }),
     );
   });
 
   return { saveSnapshot, restoreSnapshot };
+});
+
+/** Interprets snapshot programs directly on the host filesystem. */
+const makeNativeSnapshotBackend = Effect.fnUntraced(function* (
+  instanceRoot: string,
+  cacheRoot: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const root = path.join(cacheRoot, "stack-database-snapshots");
+  const exists = (target: string) => fs.exists(target);
+  const isEmptyDirectory = (target: string) =>
+    fs.readDirectory(target).pipe(Effect.map((names) => names.length === 0));
+  const readText = (file: string) =>
+    fs.readFileString(file).pipe(
+      Effect.map((text) => text.replace(/\n+$/u, "")),
+      Effect.orElseSucceed(() => undefined),
+    );
+  const proceed = Option.none<SnapshotRun>();
+  const stop = (outcome: SnapshotStop, text = "") =>
+    Option.some(SnapshotRun.Stopped({ outcome, text }));
+  const step = (
+    current: SnapshotStep,
+  ): Effect.Effect<
+    Option.Option<SnapshotRun>,
+    PlatformError | DirectoryCopyError | DatabaseSnapshotError
+  > =>
+    SnapshotStep.$match(current, {
+      Ensure: ({ directory }) =>
+        fs.makeDirectory(directory, { recursive: true, mode: 0o700 }).pipe(Effect.as(proceed)),
+      Clear: ({ directory }) =>
+        Effect.gen(function* () {
+          if (yield* fs.readLink(directory).pipe(Effect.isSuccess))
+            return yield* errorFor("clear", `${directory} is a symbolic link`);
+          yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
+          for (const name of yield* fs.readDirectory(directory))
+            yield* fs.remove(path.join(directory, name), { recursive: true, force: true });
+          return proceed;
+        }),
+      Recover: ({ stages, entries }) =>
+        Effect.gen(function* () {
+          if (!(yield* exists(stages))) return proceed;
+          for (const name of yield* fs.readDirectory(stages)) {
+            const digest = /^retired-([0-9a-f]+)-/u.exec(name)?.[1];
+            if (digest === undefined || (yield* exists(path.join(entries, digest)))) continue;
+            yield* fs.makeDirectory(entries, { recursive: true, mode: 0o700 });
+            yield* fs.rename(path.join(stages, name), path.join(entries, digest));
+          }
+          return proceed;
+        }),
+      Expect: ({ path: target, present, otherwise }) =>
+        exists(target).pipe(Effect.map((found) => (found === present ? proceed : stop(otherwise)))),
+      ExpectEmpty: ({ directory, otherwise }) =>
+        Effect.gen(function* () {
+          if (!(yield* exists(directory)) || (yield* isEmptyDirectory(directory))) return proceed;
+          return stop(otherwise);
+        }),
+      ExpectText: ({ file, text, otherwise }) =>
+        readText(file).pipe(
+          Effect.map((actual) => (actual === text ? proceed : stop(otherwise, actual ?? ""))),
+        ),
+      Copy: ({ from, to }) =>
+        copyDirectory(from, to).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.as(proceed),
+        ),
+      // Native data already belongs to the user that runs the database.
+      Adopt: () => Effect.succeedNone,
+      Write: ({ file, text }) =>
+        fs.writeFileString(file, text, { mode: 0o600 }).pipe(Effect.as(proceed)),
+      Rename: ({ from, to, optional }) =>
+        Effect.gen(function* () {
+          const destination = yield* exists(to);
+          if (optional && (destination || !(yield* exists(from)))) return proceed;
+          if (destination) {
+            if (!(yield* isEmptyDirectory(to)))
+              return yield* errorFor("rename", `${to} already exists`);
+            yield* fs.remove(to, { recursive: true });
+          }
+          yield* fs.makeDirectory(path.dirname(to), { recursive: true, mode: 0o700 });
+          yield* fs.rename(from, to);
+          return proceed;
+        }),
+      Remove: ({ path: target }) =>
+        fs.remove(target, { recursive: true, force: true }).pipe(Effect.as(proceed)),
+      Touch: ({ path: target }) =>
+        Clock.currentTimeMillis.pipe(
+          Effect.flatMap((now) => fs.utimes(target, now / 1_000, now / 1_000)),
+          Effect.as(proceed),
+        ),
+      Prune: ({ directory, keep, except }) =>
+        Effect.gen(function* () {
+          const entries: Array<{ readonly name: string; readonly mtime: number }> = [];
+          for (const name of yield* fs.readDirectory(directory)) {
+            if (name === except) continue;
+            const info = yield* fs.stat(path.join(directory, name));
+            const mtime = Option.match(info.mtime, {
+              onNone: () => 0,
+              onSome: (date) => date.getTime(),
+            });
+            entries.push({ name, mtime });
+          }
+          entries.sort(
+            (left, right) => right.mtime - left.mtime || left.name.localeCompare(right.name),
+          );
+          for (const entry of entries.slice(keep))
+            yield* fs.remove(path.join(directory, entry.name), { recursive: true, force: true });
+          return proceed;
+        }),
+    });
+  const backend: SnapshotBackend = {
+    lockKey: "native",
+    entries: path.join(root, "entries"),
+    stages: path.join(root, "stages"),
+    restoreStages: path.join(instanceRoot, ".supabase-restore"),
+    data: path.join(instanceRoot, "data"),
+    join: (...parts) => path.join(...parts),
+    run: Effect.fnUntraced(function* (steps) {
+      for (const current of steps) {
+        const stopped = yield* step(current).pipe(
+          Effect.mapError((cause) => errorFor(current._tag.toLowerCase(), cause)),
+        );
+        if (Option.isSome(stopped)) return stopped.value;
+      }
+      return SnapshotRun.Completed();
+    }),
+  };
+  return backend;
+});
+
+/** Snapshots a native database instance into the host cache. */
+export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function* (options: {
+  readonly instanceRoot: string;
+  readonly cacheRoot: string;
+  readonly runtime: DatabaseRuntime;
+  readonly version: string;
+}) {
+  return yield* makeSnapshotStore({
+    backend: yield* makeNativeSnapshotBackend(options.instanceRoot, options.cacheRoot),
+    cacheRoot: options.cacheRoot,
+    instanceRoot: options.instanceRoot,
+    runtime: options.runtime,
+    version: postgresVersion(options.version),
+  });
 });

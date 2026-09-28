@@ -26,6 +26,7 @@ const initial = (id: string): SavedStack => ({
   identity: { projectRoot: "/tmp/project", branchContext: "owner-test", stackName: id },
   runtime: "native",
   instances: [],
+  lifetime: "detached",
   composition: { members: [], dependencies: [] },
   ports: [],
 });

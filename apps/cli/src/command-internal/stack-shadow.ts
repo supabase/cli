@@ -62,6 +62,7 @@ const acquireNamespace = Effect.fn("StackShadow.acquireNamespace")(function* (op
     stateRoot: path.join(settings.supabaseHome, "stacks"),
     cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
     runtime,
+    lifetime: "session",
   });
   return { stack, runtime };
 });
@@ -212,7 +213,10 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
   } satisfies StackShadowAcquiredHandle;
 });
 
-/** Acquires a fresh shadow for callers whose enclosing scope owns its lifetime. */
+/**
+ * Acquires a fresh shadow for callers whose enclosing scope owns its lifetime. The shadow is a
+ * session stack, so its owner destroys it even when this process exits abruptly.
+ */
 export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(function* (
   input: ShadowSetupInput<unknown>,
   opts: ShadowOptions = {},
@@ -229,10 +233,7 @@ export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(funct
           : Effect.void,
       ),
       Effect.catch((cause) =>
-        output.raw(
-          `Failed to destroy shadow stack ${stack.id}: ${cause.message}. Run supabase stack destroy --stack-id ${stack.id} to remove it.\n`,
-          "stderr",
-        ),
+        output.raw(`Failed to destroy shadow stack ${stack.id}: ${cause.message}.\n`, "stderr"),
       ),
     ),
   );

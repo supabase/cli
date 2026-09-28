@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Crypto,
+  DateTime,
   Deferred,
   Effect,
   Exit,
@@ -744,6 +745,47 @@ describe("verified native artifact preparation", () => {
         expect(errorOf(exit)).toBeInstanceOf(PreparationError);
         expect(called).toBe(false);
         expect(yield* fs.exists(`${outside}/postgres`)).toBe(false);
+      }),
+    ),
+  );
+});
+
+describe("orphaned temp/quarantine sweep", () => {
+  it.live("removes a prepared key's old leftovers and keeps fresh and unrelated ones", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-sweep-",
+        });
+        const now = yield* DateTime.now;
+        const old = DateTime.toDate(DateTime.subtract(now, { hours: 25 }));
+        const recent = DateTime.toDate(DateTime.subtract(now, { hours: 1 }));
+        const parent = `${root}/database`;
+        const oldTemp = `${parent}/.postgres.00000000-0000-4000-8000-000000000001.tmp`;
+        const oldQuarantine = `${parent}/.postgres.00000000-0000-4000-8000-000000000002.invalid`;
+        const freshTemp = `${parent}/.postgres.00000000-0000-4000-8000-000000000003.tmp`;
+        const freshQuarantine = `${parent}/.postgres.00000000-0000-4000-8000-000000000004.invalid`;
+        const unrelated = `${parent}/nested/.x.tmp`;
+        const leftovers = [oldTemp, oldQuarantine, freshTemp, freshQuarantine, unrelated];
+        for (const leftover of leftovers) {
+          yield* fs.makeDirectory(leftover, { recursive: true });
+          yield* fs.writeFileString(`${leftover}/marker`, "leftover");
+        }
+        for (const leftover of [oldTemp, oldQuarantine, unrelated])
+          yield* fs.utimes(leftover, old, old);
+        for (const leftover of [freshTemp, freshQuarantine])
+          yield* fs.utimes(leftover, recent, recent);
+
+        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+        expect(yield* fs.exists(oldTemp), "construction leaves the cache alone").toBe(true);
+        expect((yield* store.prepare(request)).outcome).toBe("downloaded");
+
+        expect(yield* fs.exists(oldTemp)).toBe(false);
+        expect(yield* fs.exists(oldQuarantine)).toBe(false);
+        expect(yield* fs.exists(freshTemp)).toBe(true);
+        expect(yield* fs.exists(freshQuarantine)).toBe(true);
+        expect(yield* fs.exists(unrelated)).toBe(true);
       }),
     ),
   );
