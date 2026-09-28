@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, Predicate, Sink, Stream } from "effect";
+import { Deferred, Effect, Layer, PlatformError, Predicate, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 interface SpawnRecord {
@@ -99,6 +99,65 @@ export function mockChildProcessSpawner(
     },
     get killed() {
       return killed;
+    },
+  };
+}
+
+/** How a host's container engine answers: absent from PATH, installed with its daemon down, or serving. */
+export type ContainerEngineState = "missing" | "stopped" | "running";
+
+/**
+ * Spawner for a host whose `docker` and `podman` commands behave as `engines` describe. Other
+ * commands fail with `NotFound`, or run on the real spawner through `hidingLayer`.
+ */
+export function containerEngineSpawner(engines: {
+  readonly docker: ContainerEngineState;
+  readonly podman: ContainerEngineState;
+}) {
+  const spawned: SpawnRecord[] = [];
+  const notFound = (command: string) =>
+    PlatformError.systemError({
+      _tag: "NotFound",
+      module: "ChildProcess",
+      method: "spawn",
+      pathOrDescriptor: command,
+    });
+  const spawner = (delegate?: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
+    ChildProcessSpawner.make((command) => {
+      const cmd = Predicate.isTagged(command, "StandardCommand") ? command.command : "";
+      const args = Predicate.isTagged(command, "StandardCommand") ? command.args : [];
+      if (cmd !== "docker" && cmd !== "podman")
+        return delegate === undefined ? Effect.fail(notFound(cmd)) : delegate.spawn(command);
+      spawned.push({ command: cmd, args });
+      const state = engines[cmd];
+      if (state === "missing") return Effect.fail(notFound(cmd));
+      return Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(2000 + spawned.length),
+          stdout: Stream.empty,
+          stderr: Stream.empty,
+          all: Stream.empty,
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(state === "running" ? 0 : 1)),
+          isRunning: Effect.succeed(false),
+          stdin: Sink.drain,
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      );
+    });
+  return {
+    layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner()),
+    /** Wraps the provided real spawner so only the container engine commands are faked. */
+    hidingLayer: Layer.effect(
+      ChildProcessSpawner.ChildProcessSpawner,
+      Effect.gen(function* () {
+        return spawner(yield* ChildProcessSpawner.ChildProcessSpawner);
+      }),
+    ),
+    get spawned() {
+      return spawned;
     },
   };
 }
