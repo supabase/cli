@@ -125,18 +125,44 @@ it.effect("rejects an invalid owner PID before probing", () =>
 const statOf = (stat: string) =>
   FileSystem.makeNoop({ readFileString: () => Effect.succeed(stat) });
 
-it.effect("treats a zombie or dead owner as exited on Linux", () =>
+it.effect("reports a zombie or dead owner on Linux", () =>
   Effect.gen(function* () {
     const probe = (stat: string) => ownerExitProbe(statOf(stat), "linux")(process.pid);
-    expect(yield* probe(`${process.pid} (node) Z 1 1 1 0 -1 4194560`)).toEqual({ state: "absent" });
-    expect(yield* probe(`${process.pid} (node) X 1 1 1 0 -1 4194560`)).toEqual({ state: "absent" });
-    expect(yield* probe(`${process.pid} (my ) weird) proc) Z 1 1 1 0 -1 4194304`)).toEqual({
-      state: "absent",
+    const pid = process.pid;
+    expect(yield* probe(`${pid} (node) Z 1 1 1 0 -1 4194560`)).toEqual({ state: "zombie" });
+    expect(yield* probe(`${pid} (node) X 1 1 1 0 -1 4194560`)).toEqual({ state: "zombie" });
+    expect(yield* probe(`${pid} (my ) weird) proc) Z 1 1 1 0 -1 4194304`)).toEqual({
+      state: "zombie",
     });
-    expect(yield* probe(`${process.pid} (node) S 1 1 1 0 -1 4194560`)).toEqual({
-      state: "present",
-    });
+    expect(yield* probe(`${pid} (node) S 1 1 1 0 -1 4194560`)).toEqual({ state: "present" });
   }),
+);
+
+it.effect("waits for a zombie owner to be reaped", () =>
+  Effect.gen(function* () {
+    const attempts = yield* Ref.make(0);
+    const probe: OwnerExitProbe = () =>
+      Ref.getAndUpdate(attempts, (count) => count + 1).pipe(
+        Effect.map((count): OwnerExitProbeResult =>
+          count < 2 ? { state: "zombie" } : { state: "absent" },
+        ),
+      );
+    const fiber = yield* waitForOwnerExit(123, probe).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust("100 millis");
+    yield* Fiber.join(fiber);
+    expect(yield* Ref.get(attempts)).toBe(3);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("accepts an owner that is still an unreaped zombie when the wait ends", () =>
+  Effect.gen(function* () {
+    const probe: OwnerExitProbe = () => Effect.succeed({ state: "zombie" });
+    const fiber = yield* waitForOwnerExit(123, probe).pipe(Effect.exit, Effect.forkChild);
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust("6 seconds");
+    expect(Exit.isSuccess(yield* Fiber.join(fiber))).toBe(true);
+  }).pipe(Effect.provide(TestClock.layer())),
 );
 
 it.effect("keeps the signal result when /proc is unreadable or the platform is not Linux", () =>

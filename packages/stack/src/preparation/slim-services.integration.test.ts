@@ -392,8 +392,10 @@ describe("slim-services artifact source", () => {
         return Promise.resolve(new Response("", { status: 403 }));
       }, slimServicesChecksum(mirrored, immediate).pipe(Effect.exit));
       expect(errorOf(failed)?.message).toBe(
-        "Unable to resolve the slim-services checksum: https://release.test/SHA256SUMS (HTTP 403); " +
-          "registry.test/supabase/cli/demo:v1.0.0-native-linux-amd64 (HTTP 403)",
+        "Unable to resolve the slim-services checksum: https://release.test/SHA256SUMS " +
+          "(Unable to download https://release.test/SHA256SUMS: HTTP 403); " +
+          "registry.test/supabase/cli/demo:v1.0.0-native-linux-amd64 (Unable to download " +
+          "https://registry.test/token?scope=repository:supabase/cli/demo:pull&service=registry.test: HTTP 403)",
       );
       expect(requested).toEqual([
         "https://release.test/SHA256SUMS",
@@ -888,49 +890,6 @@ describe("native artifact catalog", () => {
         expect(served).toEqual([
           "https://ghcr.io/token?scope=repository:supabase/cli/postgrest:pull&service=ghcr.io",
           `https://ghcr.io/v2/supabase/cli/postgrest/manifests/${version}-native-linux-amd64`,
-          `${bucket}/${asset}.manifest.json`,
-          `${bucket}/${asset}.tar.zst`,
-        ]);
-      }).pipe(Effect.provide(NodeServices.layer)),
-    ),
-  );
-
-  it.live("falls back to the S3 SHA256SUMS checksum when GitHub and ghcr are both blocked", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { version } = yield* resolveArtifact({ service: "rest" });
-        const asset = `postgrest-${version}-linux-amd64`;
-        const archive = yield* compress(tar("bin/postgrest", "postgrest"));
-        const crypto = yield* Crypto.Crypto;
-        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
-        const bucket = `https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/postgrest/${version}`;
-        const served: string[] = [];
-        const fetcher: FetchLike = (input) => {
-          const url = requestUrl(input);
-          if (url.startsWith("https://github.com/") || url.startsWith("https://ghcr.io/"))
-            return Promise.resolve(new Response("", { status: 403 }));
-          served.push(url);
-          if (url === `${bucket}/${asset}.SHA256SUMS`)
-            return Promise.resolve(new Response(`${expected}  ${asset}.tar.zst\n`));
-          if (url.endsWith(".manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "postgrest", version, target: "linux-amd64" }),
-              ),
-            );
-          return Promise.resolve(new Response(archive));
-        };
-        const fs = yield* FileSystem.FileSystem;
-        const cacheRoot = yield* fs.makeTempDirectoryScoped({
-          prefix: "slim-services-s3-checksum-",
-        });
-        const prepared = yield* withFetch(
-          fetcher,
-          prepareNativeArtifact({ service: "rest" }, cacheRoot, { os: "linux", arch: "x64" }),
-        );
-        expect(yield* fs.readFileString(prepared.executable)).toBe("postgrest");
-        expect(served).toEqual([
-          `${bucket}/${asset}.SHA256SUMS`,
           `${bucket}/${asset}.manifest.json`,
           `${bucket}/${asset}.tar.zst`,
         ]);

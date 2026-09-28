@@ -1224,7 +1224,7 @@ describe("process recipe startup", () => {
         // A client that never resolves leaves the readiness timeout as the only pending timer.
         const hangingClient: HttpClient.HttpClient = { ...client, execute: () => Effect.never };
         const nativeOptions: CatalogOptions = { ...options, root, cacheRoot, runtime: "native" };
-        const nativeSpec: ProcessRecipeSpec<TestCreation> = { ...spec, startup: [] };
+        const nativeSpec: ProcessRecipeSpec<TestCreation> = { ...spec, startupCommands: [] };
         const recipe = yield* makeProcessRecipe(
           creation,
           nativeOptions,

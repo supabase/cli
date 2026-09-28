@@ -225,13 +225,6 @@ const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* 
     });
 });
 
-/** The failure's cause chain, or its own message when it wraps nothing. */
-const fallbackDetail = (error: PreparationError): string => {
-  if (error.cause === undefined) return error.message;
-  const chain = errorChainMessage(error.cause);
-  return chain.length > 0 ? chain : error.message;
-};
-
 /**
  * Runs `attempt` against each candidate until one succeeds. When every candidate fails, the
  * returned error names each attempted source with its failure detail (the sole source's own
@@ -251,18 +244,25 @@ const firstSuccess = <T, A, R>(
   ): Effect.Effect<A, PreparationError, R> => {
     const [candidate, ...rest] = remaining;
     if (candidate === undefined) {
-      const [sole] = failures;
-      if (failures.length === 1 && sole !== undefined) return Effect.fail(sole[1]);
+      const [first] = failures;
+      if (failures.length === 1 && first !== undefined) return Effect.fail(first[1]);
       const detail = failures
-        .map(([failed, error]) => `${describe(failed)} (${fallbackDetail(error)})`)
+        .map(([failed, error]) => `${describe(failed)} (${errorChainMessage(error)})`)
         .join("; ");
-      return Effect.fail(new PreparationError({ message: `${label}: ${detail}` }));
+      // The message already carries every failure, so a cause would repeat it in chain renderers.
+      return Effect.fail(
+        new PreparationError({
+          message: `${label}: ${detail}`,
+          ...(first?.[1].service === undefined ? {} : { service: first[1].service }),
+          ...(first?.[1].version === undefined ? {} : { version: first[1].version }),
+        }),
+      );
     }
     return attempt(candidate).pipe(
       Effect.tap(() => Effect.logInfo(`Slim-services used ${describe(candidate)}`)),
       Effect.tapError((cause) =>
         Effect.logWarning(
-          `Slim-services fallback ${describe(candidate)} failed: ${fallbackDetail(cause)}`,
+          `Slim-services fallback ${describe(candidate)} failed: ${errorChainMessage(cause)}`,
         ),
       ),
       Effect.catch((cause) => fallback([...failures, [candidate, cause] as const], rest)),

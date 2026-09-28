@@ -204,8 +204,6 @@ const artifactFor = (
         repository: `${SLIM_NATIVE_GHCR_REPOSITORY}/${sourceService}`,
         tag: `${resolved.version}-native-${target}`,
       },
-      // Per-target file on the same S3 mirror, for sandboxes that block both GitHub and ghcr.io.
-      { kind: "sha256sums", url: `${supabaseS3}/${assetName}.SHA256SUMS` },
     ],
     mirrors: [
       {

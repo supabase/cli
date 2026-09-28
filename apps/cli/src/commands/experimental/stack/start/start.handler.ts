@@ -93,11 +93,12 @@ const stackError = (
   });
 };
 
-const dockerUnavailableSuggestion = (runtimeInfo: {
-  readonly platform: string;
-  readonly arch: string;
-}) =>
-  defaultStackRuntime(runtimeInfo) === "native"
+// A saved stack keeps its runtime, so only a new stack can switch to native.
+const dockerUnavailableSuggestion = (
+  runtimeInfo: { readonly platform: string; readonly arch: string },
+  creating: boolean,
+) =>
+  creating && defaultStackRuntime(runtimeInfo) === "native"
     ? "Docker CLI or daemon isn't reachable. Install or start Docker, or run with --runtime native."
     : "Docker CLI or daemon isn't reachable. Install or start Docker.";
 
@@ -106,6 +107,7 @@ const stackAcquireError = (
   runtimeContext: {
     readonly selectedRuntime: "native" | "docker" | "podman";
     readonly runtime: { readonly platform: string; readonly arch: string };
+    readonly creating: boolean;
   },
 ) => {
   const base = stackError(cause);
@@ -115,7 +117,7 @@ const stackAcquireError = (
     reason: "runtime",
     message: base.message,
     ...(base.detail === undefined ? {} : { detail: base.detail }),
-    suggestion: dockerUnavailableSuggestion(runtimeContext.runtime),
+    suggestion: dockerUnavailableSuggestion(runtimeContext.runtime, runtimeContext.creating),
     cause: base.cause,
   });
 };
@@ -323,7 +325,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
                 ),
           ),
         ),
-    ).pipe(Effect.mapError((cause) => stackAcquireError(cause, { selectedRuntime, runtime })));
+    ).pipe(
+      Effect.mapError((cause) =>
+        stackAcquireError(cause, { selectedRuntime, runtime, creating: target.id === undefined }),
+      ),
+    );
     const existingServices = yield* stack.services.list.pipe(Effect.mapError(stackError));
     const composition = yield* stack.composition.describe.pipe(Effect.mapError(stackError));
     const currentInstances = yield* Effect.forEach(composition.members, ({ id }) =>
