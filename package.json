@@ -5,7 +5,7 @@
   "scripts": {
     "prepare": "effect-tsgo patch --no-typescript --oxlint && husky",
     "build": "pnpm exec turbo run build",
-    "generate": "pnpm exec turbo run @supabase/api#generate && pnpm exec turbo run @supabase/docs#generate",
+    "generate": "pnpm exec turbo run @supabase/api#generate @supabase/stack#generate && pnpm exec turbo run @supabase/docs#generate",
     "test:live": "pnpm exec turbo run supabase#test:live --concurrency=1 --",
     "record": "pnpm exec turbo run @supabase/cli-e2e#record --",
     "test:smoke": "pnpm exec turbo run supabase#test:smoke --",

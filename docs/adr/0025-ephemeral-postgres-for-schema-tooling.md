@@ -1,6 +1,6 @@
 # 0025. Ephemeral Postgres for schema tooling
 
-**Status**: proposed
+**Status**: superseded by throwaway stack shadow stacks and [database snapshots](../../packages/stack/ARCHITECTURE.md#snapshots-belong-to-the-database-instance) — `EphemeralPostgres` was never built; see [`stack-shadow.ts`](../../apps/cli/src/command-internal/stack-shadow.ts)
 **Date**: 2026-09-09
 
 ## Problem Statement

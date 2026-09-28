@@ -1,4 +1,5 @@
 import type { DocsFlag } from "./docs-spec.ts";
+import { genTypesLanguageFlagDefaults } from "../commands/gen/types/types.languages.ts";
 
 /**
  * Static data for the docs spec generator — information the Effect command tree cannot
@@ -121,6 +122,7 @@ export const DOCS_EXCLUDED: ReadonlySet<string> = new Set([
  * flags add entries by hand.
  */
 export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
+  ...genTypesLanguageFlagDefaults(),
   "supabase agent": "auto",
   "supabase dns-resolver": "native",
   "supabase output": "pretty",
@@ -150,7 +152,6 @@ export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-gen-signing-key algorithm": "ES256",
   "supabase-gen-types lang": "typescript",
   "supabase-gen-types query-timeout": "15s",
-  "supabase-gen-types swift-access-control": "internal",
   "supabase-inspect-db-bloat linked": "true",
   "supabase-inspect-db-blocking linked": "true",
   "supabase-inspect-db-calls linked": "true",

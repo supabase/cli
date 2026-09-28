@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { TestClock } from "effect/testing";
 import {
   Context,
+  DateTime,
   Deferred,
   Effect,
   Exit,
@@ -13,6 +14,7 @@ import {
   PlatformError,
   Ref,
   Schema,
+  Scope,
 } from "effect";
 import * as State from "./State.ts";
 import type { SavedStack } from "./State.ts";
@@ -31,6 +33,7 @@ const initial: SavedStack = {
   },
   runtime: "docker",
   instances: [],
+  lifetime: "detached",
   composition: { members: [], dependencies: [] },
   ports: [],
 };
@@ -58,7 +61,7 @@ describe("durable stack state", () => {
                 ...current,
                 instances: [
                   ...current.instances,
-                  { id, creation: { service: "database", config: { version: "17" } } },
+                  { id, creation: { service: "mail", config: {} } },
                 ],
               });
             }),
@@ -298,6 +301,208 @@ describe("durable stack state", () => {
     ),
   );
 
+  const listingWithReadFailures = (options: {
+    readonly root: string;
+    readonly platform: NodeJS.Platform;
+    readonly code: string;
+    readonly failures: number;
+  }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const target = (yield* Path.Path).join(options.root, initial.id, "state.json");
+      const remaining = yield* Ref.make(options.failures);
+      const firstFailure = yield* Deferred.make<void>();
+      const reported = yield* Ref.make<ReadonlyArray<string>>([]);
+      const injectedFs = Layer.succeed(FileSystem.FileSystem, {
+        ...fs,
+        readFileString: (file: string, encoding?: string) =>
+          Effect.gen(function* () {
+            if (file === target && (yield* Ref.get(remaining)) > 0) {
+              yield* Ref.update(remaining, (count) => count - 1);
+              yield* Deferred.succeed(firstFailure, undefined);
+              return yield* PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "readFile",
+                pathOrDescriptor: file,
+                cause: Object.assign(new Error("injected read failure"), { code: options.code }),
+              });
+            }
+            return yield* fs.readFileString(file, encoding);
+          }),
+      });
+      const store = yield* Layer.build(
+        State.layer({
+          root: options.root,
+          platform: options.platform,
+          onInvalidState: (id) => Ref.update(reported, (ids) => [...ids, id]),
+        }).pipe(Layer.provide(injectedFs)),
+      ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+      return { store, firstFailure, reported };
+    });
+
+  it.effect("lists a stack after a transient Windows read failure clears", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-list-retry-" });
+        yield* (yield* makeTestState(root)).save(initial);
+        const { store, firstFailure, reported } = yield* listingWithReadFailures({
+          root,
+          platform: "win32",
+          code: "EBUSY",
+          failures: 1,
+        });
+
+        const listing = yield* store.list.pipe(Effect.forkScoped);
+        yield* Deferred.await(firstFailure);
+        yield* TestClock.adjust("10 millis");
+        expect((yield* Fiber.join(listing)).map(({ id }) => id)).toEqual([initial.id]);
+        expect(yield* Ref.get(reported)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("skips and reports a stack whose state stays unreadable after retries", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        for (const [platform, code] of [
+          ["win32", "EBUSY"],
+          ["linux", "EACCES"],
+        ] as const) {
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-list-skip-" });
+          yield* (yield* makeTestState(root)).save(initial);
+          const { store, firstFailure, reported } = yield* listingWithReadFailures({
+            root,
+            platform,
+            code,
+            failures: Number.POSITIVE_INFINITY,
+          });
+
+          const listing = yield* store.list.pipe(Effect.forkScoped);
+          yield* Deferred.await(firstFailure);
+          yield* TestClock.adjust("950 millis");
+          expect(yield* Fiber.join(listing)).toEqual([]);
+          expect(yield* Ref.get(reported)).toEqual([initial.id]);
+        }
+      }),
+    ),
+  );
+
+  it.live.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "lists and claims readable stacks past a sibling directory it cannot access",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-list-eacces-" });
+          const reported: Array<string> = [];
+          const store = yield* Layer.build(
+            State.layer({ root, onInvalidState: (id) => Effect.sync(() => reported.push(id)) }),
+          ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+          yield* store.save(initial);
+          const locked = path.join(root, "locked");
+          yield* fs.makeDirectory(locked, { mode: 0o700 });
+          yield* fs.writeFileString(path.join(locked, "state.json"), "{}");
+          yield* Effect.acquireRelease(fs.chmod(locked, 0o000), () =>
+            fs.chmod(locked, 0o700).pipe(Effect.orDie),
+          );
+
+          expect((yield* store.list).map(({ id }) => id)).toEqual([initial.id]);
+          expect(reported).toEqual(["locked"]);
+          expect((yield* store.claims).map(({ id }) => id)).toEqual([initial.id]);
+        }),
+      ),
+  );
+
+  it.live("skips and reports malformed, mismatched, and non-file entries while listing", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-list-invalid-" });
+        const reported: Array<string> = [];
+        const store = yield* Layer.build(
+          State.layer({
+            root,
+            onInvalidState: (id) => Effect.sync(() => reported.push(id)),
+          }),
+        ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+        yield* store.save(initial);
+        yield* fs.makeDirectory(path.join(root, "malformed"));
+        yield* fs.writeFileString(path.join(root, "malformed", "state.json"), "{broken");
+        yield* fs.makeDirectory(path.join(root, "mismatched"));
+        yield* fs.writeFileString(
+          path.join(root, "mismatched", "state.json"),
+          yield* Schema.encodeEffect(Schema.fromJsonString(State.SavedStack))(initial),
+        );
+        yield* fs.makeDirectory(path.join(root, "directory", "state.json"), { recursive: true });
+        yield* fs.writeFileString(path.join(root, "stray-file"), "");
+
+        expect((yield* store.list).map(({ id }) => id)).toEqual([initial.id]);
+        // Windows resolves a path below a regular file as missing rather than unreadable.
+        expect(reported.toSorted()).toEqual(
+          process.platform === "win32"
+            ? ["directory", "malformed", "mismatched"]
+            : ["directory", "malformed", "mismatched", "stray-file"],
+        );
+      }),
+    ),
+  );
+
+  it.live("decodes saved compositions, creations, and instance ids strictly", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-typed-" });
+        const reported: Array<string> = [];
+        const store = yield* Layer.build(
+          State.layer({
+            root,
+            onInvalidState: (id) => Effect.sync(() => reported.push(id)),
+          }),
+        ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+        yield* store.save(initial);
+        const mail = { service: "mail", config: {} };
+        const invalid = {
+          "bad-composition": { composition: { members: "none", dependencies: [] } },
+          "bad-creation": { instances: [{ id: "one", creation: { service: "unknown" } }] },
+          "duplicate-ids": {
+            instances: [
+              { id: "one", creation: mail },
+              { id: "one", creation: mail },
+            ],
+          },
+        };
+        for (const [id, override] of Object.entries(invalid)) {
+          yield* fs.makeDirectory(path.join(root, id));
+          yield* fs.writeFileString(
+            path.join(root, id, "state.json"),
+            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+              ...initial,
+              id,
+              ...override,
+            }),
+          );
+        }
+
+        expect((yield* store.list).map(({ id }) => id)).toEqual([initial.id]);
+        expect(reported.toSorted()).toEqual(Object.keys(invalid));
+        for (const id of Object.keys(invalid)) {
+          const failure = yield* store.read(id).pipe(Effect.flip);
+          expect(failure.operation).toBe("decode");
+          expect(failure.message).toContain("Unable to decode state");
+          expect(failure.message).toContain(`for stack ${id}`);
+        }
+        const duplicate = yield* store.read("duplicate-ids").pipe(Effect.flip);
+        expect(duplicate.message).toContain("Expected unique instance ids");
+      }),
+    ),
+  );
+
   it.effect("cleans up a cancelled Windows replacement and releases the state lock", () =>
     run(
       Effect.gen(function* () {
@@ -356,6 +561,31 @@ describe("durable stack state", () => {
         yield* Ref.set(failRename, false);
         yield* store.withLock(store.save(next));
         expect((yield* store.read(initial.id))?.identity.stackName).toBe("next");
+      }),
+    ),
+  );
+
+  it.live("reaps write leftovers of dead writers and keeps recent ones on open", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-reap-" });
+        const abandoned = path.join(root, ".state-write-abandoned");
+        const inProgress = path.join(root, ".state-write-in-progress");
+        for (const directory of [abandoned, inProgress]) {
+          yield* fs.makeDirectory(directory);
+          yield* fs.writeFileString(path.join(directory, "state.json"), "{}");
+        }
+        const twoDaysAgo = DateTime.toDateUtc(DateTime.subtract(yield* DateTime.now, { days: 2 }));
+        yield* fs.utimes(abandoned, twoDaysAgo, twoDaysAgo);
+
+        const store = yield* makeTestState(root);
+
+        expect(yield* fs.exists(abandoned)).toBe(false);
+        expect(yield* fs.exists(path.join(inProgress, "state.json"))).toBe(true);
+        yield* store.save(initial);
+        expect(yield* store.read(initial.id)).toEqual(initial);
       }),
     ),
   );
@@ -486,6 +716,64 @@ describe("durable stack state", () => {
         expect(error).toBeInstanceOf(State.StateError);
         expect(error.operation).toBe("lock");
         expect(yield* state.read(initial.id)).toBeUndefined();
+      }),
+    ),
+  );
+});
+
+describe("stack owner lease", () => {
+  it.live("hands the lease of a removed stack to a waiter on a live lease file", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-lease-handoff-" });
+        const holder = yield* makeTestState(root);
+        const contended = yield* Deferred.make<void>();
+        const waiter = Context.get(
+          yield* Layer.build(
+            State.layer({
+              root,
+              onLeaseContended: () => Deferred.succeed(contended, undefined).pipe(Effect.asVoid),
+            }),
+          ),
+          State.Service,
+        );
+        const observer = yield* makeTestState(root);
+        const holderScope = yield* Scope.make();
+        expect(yield* holder.lease("gone").pipe(Scope.provide(holderScope))).toBe(true);
+
+        const waiterScope = yield* Scope.make();
+        const waiting = yield* waiter
+          .lease("gone")
+          .pipe(Scope.provide(waiterScope), Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(contended);
+        yield* Scope.close(holderScope, Exit.void);
+
+        expect(yield* Fiber.join(waiting)).toBe(true);
+        expect(yield* observer.leased("gone"), "the path names the file the waiter locked").toBe(
+          true,
+        );
+        yield* Scope.close(waiterScope, Exit.void);
+        expect(yield* observer.leased("gone")).toBe(false);
+        expect(yield* fs.exists(`${root}/gone`), "the last holder removes the directory").toBe(
+          false,
+        );
+      }),
+    ),
+  );
+
+  it.live("reports a free lease without creating a lease file", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-lease-probe-" });
+        const state = yield* makeTestState(root);
+        yield* state.save(initial);
+        expect(yield* state.leased(initial.id)).toBe(false);
+        expect(yield* state.readHolder(initial.id), "a retracted record reads as absent").toBe(
+          undefined,
+        );
+        expect(yield* fs.exists(`${root}/${initial.id}/owner.lock`)).toBe(false);
       }),
     ),
   );

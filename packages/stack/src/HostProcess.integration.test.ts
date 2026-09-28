@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import {
   Context,
   Data,
+  DateTime,
   Effect,
   FileSystem,
   Fiber,
@@ -11,19 +12,69 @@ import {
   Path,
   Schema,
   Stream,
+  Tracer,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration verifies exact-port reopening.
 import * as Net from "node:net";
 import { fileURLToPath } from "node:url";
-import { HostEndpoint, connectHost, controlPortHeld, launchHost } from "./HostProcess.ts";
+import {
+  HostEndpoint,
+  connectHost,
+  currentRelease,
+  launchHost,
+  shutdownHost,
+  type HostAccess,
+} from "./HostProcess.ts";
+import { discover } from "./effect.ts";
+import { watchLeaseRelease } from "../tests/owner.ts";
 import * as State from "./State.ts";
 
 class ProcessTestError extends Data.TaggedError("ProcessTestError")<{ readonly message: string }> {}
+
+const fixtureEntrypoint = fileURLToPath(
+  new URL("../tests/host-process-fixture.ts", import.meta.url),
+);
+
+const savedStack = (root: string, stackName: string): State.SavedStack => ({
+  id: "stack",
+  runtime: "native",
+  identity: { projectRoot: root, branchContext: "main", stackName },
+  instances: [],
+  lifetime: "detached",
+  composition: { members: [], dependencies: [] },
+  ports: [],
+});
+
+/** A loopback listener that accepts connections and never answers, counting each one. */
+const silentListener = Effect.acquireRelease(
+  Effect.callback<
+    { readonly server: Net.Server; readonly sockets: Set<Net.Socket> },
+    ProcessTestError
+  >((resume) => {
+    const sockets = new Set<Net.Socket>();
+    const server = Net.createServer((socket) => sockets.add(socket));
+    server.once("error", (cause) =>
+      resume(Effect.fail(new ProcessTestError({ message: cause.message }))),
+    );
+    server.listen(0, "127.0.0.1", () => resume(Effect.succeed({ server, sockets })));
+  }),
+  ({ server, sockets }) =>
+    Effect.callback<void>((resume) => {
+      for (const socket of sockets) socket.destroy();
+      server.close(() => resume(Effect.void));
+    }),
+).pipe(
+  Effect.flatMap(({ server, sockets }) => {
+    const address = server.address();
+    return typeof address === "object" && address !== null
+      ? Effect.succeed({ port: address.port, connections: () => sockets.size })
+      : Effect.fail(new ProcessTestError({ message: "Silent listener has no port" }));
+  }),
+);
 
 const makeTestState = (root: string) =>
   Layer.build(State.layer({ root })).pipe(
@@ -95,10 +146,14 @@ const waitForReady = (handle: ChildHandle) =>
     Effect.flatMap((line) =>
       Schema.decodeEffect(
         Schema.fromJsonString(
-          Schema.Struct({ type: Schema.Literal("ready"), endpoint: HostEndpoint }),
+          Schema.Struct({
+            type: Schema.Literal("ready"),
+            endpoint: HostEndpoint,
+            secret: Schema.String,
+          }),
         ),
       )(line).pipe(
-        Effect.map((message) => message.endpoint),
+        Effect.map(({ endpoint, secret }): HostAccess => ({ endpoint, secret })),
         Effect.mapError((cause) => new ProcessTestError({ message: String(cause) })),
       ),
     ),
@@ -122,27 +177,20 @@ const stopChild = (handle: ChildHandle) =>
     }),
   ).pipe(Effect.asVoid);
 
-const bestEffortShutdown = (client: HttpClient.HttpClient, endpoint: HostEndpoint) =>
-  Effect.exit(
-    client
-      .execute(
-        HttpClientRequest.post(`http://127.0.0.1:${endpoint.port}/shutdown`).pipe(
-          HttpClientRequest.setHeader("connection", "close"),
-        ),
-      )
-      .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk)),
-  ).pipe(Effect.asVoid);
+/** Stops an owner and waits for it to release its lease, so its files are no longer in use. */
+const bestEffortShutdown = (stateRoot: string) => (access: HostAccess) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const released = yield* watchLeaseRelease(stateRoot, access.endpoint.stackId);
+      yield* shutdownHost(access, false);
+      yield* released;
+    }),
+  ).pipe(Effect.exit, Effect.asVoid);
 
-const bestEffortShutdownByState = (
-  client: HttpClient.HttpClient,
-  state: State.Interface,
-  stackId: string,
-) =>
-  Effect.exit(
-    connectHost(state, stackId).pipe(
-      Effect.flatMap((endpoint) => bestEffortShutdown(client, endpoint)),
-    ),
-  ).pipe(Effect.asVoid);
+const bestEffortShutdownByState = (stateRoot: string, state: State.Interface, stackId: string) =>
+  Effect.exit(connectHost(state, stackId).pipe(Effect.flatMap(bestEffortShutdown(stateRoot)))).pipe(
+    Effect.asVoid,
+  );
 
 const bindExact = (port: number) =>
   Effect.callback<Net.Server, ProcessTestError>((resume) => {
@@ -189,7 +237,7 @@ const waitForMarker = (marker: string) =>
     }),
   );
 
-it.live("launches one detached owner and attaches competing launchers", () =>
+it.live("starts exactly one owner for concurrent launchers and attaches the others", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -200,6 +248,7 @@ it.live("launches one detached owner and attaches competing launchers", () =>
         runtime: "native",
         identity: { projectRoot: root, branchContext: "main", stackName: "local" },
         instances: [],
+        lifetime: "detached",
         composition: { members: [], dependencies: [] },
         ports: [],
       });
@@ -212,73 +261,128 @@ it.live("launches one detached owner and attaches competing launchers", () =>
         stackId: "stack",
         entrypoint,
       };
-      const client = yield* HttpClient.HttpClient;
       yield* Effect.gen(function* () {
-        const [first, second] = yield* Effect.all(
-          [launchHost(state, options), launchHost(state, options)],
-          { concurrency: 2 },
+        const launched = yield* Effect.all(
+          [launchHost(state, options), launchHost(state, options), launchHost(state, options)],
+          { concurrency: "unbounded" },
         );
-        expect(second.port).toBe(first.port);
-        expect(second.pid).toBe(first.pid);
-      }).pipe(Effect.ensuring(bestEffortShutdownByState(client, state, "stack")));
+        expect(new Set(launched.map(({ endpoint }) => endpoint.pid)).size).toBe(1);
+        expect(new Set(launched.map(({ endpoint }) => endpoint.port)).size).toBe(1);
+      }).pipe(Effect.ensuring(bestEffortShutdownByState(root, state, "stack")));
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.live("lets an external launcher attach, then reopens the owner port after shutdown", () =>
+it.live("relaunches after shutdown while a foreign listener holds the previous control port", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-launcher-" });
       const state = yield* makeTestState(root);
-      yield* state.save({
-        id: "stack",
-        runtime: "native",
-        identity: { projectRoot: root, branchContext: "main", stackName: "local" },
-        instances: [],
-        composition: { members: [], dependencies: [] },
-        ports: [],
-      });
-      const entrypoint = fileURLToPath(
-        new URL("../tests/host-process-fixture.ts", import.meta.url),
-      );
-      const args = [entrypoint, root, root, "stack"];
+      yield* state.save(savedStack(root, "local"));
+      const args = [fixtureEntrypoint, root, root, "stack"];
       const owner = yield* Effect.acquireRelease(
         spawnChild(args, ["ignore", "ignore", "ignore", "pipe"]),
         stopChild,
       );
-      const endpoint = yield* waitForReady(owner);
-      const observedEndpoint = yield* connectHost(state, "stack");
+      const access = yield* waitForReady(owner);
+      const { endpoint } = access;
+      const observed = yield* connectHost(state, "stack");
       const client = yield* HttpClient.HttpClient;
-      expect(observedEndpoint.pid).toBe(endpoint.pid);
+      expect(observed.endpoint.pid).toBe(endpoint.pid);
       const ownerExitFiber = yield* waitForClose(owner).pipe(Effect.forkScoped);
       yield* Effect.gen(function* () {
-        const response = yield* client.execute(
+        const unauthenticated = yield* client.execute(
           HttpClientRequest.post(`http://127.0.0.1:${endpoint.port}/shutdown`).pipe(
-            HttpClientRequest.setHeader("connection", "close"),
+            HttpClientRequest.bodyJsonUnsafe({ destroy: true }),
           ),
         );
-        yield* HttpClientResponse.filterStatusOk(response);
+        expect(unauthenticated.status, "shutdown requires the owner secret").toBe(401);
+        expect(Option.isNone(yield* shutdownHost(access, false))).toBe(true);
         const ownerExit = yield* Fiber.join(ownerExitFiber);
         owner.closed = true;
         owner.closeCode = ownerExit.code;
         owner.closeSignal = ownerExit.signal;
         expect(ownerExit.signal).toBeNull();
-      }).pipe(Effect.ensuring(bestEffortShutdown(client, endpoint)));
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const reopened = yield* Effect.acquireRelease(bindExact(endpoint.port), closeServer);
-          expect(reopened.listening).toBe(true);
-        }),
-      );
+      }).pipe(Effect.ensuring(bestEffortShutdown(root)(access)));
+      yield* Effect.acquireRelease(bindExact(endpoint.port), closeServer);
       const relaunched = yield* Effect.acquireRelease(
-        launchHost(state, { stateRoot: root, cacheRoot: root, stackId: "stack", entrypoint }).pipe(
-          Effect.provide(FetchHttpClient.layer),
-        ),
-        (next) => bestEffortShutdown(client, next),
+        launchHost(state, {
+          stateRoot: root,
+          cacheRoot: root,
+          stackId: "stack",
+          entrypoint: fixtureEntrypoint,
+        }).pipe(Effect.provide(FetchHttpClient.layer)),
+        bestEffortShutdown(root),
       );
-      expect(relaunched.port).toBe(endpoint.port);
-      expect(relaunched.pid).not.toBe(endpoint.pid);
+      expect(relaunched.endpoint.pid).not.toBe(endpoint.pid);
+      expect(relaunched.endpoint.port).not.toBe(endpoint.port);
+      expect(yield* connectHost(state, "stack")).toEqual(relaunched);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("ignores a stale endpoint record once no process holds the lease", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-stale-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(savedStack(root, "local"));
+      const unresponsive = yield* silentListener;
+      yield* state.publishHolder("stack", {
+        role: "owner",
+        secret: "stale",
+        port: unresponsive.port,
+        pid: process.pid,
+        release: yield* currentRelease,
+        lifetime: "detached",
+        startedAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      const [live] = yield* discover({ stateRoot: root });
+      expect(live?.host).toBeUndefined();
+      const launched = yield* Effect.acquireRelease(
+        launchHost(state, {
+          stateRoot: root,
+          cacheRoot: root,
+          stackId: "stack",
+          entrypoint: fixtureEntrypoint,
+        }),
+        bestEffortShutdown(root),
+      );
+      expect(launched.endpoint.port).not.toBe(unresponsive.port);
+      const published = yield* state.readHolder("stack");
+      expect(published?.role === "owner" ? published.port : undefined).toBe(launched.endpoint.port);
+      expect(unresponsive.connections()).toBe(0);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("discovers dead stacks from their free leases without contacting recorded endpoints", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-discover-" });
+      const state = yield* makeTestState(root);
+      const unresponsive = yield* silentListener;
+      const ids = ["dead-a", "dead-b", "dead-c"];
+      for (const id of ids) {
+        yield* state.save({ ...savedStack(root, id), id });
+        yield* Effect.scoped(state.lease(id));
+        yield* state.publishHolder(id, {
+          role: "owner",
+          secret: "stale",
+          port: unresponsive.port,
+          pid: process.pid,
+          release: yield* currentRelease,
+          lifetime: "detached",
+          startedAt: DateTime.formatIso(yield* DateTime.now),
+        });
+      }
+      const entries = yield* discover({ stateRoot: root });
+      expect(entries.map(({ definition }) => definition.id).toSorted()).toEqual(ids);
+      expect(entries.every(({ host }) => host === undefined)).toBe(true);
+      expect(unresponsive.connections()).toBe(0);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
@@ -298,13 +402,13 @@ it.live(
           runtime: "native",
           identity: { projectRoot: root, branchContext: "main", stackName: "local" },
           instances: [],
+          lifetime: "detached",
           composition: { members: [], dependencies: [] },
           ports: [],
         });
         const entrypoint = fileURLToPath(
           new URL("../tests/host-process-fixture.ts", import.meta.url),
         );
-        const client = yield* HttpClient.HttpClient;
         yield* Effect.gen(function* () {
           const args = [entrypoint, root, root, "stack", "launcher", entrypoint];
           const launcher = yield* Effect.acquireRelease(
@@ -315,8 +419,8 @@ it.live(
           const launcherExit = yield* waitForClose(launcher);
           expect(launcherExit.code).toBe(0);
           const connected = yield* connectHost(state, "stack");
-          expect(connected).toEqual(endpoint);
-        }).pipe(Effect.ensuring(bestEffortShutdownByState(client, state, "stack")));
+          expect(connected.endpoint).toEqual(endpoint);
+        }).pipe(Effect.ensuring(bestEffortShutdownByState(root, state, "stack")));
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
@@ -333,6 +437,7 @@ it.live("terminates a detached child when readiness is interrupted", () =>
         runtime: "native",
         identity: { projectRoot: root, branchContext: "main", stackName: "slow-handshake" },
         instances: [],
+        lifetime: "detached",
         composition: { members: [], dependencies: [] },
         ports: [],
       });
@@ -358,27 +463,57 @@ it.live("terminates a detached child when readiness is interrupted", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.live("reports a stack's control port as held while a listener binds it", () =>
-  Effect.gen(function* () {
-    const listener = yield* Effect.acquireRelease(bindExact(0), closeServer);
-    const address = listener.address();
-    if (address === null || typeof address === "string")
-      return yield* new ProcessTestError({ message: "listener has no TCP address" });
-    const saved: State.SavedStack = {
-      id: "stack",
-      runtime: "docker",
-      identity: { projectRoot: "/project", branchContext: "main", stackName: "local" },
-      instances: [],
-      composition: { members: [], dependencies: [] },
-      ports: [],
-    };
+it.live("keeps the owner log tail in a start failure after the owner removed its log", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-failed-start-" });
+      const state = yield* makeTestState(root);
+      const failure = yield* launchHost(state, {
+        stateRoot: root,
+        cacheRoot: root,
+        stackId: "stack",
+        entrypoint: fileURLToPath(new URL("../tests/failing-owner-fixture.ts", import.meta.url)),
+        register: savedStack(root, "failing"),
+      }).pipe(Effect.flip);
+      expect(failure.message).toContain("owner startup failed");
+      expect(failure.message).toContain("failing-owner-diagnostic");
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
 
-    expect(yield* controlPortHeld(saved)).toBe(false);
-    expect(
-      yield* controlPortHeld({
-        ...saved,
-        ports: [{ key: "control", host: "127.0.0.1", port: address.port }],
-      }),
-    ).toBe(true);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+it.live("keeps the owner secret out of recorded HTTP span attributes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-tracing-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(savedStack(root, "local"));
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const access = yield* launchHost(state, {
+        stateRoot: root,
+        cacheRoot: root,
+        stackId: "stack",
+        entrypoint: fixtureEntrypoint,
+      }).pipe(
+        Effect.andThen(connectHost(state, "stack")),
+        Effect.tap(bestEffortShutdown(root)),
+        Effect.withTracer(tracer),
+      );
+      const attributes = spans.flatMap((span) => Array.from(span.attributes));
+      const authorization = attributes.filter(
+        ([key]) => key === "http.request.header.authorization",
+      );
+      expect(authorization.length, "identity and shutdown requests were traced").toBeGreaterThan(1);
+      expect(authorization.every(([, value]) => value === "<redacted>")).toBe(true);
+      expect(attributes.filter(([, value]) => String(value).includes(access.secret))).toEqual([]);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

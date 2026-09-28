@@ -1,13 +1,11 @@
 import {
   Cause,
   Clock,
-  Context,
   Data,
   Deferred,
   Effect,
   Exit,
   FiberMap,
-  Layer,
   Match,
   Ref,
   Schema,
@@ -35,7 +33,6 @@ export type OrchestratorOperation =
   | "close"
   | "configure"
   | "register"
-  | "unregister"
   | "proxy";
 
 export class OrchestratorError extends Data.TaggedError("OrchestratorError")<{
@@ -73,7 +70,6 @@ interface RegisteredCore {
   readonly ready: Effect.Effect<void, LifecycleError>;
   readonly stop: Effect.Effect<void, LifecycleError>;
   readonly destroy: Effect.Effect<void, LifecycleError>;
-  readonly arm: Effect.Effect<void, LifecycleError>;
   readonly armAt: (
     revision: number,
     guard?: Effect.Effect<void, ServiceError>,
@@ -151,27 +147,25 @@ export const CompositionConfig = Schema.Struct({
   ),
 });
 
-export interface Interface {
+/** The lifecycle authority for one stack's registered instances and their composition. */
+export interface Interface<Entry extends RegisteredInstance = RegisteredInstance> {
   readonly admissionFor: (
     id: string,
   ) => (
     operation: ServiceAdmission,
     transition: Effect.Effect<void, ServiceError>,
   ) => Effect.Effect<void, ServiceError>;
-  readonly register: (
-    instance: RegisteredInstance,
-  ) => Effect.Effect<void, OrchestratorError | LifecycleError>;
-  readonly unregister: (id: string) => Effect.Effect<void, OrchestratorError | LifecycleError>;
-  readonly get: (
-    id: string,
-  ) => Effect.Effect<RegisteredInstance, OrchestratorError | LifecycleError>;
-  readonly list: Effect.Effect<
-    ReadonlyArray<RegisteredInstance>,
-    OrchestratorError | LifecycleError
-  >;
-  readonly configure: (
-    configuration: unknown,
-  ) => Effect.Effect<void, OrchestratorError | LifecycleError>;
+  readonly register: (entry: Entry) => Effect.Effect<void, OrchestratorError>;
+  readonly get: (id: string) => Effect.Effect<Entry, OrchestratorError>;
+  readonly composition: Effect.Effect<CompositionConfig>;
+  /**
+   * Validates and installs a composition; a failed `persist` keeps the previous one.
+   * `persist` runs under the graph gate, so callers take the cross-process state lock first.
+   */
+  readonly configure: <E = never>(
+    configuration: CompositionConfig,
+    persist?: Effect.Effect<void, E>,
+  ) => Effect.Effect<void, OrchestratorError | E>;
   readonly start: (id: string) => Effect.Effect<void, OrchestratorError | LifecycleError>;
   readonly stop: (id: string) => Effect.Effect<void, OrchestratorError | LifecycleError>;
   readonly restart: (
@@ -198,10 +192,6 @@ export interface Interface {
     awaitReady?: boolean,
   ) => Effect.Effect<void, OrchestratorError | LifecycleError, Scope.Scope>;
 }
-
-export class Service extends Context.Service<Service, Interface>()(
-  "@supabase/stack/Orchestrator",
-) {}
 
 interface ActivityState {
   readonly active: number;
@@ -246,11 +236,14 @@ const topo = (
   return result;
 };
 
-const makeOrchestrator = Effect.gen(function* () {
+/** Builds an orchestrator whose watchers and idle timers live in the current scope. */
+export const make = Effect.fn("Orchestrator.make")(function* <
+  Entry extends RegisteredInstance,
+>(): Effect.fn.Return<Interface<Entry>, never, Scope.Scope> {
   const owner = yield* Scope.Scope;
   const graphGate = yield* Semaphore.make(1);
   const idleTimers = yield* FiberMap.make<string>();
-  const registry = yield* Ref.make<ReadonlyMap<string, RegisteredInstance>>(new Map());
+  const registry = yield* Ref.make<ReadonlyMap<string, Entry>>(new Map());
   const composition = yield* Ref.make<CompositionConfig>({ members: [], dependencies: [] });
   const activity = yield* Ref.make<ReadonlyMap<string, ActivityState>>(new Map());
 
@@ -264,7 +257,7 @@ const makeOrchestrator = Effect.gen(function* () {
 
   const node = Effect.fn("Orchestrator.node")(function* (
     id: string,
-  ): Effect.fn.Return<RegisteredInstance, OrchestratorError> {
+  ): Effect.fn.Return<Entry, OrchestratorError> {
     const nodes = yield* Ref.get(registry);
     const value = nodes.get(id);
     if (value === undefined) return yield* graphError("register", `Unknown instance ${id}`);
@@ -544,14 +537,11 @@ const makeOrchestrator = Effect.gen(function* () {
             Effect.gen(function* () {
               const values = yield* Ref.get(activity);
               const current = values.get(id);
-              if (
+              return !(
                 current === undefined ||
                 current.active > 0 ||
                 now - current.lastActivity < timeout
-              )
-                return false;
-              yield* Ref.set(activity, new Map(values).set(id, { ...current }));
-              return true;
+              );
             }),
           );
           if (state) {
@@ -736,6 +726,9 @@ const makeOrchestrator = Effect.gen(function* () {
         const next = new Map(values);
         next.delete(id);
         yield* Ref.set(registry, next);
+        const activities = new Map(yield* Ref.get(activity));
+        activities.delete(id);
+        yield* Ref.set(activity, activities);
         const configured = yield* Ref.get(composition);
         yield* Ref.set(composition, {
           members: configured.members.filter((member) => member.id !== id),
@@ -778,7 +771,7 @@ const makeOrchestrator = Effect.gen(function* () {
       });
   });
 
-  const orchestrator: Interface = {
+  const orchestrator: Interface<Entry> = {
     admissionFor,
     register: Effect.fn("Orchestrator.register")((instance) =>
       withGraph(
@@ -832,66 +825,34 @@ const makeOrchestrator = Effect.gen(function* () {
         }),
       ),
     ),
-    unregister: Effect.fn("Orchestrator.unregister")((id) =>
+    get: Effect.fn("Orchestrator.get")((id) => node(id)),
+    composition: Ref.get(composition),
+    configure: <E = never>(configuration: CompositionConfig, persist?: Effect.Effect<void, E>) =>
       withGraph(
         Effect.gen(function* () {
-          const instance = yield* node(id);
-          const observation = yield* instance.core.get;
-          if (observation.registered || observation.lifecycle !== "stopped")
-            return yield* graphError("unregister", `Instance ${id} must be destroyed first`);
-          const structure = yield* configurationGraph(yield* Ref.get(composition));
-          if ((structure.dependents.get(id) ?? []).some((dependentId) => dependentId !== id))
-            return yield* graphError(
-              "unregister",
-              `Instance ${id} is still referenced by a dependent`,
-            );
-          const values = yield* Ref.get(registry);
-          const next = new Map(values);
-          next.delete(id);
-          yield* Ref.set(registry, next);
-          const configured = yield* Ref.get(composition);
-          yield* Ref.set(composition, {
-            members: configured.members.filter((member) => member.id !== id),
-            dependencies: configured.dependencies.filter(
-              (dependency) => dependency.from !== id && dependency.to !== id,
-            ),
-          });
+          const previous = yield* Ref.get(composition);
+          yield* configurationGraph(configuration);
+          const affected = new Set([
+            ...previous.members.map((member) => member.id),
+            ...configuration.members.map((member) => member.id),
+          ]);
+          for (const dependency of [...previous.dependencies, ...configuration.dependencies]) {
+            affected.add(dependency.from);
+            affected.add(dependency.to);
+          }
+          for (const affectedId of affected) {
+            const instance = yield* node(affectedId);
+            const observation = yield* instance.core.get;
+            if (observation.lifecycle !== "stopped" || observation.wakeEnabled)
+              return yield* graphError(
+                "configure",
+                `Instance ${affectedId} must be stopped and wake-disabled`,
+              );
+          }
+          if (persist !== undefined) yield* persist;
+          yield* Ref.set(composition, configuration);
         }),
-      ),
-    ),
-    get: Effect.fn("Orchestrator.get")((id) => node(id)),
-    list: Ref.get(registry).pipe(Effect.map((values) => [...values.values()])),
-    configure: Effect.fn("Orchestrator.configure")((configuration) =>
-      Schema.decodeUnknownEffect(CompositionConfig)(configuration).pipe(
-        Effect.mapError((cause) => graphError("configure", "Invalid composition", cause)),
-        Effect.flatMap((decoded) =>
-          withGraph(
-            Effect.gen(function* () {
-              const previous = yield* Ref.get(composition);
-              yield* configurationGraph(decoded);
-              const affected = new Set([
-                ...previous.members.map((member) => member.id),
-                ...decoded.members.map((member) => member.id),
-              ]);
-              for (const dependency of [...previous.dependencies, ...decoded.dependencies]) {
-                affected.add(dependency.from);
-                affected.add(dependency.to);
-              }
-              for (const affectedId of affected) {
-                const instance = yield* node(affectedId);
-                const observation = yield* instance.core.get;
-                if (observation.lifecycle !== "stopped" || observation.wakeEnabled)
-                  return yield* graphError(
-                    "configure",
-                    `Instance ${affectedId} must be stopped and wake-disabled`,
-                  );
-              }
-              yield* Ref.set(composition, decoded);
-            }),
-          ),
-        ),
-      ),
-    ),
+      ).pipe(Effect.withSpan("Orchestrator.configure")),
     start: Effect.fn("Orchestrator.start")((id) =>
       Effect.gen(function* () {
         const plan = yield* snapshotPlan(id);
@@ -975,5 +936,3 @@ const makeOrchestrator = Effect.gen(function* () {
   };
   return orchestrator;
 });
-
-export const layer = Layer.effect(Service, makeOrchestrator.pipe(Effect.map(Service.of)));
