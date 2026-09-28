@@ -52,6 +52,7 @@ import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import {
   stackAcquireShadowDatabase,
+  stackShadowRuntime,
   stackMigrateShadow,
 } from "../../../command-internal/stack-shadow.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
@@ -290,10 +291,15 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         } satisfies ProvisionedDeclarativeShadow;
       }).pipe(Effect.provide(runtimeWith(outputService)), Effect.mapError(nextShadowError));
 
+    // Both shadows of one plan share a runtime, so the engines are probed at most once.
+    const shadowRuntime = yield* Effect.cached(stackShadowRuntime);
     const stackAcquire = (input: NativeShadowInput, opts: ShadowCacheOpts) =>
-      stackAcquireShadowDatabase(input.base, {
-        ...(opts.webhooks === undefined ? {} : { webhooks: opts.webhooks }),
-        ...(opts.bypassCache === true ? { bypassCache: true } : {}),
+      Effect.gen(function* () {
+        return yield* stackAcquireShadowDatabase(input.base, {
+          runtime: yield* shadowRuntime,
+          ...(opts.webhooks === undefined ? {} : { webhooks: opts.webhooks }),
+          ...(opts.bypassCache === true ? { bypassCache: true } : {}),
+        });
       });
 
     const stackProvisionMigrations = (input: NativeShadowInput, opts: ShadowCacheOpts) =>

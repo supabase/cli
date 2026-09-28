@@ -2,7 +2,7 @@
 
 `supabase stack` manages local stacks with the new experimental runtime. It is unstable, its
 command interface may change, and it is excluded from the CLI compatibility promise. It is
-available when the `experimental.stack` feature flag is enabled and supports both Docker and
+available when the `experimental.stack` feature flag is enabled and supports Docker, Podman, and
 native runtimes.
 
 Native PostgreSQL requires passwords for every role except `supabase_admin`. Its local bootstrap
@@ -21,6 +21,14 @@ and password-reconciliation connection uses that administrative role, so a nativ
 | `supabase stack stop`    | Stop a stack while retaining its data.                                            |
 
 Use each command's `--help` for its available targeting and runtime options.
+
+A new stack created with `--runtime auto` uses Docker when its daemon answers, otherwise Podman
+when its engine answers, and otherwise native on Linux x64/arm64 and macOS arm64. On other
+platforms without a reachable engine, the command fails and asks you to start Docker or Podman. The
+selected runtime is saved with the stack and reused without probing; when auto selection skips
+Docker, the command prints a notice saying so. To switch, destroy the stack or choose a different
+`--stack` name. Project stacks created by database commands, and shadow stacks
+created without a project stack, use the same selection.
 
 `supabase stack prepare` downloads or pulls artifacts for the selected stack without starting
 services. If the target does not exist, prepare creates and registers it; the stack then appears in

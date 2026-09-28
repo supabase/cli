@@ -33,6 +33,7 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { containerEngineSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
 import {
   DbConnection,
   type DbSession,
@@ -1025,6 +1026,48 @@ describe("experimental stack start", () => {
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.find(({ service }) => service === "database")?.id).toBe(database.id);
       expect(fixture.composed).toBe(2);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("reports the saved runtime when automatic selection creates a Podman stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-auto-podman-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "auto-podman"\n[edge_runtime]\nenabled = false\n',
+      );
+      const output = mockOutput();
+      const engines = containerEngineSpawner({ docker: "stopped", podman: "running" });
+      const target = Layer.succeed(StackTargetResolver, {
+        resolve: () => Effect.succeed({ projectRoot: root, hostRunning: false }),
+      });
+      yield* stackStart({
+        ...flags([
+          "rest",
+          "auth",
+          "realtime",
+          "storage",
+          "functions",
+          "studio",
+          "mail",
+          "analytics",
+          "pooler",
+        ]),
+        runtime: "auto",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(layers(root, fakeStack(), output, false), target, engines.layer),
+        ),
+      );
+      expect(engines.spawned.map(({ command }) => command)).toEqual(["docker", "podman"]);
+      expect(output.messages).toContainEqual({
+        type: "info",
+        message: expect.stringContaining(
+          "Docker didn't answer, so this new stack uses the Podman runtime",
+        ),
+      });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
