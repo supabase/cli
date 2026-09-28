@@ -7,7 +7,6 @@ import { parseArgs } from "node:util";
 import { Effect } from "effect";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
 import { bundleStackFunctionsServeMainTemplate } from "../src/command-internal/stack-functions-bundler.ts";
-import { oxfmtStubPlugin } from "./bundle-externals.ts";
 import { compileOptions } from "./compile-options.ts";
 import { darwinBinaries, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
@@ -119,7 +118,7 @@ async function runBunBuild(config: Bun.BuildConfig) {
   const result = await Bun.build({
     ...config,
     ...compileOptions,
-    plugins: [...(config.plugins ?? []), oxfmtStubPlugin],
+    plugins: config.plugins ?? [],
   });
   for (const log of result.logs) {
     console.warn(log);
