@@ -392,8 +392,8 @@ const makeState = (
       Predicate.hasProperty(error.cause, "errcode") && error.cause.errcode === code;
     const isBusy = hasErrcode(5);
     const isMissing = hasErrcode(14);
-    /** macOS SQLite reports that an open database file was unlinked or replaced. */
-    const isMoved = hasErrcode(6922);
+    /** An open file that was unlinked: SQLite IOERR_VNODE on macOS, IOERR_FSTAT on Linux. */
+    const isMoved = (error: StateError) => hasErrcode(6922)(error) || hasErrcode(1802)(error);
     /** Takes the file's SQLite write lock on this connection, retrying contention on `schedule`. */
     const takeLock = (
       connection: DatabaseSync,
