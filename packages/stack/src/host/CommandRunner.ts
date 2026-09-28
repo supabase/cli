@@ -219,7 +219,7 @@ const makeCommandRunner = (options: {
                 image,
                 stackId: options.stackId,
                 instanceId: jobId,
-                service: initialization?.service,
+                service: initialization?.service ?? "database",
                 project: options.project,
                 env: postgresCommand?.env ?? initialization?.env ?? {},
                 args: postgresCommand?.args ?? initialization?.args ?? [],

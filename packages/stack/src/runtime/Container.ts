@@ -18,6 +18,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { identifyContainer } from "./ContainerName.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
@@ -108,29 +109,6 @@ const engineUnreachable = (error: ContainerError) =>
   );
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
-
-const NAME_UNSAFE = /[^a-zA-Z0-9_.-]+/gu;
-/** Keeps a name segment within docker's `[a-zA-Z0-9_.-]` alphabet and a readable length. */
-const sanitizeNameSegment = (value: string): string =>
-  value.replaceAll(NAME_UNSAFE, "-").slice(0, 40);
-
-/** Names the container and sets compose grouping labels; one-shots get a `-task` segment and `oneoff`. */
-const identifyContainer = (
-  spec: Pick<ContainerSpec, "stackId" | "service" | "project">,
-  token: string,
-  oneOff: boolean,
-) => {
-  const stackShort = spec.stackId.slice(0, 12);
-  const project = spec.project === undefined ? undefined : sanitizeNameSegment(spec.project);
-  const service = spec.service === undefined ? undefined : sanitizeNameSegment(spec.service);
-  const shortToken = token.replaceAll("-", "").slice(0, 12);
-  const name = ["supabase", project, service, oneOff ? "task" : undefined, shortToken]
-    .filter((segment): segment is string => segment !== undefined && segment.length > 0)
-    .join("-");
-  const composeProject = `supabase-${project ?? "stack"}-${stackShort}`.toLowerCase();
-  const composeService = service ?? "task";
-  return { name, composeProject, composeService };
-};
 
 const PULL_MAX_RETRIES = 4;
 
