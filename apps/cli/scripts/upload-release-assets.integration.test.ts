@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createSpawnRun,
+  KILL_GRACE_MS,
   releaseAssets,
   uploadAssets,
   uploadedAssetNames,
@@ -44,6 +45,11 @@ fi
 if [ -f "$dir/hang-once-$name" ]; then
   rm "$dir/hang-once-$name"
   exec sleep 30
+fi
+if [ -f "$dir/ignore-term-once-$name" ]; then
+  rm "$dir/ignore-term-once-$name"
+  trap '' TERM
+  sleep 30 & wait $!
 fi
 exit 0
 `;
@@ -99,6 +105,27 @@ describe("upload-release-assets against a fake gh", () => {
       `Uploaded ${asset.name} (attempt 2).`,
     ]);
   }, 20_000);
+
+  test("kills an upload that ignores SIGTERM once the grace period passes", async () => {
+    const { directory, env, calls } = await fakeGhOnPath();
+    await writeFile(path.join(directory, `ignore-term-once-${asset.name}`), "");
+    const { io, logs } = recordingIo(createSpawnRun(env));
+    const startedAt = Date.now();
+
+    await uploadAssets("v1.0.0", [asset], io, {
+      maxAttempts: 2,
+      timeoutMs: 500,
+      backoffMs: () => 0,
+    });
+
+    const elapsed = Date.now() - startedAt;
+    expect(elapsed).toBeGreaterThanOrEqual(500 + KILL_GRACE_MS);
+    expect(elapsed).toBeLessThan(20_000);
+    expect(await calls()).toHaveLength(2);
+    expect(logs[0]).toBe(
+      `Upload of ${asset.name} failed on attempt 1 (timed out after 0.5s); retrying in 0s.`,
+    );
+  }, 30_000);
 
   test("surfaces gh's stderr for a failed attempt and retries it", async () => {
     const { directory, env, calls } = await fakeGhOnPath();

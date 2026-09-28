@@ -164,6 +164,20 @@ export async function main(argv: string[], io: ReleaseIo): Promise<number> {
   return 0;
 }
 
+/**
+ * Time a timed-out command gets to exit on SIGTERM before it is killed outright, and the bound on
+ * draining its pipes afterwards, since an orphaned descendant can hold them open.
+ */
+export const KILL_GRACE_MS = 5_000;
+
+function within<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  return Promise.race([promise, expiry]).finally(() => clearTimeout(timer));
+}
+
 /** Runs a command with the given environment and terminates it once the timeout elapses. */
 export function createSpawnRun(
   env: Record<string, string | undefined> = process.env,
@@ -171,19 +185,25 @@ export function createSpawnRun(
   return async (argv, { timeoutMs }) => {
     const child = Bun.spawn(argv, { env, stdout: "pipe", stderr: "pipe" });
     let timedOut = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
+      killTimer = setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS);
     }, timeoutMs);
+    // Start draining before the child exits so a chatty child never blocks on a full pipe.
+    const stdoutText = new Response(child.stdout).text();
+    const stderrText = new Response(child.stderr).text();
     try {
-      const [exitCode, stdout, stderr] = await Promise.all([
-        child.exited,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
+      const exitCode = await child.exited;
+      const [stdout, stderr] = await Promise.all([
+        within(stdoutText, KILL_GRACE_MS, ""),
+        within(stderrText, KILL_GRACE_MS, ""),
       ]);
       return { exitCode, stdout, stderr, timedOut };
     } finally {
       clearTimeout(timer);
+      clearTimeout(killTimer);
     }
   };
 }
