@@ -95,9 +95,10 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
 
       - name: Run unit tests
-        run: pnpm run test:unit --coverage.enabled
+        run: pnpm run test:unit
 
   test-integration:
     if: |
@@ -117,9 +118,10 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
 
       - name: Run integration tests
-        run: pnpm run test:integration --coverage.enabled
+        run: pnpm run test:integration
 
   test-stack-ports:
     if: |
@@ -143,6 +145,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
 
       - name: Run stack integration tests
         working-directory: packages/stack
@@ -227,7 +230,7 @@ jobs:
         run: pnpm exec turbo run supabase#build
 
       - name: Run end-to-end tests
-        run: pnpm exec turbo run test:e2e:run --only --concurrency=1 --filter=supabase --filter=@supabase/cli-e2e -- --shard=${{ matrix.shard }}/3
+        run: pnpm exec turbo run test:e2e:run --only --concurrency=2 --filter=supabase --filter=@supabase/cli-e2e -- --shard=${{ matrix.shard }}/3
         env:
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
 
@@ -237,12 +240,13 @@ jobs:
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
-    name: Run stack end-to-end tests (${{ matrix.runtime }})
+    name: Run stack end-to-end tests (${{ matrix.runtime }}, ${{ matrix.suite }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
         runtime: [native, docker]
+        suite: [lifecycle, idle-parallel]
     steps:
       - name: Checkout
         uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
@@ -251,15 +255,16 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
 
       - name: Run stack end-to-end tests
         run: >-
           pnpm --filter @supabase/stack test:e2e:run
-          src/whole-stack.${{ matrix.runtime }}.e2e.test.ts
+          src/whole-stack.${{ matrix.runtime }}.${{ matrix.suite }}.e2e.test.ts
           --passWithNoTests=false
 
       - name: Run public stack end-to-end tests
-        if: matrix.runtime == 'native'
+        if: matrix.runtime == 'native' && matrix.suite == 'lifecycle'
         run: >-
           pnpm --filter @supabase/stack test:e2e:run
           src/public.e2e.test.ts
