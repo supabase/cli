@@ -11,12 +11,8 @@ import {
 describe("commandRuntimeLayer", () => {
   it.effect("generates a fresh command run id for each invocation", () =>
     Effect.gen(function* () {
-      const first = yield* Effect.gen(function* () {
-        return yield* CommandRuntime;
-      }).pipe(Effect.provide(commandRuntimeLayer(["status"])));
-      const second = yield* Effect.gen(function* () {
-        return yield* CommandRuntime;
-      }).pipe(Effect.provide(commandRuntimeLayer(["status"])));
+      const first = yield* CommandRuntime.pipe(Effect.provide(commandRuntimeLayer(["status"])));
+      const second = yield* CommandRuntime.pipe(Effect.provide(commandRuntimeLayer(["status"])));
 
       expect(first.commandPath).toEqual(["status"]);
       expect(second.commandPath).toEqual(["status"]);

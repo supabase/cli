@@ -270,27 +270,41 @@ describe("stdinLayer", () => {
   });
 });
 
+const fileSink = (operation: () => number | Promise<number>) =>
+  Effect.suspend(() => {
+    const result = operation();
+    return typeof result === "number" ? Effect.succeed(result) : Effect.promise(() => result);
+  });
+
 describe("stdinLayer over fd 0", () => {
-  it("waits out a non-blocking fd 0 until the answer lands", async () => {
-    // perl flips `O_NONBLOCK` on stdin (Bun cannot) and execs into the reader
-    // so fd 0 stays non-blocking. The first prompt must run its window out to
-    // None rather than treat the empty read as a dead descriptor; the second
-    // reads the answer once that window closes.
-    const bun = Bun.which("bun");
-    const perl = Bun.which("perl");
-    if (!bun || !perl) throw new Error("bun and perl executables not found");
-    const here = (file: string) => JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
-    const child = Bun.spawn(
-      [
-        perl,
-        "-e",
-        `use Fcntl;
+  it.live(
+    "waits out a non-blocking fd 0 until the answer lands",
+    () =>
+      Effect.gen(function* () {
+        // perl flips `O_NONBLOCK` on stdin (Bun cannot) and execs into the reader
+        // so fd 0 stays non-blocking. The first prompt must run its window out to
+        // None rather than treat the empty read as a dead descriptor; the second
+        // reads the answer once that window closes.
+        const bun = Bun.which("bun");
+        const perl = Bun.which("perl");
+        if (!bun || !perl) {
+          return yield* Effect.die(new Error("bun and perl executables not found"));
+        }
+        const here = (file: string) =>
+          JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
+        const child = yield* Effect.acquireRelease(
+          Effect.try(() =>
+            Bun.spawn(
+              [
+                perl,
+                "-e",
+                `use Fcntl;
          fcntl(STDIN, F_SETFL, O_NONBLOCK) or die "fcntl: $!";
          print STDERR ((fcntl(STDIN, F_GETFL, 0) & O_NONBLOCK) ? "nonblock\\n" : "block\\n");
          exec @ARGV or die "exec: $!";`,
-        bun,
-        "-e",
-        `import { Effect, Layer, Option } from "effect";
+                bun,
+                "-e",
+                `import { Effect, Layer, Option } from "effect";
          import { Stdin } from ${here("./stdin.service.ts")};
          import { stdinLayer } from ${here("./stdin.layer.ts")};
          import { ttyLayer } from ${here("./tty.layer.ts")};
@@ -302,52 +316,75 @@ describe("stdinLayer over fd 0", () => {
          Effect.runPromise(program.pipe(Effect.provide(stdinLayer.pipe(Layer.provide(ttyLayer))))).then(
            () => process.exit(0),
          );`,
-      ],
-      { cwd: import.meta.dirname, stdin: "pipe", stdout: "pipe", stderr: "pipe", timeout: 20_000 },
-    );
-    const stdout = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
-    let buffered = "";
-    const nextLine = async () => {
-      while (!buffered.includes("\n")) {
-        const { value, done } = await stdout.read();
-        if (done) throw new Error(`child exited early: ${await new Response(child.stderr).text()}`);
-        buffered += value;
-      }
-      const [line, ...rest] = buffered.split("\n");
-      buffered = rest.join("\n");
-      return line;
-    };
-    try {
-      expect(await nextLine()).toBe("<none>");
-      await child.stdin.write("y\n");
-      await child.stdin.flush();
-      expect(await nextLine()).toBe("y");
-      await child.stdin.end();
-      const [exitCode, stderr] = await Promise.all([
-        child.exited,
-        new Response(child.stderr).text(),
-      ]);
-      expect(exitCode, stderr).toBe(0);
-      expect(stderr).toContain("nonblock");
-    } finally {
-      // A failed assertion must not leave the child waiting on its second prompt.
-      child.kill();
-    }
-  }, 30_000);
+              ],
+              {
+                cwd: import.meta.dirname,
+                stdin: "pipe",
+                stdout: "pipe",
+                stderr: "pipe",
+                timeout: 20_000,
+              },
+            ),
+          ),
+          // A failed assertion must not leave the child waiting on its second prompt.
+          (child) => Effect.sync(() => child.kill()),
+        );
+        const stdout = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
+        let buffered = "";
+        const nextLine = Effect.gen(function* () {
+          while (!buffered.includes("\n")) {
+            const { value, done } = yield* Effect.promise(() => stdout.read());
+            if (done) {
+              const stderr = yield* Effect.promise(() => new Response(child.stderr).text());
+              return yield* Effect.die(new Error(`child exited early: ${stderr}`));
+            }
+            buffered += value;
+          }
+          const [line, ...rest] = buffered.split("\n");
+          buffered = rest.join("\n");
+          return line;
+        });
+        expect(yield* nextLine).toBe("<none>");
+        yield* fileSink(() => child.stdin.write("y\n"));
+        yield* fileSink(() => child.stdin.flush());
+        expect(yield* nextLine).toBe("y");
+        yield* fileSink(() => child.stdin.end());
+        const [exitCode, stderr] = yield* Effect.all(
+          [
+            Effect.promise(() => child.exited),
+            Effect.promise(() => new Response(child.stderr).text()),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(exitCode, stderr).toBe(0);
+        expect(stderr).toContain("nonblock");
+      }),
+    30_000,
+  );
 
-  it("answers prompts from a flooded pipe and leaves the rest for a child inheriting fd 0", async () => {
-    // 2 MiB of lines piped in; three prompts take the first three, then a
-    // child inheriting fd 0 counts what's left. A reader that fully drained
-    // stdin would leave it nothing.
-    const bun = Bun.which("bun");
-    if (!bun) throw new Error("Bun executable not found");
-    const here = (file: string) => JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
-    const payload = enc(Array.from({ length: 200_000 }, (_, index) => `line-${index}\n`).join(""));
-    const child = Bun.spawn(
-      [
-        bun,
-        "-e",
-        `import { Effect, Layer, Option } from "effect";
+  it.live(
+    "answers prompts from a flooded pipe and leaves the rest for a child inheriting fd 0",
+    () =>
+      Effect.gen(function* () {
+        // 2 MiB of lines piped in; three prompts take the first three, then a
+        // child inheriting fd 0 counts what's left. A reader that fully drained
+        // stdin would leave it nothing.
+        const bun = Bun.which("bun");
+        if (!bun) {
+          return yield* Effect.die(new Error("Bun executable not found"));
+        }
+        const here = (file: string) =>
+          JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
+        const payload = enc(
+          Array.from({ length: 200_000 }, (_, index) => `line-${index}\n`).join(""),
+        );
+        const child = yield* Effect.acquireRelease(
+          Effect.try(() =>
+            Bun.spawn(
+              [
+                bun,
+                "-e",
+                `import { Effect, Layer, Option } from "effect";
          import { Stdin } from ${here("./stdin.service.ts")};
          import { stdinLayer } from ${here("./stdin.layer.ts")};
          import { ttyLayer } from ${here("./tty.layer.ts")};
@@ -367,19 +404,33 @@ describe("stdinLayer over fd 0", () => {
          Effect.runPromise(program.pipe(Effect.provide(stdinLayer.pipe(Layer.provide(ttyLayer))))).then(
            () => process.exit(0),
          );`,
-      ],
-      // Prompts give up after 3 x 5 s; a child that hangs anyway is killed at 20 s, ahead of
-      // vitest's 30 s guard, so the failure still carries its stderr.
-      { cwd: import.meta.dirname, stdin: payload, stdout: "pipe", stderr: "pipe", timeout: 20_000 },
-    );
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    expect(exitCode, stderr).toBe(0);
-    const [answers, left] = stdout.trim().split("\n");
-    expect(answers).toBe("line-0 line-1 line-2");
-    expect(payload.length - Number(left)).toBeLessThanOrEqual(256 * 1024);
-  }, 30_000);
+              ],
+              // Prompts give up after 3 x 5 s; a child that hangs anyway is killed at 20 s, ahead of
+              // vitest's 30 s guard, so the failure still carries its stderr.
+              {
+                cwd: import.meta.dirname,
+                stdin: payload,
+                stdout: "pipe",
+                stderr: "pipe",
+                timeout: 20_000,
+              },
+            ),
+          ),
+          (child) => Effect.sync(() => child.kill()),
+        );
+        const [exitCode, stdout, stderr] = yield* Effect.all(
+          [
+            Effect.promise(() => child.exited),
+            Effect.promise(() => new Response(child.stdout).text()),
+            Effect.promise(() => new Response(child.stderr).text()),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(exitCode, stderr).toBe(0);
+        const [answers, left] = stdout.trim().split("\n");
+        expect(answers).toBe("line-0 line-1 line-2");
+        expect(payload.length - Number(left)).toBeLessThanOrEqual(256 * 1024);
+      }),
+    30_000,
+  );
 });
