@@ -270,7 +270,7 @@ describe("stdinLayer", () => {
   });
 });
 
-const fileSink = (operation: () => number | Promise<number>) =>
+const awaitFileSink = (operation: () => number | Promise<number>) =>
   Effect.suspend(() => {
     const result = operation();
     return typeof result === "number" ? Effect.succeed(result) : Effect.promise(() => result);
@@ -345,10 +345,10 @@ describe("stdinLayer over fd 0", () => {
           return line;
         });
         expect(yield* nextLine).toBe("<none>");
-        yield* fileSink(() => child.stdin.write("y\n"));
-        yield* fileSink(() => child.stdin.flush());
+        yield* awaitFileSink(() => child.stdin.write("y\n"));
+        yield* awaitFileSink(() => child.stdin.flush());
         expect(yield* nextLine).toBe("y");
-        yield* fileSink(() => child.stdin.end());
+        yield* awaitFileSink(() => child.stdin.end());
         const [exitCode, stderr] = yield* Effect.all(
           [
             Effect.promise(() => child.exited),
