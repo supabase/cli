@@ -1,9 +1,157 @@
-import { Data, Effect, Exit, Schema } from "effect";
+import { Data, Effect, Exit, Redacted, Schema } from "effect";
+import { postgresVersion } from "../Artifacts.ts";
 import { causeMessage, type CompositionConfig } from "../Orchestrator.ts";
 import type { Observation } from "../Rpc.ts";
-import { ServiceCreation } from "../services/Catalog.ts";
-import type { StackIdentityInput } from "../State.ts";
+import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
+import type { SavedStack, StackIdentityInput } from "../State.ts";
+import { credentialInputNames } from "../host/Credentials.ts";
 import { apiRoute, endpointNames, endpointPort } from "../host/Endpoints.ts";
+
+const managedBindings: ReadonlyArray<{
+  readonly sourceKind: ServiceCreation["service"];
+  readonly sourceEndpoint: string;
+  readonly output: string;
+  readonly targetKind: ServiceCreation["service"];
+  readonly input: string;
+}> = [
+  {
+    sourceKind: "database",
+    sourceEndpoint: "sql",
+    output: "authenticatorUrl",
+    targetKind: "rest",
+    input: "databaseUrl",
+  },
+  {
+    sourceKind: "database",
+    sourceEndpoint: "sql",
+    output: "authDatabaseUrl",
+    targetKind: "auth",
+    input: "databaseUrl",
+  },
+  {
+    sourceKind: "database",
+    sourceEndpoint: "sql",
+    output: "storageDatabaseUrl",
+    targetKind: "storage",
+    input: "databaseUrl",
+  },
+  {
+    sourceKind: "database",
+    sourceEndpoint: "sql",
+    output: "databaseUrl",
+    targetKind: "storage",
+    input: "vectorDatabaseUrl",
+  },
+  {
+    sourceKind: "database",
+    sourceEndpoint: "sql",
+    output: "databaseUrl",
+    targetKind: "realtime",
+    input: "databaseUrl",
+  },
+  {
+    sourceKind: "database",
+    sourceEndpoint: "sql",
+    output: "databaseUrl",
+    targetKind: "pgmeta",
+    input: "databaseUrl",
+  },
+  {
+    sourceKind: "database",
+    sourceEndpoint: "sql",
+    output: "internalDatabaseUrl",
+    targetKind: "analytics",
+    input: "databaseUrl",
+  },
+  {
+    sourceKind: "database",
+    sourceEndpoint: "sql",
+    output: "internalDatabaseUrl",
+    targetKind: "pooler",
+    input: "databaseUrl",
+  },
+  {
+    sourceKind: "imgproxy",
+    sourceEndpoint: "http",
+    output: "url",
+    targetKind: "storage",
+    input: "imgproxyUrl",
+  },
+  {
+    sourceKind: "pgmeta",
+    sourceEndpoint: "http",
+    output: "url",
+    targetKind: "studio",
+    input: "pgmetaUrl",
+  },
+  {
+    sourceKind: "analytics",
+    sourceEndpoint: "http",
+    output: "url",
+    targetKind: "studio",
+    input: "analyticsUrl",
+  },
+  {
+    sourceKind: "analytics",
+    sourceEndpoint: "http",
+    output: "url",
+    targetKind: "vector",
+    input: "analyticsUrl",
+  },
+  {
+    sourceKind: "functions",
+    sourceEndpoint: "http",
+    output: "url",
+    targetKind: "studio",
+    input: "functionsUrl",
+  },
+  {
+    sourceKind: "mail",
+    sourceEndpoint: "smtp",
+    output: "smtpUrl",
+    targetKind: "auth",
+    input: "smtpUrl",
+  },
+];
+
+/** Inputs the composition derives, each from its shared API endpoint or a sibling member kind. */
+const derivedInputs: Partial<
+  Record<ServiceCreation["service"], Readonly<Record<string, "api" | ServiceCreation["service"]>>>
+> = {
+  auth: { externalApiUrl: "api" },
+  studio: {
+    apiUrl: "api",
+    publicApiUrl: "api",
+    analyticsApiKey: "analytics",
+    functionsRoot: "functions",
+  },
+  functions: { apiUrl: "api", databaseUrl: "database" },
+};
+
+/** Derived inputs a project may set itself; a plan compares one whenever the request sets it. */
+const overridableInputs: Partial<Record<ServiceCreation["service"], ReadonlyArray<string>>> = {
+  studio: ["publicApiUrl"],
+};
+
+/** Names every config input the package supplies to a composition member of this kind. */
+const managedInputs = (service: ServiceCreation["service"]): ReadonlySet<string> =>
+  new Set([
+    ...managedBindings.filter(({ targetKind }) => targetKind === service).map(({ input }) => input),
+    ...Object.keys(derivedInputs[service] ?? {}),
+    ...credentialInputNames(service),
+  ]);
+
+/** Inputs that sibling member kinds supply to a member of this kind, with their source kind. */
+const siblingInputs = (
+  service: ServiceCreation["service"],
+): ReadonlyArray<readonly [string, ServiceCreation["service"]]> => [
+  ...managedBindings
+    .filter(({ targetKind }) => targetKind === service)
+    .map(({ input, sourceKind }) => [input, sourceKind] as const),
+  ...Object.entries(derivedInputs[service] ?? {}).flatMap(([input, source]) =>
+    source === "api" ? [] : [[input, source] as const],
+  ),
+];
 
 export class SupabaseCompositionError extends Data.TaggedError("SupabaseCompositionError")<{
   readonly message: string;
@@ -46,8 +194,153 @@ export interface SupabaseCompositionOperations<E = SupabaseCompositionError> {
 export interface SupabaseCompositionOptions {
   /** Reuses stopped instances; inputs declare desired bindings, not previous resolved creations. */
   readonly reuseIds?: ReadonlyArray<string>;
-  readonly identity?: StackIdentityInput;
+  readonly keys?: StackIdentityInput;
+  /**
+   * Starts every member with the composition. By default the database and members without an
+   * endpoint start eagerly, and other members start on their first connection.
+   */
+  readonly eager?: boolean;
 }
+
+/** How a saved instance differs from a requested creation once package-managed inputs are set aside. */
+export type CreationChange =
+  | { readonly change: "unchanged" }
+  | { readonly change: "changed"; readonly paths: ReadonlyArray<string> }
+  | {
+      /** The instance cannot adopt the request: its endpoints, artifact or data version differ. */
+      readonly change: "incompatible";
+      readonly paths: ReadonlyArray<string>;
+    };
+
+/** A saved instance of a requested service kind, compared with that request. */
+export type PlannedInstance = CreationChange & {
+  readonly id: string;
+  readonly service: ServiceCreation["service"];
+  /** Whether the instance belongs to the saved composition. */
+  readonly member: boolean;
+};
+
+const differences = (left: unknown, right: unknown, path: string): ReadonlyArray<string> => {
+  if (Redacted.isRedacted(left) || Redacted.isRedacted(right))
+    return Redacted.isRedacted(left) &&
+      Redacted.isRedacted(right) &&
+      Redacted.value(left) === Redacted.value(right)
+      ? []
+      : [path];
+  if (Array.isArray(left) || Array.isArray(right))
+    return Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => differences(value, right[index], path).length === 0)
+      ? []
+      : [path];
+  if (isRecord(left) && isRecord(right))
+    return [...new Set([...Object.keys(left), ...Object.keys(right)])]
+      .toSorted()
+      .flatMap((key) => differences(left[key], right[key], path === "" ? key : `${path}.${key}`));
+  return Object.is(left, right) ? [] : [path];
+};
+
+const sharesApiEndpoint = (creation: ServiceCreationInput): boolean =>
+  apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http");
+
+/** Fixed ports requested for the shared API endpoint; composition accepts at most one. */
+const fixedApiPorts = (creations: ReadonlyArray<ServiceCreationInput>): ReadonlySet<number> =>
+  new Set(
+    creations
+      .filter(sharesApiEndpoint)
+      .map((creation) => endpointPort(creation, "http"))
+      .filter((port): port is number => port !== "auto"),
+  );
+
+/** Endpoint intents with an automatic shared API port replaced by the fixed one. */
+const withSharedApiPort = (creation: ServiceCreationInput, sharedPort: number | undefined) =>
+  sharedPort === undefined ||
+  !sharesApiEndpoint(creation) ||
+  endpointPort(creation, "http") !== "auto"
+    ? creation.endpoints
+    : { ...(isRecord(creation.endpoints) ? creation.endpoints : {}), http: { port: sharedPort } };
+
+const comparable = (
+  creation: ServiceCreationInput,
+  sharedPort: number | undefined,
+  compared: ReadonlySet<string>,
+) => {
+  const managed = managedInputs(creation.service);
+  const config: Record<string, unknown> = Object.fromEntries(
+    Object.entries(creation.config).filter(([key]) => compared.has(key) || !managed.has(key)),
+  );
+  if (creation.service === "database") config.version = postgresVersion(creation.config.version);
+  return { version: creation.version, endpoints: withSharedApiPort(creation, sharedPort), config };
+};
+
+/** Compares a requested creation with a saved one, ignoring inputs the package supplies. */
+const compareCreation = (
+  saved: ServiceCreation,
+  requested: ServiceCreationInput,
+  sharedPort: number | undefined,
+  memberKinds: ReadonlySet<ServiceCreation["service"]>,
+): CreationChange => {
+  const overridable = overridableInputs[requested.service] ?? [];
+  // Without its supplying member, the composition keeps the project's own value of an input.
+  const compared = new Set([
+    ...Object.entries(requested.config)
+      .filter(([key, value]) => value !== undefined && overridable.includes(key))
+      .map(([key]) => key),
+    ...siblingInputs(requested.service)
+      .filter(([, source]) => !memberKinds.has(source))
+      .map(([input]) => input),
+  ]);
+  const paths = differences(
+    comparable(saved, undefined, compared),
+    comparable(requested, sharedPort, compared),
+    "",
+  );
+  const incompatible = paths.filter(
+    (path) =>
+      path === "version" ||
+      path === "endpoints" ||
+      path.startsWith("endpoints.") ||
+      (saved.service === "database" && path === "config.version"),
+  );
+  return incompatible.length > 0
+    ? { change: "incompatible", paths: incompatible }
+    : paths.length > 0
+      ? { change: "changed", paths }
+      : { change: "unchanged" };
+};
+
+/** Compares each saved instance of a requested kind with its request, without changing state. */
+export const planSupabaseComposition = (
+  saved: Pick<SavedStack, "instances" | "composition">,
+  requested: ReadonlyArray<ServiceCreationInput>,
+): ReadonlyArray<PlannedInstance> => {
+  const members = new Set(saved.composition.members.map(({ id }) => id));
+  const memberKinds = new Set(
+    saved.instances.filter(({ id }) => members.has(id)).map(({ creation }) => creation.service),
+  );
+  const requestedKinds = new Set(requested.map(({ service }) => service));
+  const ports = fixedApiPorts([
+    ...requested,
+    ...saved.instances
+      .filter(({ id, creation }) => members.has(id) && requestedKinds.has(creation.service))
+      .map(({ creation }) => creation),
+  ]);
+  const sharedPort = ports.size === 1 ? [...ports][0] : undefined;
+  return saved.instances.flatMap(({ id, creation }) => {
+    const request = requested.find(({ service }) => service === creation.service);
+    return request === undefined
+      ? []
+      : [
+          {
+            id,
+            service: creation.service,
+            member: members.has(id),
+            ...compareCreation(creation, request, sharedPort, memberKinds),
+          },
+        ];
+  });
+};
 
 const compositionError = (message: string, cause?: unknown) =>
   new SupabaseCompositionError({ message, cause });
@@ -136,31 +429,20 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
               return entries;
             });
 
-      const fixedPorts = new Set(
-        [...decoded, ...reusedEntries.map(({ creation }) => creation)]
-          .filter(
-            (creation) =>
-              apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http"),
-          )
-          .map((creation) => endpointPort(creation, "http"))
-          .filter((port): port is number => port !== "auto"),
-      );
+      const fixedPorts = fixedApiPorts([
+        ...decoded,
+        ...reusedEntries.map(({ creation }) => creation),
+      ]);
       if (fixedPorts.size > 1)
         return yield* compositionError("Shared HTTP endpoints must use one port");
       const sharedPort = [...fixedPorts][0];
       const normalized = yield* Effect.forEach(decoded, (creation) => {
-        if (
-          sharedPort === undefined ||
-          apiRoute(creation.service) === undefined ||
-          !endpointNames(creation).includes("http") ||
-          endpointPort(creation, "http") !== "auto"
-        )
-          return Effect.succeed(creation);
-        const endpoints = isRecord(creation.endpoints) ? creation.endpoints : {};
-        return Schema.decodeUnknownEffect(ServiceCreation)({
-          ...creation,
-          endpoints: { ...endpoints, http: { port: sharedPort } },
-        }).pipe(Effect.mapError(compositionErrorFrom));
+        const endpoints = withSharedApiPort(creation, sharedPort);
+        return endpoints === creation.endpoints
+          ? Effect.succeed(creation)
+          : Schema.decodeUnknownEffect(ServiceCreation)({ ...creation, endpoints }).pipe(
+              Effect.mapError(compositionErrorFrom),
+            );
       });
 
       const reusedByKind = new Map(reusedEntries.map((entry) => [entry.creation.service, entry]));
@@ -175,112 +457,6 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
       )
         return yield* compositionError("API URL bindings require a configured HTTP endpoint");
 
-      const managedBindings: ReadonlyArray<{
-        readonly sourceKind: ServiceCreation["service"];
-        readonly sourceEndpoint: string;
-        readonly output: string;
-        readonly targetKind: ServiceCreation["service"];
-        readonly input: string;
-      }> = [
-        {
-          sourceKind: "database",
-          sourceEndpoint: "sql",
-          output: "authenticatorUrl",
-          targetKind: "rest",
-          input: "databaseUrl",
-        },
-        {
-          sourceKind: "database",
-          sourceEndpoint: "sql",
-          output: "authDatabaseUrl",
-          targetKind: "auth",
-          input: "databaseUrl",
-        },
-        {
-          sourceKind: "database",
-          sourceEndpoint: "sql",
-          output: "storageDatabaseUrl",
-          targetKind: "storage",
-          input: "databaseUrl",
-        },
-        {
-          sourceKind: "database",
-          sourceEndpoint: "sql",
-          output: "databaseUrl",
-          targetKind: "storage",
-          input: "vectorDatabaseUrl",
-        },
-        {
-          sourceKind: "database",
-          sourceEndpoint: "sql",
-          output: "databaseUrl",
-          targetKind: "realtime",
-          input: "databaseUrl",
-        },
-        {
-          sourceKind: "database",
-          sourceEndpoint: "sql",
-          output: "databaseUrl",
-          targetKind: "pgmeta",
-          input: "databaseUrl",
-        },
-        {
-          sourceKind: "database",
-          sourceEndpoint: "sql",
-          output: "internalDatabaseUrl",
-          targetKind: "analytics",
-          input: "databaseUrl",
-        },
-        {
-          sourceKind: "database",
-          sourceEndpoint: "sql",
-          output: "internalDatabaseUrl",
-          targetKind: "pooler",
-          input: "databaseUrl",
-        },
-        {
-          sourceKind: "imgproxy",
-          sourceEndpoint: "http",
-          output: "url",
-          targetKind: "storage",
-          input: "imgproxyUrl",
-        },
-        {
-          sourceKind: "pgmeta",
-          sourceEndpoint: "http",
-          output: "url",
-          targetKind: "studio",
-          input: "pgmetaUrl",
-        },
-        {
-          sourceKind: "analytics",
-          sourceEndpoint: "http",
-          output: "url",
-          targetKind: "studio",
-          input: "analyticsUrl",
-        },
-        {
-          sourceKind: "analytics",
-          sourceEndpoint: "http",
-          output: "url",
-          targetKind: "vector",
-          input: "analyticsUrl",
-        },
-        {
-          sourceKind: "functions",
-          sourceEndpoint: "http",
-          output: "url",
-          targetKind: "studio",
-          input: "functionsUrl",
-        },
-        {
-          sourceKind: "mail",
-          sourceEndpoint: "smtp",
-          output: "smtpUrl",
-          targetKind: "auth",
-          input: "smtpUrl",
-        },
-      ];
       for (const { sourceKind, sourceEndpoint, targetKind } of managedBindings) {
         if (byKind.has(sourceKind) && byKind.has(targetKind)) {
           const source = byKind.get(sourceKind);
@@ -428,7 +604,10 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           }),
         );
         const members = configured.map(({ id, creation }) => {
-          const lazy = creation.service !== "database" && endpointNames(creation).length > 0;
+          const lazy =
+            options.eager !== true &&
+            creation.service !== "database" &&
+            endpointNames(creation).length > 0;
           return lazy
             ? creation.service === "functions"
               ? { id, activation: "lazy" as const }

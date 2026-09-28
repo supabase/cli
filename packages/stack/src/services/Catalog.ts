@@ -30,6 +30,7 @@ import {
   type ProcessRecipeResult,
 } from "./Recipe.ts";
 import { makeProcessRecipe, type ProcessDependencies } from "./ProcessRecipe.ts";
+import { missingInput } from "./ServiceConfig.ts";
 import { slimImageMirrors, type ServiceKind } from "../Artifacts.ts";
 import type { ServiceInstanceContext } from "../Service.ts";
 
@@ -89,6 +90,31 @@ export const ServiceCreation = Schema.Union([
   Pooler.Creation,
 ]);
 export type ServiceCreation = Schema.Schema.Type<typeof ServiceCreation>;
+
+/** Inputs a service cannot launch without; a composition binding or the caller supplies them. */
+const requiredInputs: { readonly [K in ServiceKind]?: ReadonlyArray<string> } = {
+  rest: ["databaseUrl"],
+  auth: ["databaseUrl"],
+  realtime: ["databaseUrl"],
+  storage: ["databaseUrl"],
+  pgmeta: ["databaseUrl"],
+  analytics: ["databaseUrl"],
+  pooler: ["databaseUrl"],
+  vector: ["analyticsUrl"],
+};
+
+/** Rejects a creation that lacks a required input before any lifecycle change. */
+export const requireInputs = (
+  creation: ServiceCreation,
+): Effect.Effect<ServiceCreation, ServiceError> => {
+  const config = new Map(Object.entries(creation.config));
+  const missing = (requiredInputs[creation.service] ?? []).find(
+    (input) => config.get(input) === undefined,
+  );
+  return missing === undefined
+    ? Effect.succeed(creation)
+    : Effect.fail(missingInput(creation.service, missing));
+};
 const DatabaseCreationInput = serviceCreation(
   "database",
   Schema.Struct({

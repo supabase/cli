@@ -16,7 +16,14 @@ import {
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the test binds a dead owner's exact port.
 import * as Net from "node:net";
 import { tmpdir } from "node:os";
-import { create, discover, open, type DatabaseInstance, type ServiceInstance } from "./effect.ts";
+import {
+  create,
+  discover,
+  find,
+  open,
+  type DatabaseInstance,
+  type ServiceInstance,
+} from "./effect.ts";
 import { initialization, postgres } from "./Commands.ts";
 import { fileURLToPath } from "node:url";
 import { launchHost } from "./HostProcess.ts";
@@ -28,6 +35,8 @@ import { destroyTestStack } from "../tests/stack-cleanup.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+// Below every OS ephemeral range, so another test's outbound socket cannot already hold it.
+const FIXED_API_PORT = 24_393;
 const databaseOwnerMarker = Schema.fromJsonString(
   Schema.Struct({ stackId: Schema.String, instanceId: Schema.String }),
 );
@@ -804,4 +813,255 @@ it.live(
       );
     }).pipe(Effect.scoped, Effect.provide(layer)),
   { timeout: 120_000 },
+);
+
+it.live("finds one saved stack by identity or id and fails on unreadable state", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-find-" });
+    const stateRoot = `${root}/state`;
+    expect(Option.isNone(yield* find({ stateRoot, projectRoot: root }))).toBe(true);
+    const stack = yield* create({
+      projectRoot: root,
+      name: "feature",
+      stateRoot,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    });
+
+    const byIdentity = Option.getOrUndefined(
+      yield* find({ stateRoot, projectRoot: root, name: "feature" }),
+    );
+    expect(byIdentity?.definition.id).toBe(stack.id);
+    expect(byIdentity?.host).toBeUndefined();
+    expect(Option.isNone(yield* find({ stateRoot, projectRoot: root }))).toBe(true);
+    const byId = yield* Effect.promise(() => PromiseApi.find({ stateRoot, id: stack.id }));
+    expect(byId?.definition.identity.stackName).toBe("feature");
+
+    yield* fs.writeFileString(`${stateRoot}/${stack.id}/state.json`, "{broken");
+    const failure = yield* find({ stateRoot, projectRoot: root, name: "feature" }).pipe(
+      Effect.flip,
+    );
+    expect(failure.operation).toBe("find");
+    expect(failure.message).toContain(stack.id);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("plans requested creations against the saved composition and honours eager", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-plan-" });
+    const stack = yield* create({
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    });
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        const database = {
+          service: "database",
+          config: {
+            version: "17",
+            databasePassword: Redacted.make("plan-database-password"),
+            jwtSecret: Redacted.make("plan-database-jwt-secret-at-least-32-chars"),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: { port: "auto" } },
+        } as const;
+        const rest = {
+          service: "rest",
+          config: { maxRows: 100 },
+          endpoints: { http: { port: FIXED_API_PORT } },
+        } as const;
+        const auth = {
+          service: "auth",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        } as const;
+        const members = yield* stack.composition.supabase([database, rest, auth]);
+        const databaseId = members.find(({ service }) => service === "database")?.id;
+        const restId = members.find(({ service }) => service === "rest")?.id;
+        const authId = members.find(({ service }) => service === "auth")?.id;
+        expect((yield* stack.composition.describe).members).toEqual([
+          { id: databaseId, activation: "eager" },
+          { id: restId, activation: "lazy", idleMillis: 60_000 },
+          { id: authId, activation: "lazy", idleMillis: 60_000 },
+        ]);
+
+        expect(
+          yield* stack.composition.plan([
+            database,
+            { ...rest, config: { maxRows: 500 } },
+            auth,
+            { service: "mail", config: {} },
+          ]),
+        ).toEqual([
+          { id: databaseId, service: "database", member: true, change: "unchanged" },
+          {
+            id: restId,
+            service: "rest",
+            member: true,
+            change: "changed",
+            paths: ["config.maxRows"],
+          },
+          { id: authId, service: "auth", member: true, change: "unchanged" },
+        ]);
+        const client = yield* Effect.promise(() =>
+          PromiseApi.open({ id: stack.id, stateRoot: `${root}/state`, cacheRoot: `${root}/cache` }),
+        );
+        const promisePlan = yield* Effect.promise(() =>
+          client.composition
+            .plan([{ ...rest, config: { maxRows: 100 } }])
+            .finally(() => client.close()),
+        );
+        expect(promisePlan).toEqual([
+          { id: restId, service: "rest", member: true, change: "unchanged" },
+        ]);
+        expect(
+          yield* stack.composition.plan([
+            { ...database, config: { ...database.config, version: "15" } },
+            { ...rest, endpoints: { http: { port: 54_999 } } },
+          ]),
+        ).toEqual([
+          {
+            id: databaseId,
+            service: "database",
+            member: true,
+            change: "incompatible",
+            paths: ["config.version"],
+          },
+          {
+            id: restId,
+            service: "rest",
+            member: true,
+            change: "incompatible",
+            paths: ["endpoints.http.port"],
+          },
+        ]);
+
+        yield* stack.composition.supabase([database, rest], {
+          reuseIds: [databaseId, restId].filter((id) => id !== undefined),
+          eager: true,
+        });
+        expect((yield* stack.composition.describe).members).toEqual([
+          { id: databaseId, activation: "eager" },
+          { id: restId, activation: "eager" },
+        ]);
+      }),
+      destroyTestStack(stack),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("plans a Studio public API URL the project sets but not the one the stack derives", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-plan-studio-" });
+    const stack = yield* create({
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    });
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        const studio = {
+          service: "studio",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        } as const;
+        const members = yield* stack.composition.supabase([
+          {
+            service: "database",
+            config: {
+              version: "17",
+              databasePassword: Redacted.make("plan-database-password"),
+              jwtSecret: Redacted.make("plan-database-jwt-secret-at-least-32-chars"),
+              jwtExpiry: 3600,
+            },
+            endpoints: { sql: { port: "auto" } },
+          },
+          { service: "rest", config: {}, endpoints: { http: { port: FIXED_API_PORT } } },
+          studio,
+        ]);
+        const studioId = members.find(({ service }) => service === "studio")?.id;
+        const planStudio = (config: { readonly publicApiUrl?: string }) =>
+          stack.composition.plan([{ ...studio, config }]);
+
+        expect(yield* planStudio({})).toEqual([
+          { id: studioId, service: "studio", member: true, change: "unchanged" },
+        ]);
+        expect(yield* planStudio({ publicApiUrl: "https://studio-api.example.test" })).toEqual([
+          {
+            id: studioId,
+            service: "studio",
+            member: true,
+            change: "changed",
+            paths: ["config.publicApiUrl"],
+          },
+        ]);
+      }),
+      destroyTestStack(stack),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("plans a project's own URL for an input whose supplying member is absent", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-plan-unbound-" });
+    const stack = yield* create({
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    });
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        const external = "postgresql://postgres@external.example.test:5432/postgres";
+        const moved = "postgresql://postgres@moved.example.test:5432/postgres";
+        const rest = {
+          service: "rest",
+          config: { databaseUrl: external },
+          endpoints: { http: { port: "auto" } },
+        } as const;
+        const functions = {
+          service: "functions",
+          config: { functionsRoot: `${root}/functions`, databaseUrl: external },
+          endpoints: { http: { port: "auto" } },
+        } as const;
+        const members = yield* stack.composition.supabase([rest, functions]);
+        const restId = members.find(({ service }) => service === "rest")?.id;
+        const functionsId = members.find(({ service }) => service === "functions")?.id;
+
+        expect(yield* stack.composition.plan([rest, functions])).toEqual([
+          { id: restId, service: "rest", member: true, change: "unchanged" },
+          { id: functionsId, service: "functions", member: true, change: "unchanged" },
+        ]);
+        expect(
+          yield* stack.composition.plan([
+            { ...rest, config: { databaseUrl: moved } },
+            { ...functions, config: { ...functions.config, databaseUrl: moved } },
+          ]),
+        ).toEqual([
+          {
+            id: restId,
+            service: "rest",
+            member: true,
+            change: "changed",
+            paths: ["config.databaseUrl"],
+          },
+          {
+            id: functionsId,
+            service: "functions",
+            member: true,
+            change: "changed",
+            paths: ["config.databaseUrl"],
+          },
+        ]);
+      }),
+      destroyTestStack(stack),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
 );

@@ -78,7 +78,7 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
     },
     {
       service: "rest",
-      config: { databaseUrl: "postgresql://placeholder", jwtSecret },
+      config: { jwtSecret },
       endpoints: { http: { port: "auto" } },
     },
     ...(included
