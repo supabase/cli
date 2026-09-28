@@ -57,8 +57,9 @@ The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pre
 `-o env` becomes `--env`.
 
 `supabase stack list` reads the global managed-stack registry and reports each readable stack's
-project, branch, runtime, and owner availability. A corrupt or unsupported registry entry fails the
-whole discovery operation with a diagnostic; readable entries are not emitted as a partial list.
+project, branch, runtime, and owner availability. Registry entries that cannot be read or decoded
+are skipped with a warning on stderr identifying each stack; only a failure to read the stacks
+directory itself fails discovery.
 The text table shortens readable IDs for scanning; use `--output-format json` or
 `--output-format stream-json` for the complete structured inventory with full IDs.
 
@@ -229,8 +230,9 @@ Excluding `rest` while Studio remains selected is rejected; excluding `analytics
 Studio. The effective configuration is
 retained in stack state, so starting without `--exclude` restores the project's configured services.
 
-`supabase stack stop --all` stops every managed stack while preserving data. Discovery fails closed
-when any registry entry is unreadable, so no partial stop operation is attempted. Individual stop
+`supabase stack stop --all` stops every managed stack while preserving data. Registry entries that
+cannot be read or decoded are skipped with a warning on stderr; only a failure to read the stacks
+directory itself fails discovery, before any stop is attempted. Individual stop
 failures make the command fail and identify the affected stack IDs with their error details; no
 success or unavailable summary is emitted when a stop fails.
 

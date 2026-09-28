@@ -29,6 +29,7 @@ const makeInstance = (
   options: {
     readonly endpoint?: boolean;
     readonly health?: Effect.Effect<void, ServiceError>;
+    readonly probe?: Effect.Effect<void, ServiceError>;
     readonly bind?: Effect.Effect<void, ServiceError>;
     readonly prepare?: Effect.Effect<void, ServiceError>;
     readonly launch?: Effect.Effect<void, ServiceError>;
@@ -56,6 +57,7 @@ const makeInstance = (
             const exited = yield* Deferred.make<Exit.Exit<void, ServiceError>>();
             return {
               health: options.health ?? Effect.void,
+              ...(options.probe === undefined ? {} : { probe: options.probe }),
               exit: Deferred.await(options.exit ?? exited),
               stop: (options.stop ?? Effect.void).pipe(
                 Effect.andThen(event("stop")),
@@ -796,3 +798,67 @@ it.live("allows later traffic to retry an armed service after a failed wake laun
     }),
   ),
 );
+
+describe("readiness recovery", () => {
+  const recoverableHealth = (healthy: Ref.Ref<boolean>) =>
+    Ref.get(healthy).pipe(
+      Effect.flatMap((ok) => (ok ? Effect.void : Effect.fail(failure("still booting")))),
+    );
+
+  it.live("serves traffic once a running instance recovers without restarting it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const orchestrator = yield* makeTestOrchestrator();
+        const healthy = yield* Ref.make(false);
+        const api = yield* makeInstance(orchestrator, "api", {
+          health: recoverableHealth(healthy),
+          probe: recoverableHealth(healthy),
+        });
+        yield* orchestrator.configure({
+          members: [{ id: "api", activation: "eager" }],
+          dependencies: [],
+        });
+        yield* orchestrator.startComposition.pipe(Effect.flip);
+        yield* Effect.scoped(orchestrator.acquire("api")).pipe(Effect.flip);
+
+        yield* Ref.set(healthy, true);
+        yield* Effect.scoped(orchestrator.acquire("api"));
+
+        expect(yield* Ref.get(api.starts)).toHaveLength(1);
+        expect(yield* api.core.get).toMatchObject({ lifecycle: "running", health: "healthy" });
+        yield* orchestrator.stopNamespace;
+      }),
+    ),
+  );
+
+  it.live("starts a blocked dependent once its running prerequisite recovers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const orchestrator = yield* makeTestOrchestrator();
+        const healthy = yield* Ref.make(false);
+        const database = yield* makeInstance(orchestrator, "database", {
+          health: recoverableHealth(healthy),
+          probe: recoverableHealth(healthy),
+        });
+        const rest = yield* makeInstance(orchestrator, "rest");
+        yield* orchestrator.configure({
+          members: [
+            { id: "database", activation: "eager" },
+            { id: "rest", activation: "eager" },
+          ],
+          dependencies: [{ from: "database", to: "rest" }],
+        });
+        yield* orchestrator.startComposition.pipe(Effect.flip);
+        expect(yield* Ref.get(rest.starts)).toEqual([]);
+
+        yield* Ref.set(healthy, true);
+        yield* orchestrator.startComposition;
+
+        expect(yield* Ref.get(database.starts)).toHaveLength(1);
+        expect(yield* Ref.get(rest.starts)).toHaveLength(1);
+        expect((yield* rest.core.get).health).toBe("healthy");
+        yield* orchestrator.stopNamespace;
+      }),
+    ),
+  );
+});
