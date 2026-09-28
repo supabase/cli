@@ -422,10 +422,24 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         ? Scope.close(connection.scope, Exit.void)
         : Effect.void,
     );
+  /** Stops lending a connection; calls and streams already using it run to completion. */
+  const retire = (current: Connection) =>
+    Ref.set(cached, undefined).pipe(
+      Effect.andThen(
+        Effect.suspend(() => {
+          current.retired = true;
+          return closeIfIdle(current);
+        }),
+      ),
+    );
   const connection = (reach: Reach) =>
     Effect.gen(function* () {
       const existing = yield* Ref.get(cached);
-      if (existing !== undefined) return existing;
+      if (existing !== undefined) {
+        // Another process can bind a dead owner's port, so reuse needs the owner's live lease.
+        if (yield* state.leased(saved.id)) return existing;
+        yield* retire(existing);
+      }
       // A spawned session owner's lifeline belongs to the handle, not to this call.
       const access = yield* resolve(reach).pipe(Effect.provideService(Scope.Scope, handleScope));
       return yield* connectTo(access).pipe(
@@ -467,9 +481,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       Effect.gen(function* () {
         const current = yield* Ref.get(cached);
         if (current === undefined || (connection !== undefined && current !== connection)) return;
-        yield* Ref.set(cached, undefined);
-        current.retired = true;
-        yield* closeIfIdle(current);
+        yield* retire(current);
       }),
     );
   const dropIfGone = (connection: Connection) => (cause: unknown) =>
