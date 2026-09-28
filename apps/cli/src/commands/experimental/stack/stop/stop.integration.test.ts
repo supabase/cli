@@ -110,13 +110,19 @@ describe("stack stop", () => {
         StackApi,
         StackApi.of({
           ...f.api,
-          discover: () =>
-            Effect.succeed([
-              {
+          find: () =>
+            Effect.succeed(
+              Option.some({
                 ...saved,
-                host: { stackId: f.stack.id, identity: saved.definition.identity, pid: 1, port: 1 },
-              },
-            ]),
+                host: {
+                  stackId: f.stack.id,
+                  identity: saved.definition.identity,
+                  pid: 1,
+                  port: 1,
+                  release: "test",
+                },
+              }),
+            ),
           open: () =>
             Effect.succeed({
               ...f.stack,

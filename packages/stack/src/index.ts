@@ -1,5 +1,5 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
-import { Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Option, Schema, Scope, Stream } from "effect";
 import * as StackEffect from "./effect.ts";
 import { StackError } from "./Rpc.ts";
 import {
@@ -49,8 +49,15 @@ const decodeCreation = (creation: unknown) =>
 export type { CompositionConfig } from "./Orchestrator.ts";
 export type { Observation } from "./Rpc.ts";
 export type { PgProveOptions } from "./effect.ts";
-export type { SupabaseCompositionOptions } from "./effect.ts";
-export type { CreateOptions, DestroyResult, OpenOptions, StackLocations } from "./effect.ts";
+export type { CreationChange, PlannedInstance, SupabaseCompositionOptions } from "./effect.ts";
+export type {
+  CreateOptions,
+  DestroyResult,
+  FindOptions,
+  FoundStack,
+  OpenOptions,
+  StackLocations,
+} from "./effect.ts";
 
 const clientLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 type Runtime = ReturnType<typeof makeRuntime>;
@@ -120,7 +127,7 @@ interface InternalCommandOptions extends CallOptions {
   readonly stderr?: (bytes: Uint8Array) => void | Promise<void>;
 }
 
-const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
+const adapt = (handle: StackEffect.Stack, runtime: Runtime, scope: Scope.Closeable) => {
   const run = <A, E>(effect: Effect.Effect<A, E>, options?: CallOptions) =>
     runtime.runPromise(effect, options);
   const activeIterators = new Set<() => Promise<void>>();
@@ -295,6 +302,11 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
           ),
           options,
         ),
+      plan: (services: ReadonlyArray<ServiceCreation>, options?: CallOptions) =>
+        run(
+          Effect.forEach(services, decodeCreation).pipe(Effect.flatMap(handle.composition.plan)),
+          options,
+        ),
       configure: (config: StackEffect.CompositionConfig, options?: CallOptions) =>
         run(handle.composition.configure(config), options),
       describe: (options?: CallOptions) => run(handle.composition.describe, options),
@@ -306,9 +318,9 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
     destroy: (options?: CallOptions) => run(handle.destroy, options),
     close: () => {
       if (clientClosePromise !== undefined) return clientClosePromise;
-      clientClosePromise = Promise.allSettled(
-        [...activeIterators].map((dispose) => dispose()),
-      ).then(() => runtime.dispose());
+      clientClosePromise = Promise.allSettled([...activeIterators].map((dispose) => dispose()))
+        .then(() => runtime.runPromise(Scope.close(scope, Exit.void)))
+        .then(() => runtime.dispose());
       return clientClosePromise;
     },
     commands: { run: runCommands },
@@ -359,7 +371,7 @@ const adapt = (handle: StackEffect.Stack, runtime: Runtime) => {
     );
   }
 };
-/** A Promise client whose close operation leaves the detached owner running. */
+/** A Promise client; closing the creating client of a session stack destroys the stack. */
 export type Stack = ReturnType<typeof adapt>;
 
 const acquire = (
@@ -367,9 +379,14 @@ const acquire = (
   options?: CallOptions,
 ): Promise<Stack> => {
   const runtime = makeRuntime();
-  return runtime.runPromise(effect, options).then(
-    (handle) => adapt(handle, runtime),
-    (error: unknown) => runtime.dispose().then(() => Promise.reject(error)),
+  const scope = runtime.runSync(Scope.make());
+  return runtime.runPromise(effect.pipe(Scope.provide(scope)), options).then(
+    (handle) => adapt(handle, runtime, scope),
+    (error: unknown) =>
+      runtime
+        .runPromise(Scope.close(scope, Exit.void))
+        .then(() => runtime.dispose())
+        .then(() => Promise.reject(error)),
   );
 };
 /** Registers a new stack identity. */
@@ -396,3 +413,10 @@ export const discover = (
     }).pipe(Effect.provide(clientLayer)),
   );
 };
+/** Reads one saved stack by id or by project identity; resolves `undefined` when none is saved. */
+export const find = (
+  options: StackEffect.FindOptions,
+): Promise<StackEffect.FoundStack | undefined> =>
+  Effect.runPromise(
+    StackEffect.find(options).pipe(Effect.map(Option.getOrUndefined), Effect.provide(clientLayer)),
+  );

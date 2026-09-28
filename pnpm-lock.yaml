@@ -234,6 +234,7 @@ overrides:
 packageExtensionsChecksum: sha256-gAA6Mc6Jn3jUpogzVWO9hE5trVRioaB8peQBgDbyG6I=
 
 patchedDependencies:
+  '@effect/platform-node-shared@4.0.0-rc.112': ae37153251ecf7edd0be9de349cc18b4b13c8cf3bd7e9ead20e8e891716af128
   '@effect/vitest@4.0.0-rc.112': fbd126f7e68e041231312d90b8c02f705f12b66c2cb2d6fc246f5c12a4ed9787
   '@libpg-query/parser@17.6.10': ed67c0ca88b6ced3ec50fd6862f191d6192a246cf20d9c777d45efdb8373bed3
 
@@ -335,15 +336,15 @@ importers:
       '@supabase/pg-topo':
         specifier: 1.0.0-alpha.6
         version: 1.0.0-alpha.6(supports-color@7.2.0)
-      '@supabase/postgrest-typegen':
-        specifier: 0.2.2
-        version: 0.2.2
       '@supabase/stack':
         specifier: workspace:*
         version: link:../../packages/stack
       '@supabase/supabase-js':
         specifier: 'catalog:'
         version: 2.112.4
+      '@supabase/typegen':
+        specifier: 0.2.1
+        version: 0.2.1(oxfmt@0.66.0)
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
@@ -2908,9 +2909,14 @@ packages:
     resolution: {integrity: sha512-uaubtPSeg2TR4wrtfQoQWgkTAe+a0qWX2KhmwvTfNl5mGN9+U7owiJt6abk3o/V6O899PSRD1yzxs5RlF4xTug==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/postgrest-typegen@0.2.2':
-    resolution: {integrity: sha512-TKh+GgakrkMlLahWtvwa6WWzbRzlK4tBExNfgZbnB0V5yMl51RIOvrgITQOacoJR3S/ZZCNbpvkRgHrhxSWsBg==}
-    engines: {node: '>=20.0.0'}
+  '@supabase/postgrest-typegen@0.3.1':
+    resolution: {integrity: sha512-FxgP+13VCH0ho3LKAhFHA6+vPk3Rbw54eZmGcDbFUcFzhjigSp8HBrgMJHVcNwjRrHpmItL0SvXAeAkOYxO7hQ==}
+    engines: {node: '>=22.12.0'}
+    peerDependencies:
+      oxfmt: 0.66.0
+    peerDependenciesMeta:
+      oxfmt:
+        optional: true
 
   '@supabase/realtime-js@2.112.4':
     resolution: {integrity: sha512-vZ+j079SKrM0Xiq7MJCvQKLDpaH2kfKfLY68xuQE1sqsCsMmx1CyrDBJHsxZ3cX01VOs5SI9igmoZAF3BmdZxw==}
@@ -2927,6 +2933,15 @@ packages:
       '@opentelemetry/api': '>=1.0.0'
     peerDependenciesMeta:
       '@opentelemetry/api':
+        optional: true
+
+  '@supabase/typegen@0.2.1':
+    resolution: {integrity: sha512-7M86EUD/zp9e3arbcBwXAPlUYowKEfhXXx5lgizjAqXzJeN4LZX8jeN8v+EYBWn3c8O1xXpl+HVG08V1MFLflQ==}
+    engines: {node: '>=22.12.0'}
+    peerDependencies:
+      oxfmt: 0.66.0
+    peerDependenciesMeta:
+      oxfmt:
         optional: true
 
   '@swc/helpers@0.5.23':
@@ -7110,13 +7125,13 @@ snapshots:
 
   '@effect/platform-bun@4.0.0-rc.112(effect@4.0.0-rc.112)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.0-rc.112(effect@4.0.0-rc.112)
+      '@effect/platform-node-shared': 4.0.0-rc.112(patch_hash=ae37153251ecf7edd0be9de349cc18b4b13c8cf3bd7e9ead20e8e891716af128)(effect@4.0.0-rc.112)
       effect: 4.0.0-rc.112
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node-shared@4.0.0-rc.112(effect@4.0.0-rc.112)':
+  '@effect/platform-node-shared@4.0.0-rc.112(patch_hash=ae37153251ecf7edd0be9de349cc18b4b13c8cf3bd7e9ead20e8e891716af128)(effect@4.0.0-rc.112)':
     dependencies:
       '@types/ws': 8.18.1
       effect: 4.0.0-rc.112
@@ -7127,7 +7142,7 @@ snapshots:
 
   '@effect/platform-node@4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.0-rc.112(effect@4.0.0-rc.112)
+      '@effect/platform-node-shared': 4.0.0-rc.112(patch_hash=ae37153251ecf7edd0be9de349cc18b4b13c8cf3bd7e9ead20e8e891716af128)(effect@4.0.0-rc.112)
       effect: 4.0.0-rc.112
       mime: 4.1.0
       redis: 6.2.1
@@ -8679,13 +8694,11 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/postgrest-typegen@0.2.2':
+  '@supabase/postgrest-typegen@0.3.1(oxfmt@0.66.0)':
     dependencies:
       arktype: 2.2.3
+    optionalDependencies:
       oxfmt: 0.66.0
-    transitivePeerDependencies:
-      - svelte
-      - vite-plus
 
   '@supabase/realtime-js@2.112.4':
     dependencies:
@@ -8704,6 +8717,12 @@ snapshots:
       '@supabase/postgrest-js': 2.112.4
       '@supabase/realtime-js': 2.112.4
       '@supabase/storage-js': 2.112.4
+
+  '@supabase/typegen@0.2.1(oxfmt@0.66.0)':
+    dependencies:
+      '@supabase/postgrest-typegen': 0.3.1(oxfmt@0.66.0)
+    optionalDependencies:
+      oxfmt: 0.66.0
 
   '@swc/helpers@0.5.23':
     dependencies:
@@ -11567,6 +11586,7 @@ snapshots:
       '@oxfmt/binding-win32-arm64-msvc': 0.66.0
       '@oxfmt/binding-win32-ia32-msvc': 0.66.0
       '@oxfmt/binding-win32-x64-msvc': 0.66.0
+    optional: true
 
   oxlint-tsgolint@7.0.2001:
     optionalDependencies:

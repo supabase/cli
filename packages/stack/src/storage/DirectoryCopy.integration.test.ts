@@ -192,26 +192,27 @@ describe("copyDirectory", () => {
     ),
   );
 
-  it.live("removes a failed host copy and copies the tree itself", () =>
+  it.live("removes a failed host copy and reports the failure", () =>
     run(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "directory-copy-fallback-" });
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "directory-copy-failed-" });
         const source = path.join(root, "source");
         const destination = path.join(root, "destination");
         yield* fs.makeDirectory(source);
         yield* fs.writeFileString(path.join(source, "file.txt"), "file\n");
 
-        yield* copyDirectory(source, destination).pipe(
+        const failure = yield* copyDirectory(source, destination).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             failedHostCopy(fs, path, destination),
           ),
+          Effect.flip,
         );
 
-        expect(yield* fs.readFileString(path.join(destination, "file.txt"))).toBe("file\n");
-        expect(yield* fs.exists(path.join(destination, "nested"))).toBe(false);
+        expect(failure.operation).toBe("copy");
+        expect(yield* fs.exists(destination)).toBe(false);
       }),
     ),
   );

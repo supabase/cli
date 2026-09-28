@@ -1,10 +1,10 @@
 import { Effect, Schema } from "effect";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
-import { databaseConnection } from "./ServiceConfig.ts";
+import { databaseConnection, requiredInput } from "./ServiceConfig.ts";
 import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
 
 export const Config = Schema.Struct({
-  databaseUrl: Schema.String,
+  databaseUrl: Schema.optionalKey(Schema.String),
   backend: Schema.optionalKey(Schema.Literal("postgres")),
   apiKey: Schema.optionalKey(Schema.String),
 });
@@ -25,9 +25,14 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   env: (creation, endpoints, container) =>
     Effect.gen(function* () {
       const http = endpoints.get("http");
-      const db = yield* databaseConnection(creation.config.databaseUrl);
+      const databaseUrl = yield* requiredInput(
+        "analytics",
+        "databaseUrl",
+        creation.config.databaseUrl,
+      );
+      const db = yield* databaseConnection(databaseUrl);
       return {
-        DATABASE_URL: creation.config.databaseUrl,
+        DATABASE_URL: databaseUrl,
         ...(http === undefined
           ? {}
           : { PORT: String(http.port), PHX_HTTP_PORT: String(http.port) }),
@@ -43,7 +48,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         ...(creation.config.apiKey === undefined
           ? {}
           : { LOGFLARE_PRIVATE_ACCESS_TOKEN: creation.config.apiKey }),
-        POSTGRES_BACKEND_URL: creation.config.databaseUrl,
+        POSTGRES_BACKEND_URL: databaseUrl,
         POSTGRES_BACKEND_SCHEMA: "_analytics",
       };
     }),

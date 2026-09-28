@@ -214,7 +214,7 @@ export const stackStorageEndpoint: Effect.Effect<
       suggestion: "Run supabase start to create it.",
     });
   return yield* stackStorageEndpointFor(opened.value);
-});
+}).pipe(Effect.scoped);
 
 /**
  * Maps a stack-gateway activation failure into `StackStorageCapabilityError` guidance, only for

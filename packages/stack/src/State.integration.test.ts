@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { TestClock } from "effect/testing";
 import {
   Context,
+  DateTime,
   Deferred,
   Effect,
   Exit,
@@ -13,6 +14,7 @@ import {
   PlatformError,
   Ref,
   Schema,
+  Scope,
 } from "effect";
 import * as State from "./State.ts";
 import type { SavedStack } from "./State.ts";
@@ -31,6 +33,7 @@ const initial: SavedStack = {
   },
   runtime: "docker",
   instances: [],
+  lifetime: "detached",
   composition: { members: [], dependencies: [] },
   ports: [],
 };
@@ -58,7 +61,7 @@ describe("durable stack state", () => {
                 ...current,
                 instances: [
                   ...current.instances,
-                  { id, creation: { service: "database", config: { version: "17" } } },
+                  { id, creation: { service: "mail", config: {} } },
                 ],
               });
             }),
@@ -449,6 +452,57 @@ describe("durable stack state", () => {
     ),
   );
 
+  it.live("decodes saved compositions, creations, and instance ids strictly", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-typed-" });
+        const reported: Array<string> = [];
+        const store = yield* Layer.build(
+          State.layer({
+            root,
+            onInvalidState: (id) => Effect.sync(() => reported.push(id)),
+          }),
+        ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+        yield* store.save(initial);
+        const mail = { service: "mail", config: {} };
+        const invalid = {
+          "bad-composition": { composition: { members: "none", dependencies: [] } },
+          "bad-creation": { instances: [{ id: "one", creation: { service: "unknown" } }] },
+          "duplicate-ids": {
+            instances: [
+              { id: "one", creation: mail },
+              { id: "one", creation: mail },
+            ],
+          },
+        };
+        for (const [id, override] of Object.entries(invalid)) {
+          yield* fs.makeDirectory(path.join(root, id));
+          yield* fs.writeFileString(
+            path.join(root, id, "state.json"),
+            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+              ...initial,
+              id,
+              ...override,
+            }),
+          );
+        }
+
+        expect((yield* store.list).map(({ id }) => id)).toEqual([initial.id]);
+        expect(reported.toSorted()).toEqual(Object.keys(invalid));
+        for (const id of Object.keys(invalid)) {
+          const failure = yield* store.read(id).pipe(Effect.flip);
+          expect(failure.operation).toBe("decode");
+          expect(failure.message).toContain("Unable to decode state");
+          expect(failure.message).toContain(`for stack ${id}`);
+        }
+        const duplicate = yield* store.read("duplicate-ids").pipe(Effect.flip);
+        expect(duplicate.message).toContain("Expected unique instance ids");
+      }),
+    ),
+  );
+
   it.effect("cleans up a cancelled Windows replacement and releases the state lock", () =>
     run(
       Effect.gen(function* () {
@@ -507,6 +561,31 @@ describe("durable stack state", () => {
         yield* Ref.set(failRename, false);
         yield* store.withLock(store.save(next));
         expect((yield* store.read(initial.id))?.identity.stackName).toBe("next");
+      }),
+    ),
+  );
+
+  it.live("reaps write leftovers of dead writers and keeps recent ones on open", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-reap-" });
+        const abandoned = path.join(root, ".state-write-abandoned");
+        const inProgress = path.join(root, ".state-write-in-progress");
+        for (const directory of [abandoned, inProgress]) {
+          yield* fs.makeDirectory(directory);
+          yield* fs.writeFileString(path.join(directory, "state.json"), "{}");
+        }
+        const twoDaysAgo = DateTime.toDateUtc(DateTime.subtract(yield* DateTime.now, { days: 2 }));
+        yield* fs.utimes(abandoned, twoDaysAgo, twoDaysAgo);
+
+        const store = yield* makeTestState(root);
+
+        expect(yield* fs.exists(abandoned)).toBe(false);
+        expect(yield* fs.exists(path.join(inProgress, "state.json"))).toBe(true);
+        yield* store.save(initial);
+        expect(yield* store.read(initial.id)).toEqual(initial);
       }),
     ),
   );
@@ -637,6 +716,64 @@ describe("durable stack state", () => {
         expect(error).toBeInstanceOf(State.StateError);
         expect(error.operation).toBe("lock");
         expect(yield* state.read(initial.id)).toBeUndefined();
+      }),
+    ),
+  );
+});
+
+describe("stack owner lease", () => {
+  it.live("hands the lease of a removed stack to a waiter on a live lease file", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-lease-handoff-" });
+        const holder = yield* makeTestState(root);
+        const contended = yield* Deferred.make<void>();
+        const waiter = Context.get(
+          yield* Layer.build(
+            State.layer({
+              root,
+              onLeaseContended: () => Deferred.succeed(contended, undefined).pipe(Effect.asVoid),
+            }),
+          ),
+          State.Service,
+        );
+        const observer = yield* makeTestState(root);
+        const holderScope = yield* Scope.make();
+        expect(yield* holder.lease("gone").pipe(Scope.provide(holderScope))).toBe(true);
+
+        const waiterScope = yield* Scope.make();
+        const waiting = yield* waiter
+          .lease("gone")
+          .pipe(Scope.provide(waiterScope), Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(contended);
+        yield* Scope.close(holderScope, Exit.void);
+
+        expect(yield* Fiber.join(waiting)).toBe(true);
+        expect(yield* observer.leased("gone"), "the path names the file the waiter locked").toBe(
+          true,
+        );
+        yield* Scope.close(waiterScope, Exit.void);
+        expect(yield* observer.leased("gone")).toBe(false);
+        expect(yield* fs.exists(`${root}/gone`), "the last holder removes the directory").toBe(
+          false,
+        );
+      }),
+    ),
+  );
+
+  it.live("reports a free lease without creating a lease file", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-lease-probe-" });
+        const state = yield* makeTestState(root);
+        yield* state.save(initial);
+        expect(yield* state.leased(initial.id)).toBe(false);
+        expect(yield* state.readHolder(initial.id), "a retracted record reads as absent").toBe(
+          undefined,
+        );
+        expect(yield* fs.exists(`${root}/${initial.id}/owner.lock`)).toBe(false);
       }),
     ),
   );

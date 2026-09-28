@@ -38,6 +38,12 @@ import {
   makeDatabaseSessionFromSqlClient,
 } from "../runtime/PostgresDatabaseSession.ts";
 import {
+  mapToServiceError,
+  processExit as sharedProcessExit,
+  publishProcessLogs,
+  runtimeSessionFromContainer,
+} from "../runtime/Session.ts";
+import {
   ServiceError,
   ServiceLaunchError,
   type RuntimeSession,
@@ -139,14 +145,7 @@ export interface DatabaseComponent {
   readonly logs: Stream.Stream<DatabaseLog, DatabaseError>;
 }
 
-const errorFor = (operation: string, cause: unknown): ServiceError =>
-  cause instanceof ServiceError
-    ? cause
-    : new ServiceError({
-        operation,
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      });
+const errorFor = mapToServiceError;
 
 const postgresArguments = (config: DatabaseConfig): Array<string> => {
   const configured = new Set(Object.keys(config.settings ?? {}).map((key) => key.toLowerCase()));
@@ -168,13 +167,7 @@ const databaseError = (operation: string, cause: unknown): DatabaseError =>
     cause,
   });
 
-/** A descendant outside the process group can keep stderr open after the launcher exits. */
-const stderrTailReady = (drained: Fiber.Fiber<void>) =>
-  Fiber.await(drained).pipe(
-    Effect.asVoid,
-    Effect.raceFirst(Effect.sleep("1 second")),
-    Effect.ignore,
-  );
+const describePostgresExit = (code: number) => `PostgreSQL exited with code ${code}`;
 
 /** Settles a native PostgreSQL exit, waiting briefly after it for the stderr tail to drain. */
 export const processExit = <E extends { readonly message: string }>(
@@ -184,31 +177,7 @@ export const processExit = <E extends { readonly message: string }>(
     readonly drained: Fiber.Fiber<void>;
   },
 ): Effect.Effect<Exit.Exit<void, ServiceError>> =>
-  (stderr === undefined
-    ? exitCode
-    : exitCode.pipe(Effect.tap(() => stderrTailReady(stderr.drained)))
-  ).pipe(
-    Effect.flatMap((code) =>
-      Number(code) === 0
-        ? Effect.void
-        : (stderr === undefined ? Effect.succeed("") : Ref.get(stderr.tail)).pipe(
-            Effect.flatMap((text) => {
-              const detail = text.trim();
-              return Effect.fail(
-                new ServiceError({
-                  operation: "exit",
-                  message:
-                    detail.length === 0
-                      ? `PostgreSQL exited with code ${String(code)}`
-                      : `PostgreSQL exited with code ${String(code)}: ${detail}`,
-                }),
-              );
-            }),
-          ),
-    ),
-    Effect.mapError((cause) => errorFor("exit", cause)),
-    Effect.exit,
-  );
+  sharedProcessExit(exitCode, describePostgresExit, stderr);
 
 const reconcileContainerPassword = Effect.fn("Database.reconcileContainerPassword")(
   (
@@ -366,53 +335,10 @@ const health = Effect.fn("Database.health")((
   );
 });
 
-const publishLogs = Effect.fn("Database.publishLogs")((
-  process: {
-    readonly stdout: Stream.Stream<Uint8Array, unknown>;
-    readonly stderr: Stream.Stream<Uint8Array, unknown>;
-  },
-  logs: PubSub.PubSub<DatabaseLog>,
-  scope: Scope.Closeable,
-  stderrTail?: Ref.Ref<string>,
-) => {
-  const drain = (stream: Stream.Stream<Uint8Array, unknown>, name: DatabaseLog["stream"]) => {
-    const decoder = name === "stderr" && stderrTail !== undefined ? new TextDecoder() : undefined;
-    const appendTail = (text: string) =>
-      text.length === 0 || stderrTail === undefined
-        ? Effect.void
-        : Ref.update(stderrTail, (current) => (current + text).slice(-4096));
-    return stream.pipe(
-      Stream.runForEach((bytes) =>
-        Effect.gen(function* () {
-          if (decoder !== undefined) yield* appendTail(decoder.decode(bytes, { stream: true }));
-          yield* PubSub.publish(logs, { stream: name, bytes });
-        }),
-      ),
-      Effect.andThen(
-        decoder === undefined
-          ? Effect.void
-          : Effect.sync(() => decoder.decode()).pipe(Effect.flatMap(appendTail)),
-      ),
-      Effect.catch((cause) => Effect.logError(cause)),
-    );
-  };
-  return Effect.gen(function* () {
-    yield* Effect.forkIn(drain(process.stdout, "stdout"), scope);
-    return yield* Effect.forkIn(drain(process.stderr, "stderr"), scope);
-  });
-});
+const publishLogs = publishProcessLogs;
 
-const runtimeFromContainer = (process: ContainerProcess, discard: boolean): RuntimeSession => ({
-  health: Effect.void,
-  exit: processExit(process.exitCode),
-  stop: process.stop.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
-  ...(discard
-    ? {
-        discard: process.discard.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
-      }
-    : {}),
-  remove: process.remove.pipe(Effect.mapError((cause) => errorFor("remove", cause))),
-});
+const runtimeFromContainer = (process: ContainerProcess, discard: boolean): RuntimeSession =>
+  runtimeSessionFromContainer(process, describePostgresExit, { discard });
 
 const ensureOwnedRoot = Effect.fn("Database.ensureOwnedRoot")((
   fs: FileSystem.FileSystem,
@@ -592,8 +518,6 @@ export const makeDatabase = (
         cacheRoot: options.cacheRoot,
         runtime: options.runtime,
         version,
-        stackId: String(options.stackId),
-        instanceId: options.instanceId,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
