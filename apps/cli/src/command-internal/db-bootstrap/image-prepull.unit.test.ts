@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Ref, Sink, Stream } from "effect";
+import { Deferred, Effect, Fiber, Ref, Sink, Stream } from "effect";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ImagePrepullError, ensureImagesCached } from "./image-prepull.ts";
@@ -47,6 +48,15 @@ function mockSpawner(
     },
   };
 }
+
+/** Steps `TestClock` a second at a time through the pull backoff until `fiber` settles. */
+const joinAdvancingClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+  Effect.gen(function* () {
+    for (let second = 0; second < 120 && fiber.pollUnsafe() === undefined; second++) {
+      yield* TestClock.adjust("1 seconds");
+    }
+    return yield* Fiber.join(fiber);
+  });
 
 describe("ensureImagesCached", () => {
   it.live("dedupes images before resolving, returning original ref -> resolved URL", () => {
@@ -125,11 +135,8 @@ describe("ensureImagesCached", () => {
     }),
   );
 
-  // Every pull attempt fails, driving the real `DOCKER_PULL_RETRY_DELAYS_MS` backoff to
-  // exhaustion across all 3 registry candidates (~36s) — needs more than Vitest's 5s default.
-  it.live(
-    "aggregates every failed image's message into one combined error",
-    () => {
+  it.effect("aggregates every failed image's message into one combined error", () =>
+    Effect.gen(function* () {
       const mock = mockSpawner((args) => {
         if (args[0] === "image" && args[1] === "inspect") {
           return {
@@ -141,45 +148,44 @@ describe("ensureImagesCached", () => {
         return { exitCode: 1 };
       });
 
-      return ensureImagesCached(mock.spawner, ["supabase/a:1", "supabase/b:1"]).pipe(
-        Effect.flip,
-        Effect.map((error) => {
-          expect(error).toBeInstanceOf(ImagePrepullError);
-          expect(error.message).toContain("supabase/a:1");
-          expect(error.message).toContain("supabase/b:1");
-        }),
+      const fiber = yield* ensureImagesCached(mock.spawner, ["supabase/a:1", "supabase/b:1"]).pipe(
+        Effect.forkChild({ startImmediately: true }),
       );
-    },
-    60_000,
+      const error = yield* joinAdvancingClock(fiber).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(ImagePrepullError);
+      expect(error.message).toContain("supabase/a:1");
+      expect(error.message).toContain("supabase/b:1");
+    }),
   );
 
-  it.live(
+  it.effect(
     "appends the install hint once when a failure indicates the daemon is unreachable",
-    () => {
-      const mock = mockSpawner((args) => {
-        if (args[0] === "image" && args[1] === "inspect") {
-          return {
-            exitCode: 1,
-            stderr: `Error response from daemon: No such image: ${args[2]}`,
-          };
-        }
-        if (args[0] === "pull") {
-          return {
-            exitCode: 1,
-            stderr: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock\n",
-          };
-        }
-        return { exitCode: 1 };
-      });
+    () =>
+      Effect.gen(function* () {
+        const mock = mockSpawner((args) => {
+          if (args[0] === "image" && args[1] === "inspect") {
+            return {
+              exitCode: 1,
+              stderr: `Error response from daemon: No such image: ${args[2]}`,
+            };
+          }
+          if (args[0] === "pull") {
+            return {
+              exitCode: 1,
+              stderr: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock\n",
+            };
+          }
+          return { exitCode: 1 };
+        });
 
-      return ensureImagesCached(mock.spawner, ["supabase/a:1"]).pipe(
-        Effect.flip,
-        Effect.map((error) => {
-          expect(error.message).toContain("Docker Desktop is a prerequisite for local development");
-        }),
-      );
-    },
-    60_000,
+        const fiber = yield* ensureImagesCached(mock.spawner, ["supabase/a:1"]).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const error = yield* joinAdvancingClock(fiber).pipe(Effect.flip);
+
+        expect(error.message).toContain("Docker Desktop is a prerequisite for local development");
+      }),
   );
 
   it.live("resolves an empty map for an empty image list without spawning anything", () => {
