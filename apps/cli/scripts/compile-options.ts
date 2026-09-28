@@ -14,7 +14,7 @@ export const compileOptions = {
   // `oxfmt` is an optional peer of `@supabase/postgrest-typegen`, loaded only by the default
   // TypeScript formatter; `gen types` supplies its own, so the binary ships without it.
   external: ["oxfmt"],
-} as const satisfies Partial<Bun.BuildConfig>;;
+} as const satisfies Partial<Bun.BuildConfig>;
 
 /**
  * Embeds the stack release of the sources being compiled, so the binary drives exactly the owners
@@ -22,6 +22,8 @@ export const compileOptions = {
  */
 export const stackReleaseDefine = async () => ({
   SUPABASE_STACK_BUILD_ID: JSON.stringify(
-    await Effect.runPromise(stackSourceDigest.pipe(Effect.provide(BunServices.layer))),
+    await Effect.runPromise(
+      stackSourceDigest.pipe(Effect.provide(BunServices.layer)),
+    ),
   ),
 });
