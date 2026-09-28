@@ -119,17 +119,29 @@ const catalogError = (operation: string, message: string, service?: ServiceKind,
     ...(cause === undefined ? {} : { cause }),
   });
 
+interface OutputTail {
+  readonly stdout: Ref.Ref<ReadonlyArray<string>>;
+  readonly stderr: Ref.Ref<ReadonlyArray<string>>;
+  readonly drained: Deferred.Deferred<void>;
+}
+
 const processExit = (
   exitCode: Effect.Effect<number, { readonly message: string }>,
+  output?: OutputTail,
 ): Effect.Effect<Exit.Exit<void, ServiceError>> =>
   exitCode.pipe(
-    Effect.flatMap((code) =>
-      Number(code) === 0
-        ? Effect.void
-        : Effect.fail(
-            new ServiceError({ operation: "exit", message: `Process exited with ${code}` }),
-          ),
-    ),
+    Effect.flatMap((code) => {
+      if (Number(code) === 0) return Effect.void;
+      const error = new ServiceError({ operation: "exit", message: `Process exited with ${code}` });
+      if (output === undefined) return Effect.fail(error);
+      // Drain fibers may still be flushing the final chunk when the exit code resolves.
+      return Deferred.await(output.drained).pipe(
+        Effect.timeout("2 seconds"),
+        Effect.ignore,
+        Effect.andThen(attachOutputTail(error, output)),
+        Effect.flatMap(Effect.fail),
+      );
+    }),
     Effect.mapError((cause) => serviceError("exit", cause)),
     Effect.exit,
   );
@@ -233,6 +245,18 @@ const withRecentOutput = (summary: string, output: StartupOutput) =>
       .filter((name) => output[name].length > 0)
       .map((name) => `Recent ${name}:\n${output[name].join("\n")}`),
   ].join("\n");
+
+const attachOutputTail = (error: ServiceError, output: OutputTail): Effect.Effect<ServiceError> =>
+  Effect.all([Ref.get(output.stdout), Ref.get(output.stderr)]).pipe(
+    Effect.map(
+      ([stdout, stderr]) =>
+        new ServiceError({
+          operation: error.operation,
+          message: withRecentOutput(error.message, { stdout, stderr }),
+          cause: error.cause,
+        }),
+    ),
+  );
 
 const awaitStartup = Effect.fn("ProcessRecipe.awaitStartup")(
   (
@@ -607,14 +631,24 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           );
           if (spec.nativeReadinessOutput === undefined) {
             yield* Ref.set(endpoints, selected);
-            yield* publishLogs(native, logs, attemptScope);
+            const plainOutput = yield* collectNativeOutput(
+              native,
+              logs,
+              selected,
+              undefined,
+              attemptScope,
+            );
             const ready = selected.get("http");
             return {
               health:
                 ready === undefined
                   ? Effect.fail(serviceError("health", "Recipe has no HTTP readiness endpoint"))
-                  : readiness(deps.client, ready, spec.healthPath),
-              exit: processExit(native.exitCode),
+                  : readiness(deps.client, ready, spec.healthPath).pipe(
+                      Effect.catch((error) =>
+                        attachOutputTail(error, plainOutput).pipe(Effect.flatMap(Effect.fail)),
+                      ),
+                    ),
+              exit: processExit(native.exitCode, plainOutput),
               stop: native.kill.pipe(Effect.mapError((cause) => serviceError("stop", cause))),
               remove: Ref.set(endpoints, new Map()),
             } satisfies RuntimeSession;
@@ -656,7 +690,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             yield* Ref.set(endpoints, selected);
             return {
               health: Effect.void,
-              exit: processExit(native.exitCode),
+              exit: processExit(native.exitCode, output),
               stop: native.kill.pipe(Effect.mapError((cause) => serviceError("stop", cause))),
               remove: Ref.set(endpoints, new Map()),
             } satisfies RuntimeSession;
@@ -680,7 +714,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             yield* Ref.set(endpoints, selected);
             return {
               health: Effect.fail(failure),
-              exit: processExit(native.exitCode),
+              exit: processExit(native.exitCode, output),
               stop: native.kill.pipe(Effect.mapError((cause) => serviceError("stop", cause))),
               remove: Ref.set(endpoints, new Map()),
             } satisfies RuntimeSession;

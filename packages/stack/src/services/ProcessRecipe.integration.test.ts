@@ -463,7 +463,8 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
 
 const platform = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
-const nativePoolerArtifact = Effect.fn(function* (cacheRoot: string) {
+/** The native artifact target for the current test host, or a typed failure on unsupported hosts. */
+const currentNativeTestTarget = Effect.fn(function* () {
   const platformName = `${process.platform}-${process.arch}`;
   const target =
     platformName === "darwin-arm64"
@@ -474,13 +475,44 @@ const nativePoolerArtifact = Effect.fn(function* (cacheRoot: string) {
           ? "linux-arm64"
           : undefined;
   if (target === undefined) return yield* Effect.fail(`Unsupported test platform: ${platformName}`);
+  return target;
+});
 
+/** Prepares a fake native artifact from an in-memory fixture, sharing the store/source scaffolding every native fixture needs. */
+const prepareNativeFixture = Effect.fn(function* (
+  cacheRoot: string,
+  request: ArtifactRequest,
+  label: string,
+  writeFixture: (
+    fs: FileSystem.FileSystem,
+    destination: string,
+  ) => Effect.Effect<void, PlatformError.PlatformError>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const source: ArtifactSource = {
+    checksum: () => Effect.succeed("0".repeat(64)),
+    materialize: (_entry, destination) =>
+      writeFixture(fs, destination).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PreparationError({
+              message: `Unable to write native ${label} fixture: ${cause.message}`,
+              cause,
+            }),
+        ),
+      ),
+  };
+  const store = yield* makeArtifactStore({ cacheRoot, source });
+  yield* store.prepare(request);
+});
+
+const nativePoolerArtifact = Effect.fn(function* (cacheRoot: string) {
+  const target = yield* currentNativeTestTarget();
   const request: ArtifactRequest = {
     key: `slim-services/pooler/v2.9.12/${target}`,
     requiredRuntimePaths: ["bin/server", "bin/prepare", "bin/provision-tenant"],
     executablePath: "bin/server",
   };
-  const fs = yield* FileSystem.FileSystem;
   const server =
     `#!${process.execPath}\nconst http = require("node:http");\n` +
     `const port = Number(process.env.PORT);\n` +
@@ -498,28 +530,32 @@ const nativePoolerArtifact = Effect.fn(function* (cacheRoot: string) {
     `console.log("Running SupavisorWeb.Endpoint at 127.0.0.1:" + port + " (http)");\n` +
     `});\n`;
   const oneShot = `#!${process.execPath}\nprocess.exit(0);\n`;
-  const source: ArtifactSource = {
-    checksum: () => Effect.succeed("0".repeat(64)),
-    materialize: (_entry, destination) =>
-      Effect.gen(function* () {
-        yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
-        yield* fs.writeFileString(`${destination}/bin/server`, server);
-        yield* fs.writeFileString(`${destination}/bin/prepare`, oneShot);
-        yield* fs.writeFileString(`${destination}/bin/provision-tenant`, oneShot);
-        yield* fs.chmod(`${destination}/bin/prepare`, 0o755);
-        yield* fs.chmod(`${destination}/bin/provision-tenant`, 0o755);
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new PreparationError({
-              message: `Unable to write native Pooler fixture: ${cause.message}`,
-              cause,
-            }),
-        ),
-      ),
+  yield* prepareNativeFixture(cacheRoot, request, "Pooler", (fs, destination) =>
+    Effect.gen(function* () {
+      yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+      yield* fs.writeFileString(`${destination}/bin/server`, server);
+      yield* fs.writeFileString(`${destination}/bin/prepare`, oneShot);
+      yield* fs.writeFileString(`${destination}/bin/provision-tenant`, oneShot);
+      yield* fs.chmod(`${destination}/bin/prepare`, 0o755);
+      yield* fs.chmod(`${destination}/bin/provision-tenant`, 0o755);
+    }),
+  );
+});
+
+const nativeRestArtifact = Effect.fn(function* (cacheRoot: string, script: string) {
+  const target = yield* currentNativeTestTarget();
+  const request: ArtifactRequest = {
+    key: `slim-services/postgrest/v16.2/${target}`,
+    requiredRuntimePaths: ["bin/postgrest"],
+    executablePath: "bin/postgrest",
   };
-  const store = yield* makeArtifactStore({ cacheRoot, source });
-  yield* store.prepare(request);
+  yield* prepareNativeFixture(cacheRoot, request, "rest", (fs, destination) =>
+    Effect.gen(function* () {
+      yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+      yield* fs.writeFileString(`${destination}/bin/postgrest`, script);
+      yield* fs.chmod(`${destination}/bin/postgrest`, 0o755);
+    }),
+  );
 });
 
 const NativeLaunchPayload = Schema.Struct({
@@ -1140,5 +1176,81 @@ describe("process recipe startup", () => {
           expect(error.message.length).toBeLessThan(2_000);
         }),
       ).pipe(Effect.provide(platform)),
+  );
+
+  it.effect("includes the native process's recent output when plain HTTP readiness times out", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const client = yield* HttpClient.HttpClient;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "process-recipe-plain-readiness-",
+        });
+        const cacheRoot = path.join(root, "cache");
+        // A second line, printed after the first has had time to flush, lets the test wait for
+        // the tail Ref to actually observe the first line instead of racing the drain fiber.
+        const drainMarker = "process-recipe-stderr-drained";
+        yield* nativeRestArtifact(
+          cacheRoot,
+          `#!${process.execPath}\nconsole.error("connecting to postgres failed: retrying");\n` +
+            `setTimeout(() => { console.error("${drainMarker}"); }, 10);\n` +
+            `setInterval(() => {}, 1000);\n`,
+        );
+        const stderrDrained = yield* Deferred.make<void>();
+        const decoder = new TextDecoder();
+        let stderrSeen = "";
+        const observingSpawner: typeof spawner = {
+          ...spawner,
+          spawn: (command) =>
+            spawner.spawn(command).pipe(
+              Effect.map((handle) => ({
+                ...handle,
+                stderr: handle.stderr.pipe(
+                  // The marker can span pipe chunks, so match against everything seen so far.
+                  Stream.tap((bytes) => {
+                    stderrSeen += decoder.decode(bytes, { stream: true });
+                    return stderrSeen.includes(drainMarker)
+                      ? Deferred.succeed(stderrDrained, undefined)
+                      : Effect.void;
+                  }),
+                ),
+              })),
+            ),
+        };
+        // A client that never resolves leaves the readiness timeout as the only pending timer.
+        const hangingClient: HttpClient.HttpClient = { ...client, execute: () => Effect.never };
+        const nativeOptions: CatalogOptions = { ...options, root, cacheRoot, runtime: "native" };
+        const nativeSpec: ProcessRecipeSpec<TestCreation> = { ...spec, startup: [] };
+        const recipe = yield* makeProcessRecipe(
+          creation,
+          nativeOptions,
+          {
+            fs,
+            path,
+            crypto,
+            client: hangingClient,
+            spawner: observingSpawner,
+            container: undefined,
+          },
+          nativeSpec,
+        );
+        if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
+        const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
+        const runtime = yield* recipe.definition.launch({ id: "rest", config: creation, scope });
+
+        const failure = yield* Effect.flip(runtime.health).pipe(Effect.forkChild);
+        yield* Deferred.await(stderrDrained);
+        yield* TestClock.adjust("61 seconds");
+        const error = yield* Fiber.join(failure);
+
+        expect(error.message).toContain("Service health timed out");
+        expect(error.message).toContain("Recent stderr:");
+        expect(error.message).toContain("connecting to postgres failed: retrying");
+        yield* runtime.stop;
+      }),
+    ).pipe(Effect.provide(platform)),
   );
 });

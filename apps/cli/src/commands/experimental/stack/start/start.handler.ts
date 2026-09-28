@@ -93,6 +93,33 @@ const stackError = (
   });
 };
 
+const dockerUnavailableSuggestion = (runtimeInfo: {
+  readonly platform: string;
+  readonly arch: string;
+}) =>
+  defaultStackRuntime(runtimeInfo) === "native"
+    ? "Docker CLI or daemon isn't reachable. Install or start Docker, or run with --runtime native."
+    : "Docker CLI or daemon isn't reachable. Install or start Docker.";
+
+const stackAcquireError = (
+  cause: StackError,
+  runtimeContext: {
+    readonly selectedRuntime: "native" | "docker" | "podman";
+    readonly runtime: { readonly platform: string; readonly arch: string };
+  },
+) => {
+  const base = stackError(cause);
+  if (cause.reason !== "runtime-unavailable" || runtimeContext.selectedRuntime !== "docker")
+    return base;
+  return new StackCommandStartError({
+    reason: "runtime",
+    message: base.message,
+    ...(base.detail === undefined ? {} : { detail: base.detail }),
+    suggestion: dockerUnavailableSuggestion(runtimeContext.runtime),
+    cause: base.cause,
+  });
+};
+
 const loadStartConfig = (projectRoot: string, fs: FileSystem.FileSystem, path: Path.Path) =>
   Effect.gen(function* () {
     const config = yield* loadStackConfig(projectRoot);
@@ -296,7 +323,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
                 ),
           ),
         ),
-    ).pipe(Effect.mapError(stackError));
+    ).pipe(Effect.mapError((cause) => stackAcquireError(cause, { selectedRuntime, runtime })));
     const existingServices = yield* stack.services.list.pipe(Effect.mapError(stackError));
     const composition = yield* stack.composition.describe.pipe(Effect.mapError(stackError));
     const currentInstances = yield* Effect.forEach(composition.members, ({ id }) =>

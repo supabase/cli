@@ -377,7 +377,7 @@ describe("slim-services artifact source", () => {
     ),
   );
 
-  it.live("reports the primary checksum failure when every checksum source fails", () =>
+  it.live("names every failed checksum source in the aggregated error", () =>
     Effect.gen(function* () {
       const mirrored: SlimServicesArtifact = {
         ...artifact,
@@ -391,7 +391,10 @@ describe("slim-services artifact source", () => {
         requested.push(requestUrl(input));
         return Promise.resolve(new Response("", { status: 403 }));
       }, slimServicesChecksum(mirrored, immediate).pipe(Effect.exit));
-      expect(errorOf(failed)?.message).toBe("Unable to download https://release.test/SHA256SUMS");
+      expect(errorOf(failed)?.message).toBe(
+        "Unable to resolve the slim-services checksum: https://release.test/SHA256SUMS (HTTP 403); " +
+          "registry.test/supabase/cli/demo:v1.0.0-native-linux-amd64 (HTTP 403)",
+      );
       expect(requested).toEqual([
         "https://release.test/SHA256SUMS",
         "https://registry.test/token?scope=repository:supabase/cli/demo:pull&service=registry.test",
@@ -445,7 +448,10 @@ describe("slim-services artifact source", () => {
             .materialize(request, rejected, expected)
             .pipe(Effect.exit),
         );
-        expect(errorOf(failed)?.message).toBe("Unable to download slim-services archive");
+        const message = errorOf(failed)?.message;
+        expect(message).toContain("Unable to download the slim-services archive");
+        expect(message).toContain("https://release.test/demo.tar.zst");
+        expect(message).toContain("https://bucket.test/bad.tar.zst");
         expect(yield* fs.exists(`${rejected}/bin/demo`)).toBe(false);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
@@ -882,6 +888,49 @@ describe("native artifact catalog", () => {
         expect(served).toEqual([
           "https://ghcr.io/token?scope=repository:supabase/cli/postgrest:pull&service=ghcr.io",
           `https://ghcr.io/v2/supabase/cli/postgrest/manifests/${version}-native-linux-amd64`,
+          `${bucket}/${asset}.manifest.json`,
+          `${bucket}/${asset}.tar.zst`,
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("falls back to the S3 SHA256SUMS checksum when GitHub and ghcr are both blocked", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { version } = yield* resolveArtifact({ service: "rest" });
+        const asset = `postgrest-${version}-linux-amd64`;
+        const archive = yield* compress(tar("bin/postgrest", "postgrest"));
+        const crypto = yield* Crypto.Crypto;
+        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
+        const bucket = `https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/postgrest/${version}`;
+        const served: string[] = [];
+        const fetcher: FetchLike = (input) => {
+          const url = requestUrl(input);
+          if (url.startsWith("https://github.com/") || url.startsWith("https://ghcr.io/"))
+            return Promise.resolve(new Response("", { status: 403 }));
+          served.push(url);
+          if (url === `${bucket}/${asset}.SHA256SUMS`)
+            return Promise.resolve(new Response(`${expected}  ${asset}.tar.zst\n`));
+          if (url.endsWith(".manifest.json"))
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({ service: "postgrest", version, target: "linux-amd64" }),
+              ),
+            );
+          return Promise.resolve(new Response(archive));
+        };
+        const fs = yield* FileSystem.FileSystem;
+        const cacheRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "slim-services-s3-checksum-",
+        });
+        const prepared = yield* withFetch(
+          fetcher,
+          prepareNativeArtifact({ service: "rest" }, cacheRoot, { os: "linux", arch: "x64" }),
+        );
+        expect(yield* fs.readFileString(prepared.executable)).toBe("postgrest");
+        expect(served).toEqual([
+          `${bucket}/${asset}.SHA256SUMS`,
           `${bucket}/${asset}.manifest.json`,
           `${bucket}/${asset}.tar.zst`,
         ]);

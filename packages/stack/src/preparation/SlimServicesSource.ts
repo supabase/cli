@@ -4,6 +4,7 @@ import { HttpClient, HttpClientError } from "effect/unstable/http";
 import { createZstdDecompress } from "node:zlib";
 import { createHash } from "node:crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { errorChainMessage } from "../internal/error-message.ts";
 import type { ArtifactRequest, ArtifactSource } from "./ArtifactStore.ts";
 import { PreparationError } from "./Errors.ts";
 
@@ -34,7 +35,7 @@ export interface SlimServicesArtifact {
   readonly target: "darwin-arm64" | "linux-amd64" | "linux-arm64";
   readonly archive: "tar.zst";
   readonly assetName: string;
-  /** Checksum authorities, tried in order. Download mirrors never supply their own checksum. */
+  /** Checksum authorities, tried in order; a mirror's own checksum file counts only when listed here. */
   readonly checksums: readonly [
     SlimServicesChecksumSource,
     ...ReadonlyArray<SlimServicesChecksumSource>,
@@ -224,30 +225,39 @@ const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* 
     });
 });
 
+/** The failure's cause chain, or its own message when it wraps nothing. */
 const fallbackDetail = (error: PreparationError): string => {
-  const nested = error.cause instanceof PreparationError ? error.cause.message : undefined;
-  return nested === undefined || nested.length === 0
-    ? error.message
-    : `${error.message} (${nested})`;
+  if (error.cause === undefined) return error.message;
+  const chain = errorChainMessage(error.cause);
+  return chain.length > 0 ? chain : error.message;
 };
 
 /**
  * Runs `attempt` against each candidate until one succeeds. When every candidate fails, the
- * returned error is still the primary's. A fallback failure, including a checksum mismatch, is
- * logged as a warning, and a fallback that succeeds names the host it used.
+ * returned error names each attempted source with its failure detail (the sole source's own
+ * error when there was nothing to aggregate). A fallback failure, including a checksum mismatch,
+ * is logged as a warning, and a fallback that succeeds names the host it used.
  */
 const firstSuccess = <T, A, R>(
+  label: string,
   candidates: readonly [T, ...ReadonlyArray<T>],
   describe: (candidate: T) => string,
   attempt: (candidate: T) => Effect.Effect<A, PreparationError, R>,
 ): Effect.Effect<A, PreparationError, R> => {
   const [primary, ...fallbacks] = candidates;
   const fallback = (
-    primaryError: PreparationError,
+    failures: ReadonlyArray<readonly [T, PreparationError]>,
     remaining: ReadonlyArray<T>,
   ): Effect.Effect<A, PreparationError, R> => {
     const [candidate, ...rest] = remaining;
-    if (candidate === undefined) return Effect.fail(primaryError);
+    if (candidate === undefined) {
+      const [sole] = failures;
+      if (failures.length === 1 && sole !== undefined) return Effect.fail(sole[1]);
+      const detail = failures
+        .map(([failed, error]) => `${describe(failed)} (${fallbackDetail(error)})`)
+        .join("; ");
+      return Effect.fail(new PreparationError({ message: `${label}: ${detail}` }));
+    }
     return attempt(candidate).pipe(
       Effect.tap(() => Effect.logInfo(`Slim-services used ${describe(candidate)}`)),
       Effect.tapError((cause) =>
@@ -255,10 +265,12 @@ const firstSuccess = <T, A, R>(
           `Slim-services fallback ${describe(candidate)} failed: ${fallbackDetail(cause)}`,
         ),
       ),
-      Effect.catch(() => fallback(primaryError, rest)),
+      Effect.catch((cause) => fallback([...failures, [candidate, cause] as const], rest)),
     );
   };
-  return attempt(primary).pipe(Effect.catch((primaryError) => fallback(primaryError, fallbacks)));
+  return attempt(primary).pipe(
+    Effect.catch((primaryError) => fallback([[primary, primaryError]], fallbacks)),
+  );
 };
 
 const checksumFor = (contents: string, archiveName: string): string | undefined =>
@@ -322,24 +334,28 @@ export const slimServicesChecksum = Effect.fn("SlimServicesSource.checksum")(fun
   artifact: SlimServicesArtifact,
   backoff: Schedule.Schedule<unknown> = transferBackoff,
 ) {
-  return yield* firstSuccess(artifact.checksums, describeChecksumSource, (source) =>
-    source.kind === "oci"
-      ? ociArchiveDigest(source, backoff)
-      : fetchBytes(source.url, backoff).pipe(
-          Effect.map((bytes) => new TextDecoder().decode(bytes)),
-          Effect.flatMap((contents) => {
-            const checksum = checksumFor(contents, `${artifact.assetName}.tar.zst`);
-            return checksum === undefined || !/^[a-f0-9]{64}$/iu.test(checksum)
-              ? Effect.fail(
-                  new PreparationError({
-                    message: "Slim-services checksum is missing",
-                    service: artifact.service,
-                    version: artifact.version,
-                  }),
-                )
-              : Effect.succeed(checksum.toLowerCase());
-          }),
-        ),
+  return yield* firstSuccess(
+    "Unable to resolve the slim-services checksum",
+    artifact.checksums,
+    describeChecksumSource,
+    (source) =>
+      source.kind === "oci"
+        ? ociArchiveDigest(source, backoff)
+        : fetchBytes(source.url, backoff).pipe(
+            Effect.map((bytes) => new TextDecoder().decode(bytes)),
+            Effect.flatMap((contents) => {
+              const checksum = checksumFor(contents, `${artifact.assetName}.tar.zst`);
+              return checksum === undefined || !/^[a-f0-9]{64}$/iu.test(checksum)
+                ? Effect.fail(
+                    new PreparationError({
+                      message: "Slim-services checksum is missing",
+                      service: artifact.service,
+                      version: artifact.version,
+                    }),
+                  )
+                : Effect.succeed(checksum.toLowerCase());
+            }),
+          ),
   );
 });
 
@@ -496,6 +512,7 @@ export const makeSlimServicesSource = (
         return yield* Effect.gen(function* () {
           const artifact = yield* resolveArtifact(request);
           yield* firstSuccess(
+            "Unable to download the slim-services archive",
             artifact.mirrors,
             (mirror) => mirror.downloadUrl,
             (mirror) =>

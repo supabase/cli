@@ -1,10 +1,11 @@
 import { expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Ref } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, PlatformError, Ref } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import {
   HostProcessError,
   type OwnerExitProbe,
   type OwnerExitProbeResult,
+  ownerExitProbe,
   waitForOwnerExit,
 } from "./HostProcess.ts";
 
@@ -117,5 +118,42 @@ it.effect("rejects an invalid owner PID before probing", () =>
       reason: "invalid-owner-pid",
     });
     expect(yield* Ref.get(attempts)).toBe(0);
+  }),
+);
+
+// The test process itself answers signal 0, so /proc content alone decides the result.
+const statOf = (stat: string) =>
+  FileSystem.makeNoop({ readFileString: () => Effect.succeed(stat) });
+
+it.effect("treats a zombie or dead owner as exited on Linux", () =>
+  Effect.gen(function* () {
+    const probe = (stat: string) => ownerExitProbe(statOf(stat), "linux")(process.pid);
+    expect(yield* probe(`${process.pid} (node) Z 1 1 1 0 -1 4194560`)).toEqual({ state: "absent" });
+    expect(yield* probe(`${process.pid} (node) X 1 1 1 0 -1 4194560`)).toEqual({ state: "absent" });
+    expect(yield* probe(`${process.pid} (my ) weird) proc) Z 1 1 1 0 -1 4194304`)).toEqual({
+      state: "absent",
+    });
+    expect(yield* probe(`${process.pid} (node) S 1 1 1 0 -1 4194560`)).toEqual({
+      state: "present",
+    });
+  }),
+);
+
+it.effect("keeps the signal result when /proc is unreadable or the platform is not Linux", () =>
+  Effect.gen(function* () {
+    const unreadable = FileSystem.makeNoop({
+      readFileString: (path) =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "NotFound",
+            module: "FileSystem",
+            method: "readFileString",
+            pathOrDescriptor: path,
+          }),
+        ),
+    });
+    expect(yield* ownerExitProbe(unreadable, "linux")(process.pid)).toEqual({ state: "present" });
+    const zombie = statOf(`${process.pid} (node) Z 1 1 1 0 -1 4194560`);
+    expect(yield* ownerExitProbe(zombie, "darwin")(process.pid)).toEqual({ state: "present" });
   }),
 );

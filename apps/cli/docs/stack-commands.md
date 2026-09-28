@@ -224,6 +224,8 @@ start configuration without changing the project file. Valid names are `rest`, `
 Excluding `rest` while Studio remains selected is rejected; excluding `analytics` does not affect
 Studio. The effective configuration is
 retained in stack state, so starting without `--exclude` restores the project's configured services.
+When Docker is unreachable, the failure suggests
+`--runtime native` on platforms where native is the default.
 
 `supabase stack stop --all` stops every managed stack while preserving data. Discovery fails closed
 when any registry entry is unreadable, so no partial stop operation is attempted. Individual stop

@@ -4,7 +4,7 @@ import { Context, Crypto, Effect, FileSystem, Layer, Path, Redacted, Stream } fr
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as State from "./State.ts";
-import { launchHost, waitForOwnerExit } from "./HostProcess.ts";
+import { launchHost, ownerExitProbe, waitForOwnerExit } from "./HostProcess.ts";
 import { StackRpc } from "./Rpc.ts";
 import { makeContainerRuntime } from "./runtime/Container.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
@@ -125,7 +125,9 @@ it.live.skipIf(process.platform === "win32")(
         let stoppedB = true;
         const signalAndWait = (endpoint: { pid: number }, signal: NodeJS.Signals) =>
           Effect.sync(() => process.kill(endpoint.pid, signal)).pipe(
-            Effect.andThen(waitForOwnerExit(endpoint.pid).pipe(Effect.timeout("15 seconds"))),
+            Effect.andThen(
+              waitForOwnerExit(endpoint.pid, ownerExitProbe(fs)).pipe(Effect.timeout("15 seconds")),
+            ),
           );
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
@@ -227,7 +229,9 @@ it.live.skipIf(process.platform === "win32")(
         yield* clientFor(endpointA2.port).pipe(
           Effect.flatMap((rpc) => rpc.shutdown({ destroy: true })),
         );
-        yield* waitForOwnerExit(endpointA2.pid).pipe(Effect.timeout("15 seconds"));
+        yield* waitForOwnerExit(endpointA2.pid, ownerExitProbe(fs)).pipe(
+          Effect.timeout("15 seconds"),
+        );
         stoppedA = true;
         activeA = undefined;
         expect(yield* containers(stackId, dataA), "destroy removes A containers").toEqual([]);
@@ -239,7 +243,9 @@ it.live.skipIf(process.platform === "win32")(
         yield* clientFor(endpointB2.port).pipe(
           Effect.flatMap((rpc) => rpc.shutdown({ destroy: true })),
         );
-        yield* waitForOwnerExit(endpointB2.pid).pipe(Effect.timeout("15 seconds"));
+        yield* waitForOwnerExit(endpointB2.pid, ownerExitProbe(fs)).pipe(
+          Effect.timeout("15 seconds"),
+        );
         stoppedB = true;
         activeB = undefined;
         expect(yield* containers(stackId, dataB), "destroy removes B containers").toEqual([]);

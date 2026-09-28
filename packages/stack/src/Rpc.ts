@@ -1,5 +1,6 @@
 import { Data, Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/unstable/rpc";
+import { HostFailureReason } from "./HostProcess.ts";
 import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
 import { CompositionConfig } from "./Orchestrator.ts";
 import { PgProveOptions, PostgresTool } from "./Tools.ts";
@@ -15,6 +16,7 @@ export const StackErrorSchema = Schema.TaggedStruct("StackError", {
   operation: Schema.String,
   message: Schema.String,
   outcomes: Schema.optionalKey(Schema.Array(Outcome)),
+  reason: Schema.optionalKey(HostFailureReason),
 });
 type StackErrorPayload = Omit<Schema.Schema.Type<typeof StackErrorSchema>, "_tag">;
 

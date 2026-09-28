@@ -24,6 +24,7 @@ import {
   controlPortHeld,
   HostProcessError,
   launchHost,
+  ownerExitProbe,
   waitForOwnerExit,
 } from "./HostProcess.ts";
 import { removeStackContainersCommand } from "./runtime/Container.ts";
@@ -103,6 +104,9 @@ const failure = (operation: string, cause: unknown): StackError =>
           : cause instanceof Error
             ? cause.message
             : String(cause),
+        ...(cause instanceof HostProcessError && cause.reason !== undefined
+          ? { reason: cause.reason }
+          : {}),
       });
 
 type Kind = ServiceCreation["service"];
@@ -334,7 +338,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         onSome: (cause) => failure(operation, cause),
       });
       if (!destroy) return yield* shutdownFailure;
-      const exitResult = yield* waitForOwnerExit(endpoint.pid).pipe(
+      const exitResult = yield* waitForOwnerExit(endpoint.pid, ownerExitProbe(fs)).pipe(
         Effect.mapError((cause) => failure("shutdown-exit", cause)),
         Effect.exit,
       );
@@ -353,7 +357,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       }
       return yield* shutdownFailure;
     }
-    yield* waitForOwnerExit(endpoint.pid).pipe(
+    yield* waitForOwnerExit(endpoint.pid, ownerExitProbe(fs)).pipe(
       Effect.mapError((cause) => failure("shutdown-exit", cause)),
     );
     return { runtimeCleanup: "complete" } as const;

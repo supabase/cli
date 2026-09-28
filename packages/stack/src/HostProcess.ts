@@ -1,5 +1,16 @@
 import { NodeHttpServer } from "@effect/platform-node";
-import { Data, Effect, Duration, Exit, Option, Schedule, Schema, Scope, Stream } from "effect";
+import {
+  Data,
+  Effect,
+  Duration,
+  Exit,
+  FileSystem,
+  Option,
+  Schedule,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -18,14 +29,17 @@ export class HostProcessError extends Data.TaggedError("HostProcessError")<{
   readonly cause?: unknown;
   readonly reason?: HostFailureReason;
 }> {}
-type HostFailureReason =
-  | "missing-control-listener"
-  | "connection-failure"
-  | "bind-conflict"
-  | "runtime-unavailable"
-  | "invalid-owner-pid"
-  | "owner-exit-pending"
-  | "owner-exit-probe";
+/** Why an owner process could not be launched, reached, or confirmed exited. */
+export const HostFailureReason = Schema.Literals([
+  "missing-control-listener",
+  "connection-failure",
+  "bind-conflict",
+  "runtime-unavailable",
+  "invalid-owner-pid",
+  "owner-exit-pending",
+  "owner-exit-probe",
+]);
+type HostFailureReason = typeof HostFailureReason.Type;
 const HostIdentity = Schema.Struct({
   projectRoot: Schema.String,
   branchContext: Schema.String,
@@ -260,34 +274,58 @@ export type OwnerExitProbeResult =
   | { readonly state: "inconclusive"; readonly code: "EPERM" };
 export type OwnerExitProbe = (pid: number) => Effect.Effect<OwnerExitProbeResult, HostProcessError>;
 
-/** Probes the captured owner PID with signal 0. */
-const probeOwnerExit: OwnerExitProbe = Effect.fn("HostProcess.probeOwnerExit")(function* (pid) {
-  return yield* Effect.try({
-    try: () => {
-      process.kill(pid, 0);
-      return { state: "present" } as const;
-    },
-    catch: (cause) =>
-      new HostProcessError({
-        operation: "shutdown-exit",
-        message: `Shutdown acknowledged, but probing owner process ${pid} failed: ${String(cause)}`,
-        reason: "owner-exit-probe",
-        cause,
+const zombieProcStates = new Set(["Z", "X"]);
+
+/** The state field follows the last `)`, because `comm` may itself contain spaces and parens. */
+const procStatState = (stat: string): string | undefined =>
+  stat
+    .slice(stat.lastIndexOf(")") + 1)
+    .trim()
+    .split(/\s+/u)[0];
+
+/**
+ * Probes the owner PID with signal 0. A zombie answers it until its parent reaps it, and a sandbox
+ * PID 1 often never does, so on Linux a `Z` or `X` state in `/proc/<pid>/stat` counts as exited.
+ */
+export const ownerExitProbe = (
+  fs: FileSystem.FileSystem,
+  platform: string = process.platform,
+): OwnerExitProbe =>
+  Effect.fn("HostProcess.probeOwnerExit")(function* (pid) {
+    const signalResult = yield* Effect.try({
+      try: () => {
+        process.kill(pid, 0);
+        return { state: "present" } as const;
+      },
+      catch: (cause) =>
+        new HostProcessError({
+          operation: "shutdown-exit",
+          message: `Shutdown acknowledged, but probing owner process ${pid} failed: ${String(cause)}`,
+          reason: "owner-exit-probe",
+          cause,
+        }),
+    }).pipe(
+      Effect.catch((failure): Effect.Effect<OwnerExitProbeResult, HostProcessError> => {
+        const code = causeCode(failure.cause);
+        if (code === "ESRCH") return Effect.succeed({ state: "absent" } as const);
+        if (code === "EPERM") return Effect.succeed({ state: "inconclusive", code } as const);
+        return Effect.fail(failure);
       }),
-  }).pipe(
-    Effect.catch((failure): Effect.Effect<OwnerExitProbeResult, HostProcessError> => {
-      const code = causeCode(failure.cause);
-      if (code === "ESRCH") return Effect.succeed({ state: "absent" } as const);
-      if (code === "EPERM") return Effect.succeed({ state: "inconclusive", code } as const);
-      return Effect.fail(failure);
-    }),
-  );
-});
+    );
+    if (signalResult.state !== "present" || platform !== "linux") return signalResult;
+    const state = yield* fs.readFileString(`/proc/${pid}/stat`).pipe(
+      Effect.map(procStatState),
+      Effect.orElseSucceed(() => undefined),
+    );
+    return state !== undefined && zombieProcStates.has(state)
+      ? ({ state: "absent" } as const)
+      : signalResult;
+  });
 
 /** Waits until the captured owner PID is absent from the process table. */
 export const waitForOwnerExit = Effect.fn("HostProcess.waitForOwnerExit")(function* (
   pid: number,
-  probe: OwnerExitProbe = probeOwnerExit,
+  probe: OwnerExitProbe,
 ) {
   if (!Number.isSafeInteger(pid) || pid <= 0)
     return yield* error(
