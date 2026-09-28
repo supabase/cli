@@ -332,7 +332,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       databaseStatus !== undefined &&
       isServing(databaseStatus) &&
       currentStatuses.every((status) =>
-        status.lifecycle === "running" ? isServing(status) : status.wakeEnabled,
+        status.lifecycle === "running"
+          ? isServing(status)
+          : status.lifecycle !== "starting" && status.wakeEnabled,
       );
     if (fullyStarted) {
       yield* Ref.set(startupComplete, true);
@@ -361,6 +363,20 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       yield* stack.composition.start.pipe(
         Effect.tapError((error) => starting.fail(error.message)),
         Effect.mapError((error) => stackError(error, currentInstances)),
+      );
+      // Composition start awaits only eager members; lazy members that are up must be ready too.
+      const active = new Set(
+        currentStatuses
+          .filter(({ lifecycle }) => lifecycle === "running" || lifecycle === "starting")
+          .map(({ id }) => id),
+      );
+      yield* Effect.forEach(
+        currentInstances.filter(({ id }) => active.has(id)),
+        (instance) => instance.ready,
+        { concurrency: "unbounded", discard: true },
+      ).pipe(
+        Effect.tapError((error) => starting.fail(error.message)),
+        Effect.mapError(stackError),
       );
       yield* Ref.set(startupComplete, true);
       const endpoints = yield* reportEndpoints(currentInstances).pipe(
