@@ -1725,6 +1725,7 @@ describe("db start stack backend", () => {
                     identity: { projectRoot: root, branchContext: "main", stackName: "default" },
                     runtime: "native",
                     instances: [],
+                    lifetime: "detached",
                     composition: { members: [], dependencies: [] },
                     ports: [],
                   },

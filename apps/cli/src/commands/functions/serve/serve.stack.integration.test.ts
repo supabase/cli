@@ -298,6 +298,7 @@ const fixture = (
               identity,
               runtime: "native",
               instances: [],
+              lifetime: "detached",
               composition: { members: [], dependencies: [] },
               ports: [],
             },

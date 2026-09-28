@@ -60,7 +60,9 @@
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/.bun-version",
         "$TURBO_ROOT$/mise.lock",
-        "$TURBO_ROOT$/packages/api/**"
+        "$TURBO_ROOT$/packages/api/**",
+        "$TURBO_ROOT$/packages/stack/package.json",
+        "$TURBO_ROOT$/packages/stack/src/**"
       ],
       "outputs": ["dist/**"]
     },

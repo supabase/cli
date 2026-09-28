@@ -57,6 +57,7 @@ describe("service catalog", () => {
             identity: { projectRoot: root, branchContext: "test", stackName: "catalog" },
             runtime: "docker",
             instances: [],
+            lifetime: "detached",
             composition: { members: [], dependencies: [] },
             ports: [],
           });

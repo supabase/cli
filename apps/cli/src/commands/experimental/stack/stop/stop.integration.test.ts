@@ -114,7 +114,13 @@ describe("stack stop", () => {
             Effect.succeed([
               {
                 ...saved,
-                host: { stackId: f.stack.id, identity: saved.definition.identity, pid: 1, port: 1 },
+                host: {
+                  stackId: f.stack.id,
+                  identity: saved.definition.identity,
+                  pid: 1,
+                  port: 1,
+                  release: "test",
+                },
               },
             ]),
           open: () =>

@@ -155,6 +155,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
             runtime,
             instances: [],
             composition: { members: [{ id, activation: "eager" as const }], dependencies: [] },
+            lifetime: "detached" as const,
             ports: [],
           },
           host: undefined,
