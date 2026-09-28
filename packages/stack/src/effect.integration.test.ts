@@ -1006,3 +1006,62 @@ it.live("plans a Studio public API URL the project sets but not the one the stac
     );
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
+
+it.live("plans a project's own URL for an input whose supplying member is absent", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-plan-unbound-" });
+    const stack = yield* create({
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    });
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        const external = "postgresql://postgres@external.example.test:5432/postgres";
+        const moved = "postgresql://postgres@moved.example.test:5432/postgres";
+        const rest = {
+          service: "rest",
+          config: { databaseUrl: external },
+          endpoints: { http: { port: "auto" } },
+        } as const;
+        const functions = {
+          service: "functions",
+          config: { functionsRoot: `${root}/functions`, databaseUrl: external },
+          endpoints: { http: { port: "auto" } },
+        } as const;
+        const members = yield* stack.composition.supabase([rest, functions]);
+        const restId = members.find(({ service }) => service === "rest")?.id;
+        const functionsId = members.find(({ service }) => service === "functions")?.id;
+
+        expect(yield* stack.composition.plan([rest, functions])).toEqual([
+          { id: restId, service: "rest", member: true, change: "unchanged" },
+          { id: functionsId, service: "functions", member: true, change: "unchanged" },
+        ]);
+        expect(
+          yield* stack.composition.plan([
+            { ...rest, config: { databaseUrl: moved } },
+            { ...functions, config: { ...functions.config, databaseUrl: moved } },
+          ]),
+        ).toEqual([
+          {
+            id: restId,
+            service: "rest",
+            member: true,
+            change: "changed",
+            paths: ["config.databaseUrl"],
+          },
+          {
+            id: functionsId,
+            service: "functions",
+            member: true,
+            change: "changed",
+            paths: ["config.databaseUrl"],
+          },
+        ]);
+      }),
+      destroyTestStack(stack),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);

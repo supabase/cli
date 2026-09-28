@@ -114,11 +114,18 @@ const managedBindings: ReadonlyArray<{
   },
 ];
 
-/** Inputs the composition derives from its shared API endpoint and sibling members. */
-const derivedInputs: Partial<Record<ServiceCreation["service"], ReadonlyArray<string>>> = {
-  auth: ["externalApiUrl"],
-  studio: ["apiUrl", "publicApiUrl", "analyticsApiKey", "functionsRoot"],
-  functions: ["apiUrl", "databaseUrl"],
+/** Inputs the composition derives, each from its shared API endpoint or a sibling member kind. */
+const derivedInputs: Partial<
+  Record<ServiceCreation["service"], Readonly<Record<string, "api" | ServiceCreation["service"]>>>
+> = {
+  auth: { externalApiUrl: "api" },
+  studio: {
+    apiUrl: "api",
+    publicApiUrl: "api",
+    analyticsApiKey: "analytics",
+    functionsRoot: "functions",
+  },
+  functions: { apiUrl: "api", databaseUrl: "database" },
 };
 
 /** Derived inputs a project may set itself; a plan compares one whenever the request sets it. */
@@ -130,9 +137,21 @@ const overridableInputs: Partial<Record<ServiceCreation["service"], ReadonlyArra
 const managedInputs = (service: ServiceCreation["service"]): ReadonlySet<string> =>
   new Set([
     ...managedBindings.filter(({ targetKind }) => targetKind === service).map(({ input }) => input),
-    ...(derivedInputs[service] ?? []),
+    ...Object.keys(derivedInputs[service] ?? {}),
     ...credentialInputNames(service),
   ]);
+
+/** Inputs that sibling member kinds supply to a member of this kind, with their source kind. */
+const siblingInputs = (
+  service: ServiceCreation["service"],
+): ReadonlyArray<readonly [string, ServiceCreation["service"]]> => [
+  ...managedBindings
+    .filter(({ targetKind }) => targetKind === service)
+    .map(({ input, sourceKind }) => [input, sourceKind] as const),
+  ...Object.entries(derivedInputs[service] ?? {}).flatMap(([input, source]) =>
+    source === "api" ? [] : [[input, source] as const],
+  ),
+];
 
 export class SupabaseCompositionError extends Data.TaggedError("SupabaseCompositionError")<{
   readonly message: string;
@@ -260,13 +279,18 @@ const compareCreation = (
   saved: ServiceCreation,
   requested: ServiceCreationInput,
   sharedPort: number | undefined,
+  memberKinds: ReadonlySet<ServiceCreation["service"]>,
 ): CreationChange => {
   const overridable = overridableInputs[requested.service] ?? [];
-  const compared = new Set(
-    Object.entries(requested.config)
+  // Without its supplying member, the composition keeps the project's own value of an input.
+  const compared = new Set([
+    ...Object.entries(requested.config)
       .filter(([key, value]) => value !== undefined && overridable.includes(key))
       .map(([key]) => key),
-  );
+    ...siblingInputs(requested.service)
+      .filter(([, source]) => !memberKinds.has(source))
+      .map(([input]) => input),
+  ]);
   const paths = differences(
     comparable(saved, undefined, compared),
     comparable(requested, sharedPort, compared),
@@ -292,6 +316,9 @@ export const planSupabaseComposition = (
   requested: ReadonlyArray<ServiceCreationInput>,
 ): ReadonlyArray<PlannedInstance> => {
   const members = new Set(saved.composition.members.map(({ id }) => id));
+  const memberKinds = new Set(
+    saved.instances.filter(({ id }) => members.has(id)).map(({ creation }) => creation.service),
+  );
   const requestedKinds = new Set(requested.map(({ service }) => service));
   const ports = fixedApiPorts([
     ...requested,
@@ -309,7 +336,7 @@ export const planSupabaseComposition = (
             id,
             service: creation.service,
             member: members.has(id),
-            ...compareCreation(creation, request, sharedPort),
+            ...compareCreation(creation, request, sharedPort, memberKinds),
           },
         ];
   });
