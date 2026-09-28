@@ -521,6 +521,8 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
   const path = yield* Path.Path;
   const cache = path.join(options.cacheRoot, "stack-database-snapshots");
   const instance = path.join(options.instanceRoot, instanceSnapshotsDirectory);
+  // Both backends share the instance's data and restore stages. Service.storage runs one operation
+  // per instance at a time, so each lock only guards its own store across processes.
   return yield* makeSnapshotStore({
     backends: {
       cache: yield* makeNativeSnapshotBackend({
