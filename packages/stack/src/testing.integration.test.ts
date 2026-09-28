@@ -188,7 +188,8 @@ it.live(
         : Option.none();
       if (Option.isNone(failure)) return yield* Effect.die("Expected a typed startup failure");
       expect(failure.value.operation).toBe("test-startup");
-      expect(failure.value.message).toContain(`${port} is already in use`);
+      // macOS and Windows refuse the port while claiming it; Linux reports the failed bind.
+      expect(failure.value.message).toMatch(new RegExp(`\\b${port}\\b.*\\bin use\\b`));
       expect(failure.value.message).toContain("Services: none");
       expect(failure.value.message).toMatch(/Owner log: .+\/owner\.log$/);
       expect(yield* discover({ stateRoot })).toEqual([]);
