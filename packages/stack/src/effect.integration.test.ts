@@ -618,6 +618,39 @@ it.live("sends no call to a process that took a dead owner's port", () =>
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
+it.live("sends no call to a process that took the port of a replaced owner", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-replaced-owner-port-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* create(options);
+    const mail = yield* stack.services.create({ service: "mail", config: {} });
+    yield* mail.status;
+    const state = yield* State.Service.pipe(
+      Effect.provide(State.layer({ root: options.stateRoot })),
+    );
+    const replaced = yield* state.readHolder(stack.id);
+    if (replaced?.role !== "owner") return yield* Effect.die("Expected a live owner record");
+    const released = yield* watchLeaseRelease(options.stateRoot, stack.id);
+    yield* Effect.sync(() => process.kill(replaced.pid, "SIGKILL"));
+    yield* released;
+    const accepted = yield* countConnectionsOn(replaced.port);
+    const other = yield* open({ ...options, id: stack.id });
+    expect(yield* other.composition.start).toEqual([]);
+
+    const status = yield* Effect.exit(mail.status);
+
+    expect(accepted(), "connections reaching the replaced owner's port").toBe(0);
+    expect(Exit.isSuccess(status) && status.value.id).toBe(mail.id);
+    yield* destroyTestStack(stack);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 it.live(
   "releases each call's owner connection in the call's scope, not the handle's",
   () =>
