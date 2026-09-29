@@ -20,7 +20,13 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration observes exact listener closure.
 import * as Net from "node:net";
-import { launchHost, ownerAuthorization, ownerClient, type HostAccess } from "./HostProcess.ts";
+import {
+  launchHost,
+  ownerAuthorization,
+  ownerClient,
+  waitForOwnerExit,
+  type HostAccess,
+} from "./HostProcess.ts";
 import * as Owner from "./Owner.ts";
 import { OrchestratorError } from "./Orchestrator.ts";
 import { CommandEvent, StackError } from "./Rpc.ts";
@@ -550,7 +556,14 @@ it.live(
         yield* Effect.addFinalizer(() =>
           Ref.get(stopped).pipe(
             Effect.flatMap((value) =>
-              value ? Effect.void : shutdownOwner(access, true).pipe(Effect.ignore),
+              value
+                ? Effect.void
+                : shutdownOwner(access, true).pipe(
+                    // A destroy request is refused once the test started a plain shutdown.
+                    Effect.ignore,
+                    Effect.andThen(waitForOwnerExit(endpoint.pid)),
+                    Effect.ignore,
+                  ),
             ),
           ),
         );
@@ -673,6 +686,8 @@ it.live(
         expect(Exit.isFailure(drainingToolExit)).toBe(true);
         if (Exit.isFailure(drainingToolExit))
           expect(Cause.pretty(drainingToolExit.cause)).toContain("Stack host is draining");
+        // The owner still releases its state files after acknowledging shutdown.
+        yield* waitForOwnerExit(endpoint.pid);
         yield* Ref.set(stopped, true);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
