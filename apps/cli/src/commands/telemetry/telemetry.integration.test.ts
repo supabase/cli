@@ -75,6 +75,7 @@ function setupWithRealAnalytics(dir: string) {
     Layer.provide(runtimeInfoLayer),
     Layer.provide(cliProjectContextLayer),
     Layer.provide(envLayer),
+    Layer.provide(BunServices.layer),
   );
   const analytics = analyticsLayer.pipe(
     Layer.provide(configLayer),
