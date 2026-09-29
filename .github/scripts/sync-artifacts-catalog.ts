@@ -21,6 +21,14 @@
  *
  *   bun .github/scripts/sync-artifacts-catalog.ts hotfix-matches --service <service> \
  *     --upstream <U> --revision <N>
+ *
+ * Validate-payload mode (used by the same workflow, before anything else):
+ * checks an untrusted `slim-release-published` dispatch payload against
+ * anchored charsets and prints it back as `key=value` lines, so a value that
+ * fails validation is never written to `$GITHUB_OUTPUT` in the first place.
+ *
+ *   bun .github/scripts/sync-artifacts-catalog.ts validate-payload --service <service> \
+ *     --upstream <U> --revision <N> --release <R>
  */
 
 import { parseDockerfileServiceImages } from "../../apps/cli/src/shared/services/parse-dockerfile-service-images.ts";
@@ -403,6 +411,11 @@ export function findHotfixMatches(
     ...pins.additional.map((span) => ({ target: "additional" as const, span })),
   ];
 
+  // A service's default pin and every additional pin live on distinct release lines
+  // (`selectEntry`'s `releaseLine` split), so at most one candidate's `upstreamVersion` can equal
+  // `payload.upstream_version`: this can return more than one entry only if the catalog itself
+  // duplicates an upstream version across pins, which `selectEntry` would already treat as
+  // ambiguous.
   const matches: HotfixMatch[] = [];
   for (const candidate of candidates) {
     if (candidate.span.version !== payload.upstream_version) continue;
@@ -414,6 +427,51 @@ export function findHotfixMatches(
     }
   }
   return matches;
+}
+
+/** Every upstream tag format the catalog carries, including Studio's `2026.09.04-sha-5a67366`. */
+const UPSTREAM_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SERVICE_NAME_PATTERN = /^[a-z0-9-]+$/;
+const RELEASE_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*-r(0|[1-9][0-9]*)$/;
+
+/**
+ * Validates an untrusted `slim-release-published` dispatch payload before any of its fields are
+ * written anywhere (a `$GITHUB_OUTPUT` line, a branch name, a PR title, …). Every field is checked
+ * against an anchored charset — `upstream_version` and `release_version` included, not just
+ * `service` and `revision` — so a value carrying a newline or shell/Actions metacharacter is
+ * rejected here instead of being echoed downstream.
+ */
+export function validateSlimReleasePublishedPayload(input: {
+  readonly service: string;
+  readonly upstream_version: string;
+  readonly revision: string;
+  readonly release_version: string;
+}): SlimReleasePublishedPayload {
+  if (!SERVICE_NAME_PATTERN.test(input.service)) {
+    throw new InvalidPayloadError(`invalid service: '${input.service}'`);
+  }
+  if (!UPSTREAM_VERSION_PATTERN.test(input.upstream_version)) {
+    throw new InvalidPayloadError(`invalid upstream_version: '${input.upstream_version}'`);
+  }
+  if (!/^(0|[1-9][0-9]*)$/.test(input.revision)) {
+    throw new InvalidPayloadError(`invalid revision: '${input.revision}'`);
+  }
+  if (!RELEASE_VERSION_PATTERN.test(input.release_version)) {
+    throw new InvalidPayloadError(`invalid release_version: '${input.release_version}'`);
+  }
+  const revision = Number(input.revision);
+  const expected = `${input.upstream_version}-r${revision}`;
+  if (input.release_version !== expected) {
+    throw new InvalidPayloadError(
+      `release_version '${input.release_version}' does not match derived '${expected}'`,
+    );
+  }
+  return {
+    service: input.service,
+    upstream_version: input.upstream_version,
+    revision,
+    release_version: input.release_version,
+  };
 }
 
 function skipReason(alias: string, version: string, entry: SelectedEntry): string | undefined {
@@ -713,7 +771,39 @@ async function runHotfixMatches(argv: ReadonlyArray<string>): Promise<void> {
   console.log(JSON.stringify(matches));
 }
 
+async function runValidatePayload(argv: ReadonlyArray<string>): Promise<void> {
+  const flags = parseFlags(argv);
+  const service = flags.get("service");
+  const upstream = flags.get("upstream");
+  const revision = flags.get("revision");
+  const release = flags.get("release");
+  if (
+    service === undefined ||
+    upstream === undefined ||
+    revision === undefined ||
+    release === undefined
+  ) {
+    throw new InvalidPayloadError(
+      "Usage: sync-artifacts-catalog.ts validate-payload --service <service> --upstream <U> --revision <N> --release <R>",
+    );
+  }
+  const payload = validateSlimReleasePublishedPayload({
+    service,
+    upstream_version: upstream,
+    revision,
+    release_version: release,
+  });
+  console.log(`service=${payload.service}`);
+  console.log(`upstream_version=${payload.upstream_version}`);
+  console.log(`revision=${payload.revision}`);
+  console.log(`release_version=${payload.release_version}`);
+}
+
 async function main(argv: ReadonlyArray<string>): Promise<void> {
+  if (argv[0] === "validate-payload") {
+    await runValidatePayload(argv.slice(1));
+    return;
+  }
   if (argv[0] === "hotfix-matches") {
     await runHotfixMatches(argv.slice(1));
     return;

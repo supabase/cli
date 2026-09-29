@@ -11,6 +11,7 @@ import {
   findHotfixMatches,
   planArtifactCatalogUpdate,
   refreshCatalogPin,
+  validateSlimReleasePublishedPayload,
   type RevisionIo,
 } from "./sync-artifacts-catalog.ts";
 
@@ -167,6 +168,62 @@ describe("findHotfixMatches", () => {
     });
 
     expect(matches).toEqual([{ target: "additional", currentRevision: 3 }]);
+  });
+});
+
+describe("validateSlimReleasePublishedPayload", () => {
+  test("rejects a newline injected into upstream_version", () => {
+    expect(() =>
+      validateSlimReleasePublishedPayload({
+        service: "postgres",
+        upstream_version: "15.14.1.168\nrevision=999\ninjected=yes",
+        revision: "0",
+        release_version: "15.14.1.168\nrevision=999\ninjected=yes-r0",
+      }),
+    ).toThrow(InvalidPayloadError);
+  });
+
+  test("accepts a Studio-style calendar-versioned upstream", () => {
+    const payload = validateSlimReleasePublishedPayload({
+      service: "studio",
+      upstream_version: "2026.09.04-sha-5a67366",
+      revision: "1",
+      release_version: "2026.09.04-sha-5a67366-r1",
+    });
+
+    expect(payload).toEqual({
+      service: "studio",
+      upstream_version: "2026.09.04-sha-5a67366",
+      revision: 1,
+      release_version: "2026.09.04-sha-5a67366-r1",
+    });
+  });
+
+  test("accepts a Postgres four-part upstream version", () => {
+    const payload = validateSlimReleasePublishedPayload({
+      service: "postgres",
+      upstream_version: "15.14.1.168",
+      revision: "3",
+      release_version: "15.14.1.168-r3",
+    });
+
+    expect(payload).toEqual({
+      service: "postgres",
+      upstream_version: "15.14.1.168",
+      revision: 3,
+      release_version: "15.14.1.168-r3",
+    });
+  });
+
+  test("rejects a release_version that does not match the derived value", () => {
+    expect(() =>
+      validateSlimReleasePublishedPayload({
+        service: "postgres",
+        upstream_version: "15.14.1.168",
+        revision: "3",
+        release_version: "15.14.1.168-r4",
+      }),
+    ).toThrow(InvalidPayloadError);
   });
 });
 
