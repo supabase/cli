@@ -1107,6 +1107,11 @@ describe("experimental stack start", () => {
         Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
       );
       expect(error.message).toContain("Cannot connect to the Docker daemon");
+      expect(error).toBeInstanceOf(StackCommandStartError);
+      if (error instanceof StackCommandStartError) {
+        expect(error.reason).toBe("runtime");
+        expect(error.suggestion).toContain("Docker CLI or daemon isn't reachable");
+      }
       expect(output.stderrText).not.toContain("Failed to stop");
 
       const stacks = yield* StackApi.pipe(

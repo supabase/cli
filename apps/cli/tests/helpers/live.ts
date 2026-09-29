@@ -6,6 +6,7 @@ import { Effect, Predicate } from "effect";
 import pg from "pg";
 import { expect, inject, test as vitestTest } from "vitest";
 
+import { rootCaBundle } from "../../src/commands/gen/types/types.shared.ts";
 import {
   type CliRunError,
   makeTempHome,
@@ -276,7 +277,8 @@ export async function queryLiveDb<T extends Record<string, unknown>>(
   query: string,
   values?: ReadonlyArray<unknown>,
 ): Promise<T[]> {
-  const client = new pg.Client({ connectionString: dbUrl });
+  // Verified TLS against the Supabase CA, so the query works whatever the project's SSL enforcement.
+  const client = new pg.Client({ connectionString: dbUrl, ssl: { ca: rootCaBundle() } });
   await client.connect();
   try {
     const result = await client.query(query, values === undefined ? undefined : [...values]);
