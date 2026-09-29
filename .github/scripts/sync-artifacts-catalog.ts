@@ -1,10 +1,19 @@
 /**
- * Pins `packages/stack/src/Artifacts.ts` to the slim workloads named by
- * `apps/cli/src/shared/services/Dockerfile`. Native archive URLs are derived
- * from service + version. An entry that already carries a digest keeps one:
- * the published `ghcr.io/supabase/cli/<service>:<version>` manifest digest.
+ * Pins `packages/stack/src/Artifacts.ts` to committed `supabase/slim-services`
+ * revisions (`<upstream>-r<N>`). Every entry is pinned by content: the GHCR
+ * image digest, plus an archive and manifest sha256 per native target.
  *
- * Run: `bun .github/scripts/sync-artifacts-catalog.ts <dockerfile> <catalog> [base-dockerfile]`
+ * Dependabot mode (used by CI): rewrites every catalog entry whose slim
+ * service moved between `dockerfile` and `base-dockerfile`, to the highest
+ * committed revision of its new upstream version.
+ *
+ *   bun .github/scripts/sync-artifacts-catalog.ts <dockerfile> <catalog> [base-dockerfile]
+ *
+ * Manual mode: refreshes one catalog entry to the highest committed revision
+ * of a given upstream version (or of its currently pinned upstream version,
+ * when `--upstream` is omitted).
+ *
+ *   bun .github/scripts/sync-artifacts-catalog.ts --service <service> [--upstream <U>]
  */
 
 import { parseDockerfileServiceImages } from "../../apps/cli/src/shared/services/parse-dockerfile-service-images.ts";
@@ -14,14 +23,23 @@ import {
   InvalidPayloadError,
   SOURCE_REGISTRY,
   VERSION_PATTERN,
+  checksumFor,
   escapeRegExp,
+  nativeFileNames,
+  nativeObjectUrl,
 } from "./slim-mirror-payload.ts";
 
 export const CATALOG_PATH = "packages/stack/src/Artifacts.ts";
 const DOCKERFILE_PATH = "apps/cli/src/shared/services/Dockerfile";
-const NATIVE_RELEASES = "https://api.github.com/repos/supabase/slim-services/releases/tags";
 
 const SLIM_IMAGE_PREFIX = `${SOURCE_REGISTRY}/`;
+
+/** The three native targets the catalog pins per revision. Kept self-contained; see module docs. */
+const NATIVE_TARGETS = ["darwin-arm64", "linux-amd64", "linux-arm64"] as const;
+type NativeTargetName = (typeof NATIVE_TARGETS)[number];
+
+const RELEASES_API = "https://api.github.com/repos/supabase/slim-services/releases";
+const RELEASE_DOWNLOAD_BASE = "https://github.com/supabase/slim-services/releases/download";
 
 /** Leading numeric component, `v` stripped. Only postgres carries more than one line. */
 function releaseLine(version: string): string {
@@ -30,7 +48,10 @@ function releaseLine(version: string): string {
   return separator === -1 ? withoutPrefix : withoutPrefix.slice(0, separator);
 }
 
-/** True when every numeric prefix of `next` is older than `current`. Equal prefixes are not older. */
+/**
+ * True when every numeric prefix of `next` is older than `current`. Equal prefixes are not
+ * older. Compares upstream versions only; revisions never enter this comparison.
+ */
 function isOlderRelease(next: string, current: string): boolean {
   const nextParts = next.replace(/^[vV]/, "").split(".");
   const currentParts = current.replace(/^[vV]/, "").split(".");
@@ -52,6 +73,7 @@ function leadingInteger(part: string): number | undefined {
 export interface CatalogPinUpdate {
   readonly service: string;
   readonly version: string;
+  readonly revision: number;
   readonly previousVersion: string;
   readonly target: "default" | "additional";
 }
@@ -59,7 +81,7 @@ export interface CatalogPinUpdate {
 export interface SkippedCatalogPin {
   readonly alias: string;
   readonly reason: string;
-  /** OrioleDB has no slim image and must not fail the other pins. */
+  /** OrioleDB and an older Dependabot bump are the non-blocking skips. */
   readonly blocking: boolean;
 }
 
@@ -69,75 +91,254 @@ export interface CatalogPlan {
   readonly skipped: ReadonlyArray<SkippedCatalogPin>;
 }
 
-export type ReleasePublication =
-  | { readonly status: "published"; readonly digest?: string }
-  | { readonly status: "missing" | "lookup-failed" };
-
-/** `definition("<service>", "<version>", "<image>"`. */
-function defaultEntryPattern(service: string): RegExp {
-  const s = escapeRegExp(service);
-  return new RegExp(
-    `(definition\\(\\s*"${s}",\\s*")([^"]+)("\\s*,\\s*")(${escapeRegExp(SLIM_IMAGE_PREFIX)}${s}:[^"]+)(")`,
-  );
+/** Content pin for one resolved `<upstream>-r<N>` revision, ready to serialize into the catalog. */
+interface ResolvedPin {
+  readonly upstreamVersion: string;
+  readonly revision: number;
+  readonly image: string;
+  readonly natives: Readonly<
+    Record<NativeTargetName, { readonly archive: string; readonly manifest: string }>
+  >;
 }
 
-/** Additional release entries: `"<version>": "<image>"`. */
-function additionalEntryPattern(service: string, version?: string): RegExp {
-  const s = escapeRegExp(service);
-  const key = version === undefined ? `[^"]+` : escapeRegExp(version);
-  return new RegExp(
-    `"(${key})"(\\s*:\\s*)"(${escapeRegExp(SLIM_IMAGE_PREFIX)}${s}:[^"]+)"`,
-    version === undefined ? "g" : "",
-  );
+export type RevisionResolution =
+  | { readonly status: "resolved"; readonly pin: ResolvedPin }
+  | {
+      readonly status: "missing" | "incomplete" | "stale" | "lookup-failed";
+      readonly message: string;
+    };
+
+/**
+ * Network ports the resolver needs: the release list (for revision allocation), a release's
+ * `SHA256SUMS` body, the GHCR manifest digest, and a byte source's sha256. Tests stub these
+ * directly, the same way the previous `publication` callback was stubbed.
+ */
+export interface RevisionIo {
+  readonly listReleaseTags: () => Promise<ReadonlyArray<string>>;
+  readonly fetchChecksums: (service: string, releaseVersion: string) => Promise<string | undefined>;
+  readonly imageDigest: (service: string, releaseVersion: string) => Promise<string | undefined>;
+  readonly s3Sha256: (url: string) => Promise<string | undefined>;
 }
 
-function imageHasDigest(image: string): boolean {
-  return /@sha256:[0-9a-f]{64}$/.test(image);
-}
-
-function desiredImage(
-  service: string,
-  version: string,
-  currentImage: string,
-  digest: string,
-): string {
-  const tagged = `${SLIM_IMAGE_PREFIX}${service}:${version}`;
-  if (!imageHasDigest(currentImage)) return tagged;
+function desiredImage(service: string, releaseVersion: string, digest: string): string {
   if (!DIGEST_PATTERN.test(digest)) {
-    throw new InvalidPayloadError(`missing slim digest for ${service}:${version}`);
+    throw new InvalidPayloadError(`missing slim digest for ${service}:${releaseVersion}`);
   }
-  return `${tagged}@${digest}`;
+  return `${SLIM_IMAGE_PREFIX}${service}:${releaseVersion}@${digest}`;
+}
+
+/**
+ * Resolves `service`'s highest committed `<upstream>-r<N>` revision, pinned by content: the
+ * GHCR manifest digest, and every native target's archive and manifest sha256, cross-checked
+ * against the S3 mirror copy. See module docs for the five-step protocol.
+ */
+export async function resolveRevisionPin(
+  service: string,
+  upstream: string,
+  io: RevisionIo,
+): Promise<RevisionResolution> {
+  const tagPattern = new RegExp(
+    `^${escapeRegExp(service)}-${escapeRegExp(upstream)}-r(0|[1-9][0-9]*)$`,
+  );
+  let highest: number | undefined;
+  for (const tag of await io.listReleaseTags()) {
+    const match = tagPattern.exec(tag);
+    if (match === null) continue;
+    const revision = Number(match[1]);
+    if (highest === undefined || revision > highest) highest = revision;
+  }
+  if (highest === undefined) {
+    return {
+      status: "missing",
+      message: `${service}:${upstream} has no published slim-services revision.`,
+    };
+  }
+
+  const releaseVersion = `${upstream}-r${highest}`;
+  const checksums = await io.fetchChecksums(service, releaseVersion);
+  if (checksums === undefined) {
+    return {
+      status: "incomplete",
+      message: `${service}-${releaseVersion} has no SHA256SUMS asset.`,
+    };
+  }
+
+  const natives: Record<string, { archive: string; manifest: string }> = {};
+  for (const target of NATIVE_TARGETS) {
+    const files = nativeFileNames(service, releaseVersion, target);
+    const archive = checksumFor(checksums, files.archive);
+    const manifest = checksumFor(checksums, files.manifest);
+    if (archive === undefined || manifest === undefined) {
+      return {
+        status: "incomplete",
+        message: `${service}-${releaseVersion} SHA256SUMS has no line for ${
+          archive === undefined ? files.archive : files.manifest
+        }.`,
+      };
+    }
+    natives[target] = { archive, manifest };
+  }
+
+  const digest = await io.imageDigest(service, releaseVersion);
+  if (digest === undefined || !DIGEST_PATTERN.test(digest)) {
+    return {
+      status: "lookup-failed",
+      message: `${SLIM_IMAGE_PREFIX}${service}:${releaseVersion} has no published manifest.`,
+    };
+  }
+
+  for (const target of NATIVE_TARGETS) {
+    const files = nativeFileNames(service, releaseVersion, target);
+    for (const part of ["archive", "manifest"] as const) {
+      const url = nativeObjectUrl(service, releaseVersion, files[part]);
+      const actual = await io.s3Sha256(url);
+      if (actual === undefined || actual !== natives[target]?.[part]) {
+        return {
+          status: "stale",
+          message: `S3 copy of ${releaseVersion} ${target} is stale; run the slim-services mirror backfill`,
+        };
+      }
+    }
+  }
+
+  return {
+    status: "resolved",
+    pin: {
+      upstreamVersion: upstream,
+      revision: highest,
+      image: desiredImage(service, releaseVersion, digest),
+      natives: natives as Record<NativeTargetName, { archive: string; manifest: string }>,
+    },
+  };
+}
+
+/** Serializes a resolved pin into the object literal `Artifacts.ts` embeds, in catalog order. */
+function serializePin(pin: ResolvedPin): string {
+  const natives = NATIVE_TARGETS.map((target) => {
+    const native = pin.natives[target];
+    return `"${target}": { archive: "${native.archive}", manifest: "${native.manifest}" }`;
+  }).join(", ");
+  return `{ upstreamVersion: "${pin.upstreamVersion}", revision: ${pin.revision}, image: "${pin.image}", natives: { ${natives} } }`;
+}
+
+/** Matches `Artifacts.ts`'s emitted pin literal, in the exact shape `serializePin` writes. */
+function pinLiteralSource(): string {
+  const nativeEntries = NATIVE_TARGETS.map(
+    (target) =>
+      `"${target}":\\s*\\{\\s*archive:\\s*"([0-9a-f]{64})"\\s*,\\s*manifest:\\s*"([0-9a-f]{64})"\\s*\\},?`,
+  ).join("\\s*");
+  return `\\{\\s*upstreamVersion:\\s*"([^"]+)"\\s*,\\s*revision:\\s*(\\d+)\\s*,\\s*image:\\s*"([^"]+)"\\s*,\\s*natives:\\s*\\{\\s*${nativeEntries}\\s*\\},?\\s*\\}`;
+}
+
+/** `placeholderPin("<repository>", "<upstreamVersion>")`, B1's stand-in for an unresolved pin. */
+function placeholderCallSource(): string {
+  return `placeholderPin\\(\\s*"[a-z0-9-]+"\\s*,\\s*"([^"]+)"\\s*\\)`;
+}
+
+interface PinSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly version: string;
+}
+
+/** Matches a pin expression (placeholder call or resolved literal) starting exactly at `index`. */
+function matchPinAt(source: string, index: number): PinSpan | undefined {
+  const placeholder = new RegExp(placeholderCallSource(), "y");
+  placeholder.lastIndex = index;
+  const placeholderMatch = placeholder.exec(source);
+  if (placeholderMatch !== null) {
+    return {
+      start: index,
+      end: index + placeholderMatch[0].length,
+      version: placeholderMatch[1] ?? "",
+    };
+  }
+  const literal = new RegExp(pinLiteralSource(), "y");
+  literal.lastIndex = index;
+  const literalMatch = literal.exec(source);
+  if (literalMatch !== null) {
+    return { start: index, end: index + literalMatch[0].length, version: literalMatch[1] ?? "" };
+  }
+  return undefined;
+}
+
+/** Index right after the matching `)` for the `(` at `afterOpenParenIndex - 1`. */
+function scanToMatchingParen(source: string, afterOpenParenIndex: number): number {
+  let depth = 1;
+  let index = afterOpenParenIndex;
+  while (index < source.length && depth > 0) {
+    const ch = source[index];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      const quote = ch;
+      index++;
+      while (index < source.length && source[index] !== quote) {
+        if (source[index] === "\\") index++;
+        index++;
+      }
+    } else if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    index++;
+  }
+  return index;
 }
 
 type SelectedEntry =
-  | { readonly kind: "default" | "additional"; readonly version: string; readonly image: string }
+  | { readonly kind: "default" | "additional"; readonly version: string; readonly span: PinSpan }
   | { readonly kind: "unmodelled-service" }
   | { readonly kind: "unmodelled-release-line"; readonly known: ReadonlyArray<string> };
 
-function selectEntry(source: string, service: string, version: string): SelectedEntry {
-  const defaultMatch = defaultEntryPattern(service).exec(source);
-  if (defaultMatch === null) return { kind: "unmodelled-service" };
+/**
+ * Locates `service`'s pin expression in `source`: the `definition("<service>", <pin>, ...)`
+ * default pin, and, when `version` is given, whichever pin (default or additional) sits on its
+ * release line. With no `version`, returns the default pin unconditionally.
+ */
+function selectEntry(source: string, service: string, version: string | undefined): SelectedEntry {
+  const prefix = new RegExp(`definition\\(\\s*"${escapeRegExp(service)}"\\s*,\\s*`);
+  const prefixMatch = prefix.exec(source);
+  if (prefixMatch === null) return { kind: "unmodelled-service" };
+  const pinIndex = prefixMatch.index + prefixMatch[0].length;
+  const defaultPin = matchPinAt(source, pinIndex);
+  if (defaultPin === undefined) return { kind: "unmodelled-service" };
 
-  const currentDefaultVersion = defaultMatch[2] ?? "";
-  const currentDefaultImage = defaultMatch[4] ?? "";
-  const additional = [...source.matchAll(additionalEntryPattern(service))].map((match) => ({
-    version: match[1] ?? "",
-    image: match[3] ?? "",
-  }));
-  const bumpsDefault =
-    additional.length === 0 || releaseLine(version) === releaseLine(currentDefaultVersion);
-  if (bumpsDefault) {
-    return { kind: "default", version: currentDefaultVersion, image: currentDefaultImage };
+  if (version === undefined) {
+    return { kind: "default", version: defaultPin.version, span: defaultPin };
   }
 
+  const openParenIndex = prefixMatch.index + prefixMatch[0].indexOf("(");
+  const callEnd = scanToMatchingParen(source, openParenIndex + 1);
+
+  const additional: Array<{ version: string; span: PinSpan }> = [];
+  const keyPattern = /"([^"]+)"\s*:\s*/g;
+  keyPattern.lastIndex = defaultPin.end;
+  for (
+    let keyMatch = keyPattern.exec(source);
+    keyMatch !== null;
+    keyMatch = keyPattern.exec(source)
+  ) {
+    if (keyMatch.index >= callEnd) break;
+    const valueStart = keyMatch.index + keyMatch[0].length;
+    const pin = matchPinAt(source, valueStart);
+    if (pin === undefined) {
+      keyPattern.lastIndex = valueStart;
+      continue;
+    }
+    additional.push({ version: pin.version, span: pin });
+    keyPattern.lastIndex = pin.end;
+  }
+
+  const bumpsDefault =
+    additional.length === 0 || releaseLine(version) === releaseLine(defaultPin.version);
+  if (bumpsDefault) {
+    return { kind: "default", version: defaultPin.version, span: defaultPin };
+  }
   const sameLine = additional.find((entry) => releaseLine(entry.version) === releaseLine(version));
   if (sameLine === undefined) {
     return {
       kind: "unmodelled-release-line",
-      known: [currentDefaultVersion, ...additional.map((entry) => entry.version)],
+      known: [defaultPin.version, ...additional.map((entry) => entry.version)],
     };
   }
-  return { kind: "additional", version: sameLine.version, image: sameLine.image };
+  return { kind: "additional", version: sameLine.version, span: sameLine.span };
 }
 
 function skipReason(alias: string, version: string, entry: SelectedEntry): string | undefined {
@@ -159,65 +360,35 @@ function slimVersions(dockerfile: string): ReadonlyMap<string, string> {
   return versions;
 }
 
-type PinResult =
-  | {
-      readonly kind: "updated";
-      readonly source: string;
-      readonly previousVersion: string;
-      readonly target: "default" | "additional";
-    }
-  | { readonly kind: "unchanged" };
+const normalizeText = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-function pinService(
+/** Writes `pin` over `entry`'s span in `source`, or returns `source` unchanged when it already matches. */
+function writePin(
   source: string,
-  service: string,
-  version: string,
-  digest: string | undefined,
-): PinResult {
-  const entry = selectEntry(source, service, version);
-  if (entry.kind !== "default" && entry.kind !== "additional") {
-    throw new InvalidPayloadError(`${service} ${version} is not a catalog entry.`);
-  }
-  if (imageHasDigest(entry.image) && (digest === undefined || !DIGEST_PATTERN.test(digest))) {
-    throw new InvalidPayloadError(`missing slim digest for ${service}:${version}`);
-  }
-  const desired = desiredImage(service, version, entry.image, digest ?? "");
-  if (entry.version === version && entry.image === desired) return { kind: "unchanged" };
-
-  if (entry.kind === "default") {
-    return {
-      kind: "updated",
-      source: source.replace(
-        defaultEntryPattern(service),
-        (_full, prefix: string, _version: string, mid: string, _image: string, suffix: string) =>
-          `${prefix}${version}${mid}${desired}${suffix}`,
-      ),
-      previousVersion: entry.version,
-      target: "default",
-    };
-  }
-
+  entry: Extract<SelectedEntry, { kind: "default" | "additional" }>,
+  pin: ResolvedPin,
+): { readonly source: string; readonly changed: boolean } {
+  const desired = serializePin(pin);
+  const current = source.slice(entry.span.start, entry.span.end);
+  if (normalizeText(current) === normalizeText(desired)) return { source, changed: false };
   return {
-    kind: "updated",
-    source: source.replace(
-      additionalEntryPattern(service, entry.version),
-      (_full, _key: string, separator: string) => `"${version}"${separator}"${desired}"`,
-    ),
-    previousVersion: entry.version,
-    target: "additional",
+    source: source.slice(0, entry.span.start) + desired + source.slice(entry.span.end),
+    changed: true,
   };
 }
 
 /**
- * Rewrites `catalog` from Dockerfile tags that differ from `baseDockerfile`.
- * With no base, every slim tag is in scope. A pin that cannot be applied is
- * reported in `skipped`. OrioleDB is the only non-blocking skip.
+ * Rewrites `catalog` from Dockerfile tags that differ from `baseDockerfile`, pinning each to its
+ * upstream's highest committed slim-services revision. With no base, every slim tag is in scope.
+ * A pin that cannot be applied is reported in `skipped`. OrioleDB and a Dependabot bump older
+ * than the current catalog pin are the non-blocking skips; the catalog is allowed to lead the
+ * Dockerfile until Dependabot catches up.
  */
 export async function planArtifactCatalogUpdate(input: {
   readonly dockerfile: string;
   readonly baseDockerfile?: string;
   readonly catalog: string;
-  readonly publication: (service: string, version: string) => Promise<ReleasePublication>;
+  readonly io: RevisionIo;
 }): Promise<CatalogPlan> {
   let source = input.catalog;
   const updates: CatalogPinUpdate[] = [];
@@ -254,112 +425,201 @@ export async function planArtifactCatalogUpdate(input: {
       skipped.push({
         alias: from.alias,
         reason: `${pin.service} ${pin.version} is older than the catalog pin ${entry.version}.`,
-        blocking: true,
+        blocking: false,
       });
       continue;
     }
-    if (entry.version === pin.version && !imageHasDigest(entry.image)) continue;
 
-    const release = await input.publication(pin.service, pin.version);
-    if (release.status !== "published") {
-      skipped.push({
-        alias: from.alias,
-        reason:
-          release.status === "missing"
-            ? `${pin.service}:${pin.version} has no published slim image and native release.`
-            : `${pin.service}:${pin.version} publication check failed.`,
-        blocking: true,
-      });
+    const resolution = await resolveRevisionPin(pin.service, pin.version, input.io);
+    if (resolution.status !== "resolved") {
+      skipped.push({ alias: from.alias, reason: resolution.message, blocking: true });
       continue;
     }
-    const digest = imageHasDigest(entry.image) ? release.digest : undefined;
-    if (imageHasDigest(entry.image) && (digest === undefined || !DIGEST_PATTERN.test(digest))) {
-      skipped.push({
-        alias: from.alias,
-        reason: `${pin.service}:${pin.version} has no published slim manifest.`,
-        blocking: true,
-      });
-      continue;
-    }
-    const result = pinService(source, pin.service, pin.version, digest);
-    if (result.kind === "unchanged") continue;
-    source = result.source;
+    const written = writePin(source, entry, resolution.pin);
+    if (!written.changed) continue;
+    source = written.source;
     updates.push({
       service: pin.service,
       version: pin.version,
-      previousVersion: result.previousVersion,
-      target: result.target,
+      revision: resolution.pin.revision,
+      previousVersion: entry.version,
+      target: entry.kind,
     });
   }
 
   return { source, updates, skipped };
 }
 
-type Probe = "published" | "missing" | "lookup-failed";
-
-async function probeManifest(reference: string): Promise<{ probe: Probe; digest?: string }> {
-  const proc = Bun.spawn(["regctl", "manifest", "head", reference], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exit] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  const digest = stdout.trim();
-  if (exit === 0 && DIGEST_PATTERN.test(digest)) return { probe: "published", digest };
-  const detail = stderr.toLowerCase();
-  if (
-    detail.includes("manifest unknown") ||
-    detail.includes("name unknown") ||
-    detail.includes("not found") ||
-    detail.includes("404")
-  ) {
-    return { probe: "missing" };
-  }
-  const message = stderr.trim();
-  console.log(
-    `::warning ::${reference} publication check failed${message === "" ? "" : `: ${message}`}`,
-  );
-  return { probe: "lookup-failed" };
+export interface CatalogRefreshResult {
+  readonly source: string;
+  readonly update?: CatalogPinUpdate;
 }
 
-async function probeNativeRelease(service: string, version: string): Promise<Probe> {
-  const tag = `${service}-${version}`;
+/**
+ * Refreshes one catalog entry to the highest committed revision of `upstream` (or, when omitted,
+ * of its currently pinned upstream version). Pure aside from `io`: callers own reading and
+ * writing `Artifacts.ts`. This is what the manual CLI mode calls, and what a later hotfix pickup
+ * workflow can call directly with `{service, upstream_version}` from its dispatch payload.
+ */
+export async function refreshCatalogPin(input: {
+  readonly catalog: string;
+  readonly service: string;
+  readonly upstream?: string;
+  readonly io: RevisionIo;
+}): Promise<CatalogRefreshResult> {
+  const entry = selectEntry(input.catalog, input.service, input.upstream);
+  if (entry.kind === "unmodelled-service") {
+    throw new InvalidPayloadError(`${CATALOG_PATH} has no slim entry for ${input.service}.`);
+  }
+  if (entry.kind === "unmodelled-release-line") {
+    throw new InvalidPayloadError(
+      `${input.service} ${input.upstream ?? ""} is not on a release line ${CATALOG_PATH} carries (${entry.known.join(", ")}).`,
+    );
+  }
+  const upstream = input.upstream ?? entry.version;
+  const resolution = await resolveRevisionPin(input.service, upstream, input.io);
+  if (resolution.status !== "resolved") {
+    throw new InvalidPayloadError(resolution.message);
+  }
+  const written = writePin(input.catalog, entry, resolution.pin);
+  if (!written.changed) return { source: input.catalog };
+  return {
+    source: written.source,
+    update: {
+      service: input.service,
+      version: upstream,
+      revision: resolution.pin.revision,
+      previousVersion: entry.version,
+      target: entry.kind,
+    },
+  };
+}
+
+function githubHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "User-Agent": "supabase-cli-catalog-sync",
   };
   const token = process.env.GITHUB_TOKEN;
   if (token !== undefined && token !== "") headers.Authorization = `Bearer ${token}`;
-  try {
-    const response = await fetch(`${NATIVE_RELEASES}/${encodeURIComponent(tag)}`, { headers });
-    if (response.status === 200) return "published";
-    if (response.status === 404) return "missing";
-    console.log(`::warning ::${tag} native release check returned HTTP ${response.status}.`);
-    return "lookup-failed";
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.log(`::warning ::${tag} native release check failed: ${message}`);
-    return "lookup-failed";
-  }
+  return headers;
 }
 
-async function lookupPublication(service: string, version: string): Promise<ReleasePublication> {
-  const reference = `${SLIM_IMAGE_PREFIX}${service}:${version}`;
-  const [manifest, native] = await Promise.all([
-    probeManifest(reference),
-    probeNativeRelease(service, version),
-  ]);
-  if (manifest.probe === "lookup-failed" || native === "lookup-failed") {
-    return { status: "lookup-failed" };
+async function listReleaseTags(): Promise<ReadonlyArray<string>> {
+  const tags: string[] = [];
+  for (let page = 1; ; page++) {
+    const response = await fetch(`${RELEASES_API}?per_page=100&page=${page}`, {
+      headers: githubHeaders(),
+    });
+    if (!response.ok) {
+      throw new InvalidPayloadError(
+        `slim-services releases list failed (HTTP ${response.status}).`,
+      );
+    }
+    const batch: unknown = await response.json();
+    if (!Array.isArray(batch)) {
+      throw new InvalidPayloadError("Malformed slim-services releases response.");
+    }
+    for (const item of batch) {
+      const tagName = (item as { tag_name?: unknown } | null)?.tag_name;
+      if (typeof tagName === "string") tags.push(tagName);
+    }
+    if (batch.length < 100) break;
   }
-  if (manifest.probe === "missing" || native === "missing") return { status: "missing" };
-  return { status: "published", digest: manifest.digest };
+  return tags;
+}
+
+async function fetchChecksums(
+  service: string,
+  releaseVersion: string,
+): Promise<string | undefined> {
+  const response = await fetch(`${RELEASE_DOWNLOAD_BASE}/${service}-${releaseVersion}/SHA256SUMS`);
+  if (response.status === 404) return undefined;
+  if (!response.ok) {
+    throw new InvalidPayloadError(
+      `SHA256SUMS download failed for ${service}-${releaseVersion} (HTTP ${response.status}).`,
+    );
+  }
+  return response.text();
+}
+
+async function imageDigest(service: string, releaseVersion: string): Promise<string | undefined> {
+  const reference = `${SLIM_IMAGE_PREFIX}${service}:${releaseVersion}`;
+  const proc = Bun.spawn(["regctl", "manifest", "head", reference], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exit] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  const digest = stdout.trim();
+  return exit === 0 && DIGEST_PATTERN.test(digest) ? digest : undefined;
+}
+
+async function s3Sha256(url: string): Promise<string | undefined> {
+  const response = await fetch(url);
+  if (!response.ok) return undefined;
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(new Uint8Array(await response.arrayBuffer()));
+  return hasher.digest("hex");
+}
+
+function defaultRevisionIo(): RevisionIo {
+  return { listReleaseTags, fetchChecksums, imageDigest, s3Sha256 };
+}
+
+function parseFlags(argv: ReadonlyArray<string>): ReadonlyMap<string, string> {
+  const flags = new Map<string, string>();
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index];
+    if (arg === undefined || !arg.startsWith("--")) {
+      throw new InvalidPayloadError(`unexpected argument '${arg ?? ""}'`);
+    }
+    const key = arg.slice(2);
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new InvalidPayloadError(`missing value for --${key}`);
+    }
+    flags.set(key, value);
+    index++;
+  }
+  return flags;
+}
+
+async function runManual(argv: ReadonlyArray<string>): Promise<void> {
+  const flags = parseFlags(argv);
+  const service = flags.get("service");
+  if (service === undefined) {
+    throw new InvalidPayloadError(
+      "Usage: sync-artifacts-catalog.ts --service <service> [--upstream <U>]",
+    );
+  }
+  const catalogPath = CATALOG_PATH;
+  const catalog = await Bun.file(catalogPath).text();
+  const result = await refreshCatalogPin({
+    catalog,
+    service,
+    upstream: flags.get("upstream"),
+    io: defaultRevisionIo(),
+  });
+  if (result.update === undefined) {
+    console.log(`${service} already pins the highest committed revision.`);
+    return;
+  }
+  await Bun.write(catalogPath, result.source);
+  console.log(
+    `Pinned ${service} ${result.update.target} ${result.update.previousVersion} -> ${result.update.version} r${result.update.revision}.`,
+  );
 }
 
 async function main(argv: ReadonlyArray<string>): Promise<void> {
+  if (argv[0]?.startsWith("--") === true) {
+    await runManual(argv);
+    return;
+  }
+
   const [dockerfilePath = DOCKERFILE_PATH, catalogPath = CATALOG_PATH, baseDockerfilePath] = argv;
   const dockerfile = await Bun.file(dockerfilePath).text();
   const catalog = await Bun.file(catalogPath).text();
@@ -369,7 +629,7 @@ async function main(argv: ReadonlyArray<string>): Promise<void> {
     dockerfile,
     baseDockerfile,
     catalog,
-    publication: lookupPublication,
+    io: defaultRevisionIo(),
   });
   for (const skip of plan.skipped) {
     console.log(`::warning ::Left ${skip.alias} unchanged: ${skip.reason}`);
@@ -385,7 +645,7 @@ async function main(argv: ReadonlyArray<string>): Promise<void> {
   }
   for (const update of plan.updates) {
     console.log(
-      `Pinned ${update.service} ${update.target} ${update.previousVersion} -> ${update.version}.`,
+      `Pinned ${update.service} ${update.target} ${update.previousVersion} -> ${update.version} r${update.revision}.`,
     );
   }
 }
