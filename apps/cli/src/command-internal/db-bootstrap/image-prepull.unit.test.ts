@@ -49,11 +49,22 @@ function mockSpawner(
   };
 }
 
+const backoffClockLimitSeconds = 120;
+
 /** Steps `TestClock` a second at a time through the pull backoff until `fiber` settles. */
 const joinAdvancingClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
   Effect.gen(function* () {
-    for (let second = 0; second < 120 && fiber.pollUnsafe() === undefined; second++) {
+    for (
+      let second = 0;
+      second < backoffClockLimitSeconds && fiber.pollUnsafe() === undefined;
+      second++
+    ) {
       yield* TestClock.adjust("1 seconds");
+    }
+    if (fiber.pollUnsafe() === undefined) {
+      return yield* Effect.die(
+        `fiber still pending after ${backoffClockLimitSeconds} virtual seconds of pull backoff`,
+      );
     }
     return yield* Fiber.join(fiber);
   });
