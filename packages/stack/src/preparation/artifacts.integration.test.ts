@@ -401,7 +401,9 @@ describe("verified native artifact preparation", () => {
         };
         const exit = yield* store.prepare(wider).pipe(Effect.exit);
 
-        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
+        const error = errorOf(exit);
+        expect(error).toBeInstanceOf(ArtifactIntegrityError);
+        expect(error?.message).toContain(`remove ${published.path} to download it again`);
         expect(yield* fs.exists(published.path)).toBe(true);
         expect((yield* fs.stat(published.path)).ino).toEqual(publishedIno);
       }),

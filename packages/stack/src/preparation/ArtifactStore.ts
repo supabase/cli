@@ -511,7 +511,6 @@ const ensureExecutableFile = (
   );
 };
 
-/** A request identifies a different artifact than the one published at this key. */
 const identityMismatch = (request: ArtifactRequest, metadata: ArtifactMetadata): boolean =>
   metadata.key !== request.key || metadata.executablePath !== request.executablePath;
 
@@ -694,8 +693,8 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
       const cachedMetadata = yield* readMetadata(fs, metadataPath);
       if (Option.isNone(cachedMetadata)) return Option.none();
       const metadata = cachedMetadata.value;
-      // A key identifies immutable content: only a different key or executable is a miss, and
-      // paths a request needs beyond the recorded ones are checked against the published tree.
+      // A key names immutable content and sources unpack whole archives, so only a different key
+      // or executable is a miss; paths beyond the recorded ones are checked in the published tree.
       if (identityMismatch(request, metadata)) return Option.none();
       const sha256 = yield* sha256Of(request, metadata);
       const newPaths = unrecordedRequiredPaths(request, metadata);
@@ -718,7 +717,14 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
       // validation a fresh publish applies, before its kind is trusted and recorded.
       const newSafePaths =
         newPaths.length > 0
-          ? yield* validateFreshRuntimePaths(fs, path, target, realRoot.value, newPaths)
+          ? yield* validateFreshRuntimePaths(fs, path, target, realRoot.value, newPaths).pipe(
+              Effect.mapError((cause) =>
+                metadataError(
+                  `Cached artifact ${request.key} cannot serve newly required runtime paths (${cause.message}); remove ${target} to download it again`,
+                  { key: request.key, path: target, cause },
+                ),
+              ),
+            )
           : {};
       const safePaths = { ...recordedSafePaths, ...newSafePaths };
       if (newPaths.length > 0) {
