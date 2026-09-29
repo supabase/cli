@@ -69,7 +69,19 @@ export const automaticRuntimeNotice = (
 export const selectStackRuntime = Effect.fn("StackRuntime.select")(function* (
   requested: StackRuntime | undefined,
 ) {
-  if (requested !== undefined) return requested;
+  if (requested !== undefined) {
+    if (requested === "native") {
+      const { platform, arch } = yield* RuntimeInfo;
+      // Fail before a stack is created; the runtime's own check only runs mid-start.
+      if (defaultRuntime({ os: platform, arch }) !== "native")
+        return yield* new StackRuntimeSelectionError({
+          message: `Native artifacts are unsupported on ${platform}/${arch}.`,
+          suggestion:
+            "Start Docker or Podman and rerun with --runtime docker or --runtime podman; destroy an existing native stack first with supabase stack destroy.",
+        });
+    }
+    return requested;
+  }
   const spawner = yield* ChildProcessSpawner;
   for (const probe of engineProbes) {
     if (yield* engineReachable(spawner, probe)) return probe.runtime;

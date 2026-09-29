@@ -231,15 +231,19 @@ export const textOutputLayer = Layer.effect(
             render();
           };
 
-          timeout = setTimeout(() => {
-            if (settled) {
-              return;
-            }
-            task = spinner();
-            shown = true;
-            task.start(currentMessage);
-            timeout = undefined;
-          }, TASK_SPINNER_DELAY_MS);
+          // clack's spinner writes cursor/animation escape codes to stdout;
+          // never schedule it when stdout is not a TTY.
+          if (tty.stdoutIsTty) {
+            timeout = setTimeout(() => {
+              if (settled) {
+                return;
+              }
+              task = spinner();
+              shown = true;
+              task.start(currentMessage);
+              timeout = undefined;
+            }, TASK_SPINNER_DELAY_MS);
+          }
 
           return {
             message: (nextMessage: string) =>

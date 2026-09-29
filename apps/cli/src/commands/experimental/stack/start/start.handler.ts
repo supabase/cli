@@ -617,6 +617,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             emitSummary: false,
             interactive: false,
             yes: true,
+            // Non-interactive prompts here would fake a `[Y/n]` question nobody answers.
+            promptless: true,
             credentials,
             resolvedConfig: { config: context.config, document: context.loaded?.document },
             projectEnvValues: toml.projectEnv,

@@ -1063,31 +1063,36 @@ describe("db reset", () => {
         args: ["db", "reset", "--local"],
         isLocal: true,
       });
-      return Effect.gen(function* () {
-        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain("Resetting local database...");
-        expect(out.stderrText).toContain("Recreating database...\n");
-        expect(removedContainers(child.spawned)).toContain(DB_ID);
-        expect(removedVolumes(child.spawned)).toContain(DB_ID);
-        expect(createArgs(child.spawned)).not.toBeUndefined();
-        // Default config: realtime, storage, and auth are all enabled (PG >= 15 default).
-        expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
-        expect(out.stderrText).toContain("Restarting containers...\n");
-        // Satellite restarts (storage/auth/realtime/pooler), then Kong reload.
-        expect(restartedContainers(child.spawned)).toEqual(
-          expect.arrayContaining([
-            "supabase_storage_test",
-            "supabase_auth_test",
-            "supabase_realtime_test",
-            "supabase_pooler_test",
-          ]),
-        );
-        expect(kongReloadCalls(child.spawned)).toHaveLength(1);
-        expect(out.stderrText).toContain("Finished ");
-        expect(out.stderrText).toContain("on branch ");
-        // Confirms the single `Effect.ensuring` finalizer still fires exactly once.
-        expect(telemetry.flushCount).toBe(1);
-      });
+      return withEnvVar(
+        "GITHUB_HEAD_REF",
+        undefined,
+        Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("Resetting local database...");
+          expect(out.stderrText).toContain("Recreating database...\n");
+          expect(removedContainers(child.spawned)).toContain(DB_ID);
+          expect(removedVolumes(child.spawned)).toContain(DB_ID);
+          expect(createArgs(child.spawned)).not.toBeUndefined();
+          // Default config: realtime, storage, and auth are all enabled (PG >= 15 default).
+          expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
+          expect(out.stderrText).toContain("Restarting containers...\n");
+          // Satellite restarts (storage/auth/realtime/pooler), then Kong reload.
+          expect(restartedContainers(child.spawned)).toEqual(
+            expect.arrayContaining([
+              "supabase_storage_test",
+              "supabase_auth_test",
+              "supabase_realtime_test",
+              "supabase_pooler_test",
+            ]),
+          );
+          expect(kongReloadCalls(child.spawned)).toHaveLength(1);
+          // The temp workdir sits outside any git checkout, so the branch is unknown and
+          // the "Finished" line omits the clause instead of falsely claiming "main".
+          expect(out.stderrText).toContain("Finished supabase db reset.\n");
+          // Confirms the single `Effect.ensuring` finalizer still fires exactly once.
+          expect(telemetry.flushCount).toBe(1);
+        }),
+      );
     });
 
     it.live(

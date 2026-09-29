@@ -111,6 +111,74 @@ describe("detectGitBranch", () => {
     }).pipe(Effect.provide(withCwd(root)));
   });
 
+  it.live("resolves a worktree's `.git` gitlink file to its own HEAD", () => {
+    const original7 = process.env["GITHUB_HEAD_REF"];
+    delete process.env["GITHUB_HEAD_REF"];
+    // Mirrors `git worktree add`: the worktree's `.git` is a FILE pointing at the
+    // real gitdir, nested under the main checkout's `.git/worktrees/<name>`.
+    const main = mkdtempSync(join(tmpdir(), "git-branch-main-"));
+    mkdirSync(join(main, ".git"));
+    writeFileSync(join(main, ".git", "HEAD"), "ref: refs/heads/develop\n");
+    const worktreeGitDir = join(main, ".git", "worktrees", "feature");
+    mkdirSync(worktreeGitDir, { recursive: true });
+    writeFileSync(join(worktreeGitDir, "HEAD"), "ref: refs/heads/feature-x\n");
+    const worktree = mkdtempSync(join(tmpdir(), "git-branch-worktree-"));
+    writeFileSync(join(worktree, ".git"), `gitdir: ${worktreeGitDir}\n`);
+    return Effect.gen(function* () {
+      const got = yield* detectGitBranch();
+      try {
+        expect(Option.isSome(got)).toBe(true);
+        if (Option.isSome(got)) expect(got.value).toBe("feature-x");
+      } finally {
+        rmSync(main, { recursive: true, force: true });
+        rmSync(worktree, { recursive: true, force: true });
+        if (original7 !== undefined) process.env["GITHUB_HEAD_REF"] = original7;
+      }
+    }).pipe(Effect.provide(withCwd(worktree)));
+  });
+
+  it.live("resolves a relative gitdir in a `.git` gitlink against its directory", () => {
+    const original8 = process.env["GITHUB_HEAD_REF"];
+    delete process.env["GITHUB_HEAD_REF"];
+    const root = mkdtempSync(join(tmpdir(), "git-branch-relative-"));
+    const gitDir = join(root, "actual-gitdir");
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/relative-branch\n");
+    writeFileSync(join(root, ".git"), "gitdir: ./actual-gitdir\n");
+    return Effect.gen(function* () {
+      const got = yield* detectGitBranch();
+      try {
+        expect(Option.isSome(got)).toBe(true);
+        if (Option.isSome(got)) expect(got.value).toBe("relative-branch");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        if (original8 !== undefined) process.env["GITHUB_HEAD_REF"] = original8;
+      }
+    }).pipe(Effect.provide(withCwd(root)));
+  });
+
+  it.live("stops at the nearest .git instead of a detached HEAD's parent checkout", () => {
+    const original9 = process.env["GITHUB_HEAD_REF"];
+    delete process.env["GITHUB_HEAD_REF"];
+    // A parent repo with a real branch must not leak into a nested repo whose own
+    // HEAD is detached — the nested `.git` should stop the walk right there.
+    const root = mkdtempSync(join(tmpdir(), "git-branch-detached-nested-"));
+    mkdirSync(join(root, ".git"));
+    writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+    const nested = join(root, "nested");
+    mkdirSync(join(nested, ".git"), { recursive: true });
+    writeFileSync(join(nested, ".git", "HEAD"), "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n");
+    return Effect.gen(function* () {
+      const got = yield* detectGitBranch();
+      try {
+        expect(Option.isNone(got)).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        if (original9 !== undefined) process.env["GITHUB_HEAD_REF"] = original9;
+      }
+    }).pipe(Effect.provide(withCwd(nested)));
+  });
+
   it.live("walks from an explicit startDir instead of the runtime CWD", () => {
     const original6 = process.env["GITHUB_HEAD_REF"];
     delete process.env["GITHUB_HEAD_REF"];
