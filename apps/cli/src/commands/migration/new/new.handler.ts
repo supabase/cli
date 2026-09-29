@@ -26,6 +26,7 @@ export const migrationNew = Effect.fn("migration.new")(function* (flags: Migrati
   const path = yield* Path.Path;
 
   yield* Effect.gen(function* () {
+    yield* Effect.annotateCurrentSpan({ "migration.stdin_piped": !stdin.isTTY });
     const timestamp = formatMigrationTimestamp(yield* Clock.currentTimeMillis);
     const migrationPath = getMigrationPath(
       path,

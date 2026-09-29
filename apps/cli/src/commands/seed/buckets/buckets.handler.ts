@@ -72,6 +72,7 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
     const projectRef = isLinked ? yield* projectRefResolver.loadProjectRef(flags.projectRef) : "";
     linkedRef = projectRef;
 
+    yield* Effect.annotateCurrentSpan({ "db.conn_type": isLinked ? "linked" : "local" });
     yield* seedBucketsRun({ projectRef, emitSummary: true });
   }).pipe(
     // Caches the linked project and fires org/project group identify — only

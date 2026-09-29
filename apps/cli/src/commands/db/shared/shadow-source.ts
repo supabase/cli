@@ -83,6 +83,10 @@ export const prepareShadowSource = <E>(
 > =>
   Effect.gen(function* () {
     const { containerId } = handle;
+    yield* Effect.annotateCurrentSpan({
+      "shadow.migration_mode": input.migrationMode ?? "legacy",
+      "shadow.target_local": input.targetLocal,
+    });
 
     const connConfig: PgConnInput = {
       host: input.hostname,
@@ -141,7 +145,7 @@ export const prepareShadowSource = <E>(
       sourceUrl,
       targetUrlOverride,
     } satisfies ShadowSourceResult;
-  });
+  }).pipe(Effect.withSpan("ShadowSource.prepare"));
 
 /** Glob metacharacters recognized here: `*?[` only — not `\`. */
 function hasConfigGlobMeta(pattern: string): boolean {
@@ -332,7 +336,7 @@ export function loadDeclaredSchemas(
     );
     if (!isSchemasDir) return [];
     return yield* walkSqlFilesSorted(fs, path, workdir, schemasDirRel, "failed to walk dir");
-  });
+  }).pipe(Effect.withSpan("ShadowSource.loadDeclaredSchemas"));
 }
 
 /**

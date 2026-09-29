@@ -198,9 +198,11 @@ export const pgDeltaNextEngineLayer = Layer.effect(
       );
     };
 
-    const diffPools = (
+    const diffPools = Effect.fn("PgDeltaNextEngine.diff")(function* (
       input: {
-        readonly context: { readonly cwd: string };
+        readonly context: {
+          readonly cwd: string;
+        };
         readonly schema: ReadonlyArray<string>;
         readonly formatOptions: string;
         readonly debug: boolean;
@@ -208,26 +210,29 @@ export const pgDeltaNextEngineLayer = Layer.effect(
       },
       sourcePool: Pool,
       desiredPool: Pool,
-    ) =>
-      Effect.gen(function* () {
-        const result = yield* adapter.diff({
-          sourcePool,
-          desiredPool,
-          allowDrops: true,
-          debug: input.debug,
-          schema: input.schema,
-          formatOptions: input.formatOptions,
-        });
-        const debugDirectory =
-          result.debug !== undefined
-            ? yield* saveDebugArtifacts(input.context.cwd, "diff", {
-                ...result.debug,
-                diagnostics: result.diagnostics,
-              })
-            : undefined;
-        yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage, input.debug);
-        return normalizeNextDiff(result, debugDirectory);
+    ) {
+      const result = yield* adapter.diff({
+        sourcePool,
+        desiredPool,
+        allowDrops: true,
+        debug: input.debug,
+        schema: input.schema,
+        formatOptions: input.formatOptions,
       });
+      const debugDirectory =
+        result.debug !== undefined
+          ? yield* saveDebugArtifacts(input.context.cwd, "diff", {
+              ...result.debug,
+              diagnostics: result.diagnostics,
+            })
+          : undefined;
+      yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage, input.debug);
+      yield* Effect.annotateCurrentSpan({
+        "diff.changes": result.changes,
+        "diff.hazard_count": result.hazards.kinds.length,
+      });
+      return normalizeNextDiff(result, debugDirectory);
+    });
 
     return PgDeltaEngine.of({
       diffExplicit: (input) =>
@@ -281,7 +286,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
             );
             return yield* diffPools(input, sourcePool, desiredPool);
           }),
-        ).pipe(Effect.mapError(pgDeltaNextEngineError)),
+        ).pipe(
+          Effect.mapError(pgDeltaNextEngineError),
+          Effect.withSpan("PgDeltaNextEngine.diffExplicit"),
+        ),
       diffDatabase: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -289,7 +297,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
             const desiredPool = yield* acquireDatabase(input.target, input.context.projectEnv);
             return yield* diffPools(input, migrationsPool, desiredPool);
           }),
-        ).pipe(Effect.mapError(pgDeltaNextEngineError)),
+        ).pipe(
+          Effect.mapError(pgDeltaNextEngineError),
+          Effect.withSpan("PgDeltaNextEngine.diffDatabase"),
+        ),
       exportDeclarativeSchema: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -319,7 +330,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
             );
             return { files: result.files, manifest: result.manifest };
           }),
-        ).pipe(Effect.mapError(pgDeltaNextEngineError)),
+        ).pipe(
+          Effect.mapError(pgDeltaNextEngineError),
+          Effect.withSpan("PgDeltaNextEngine.exportDeclarativeSchema"),
+        ),
       planDeclarativeSchema: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -375,7 +389,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
               targetRef: "pg-delta-next:declarative",
             };
           }),
-        ).pipe(Effect.mapError(pgDeltaNextEngineError)),
+        ).pipe(
+          Effect.mapError(pgDeltaNextEngineError),
+          Effect.withSpan("PgDeltaNextEngine.planDeclarativeSchema"),
+        ),
     });
   }),
 );

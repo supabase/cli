@@ -187,6 +187,12 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       linkedProjectRef: flags.projectRef,
     });
 
+    yield* Effect.annotateCurrentSpan({
+      "db.conn_type": connType,
+      "db.is_local": cfg.isLocal,
+      ...(resolvedVersion !== "" ? { "migration.version": resolvedVersion } : {}),
+    });
+
     // Local target: the composition (container recreate, storage-health gate, bucket seeding,
     // git-branch line) is hoisted into `resetLocalDatabase`, shared with `db schema declarative`'s
     // recovery reset; this call site keeps only version/seed-flags plumbing and the JSON envelope.
@@ -263,6 +269,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
             const m = MIGRATE_FILE_PATTERN.exec(path.basename(p));
             return m?.[1] !== undefined && m[1] <= resolvedVersion;
           });
+          yield* Effect.annotateCurrentSpan({ "migration.count": pending.length });
           yield* applyMigrations(session, fs, path, pending, applyError);
         }
 
@@ -276,9 +283,10 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
         );
         if (resolvedSeed.enabled) {
           const seeds = yield* getPendingSeeds(session, fs, path, resolvedSeed.sqlPaths, workdir);
+          yield* Effect.annotateCurrentSpan({ "seed.file.count": seeds.length });
           yield* seedData(session, fs, workdir, path, seeds, applyError);
         }
-      }),
+      }).pipe(Effect.withSpan("db.reset.applyMigrations")),
     );
 
     if (output.format !== "text") {

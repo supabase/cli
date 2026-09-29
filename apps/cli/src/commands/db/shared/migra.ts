@@ -103,7 +103,7 @@ function shouldFallbackToBashMigra(message: string): boolean {
 }
 
 /** Builds the shared SOURCE/TARGET/SSL/schema env for both migra paths. */
-const buildMigraEnv = Effect.fnUntraced(function* (params: {
+const buildMigraEnv = Effect.fn("Migra.buildEnv")(function* (params: {
   readonly source: string;
   readonly target: string;
   readonly schema: ReadonlyArray<string>;
@@ -129,7 +129,7 @@ const buildMigraEnv = Effect.fnUntraced(function* (params: {
  * Loads the target's user-defined schemas for the bash fallback: migra.sh iterates over an
  * explicit schema list and cannot diff in exclude mode.
  */
-const loadTargetUserSchemas = Effect.fnUntraced(function* (
+const loadTargetUserSchemas = Effect.fn("Migra.loadTargetUserSchemas")(function* (
   target: string,
   connectOptions: DbConnectOptions,
 ) {
@@ -161,7 +161,7 @@ const loadTargetUserSchemas = Effect.fnUntraced(function* (
  * network. When no `--schema` is given, the included schemas are loaded from the target and
  * passed as positional args to migra.sh.
  */
-const diffMigraBash = Effect.fnUntraced(function* (params: {
+const diffMigraBash = Effect.fn("Migra.diffBash")(function* (params: {
   readonly source: string;
   readonly target: string;
   readonly schema: ReadonlyArray<string>;
@@ -224,7 +224,7 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
  * `supabase/migra` Docker image when the edge-runtime worker runs out of memory.
  * `source`/`target` are live Postgres URLs (the shadow source and the diff target).
  */
-export const diffMigra = Effect.fnUntraced(function* (
+export const diffMigra = Effect.fn("Migra.diff")(function* (
   ctx: PgDeltaContext,
   params: {
     readonly source: string;

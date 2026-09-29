@@ -70,6 +70,10 @@ const runUp = Effect.fnUntraced(function* (
     });
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
     const toml = yield* readDbToml(fs, path, cliSettings.workdir, ref);
+    yield* Effect.annotateCurrentSpan({
+      "db.conn_type": target.connType ?? "local",
+      "db.is_local": cfg.isLocal,
+    });
 
     yield* Effect.scoped(
       Effect.gen(function* () {
@@ -116,6 +120,7 @@ const runUp = Effect.fnUntraced(function* (
 
         yield* upsertVaultSecrets(session, toml.vault);
 
+        yield* Effect.annotateCurrentSpan({ "migration.count": pending.length });
         for (const migrationPath of pending) {
           yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
           yield* applyMigrationFile(
@@ -124,6 +129,10 @@ const runUp = Effect.fnUntraced(function* (
             path,
             migrationPath,
             (message) => new MigrationApplyError({ message }),
+          ).pipe(
+            Effect.withSpan("migration.up.applyMigration", {
+              attributes: { "migration.version": path.basename(migrationPath) },
+            }),
           );
         }
 
