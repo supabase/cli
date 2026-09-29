@@ -150,11 +150,7 @@ function stringifyScalar(value: unknown): string {
 // branch below.
 const INTEGER_PATTERN = /^[+-]?\d+$/;
 
-/**
- * Quotes one dotenv value like `status -o env`: integers stay bare; everything else is
- * double-quoted with `\`, `"`, and control characters escaped.
- */
-export function formatEnvValue(value: string): string {
+function formatEnvValue(value: string): string {
   if (INTEGER_PATTERN.test(value)) {
     const parsed = Number(value);
     // Round-trip through Number to drop a leading `+` or leading zeros.

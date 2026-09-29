@@ -446,7 +446,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
         databaseUrl === undefined ? {} : { databaseUrl },
         envNames,
       );
-      if (output.format === "text") yield* output.raw(encodeStackEnv(values));
+      if (output.format === "text") yield* output.raw(yield* encodeStackEnv(values));
       else yield* output.result(values);
       return;
     }
