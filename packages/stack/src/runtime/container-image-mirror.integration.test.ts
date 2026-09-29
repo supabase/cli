@@ -207,21 +207,29 @@ describe("container image mirror", () => {
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
   });
 
-  it.effect("does not retry a permanent pull failure", () => {
-    const engine = fakeEngine({
-      pullable: [],
-      failures: { [primary]: ["manifest unknown"] },
+  const permanentPullFailures = [
+    "manifest unknown",
+    `manifest for ${primary}/eof:latest not found: manifest unknown`,
+    `error during connect: Get "http://%2F%2F.%2Fpipe%2Fdocker_engine/v1.47/images/create?fromImage=eof": EOF`,
+  ];
+
+  for (const message of permanentPullFailures) {
+    it.effect(`does not retry a permanent pull failure: ${message}`, () => {
+      const engine = fakeEngine({
+        pullable: [],
+        failures: { [primary]: [message] },
+      });
+      return Effect.gen(function* () {
+        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+        const failed = yield* runtime.prepare(primary).pipe(Effect.exit);
+        const error = Exit.isFailure(failed)
+          ? Option.getOrUndefined(Cause.findErrorOption(failed.cause))
+          : undefined;
+        expect(error?.message).toContain(message);
+        expect(engine.commands.filter((args) => args[0] === "pull")).toHaveLength(1);
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
     });
-    return Effect.gen(function* () {
-      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
-      const failed = yield* runtime.prepare(primary).pipe(Effect.exit);
-      const error = Exit.isFailure(failed)
-        ? Option.getOrUndefined(Cause.findErrorOption(failed.cause))
-        : undefined;
-      expect(error?.message).toContain("manifest unknown");
-      expect(engine.commands.filter((args) => args[0] === "pull")).toHaveLength(1);
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
-  });
+  }
 
   it.effect("reports the rate limit after five throttled attempts", () => {
     const engine = fakeEngine({ pullable: [primary], throttled: { [primary]: 10 } });

@@ -95,9 +95,13 @@ const errorFor = (operation: string, cause: unknown) =>
 const rateLimited = (error: ContainerError) =>
   /toomanyrequests|too many requests|rate limit|rate exceeded/iu.test(error.message);
 
-/** Matches a dropped or unavailable registry connection, not a permanent pull rejection. */
+/**
+ * Matches a dropped registry connection, not a permanent rejection or a failing engine socket
+ * (`error during connect`, `%2F…` hosts). `EOF` only counts after a registry request URL.
+ */
 const transientPullFailure = (error: ContainerError) =>
-  /\bEOF\b|connection reset by peer|i\/o timeout|TLS handshake timeout|net\/http: request canceled|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout|received unexpected HTTP status: 5\d\d/iu.test(
+  !/error during connect/iu.test(error.message) &&
+  /(?:Get|Head|Post|Put) "https?:\/\/(?!%2F)[^"]+": (?:unexpected )?EOF|connection reset by peer|i\/o timeout|TLS handshake timeout|net\/http: request canceled|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout|received unexpected HTTP status: 5\d\d/iu.test(
     error.message,
   );
 
@@ -263,11 +267,11 @@ export const makeContainerRuntime = (options: {
       });
       return yield* attempt.pipe(
         Effect.tapError((error) =>
-          rateLimited(error)
-            ? Effect.logWarning(`Registry rate-limited the pull of ${image}`)
-            : transientPullFailure(error)
-              ? Effect.logWarning(`Registry pull of ${image} failed transiently`)
-              : Effect.void,
+          !retryablePull(error)
+            ? Effect.void
+            : rateLimited(error)
+              ? Effect.logWarning(`Registry rate-limited the pull of ${image}`)
+              : Effect.logWarning(`Registry pull of ${image} failed transiently`),
         ),
         Effect.retry({ schedule: pullBackoff, times: PULL_MAX_RETRIES, while: retryablePull }),
       );
