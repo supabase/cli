@@ -789,4 +789,73 @@ describe("orphaned temp/quarantine sweep", () => {
       }),
     ),
   );
+
+  it.live("never reaps an in-progress extraction whose source backdated its own destination", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const crypto = yield* Crypto.Crypto;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-reaper-race-",
+        });
+        const backdated = yield* Deferred.make<void>();
+        const secondReachedMaterialize = yield* Deferred.make<void>();
+        let materializeCalls = 0;
+        const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
+          materialize: (_entry, destination, expectedSha256) =>
+            Effect.gen(function* () {
+              materializeCalls += 1;
+              if (materializeCalls > 1) {
+                // A second, concurrent preparation for the same key must never get this far in
+                // a correct design: the leftover reaper it ran on its way here must have left
+                // the first operation's staging directory alone. Refusing here, instead of
+                // racing it to publish, keeps the interleaving deterministic.
+                yield* Deferred.succeed(secondReachedMaterialize, undefined);
+                return yield* new PreparationError({
+                  message: "a second concurrent materialization must not happen in this test",
+                });
+              }
+              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+              yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
+              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
+              yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
+              yield* verifySha256(archive, expectedSha256).pipe(
+                Effect.provideService(Crypto.Crypto, crypto),
+              );
+              // GNU tar sets an extraction destination's own mtime from the archive's `./`
+              // entry; the slim-services archives carry epoch mtimes there.
+              yield* fs.utimes(destination, 0, 0);
+              yield* Deferred.succeed(backdated, undefined);
+              yield* Deferred.await(secondReachedMaterialize);
+            }).pipe(
+              Effect.mapError((cause) =>
+                cause instanceof PreparationError || cause instanceof ArtifactIntegrityError
+                  ? cause
+                  : new PreparationError({
+                      message: `materialization failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+                      cause,
+                    }),
+              ),
+            ),
+        };
+        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+
+        const first = yield* Effect.forkChild(store.prepare(request));
+        yield* Deferred.await(backdated);
+
+        // Runs the same leftover reaper the first operation's staging directory is exposed to;
+        // it refuses its own materialization once it gets there, so it can never win a race to
+        // publish and mask a reap that already happened.
+        const second = yield* store.prepare(request).pipe(Effect.exit);
+        expect(Exit.isFailure(second)).toBe(true);
+
+        const published = yield* Fiber.join(first);
+        expect(published.outcome).toBe("downloaded");
+        expect(yield* fs.exists(`${published.path}/bin/postgres`)).toBe(true);
+        expect(yield* fs.readFileString(`${published.path}/bin/postgres`)).toBe("native postgres");
+        expect(yield* fs.readFileString(`${published.path}/etc/postgres.conf`)).toBe("config");
+      }),
+    ),
+  );
 });
