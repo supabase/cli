@@ -27,7 +27,9 @@ when its engine answers, and otherwise native on Linux x64/arm64 and macOS arm64
 platforms without a reachable engine, the command fails and asks you to start Docker or Podman. The
 selected runtime is saved with the stack and reused without probing; when auto selection skips
 Docker, the command prints a notice saying so. To switch, destroy the stack or choose a different
-`--stack` name. Project stacks created by database commands, and shadow stacks
+`--stack` name. When an explicit `--runtime docker` or a saved Docker stack cannot reach Docker,
+the failure asks you to install or start it, and also suggests `--runtime native` for a new stack
+on platforms that support native. Project stacks created by database commands, and shadow stacks
 created without a project stack, use the same selection.
 
 `supabase stack prepare` downloads or pulls artifacts for the selected stack without starting
@@ -237,8 +239,6 @@ start configuration without changing the project file. Valid names are `rest`, `
 Excluding `rest` while Studio remains selected is rejected; excluding `analytics` does not affect
 Studio. The effective configuration is
 retained in stack state, so starting without `--exclude` restores the project's configured services.
-When Docker is unreachable, the failure suggests
-`--runtime native` for a new stack on platforms that support native.
 
 `supabase stack stop --all` stops every managed stack while preserving data. Registry entries that
 cannot be read or decoded are skipped with a warning on stderr; only a failure to read the stacks

@@ -41,8 +41,8 @@ probe is bounded by 10 seconds. Without a reachable engine on other platforms, t
 asks the user to start Docker or Podman. When auto selection skips Docker, an info line names the
 saved Podman or native runtime and how to switch to Docker. An existing stack keeps its saved
 runtime and runs no probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
-When a requested Docker runtime is unreachable, the reported failure suggests starting Docker, and
-`--runtime native` for a new stack on platforms that support native.
+When an explicit or saved Docker runtime is unreachable, the reported failure suggests starting
+Docker, and `--runtime native` for a new stack on platforms that support native.
 
 Native startup refuses root because PostgreSQL `initdb` cannot run as root, unless a Claude Code
 or Modal Sandbox is detected or `SUPABASE_NATIVE_POSTGRES_USER` names a non-root user. PostgreSQL then runs

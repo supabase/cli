@@ -397,6 +397,10 @@ describe("slim-services artifact source", () => {
           "registry.test/supabase/cli/demo:v1.0.0-native-linux-amd64 (Unable to download " +
           "https://registry.test/token?scope=repository:supabase/cli/demo:pull&service=registry.test: HTTP 403)",
       );
+      expect(errorOf(failed)).toMatchObject({
+        service: artifact.service,
+        version: artifact.version,
+      });
       expect(requested).toEqual([
         "https://release.test/SHA256SUMS",
         "https://registry.test/token?scope=repository:supabase/cli/demo:pull&service=registry.test",

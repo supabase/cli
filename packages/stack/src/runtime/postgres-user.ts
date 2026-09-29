@@ -37,7 +37,7 @@ export type NativePostgresUser =
 
 const suggestion =
   `Set ${NATIVE_POSTGRES_USER_ENV}=<user> to run PostgreSQL as a non-root user, creating one if ` +
-  "needed (for example `useradd --system --user-group supabase-postgres`).";
+  "needed (on Linux, for example `useradd --system --user-group supabase-postgres`).";
 const unavailable = (message: string): NativePostgresUser => ({
   _tag: "Unavailable",
   message,

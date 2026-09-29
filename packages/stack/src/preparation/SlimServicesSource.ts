@@ -233,6 +233,7 @@ const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* 
  */
 const firstSuccess = <T, A, R>(
   label: string,
+  artifact: Pick<SlimServicesArtifact, "service" | "version">,
   candidates: readonly [T, ...ReadonlyArray<T>],
   describe: (candidate: T) => string,
   attempt: (candidate: T) => Effect.Effect<A, PreparationError, R>,
@@ -253,8 +254,8 @@ const firstSuccess = <T, A, R>(
       return Effect.fail(
         new PreparationError({
           message: `${label}: ${detail}`,
-          ...(first?.[1].service === undefined ? {} : { service: first[1].service }),
-          ...(first?.[1].version === undefined ? {} : { version: first[1].version }),
+          service: artifact.service,
+          version: artifact.version,
         }),
       );
     }
@@ -336,6 +337,7 @@ export const slimServicesChecksum = Effect.fn("SlimServicesSource.checksum")(fun
 ) {
   return yield* firstSuccess(
     "Unable to resolve the slim-services checksum",
+    artifact,
     artifact.checksums,
     describeChecksumSource,
     (source) =>
@@ -513,6 +515,7 @@ export const makeSlimServicesSource = (
           const artifact = yield* resolveArtifact(request);
           yield* firstSuccess(
             "Unable to download the slim-services archive",
+            artifact,
             artifact.mirrors,
             (mirror) => mirror.downloadUrl,
             (mirror) =>
