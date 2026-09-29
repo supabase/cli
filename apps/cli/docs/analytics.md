@@ -34,13 +34,14 @@ The core pieces are:
 
 - `CurrentAnalyticsContext`
 - `withAnalyticsContext(...)`
-- `withCommandInstrumentation(...)`
+- `withCommandTelemetry(...)`
 
 `CurrentAnalyticsContext` is a `ServiceMap.Reference` that carries the current analytics context
 for the running effect scope.
 
-`withCommandInstrumentation(...)` wraps command handlers and installs per-invocation tracing plus
-the per-invocation analytics context such as:
+`withCommandTelemetry(...)` from
+[`src/telemetry/command-telemetry.ts`](../src/telemetry/command-telemetry.ts) wraps command
+handlers and installs the command span plus the per-invocation analytics context such as:
 
 - `command_run_id`
 - `command`

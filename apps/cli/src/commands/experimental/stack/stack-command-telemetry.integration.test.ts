@@ -62,7 +62,6 @@ const setup = () =>
         mockRuntimeInfo({ cwd: root, homeDir: root }),
         mockTelemetryRuntime({
           configDir: path.join(root, ".supabase"),
-          tracesDir: path.join(root, ".supabase", "traces"),
         }),
         processEnvLayer({ SUPABASE_HOME: path.join(root, ".supabase") }),
       ),

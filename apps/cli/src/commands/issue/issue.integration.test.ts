@@ -113,9 +113,7 @@ function issueSetup(
     TelemetryRuntime,
     TelemetryRuntime.of({
       configDir: "/test/config",
-      tracesDir: "/test/config/traces",
       consent: "granted",
-      showDebug: false,
       deviceId: "device-id",
       sessionId: "session-id",
       identity: makeTelemetryIdentity(undefined),

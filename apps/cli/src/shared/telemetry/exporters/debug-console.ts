@@ -1,7 +1,8 @@
-import { DateTime, Effect, Match, Option, Schema } from "effect";
+import { Cause, DateTime, Effect, Exit, Option, Schema } from "effect";
 import type { PlatformError, Tracer } from "effect";
+import { sanitizeAttributeEntries } from "../trace-sanitize.ts";
 
-type EndedSpanStatus = Extract<Tracer.SpanStatus, { readonly _tag: "Ended" }>;
+const MAX_PRINTED_DEPTH = 2;
 const JsonAttributesSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 
 function formatTimestamp(ms: number): Option.Option<string> {
@@ -18,29 +19,46 @@ function formatTimestamp(ms: number): Option.Option<string> {
   );
 }
 
-export const formatSpanForDebugConsole = Effect.fnUntraced(function* (span: Tracer.Span) {
-  const ended = Match.value(span.status).pipe(
-    Match.tag("Started", (): Option.Option<EndedSpanStatus> => Option.none()),
-    Match.tag("Ended", (status): Option.Option<EndedSpanStatus> => Option.some(status)),
-    Match.exhaustive,
-  );
-  if (Option.isNone(ended)) return Option.none<string>();
+function spanDepth(span: Tracer.Span): number {
+  let depth = 0;
+  let parent = span.parent;
+  while (Option.isSome(parent) && parent.value._tag === "Span") {
+    depth += 1;
+    parent = parent.value.parent;
+  }
+  return depth;
+}
 
-  const durationMs = Math.round(Number(ended.value.endTime - ended.value.startTime) / 1_000_000);
-  const timestampMs = Number(ended.value.startTime / BigInt(1_000_000));
-  const time = formatTimestamp(timestampMs);
+function spanFailed(span: Tracer.Span): boolean {
+  return (
+    span.status._tag === "Ended" &&
+    Exit.isFailure(span.status.exit) &&
+    !Cause.hasInterruptsOnly(span.status.exit.cause)
+  );
+}
+
+export const formatSpanForDebugConsole = Effect.fnUntraced(function* (span: Tracer.Span) {
+  const status = span.status;
+  if (status._tag !== "Ended") return Option.none<string>();
+  const depth = spanDepth(span);
+  const failed = spanFailed(span);
+  if (depth > MAX_PRINTED_DEPTH && !failed) return Option.none<string>();
+
+  const durationMs = Math.round(Number(status.endTime - status.startTime) / 1_000_000);
+  const time = formatTimestamp(Number(status.startTime / BigInt(1_000_000)));
   if (Option.isNone(time)) return Option.none<string>();
 
-  const attrs: Record<string, unknown> = {};
-  for (const [key, value] of span.attributes) {
-    attrs[key] = value;
-  }
+  const attrs = Object.fromEntries(sanitizeAttributeEntries(span.attributes));
   const attrStr =
     Object.keys(attrs).length === 0
       ? ""
       : ` ${yield* Schema.encodeEffect(JsonAttributesSchema)(attrs)}`;
+  const indent = "  ".repeat(Math.min(depth, MAX_PRINTED_DEPTH + 1));
+  const marker = failed ? " failed" : "";
 
-  return Option.some(`[${time.value}] ${span.name} (${durationMs}ms)${attrStr}\n`);
+  return Option.some(
+    `[${time.value}] ${indent}${span.name} (${durationMs}ms)${marker}${attrStr}\n`,
+  );
 });
 
 export function makeDebugConsoleExporter(

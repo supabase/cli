@@ -33,7 +33,6 @@ describe("migration command integration", () => {
       CliOutput.layer(textCliOutputFormatter()),
       mockTelemetryRuntime({
         configDir: `${tmp.current}/.supabase`,
-        tracesDir: `${tmp.current}/.supabase/traces`,
       }),
     );
     // No subcommand is proxied, so the plural alias is proven at the parser:

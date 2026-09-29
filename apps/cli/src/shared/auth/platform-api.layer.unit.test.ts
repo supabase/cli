@@ -9,11 +9,11 @@ import { CliSettings } from "../config/cli-settings.service.ts";
 import { CommandRuntime } from "../runtime/command-runtime.service.ts";
 import { CurrentAnalyticsContext } from "../telemetry/analytics-context.ts";
 import { Analytics } from "../telemetry/analytics.service.ts";
-import { withCommandInstrumentation } from "../telemetry/command-instrumentation.ts";
+import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { Credentials } from "./credentials.service.ts";
 import { PlatformApi } from "./platform-api.service.ts";
 import { makePlatformApiServices } from "./platform-api.layer.ts";
-import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
 
 function httpClientLayer(
   handler: (
@@ -238,13 +238,14 @@ describe("platformApiLayer", () => {
       const api = yield* PlatformApi;
       yield* api.v1.listAllBranches({ ref: "abcdefghijklmnopqrst" });
     }).pipe(
-      withCommandInstrumentation(),
+      withCommandTelemetry(),
       Effect.provide(
         Layer.mergeAll(
           layer,
           runtimeLayer,
           analytics.layer,
           mockOutput({ format: "text" }).layer,
+          mockProcessControl().layer,
           Stdio.layerTest({
             args: Effect.succeed(["branches", "list"]),
           }),

@@ -116,6 +116,10 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
   launcher: NativeProcessLauncher = defaultNativeProcessLauncher(),
   identity?: NativeProcessIdentity,
 ) {
+  yield* Effect.annotateCurrentSpan({
+    "process.executable.name": spec.executable.split(/[\\/]/u).pop() ?? spec.executable,
+    "process.arg_count": spec.args?.length ?? 0,
+  });
   return yield* Effect.gen(function* () {
     // Shutdown must precede the spawner's finalizer even when the caller closes in parallel.
     const processScope = yield* Scope.fork(yield* Scope.Scope, "sequential");

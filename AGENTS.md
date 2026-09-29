@@ -38,6 +38,8 @@ The skill is authoritative for Effect coding practices when repository instructi
 Effect linting uses oxlint via `.oxlintrc.effect.json`; run `pnpm lint:effect:check` or
 `pnpm lint:effect:fix` from the repository root.
 
+Follow the [tracing conventions ADR](docs/adr/0027-cli-tracing-conventions.md) when adding spans.
+
 ## Commands, validation, and workflows
 
 Package scripts are the source of truth for leaf workspaces; root-owned Turbo coordinates build,

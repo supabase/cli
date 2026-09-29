@@ -3,6 +3,11 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
+  withChildTraceEnv,
+  withProcessSpan,
+  withProcessSpanScoped,
+} from "../shared/telemetry/spans.ts";
+import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
@@ -54,10 +59,10 @@ export const spawnContainerCliWithRuntime = (
   args: ReadonlyArray<string>,
   options?: ChildProcess.CommandOptions,
 ) =>
-  spawner.spawn(ChildProcess.make("docker", args, options)).pipe(
+  spawnRuntime(spawner, dockerRuntime, args, options).pipe(
     Effect.map((handle) => ({ handle, runtime: dockerRuntime })),
     Effect.catch(() =>
-      spawner.spawn(ChildProcess.make("podman", args, options)).pipe(
+      spawnRuntime(spawner, podmanRuntime, args, options).pipe(
         Effect.map((handle) => ({ handle, runtime: podmanRuntime })),
         Effect.catch(() =>
           Effect.fail(
@@ -72,6 +77,34 @@ export const spawnContainerCliWithRuntime = (
 
 const dockerRuntime: ContainerRuntime = "docker";
 const podmanRuntime: ContainerRuntime = "podman";
+
+function spawnRuntime(
+  spawner: Spawner,
+  runtime: ContainerRuntime,
+  args: ReadonlyArray<string>,
+  options?: ChildProcess.CommandOptions,
+) {
+  return withProcessSpanScoped(
+    "ContainerCli.spawn",
+    { executable: runtime, argCount: args.length },
+    (traceEnv) =>
+      spawner.spawn(ChildProcess.make(runtime, args, withChildTraceEnv(options, traceEnv))),
+  );
+}
+
+function runtimeExitCode(
+  spawner: Spawner,
+  runtime: ContainerRuntime,
+  args: ReadonlyArray<string>,
+  options?: ChildProcess.CommandOptions,
+) {
+  return withProcessSpan(
+    "ContainerCli.run",
+    { executable: runtime, argCount: args.length },
+    (traceEnv) =>
+      spawner.exitCode(ChildProcess.make(runtime, args, withChildTraceEnv(options, traceEnv))),
+  );
+}
 
 /**
  * Spawn a container-CLI command and return the process handle. Use when the
@@ -95,9 +128,9 @@ export const containerCliExitCode = (
   options?: ChildProcess.CommandOptions,
   podmanArgs?: ReadonlyArray<string>,
 ) =>
-  spawner.exitCode(ChildProcess.make("docker", args, options)).pipe(
+  runtimeExitCode(spawner, dockerRuntime, args, options).pipe(
     Effect.catch(() =>
-      spawner.exitCode(ChildProcess.make("podman", podmanArgs ?? args, options)).pipe(
+      runtimeExitCode(spawner, podmanRuntime, podmanArgs ?? args, options).pipe(
         Effect.catch(() =>
           Effect.fail(
             new ContainerRuntimeNotFoundError({
@@ -188,9 +221,9 @@ export const containerCliExitCodeAndStdout = (
         stdout: "pipe",
         stderr: "ignore",
       } satisfies ChildProcess.CommandOptions;
-      const handle = yield* spawner.spawn(ChildProcess.make("docker", args, options)).pipe(
+      const handle = yield* spawnRuntime(spawner, dockerRuntime, args, options).pipe(
         Effect.catch(() =>
-          spawner.spawn(ChildProcess.make("podman", podmanArgs ?? args, options)).pipe(
+          spawnRuntime(spawner, podmanRuntime, podmanArgs ?? args, options).pipe(
             Effect.catch(() =>
               Effect.fail(
                 new ContainerRuntimeNotFoundError({

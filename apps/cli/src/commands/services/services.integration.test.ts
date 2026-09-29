@@ -253,9 +253,7 @@ describe("services", () => {
           TelemetryRuntime,
           TelemetryRuntime.of({
             configDir: path.join(workdir, ".supabase"),
-            tracesDir: path.join(workdir, ".supabase", "traces"),
             consent: "granted",
-            showDebug: false,
             deviceId: "test-device-id",
             sessionId: "test-session-id",
             identity: makeTelemetryIdentity(undefined),

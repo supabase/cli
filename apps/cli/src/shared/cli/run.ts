@@ -17,6 +17,7 @@ import {
   Stdio,
 } from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { CLI_VERSION } from "./version.ts";
 import { Credentials } from "../auth/credentials.service.ts";
@@ -52,7 +53,11 @@ import { aiToolLayer } from "../telemetry/ai-tool.layer.ts";
 import { AiTool } from "../telemetry/ai-tool.service.ts";
 import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
 import type { TelemetryRuntime } from "../telemetry/runtime.service.ts";
-import { tracingLayer } from "../telemetry/tracing.layer.ts";
+import {
+  resolveTraceSettings,
+  TraceExportConfigError,
+  withTraceExport,
+} from "../telemetry/trace-export.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
 import {
@@ -611,7 +616,6 @@ function cliProgramFor<
   ).pipe(
     Effect.provide(formatterLayerFor(rootCommand, args, outputFormat)),
     Effect.provide(options.analyticsLayer),
-    Effect.provide(tracingLayer),
     Effect.provide(telemetryRuntimeLayer),
     Effect.provide(cliSettingsLayerFor(runtimeLayer)),
     Effect.provide(cliProjectHomeLayerFor(runtimeLayer)),
@@ -631,6 +635,7 @@ export async function runCli<
   E,
   R extends AllowedRunCliServices,
 >(rootCommand: Command.Command<Name, Input, ContextInput, E, R>, options: RunCliOptions) {
+  const bootMs = Math.round(performance.now());
   const args = await Effect.runPromise(
     Effect.gen(function* () {
       const stdio = yield* Stdio.Stdio;
@@ -689,9 +694,7 @@ export async function runCli<
 
   const handledRuntimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
 
-  const handledProgram = <A, E, R>(
-    program: Effect.Effect<A, E, R>,
-  ): Effect.Effect<never, unknown, never> =>
+  const runToExitCode = <A, E, R>(program: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
       const goProxyInvocation = yield* GoProxyInvocation;
@@ -740,23 +743,45 @@ export async function runCli<
           yield* output.fail(normalizeCause(exit.cause, suggestionContext));
         }
         yield* afterSuccess(exitCode, true);
-        return yield* processControl.exit(exitCode);
+        return exitCode;
       }
       const exitCode = yield* processControl.getExitCode;
       yield* afterSuccess(exitCode ?? 0, false);
-      return yield* processControl.exit(exitCode ?? 0);
+      return exitCode ?? 0;
     }).pipe(
       Effect.provide(outputLayerFor(outputFormat)),
       Effect.provide(telemetryRuntimeLayer),
       Effect.provide(cliProjectHomeLayerFor(handledRuntimeLayer)),
       Effect.provide(cliSettingsLayerFor(handledRuntimeLayer)),
       Effect.provide(cliProjectContextLayerFor(handledRuntimeLayer)),
-      Effect.provide(processControlLayer),
-      Effect.provide(runtimeInfoLayer),
       Effect.provide(ttyLayer),
-      Effect.provide(BunServices.layer),
       Effect.provide(goProxyInvocationLayer),
       Effect.provide(successTrailerLayer),
+    );
+
+  // The exit code is resolved inside the traced scope so its flush completes before
+  // `processControl.exit`, which skips finalizers.
+  const handledProgram = <A, E, R>(
+    program: Effect.Effect<A, E, R>,
+  ): Effect.Effect<never, unknown, never> =>
+    Effect.gen(function* () {
+      const processControl = yield* ProcessControl;
+      const exitCode = yield* resolveTraceSettings(args).pipe(
+        Effect.flatMap((settings) =>
+          withTraceExport(settings, { "process.boot_ms": bootMs })(runToExitCode(program)),
+        ),
+        Effect.catchIf(
+          (error) => error instanceof TraceExportConfigError,
+          (error) => runToExitCode(Effect.fail(error)),
+        ),
+      );
+      return yield* processControl.exit(exitCode);
+    }).pipe(
+      Effect.withTracerEnabled(false),
+      Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+      Effect.provide(processControlLayer),
+      Effect.provide(runtimeInfoLayer),
+      Effect.provide(BunServices.layer),
       Effect.provide(cliConfigProviderLayer),
     );
 

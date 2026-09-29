@@ -26,20 +26,21 @@ ADR 0001 Pillar 5 and ADR 0002 share infrastructure. No separate metrics SDK and
                    │
      ┌─────────────┼─────────────┐
      ▼             ▼             ▼
-Local file      --debug       Remote
-state root/     output        export
-traces/         (always)      (opt-in)
-(always)           │               │
+Trace file or   --debug       Remote
+own OTLP        output        export
+collector       (opt-in)      (opt-in)
+(opt-in)           │               │
      │             │         ┌─────┴─────┐
      ▼             ▼         ▼           ▼
 Observability  Observability Sentry    Grafana
-(ADR 0001      (ADR 0001    (Phase 1) (Phase 2,
- Pillar 5)      Pillar 5)             future)
+(ADR 0027)     (ADR 0027)   (Phase 1) (Phase 2,
+                                       future)
 ```
 
 Sentry receives every command span via its native OpenTelemetry integration and powers error diagnostics, performance monitoring, and product analytics dashboards for all 5 metric categories from ADR 0002. In Phase 2, spans will also be exported to a company-owned Grafana instance via OTLP for long-term retention and custom analytics. The CLI code does not change between phases — only the exporter configuration.
 
-In the diagram, "state root" means `<SUPABASE_HOME or ~/.supabase>`.
+The trace file and user-owned OTLP collector are chosen per run with `SUPABASE_TRACE_FILE` or
+`SUPABASE_OTLP_ENDPOINT`; see [ADR 0027](adr/0027-cli-tracing-conventions.md).
 
 ## Collection Architecture
 
@@ -156,15 +157,13 @@ Privacy guarantees:
 | OS and architecture                       | Environment variables                  |
 | Stack traces (via span.recordException()) | Email, name, or other profile data     |
 
-## Local Storage
+## Local Traces
 
-NDJSON files in `<SUPABASE_HOME or ~/.supabase>/traces/`:
-
-- One file per day: `2025-01-15.ndjson`
-- 7-day automatic retention (older files deleted on CLI startup)
-- Always written regardless of consent — this is the user's own machine
-- Powers `--debug` output and local diagnostics (ADR 0001 Pillar 5)
-- Same span attribute format as remote export
+Local traces are opt-in per run: `SUPABASE_TRACE_FILE` appends sanitized OTLP/JSON batches to a
+file, `SUPABASE_OTLP_ENDPOINT` sends them to a collector the user runs, and `--debug` prints the top
+of the span tree to stderr. The CLI no longer writes `<SUPABASE_HOME or ~/.supabase>/traces/`. See
+the [tracing how-to](../apps/cli/docs/tracing-monitoring.md) and
+[ADR 0027](adr/0027-cli-tracing-conventions.md).
 
 ## Remote Export
 
@@ -247,8 +246,7 @@ span.setAttributes({
 span.setStatus({ code: SpanStatusCode.OK });
 span.end();
 
-// 5. Always: append to local trace file
-// <SUPABASE_HOME or ~/.supabase>/traces/2025-01-15.ndjson += JSON.stringify(spanData) + "\n"
+// 5. Only when SUPABASE_TRACE_FILE is set: append the sanitized OTLP batch to that file
 
 // 6. If consent === "granted": Sentry SDK exports the span
 // Non-blocking — SDK batches internally

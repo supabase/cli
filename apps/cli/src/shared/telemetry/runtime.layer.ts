@@ -1,6 +1,5 @@
 import { note } from "@clack/prompts";
-import { Config, Crypto, Effect, Layer, Option, Path } from "effect";
-import { CliSettings } from "../config/cli-settings.service.ts";
+import { Config, Crypto, Effect, Layer, Option } from "effect";
 import { CLI_VERSION } from "../cli/version.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
@@ -10,14 +9,19 @@ import { TelemetryRuntime } from "./runtime.service.ts";
 
 const CI_ENV_VARS = ["CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL", "BUILDKITE"];
 
+/** Whether a well-known CI provider variable is set. */
+export const detectCi = Effect.gen(function* () {
+  for (const envVar of CI_ENV_VARS) {
+    if (Option.isSome(yield* Config.option(Config.string(envVar)))) return true;
+  }
+  return false;
+});
+
 export const telemetryRuntimeLayer = Layer.effect(
   TelemetryRuntime,
   Effect.gen(function* () {
-    const cliSettings = yield* CliSettings;
     const crypto = yield* Crypto.Crypto;
-    const path = yield* Path.Path;
     const configDir = yield* getConfigDir;
-    const tracesDir = path.join(configDir, "traces");
     const tty = yield* Tty;
     const runtimeInfo = yield* RuntimeInfo;
 
@@ -59,23 +63,11 @@ export const telemetryRuntimeLayer = Layer.effect(
       }
     }
 
-    const showDebug =
-      (Option.isSome(cliSettings.debug) && cliSettings.debug.value === "1") ||
-      (Option.isSome(cliSettings.telemetryDebug) && cliSettings.telemetryDebug.value === "1");
-
-    let isCi = false;
-    for (const envVar of CI_ENV_VARS) {
-      if (Option.isSome(yield* Config.option(Config.string(envVar)))) {
-        isCi = true;
-        break;
-      }
-    }
+    const isCi = yield* detectCi;
 
     return TelemetryRuntime.of({
       configDir,
-      tracesDir,
       consent,
-      showDebug,
       deviceId: identity.deviceId,
       sessionId: identity.sessionId,
       identity: makeTelemetryIdentity(identity.distinctId),

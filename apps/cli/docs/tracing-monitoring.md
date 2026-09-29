@@ -1,110 +1,99 @@
 # CLI Tracing and Monitoring
 
-This document describes the CLI tracing path: spans, local trace export, and how this
-observability path is intended to relate to Sentry.
+Every CLI run can produce one span tree rooted at `cli.run`. Use it to find where time goes in a
+command. Tracing is off unless you turn it on for a run; the conventions for adding spans live in
+[ADR 0027](../../../docs/adr/0027-cli-tracing-conventions.md).
 
 For product analytics and command usage events, see [analytics.md](./analytics.md).
 
-For where CLI-owned global state lives, including telemetry state under `SUPABASE_HOME`, see
-[supabase-home.md](./supabase-home.md).
+## Turning tracing on
 
-## Purpose
+Pick one destination per run:
 
-Tracing answers observability questions such as:
+| Variable                 | Effect                                                                   |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `SUPABASE_TRACE_FILE`    | Appends one OTLP/JSON batch per line to this file (created with `0600`). |
+| `SUPABASE_OTLP_ENDPOINT` | Posts OTLP/HTTP JSON to `<endpoint>/v1/traces`.                          |
+| `SUPABASE_OTLP_HEADERS`  | Extra collector headers as `key=value,key2=value2` (percent-encoded).    |
+| `TRACEPARENT`            | W3C trace context adopted as the parent of `cli.run` when a sink is set. |
 
-- which command ran
-- how long major phases took
-- whether the command succeeded or failed
-- what happened inside a command span tree
+Setting both `SUPABASE_TRACE_FILE` and `SUPABASE_OTLP_ENDPOINT` fails the run with a
+configuration error. The generic `OTEL_EXPORTER_OTLP_*` variables are ignored.
 
-This path is span-based. It is intentionally separate from PostHog analytics, which is event-based
-and optimized for product questions rather than operational traces.
+`--debug`, `SUPABASE_DEBUG=1`, or `SUPABASE_TELEMETRY_DEBUG=1` also prints finished spans to stderr:
+the root, its children and grandchildren, plus every failed span at any depth.
 
-The tracing implementation is currently owned by the `Tracing` service and
-[`src/shared/telemetry/tracing.layer.ts`](../src/shared/telemetry/tracing.layer.ts).
+Without any of these, spans are no-ops and the CLI does no tracing I/O.
 
-## What Happens Today
+## Local trace file
 
-The CLI builds a custom Effect tracer and attaches a fixed set of global attributes to every span:
-
-- `schema_version`
-- `device_id`
-- `session_id`
-- `is_first_run`
-- `is_tty`
-- `is_ci`
-- `os`
-- `arch`
-- `cli_version`
-
-Commands then use normal Effect tracing primitives such as `Effect.withSpan(...)` and
-`Effect.annotateCurrentSpan(...)` to create and enrich spans.
-
-Today, tracing is exported in two ways:
-
-- NDJSON files under `SUPABASE_HOME/traces/`
-- optional debug console output when telemetry debug is enabled
-
-The NDJSON exporter is the durable local trace sink. The debug console exporter is only for
-interactive inspection while developing or debugging the CLI.
-
-## Consent and State
-
-Tracing follows the shared telemetry consent model used by the CLI:
-
-- consent is user-level CLI state stored in `SUPABASE_HOME/telemetry.json`
-- environment overrides can still disable telemetry in CI or sandboxed runs
-- consent is not stored in `supabase/config.*`
-- consent is not stored in repo-local `.supabase/`
-
-The consent read/write logic lives in [`src/shared/telemetry/consent.ts`](../src/shared/telemetry/consent.ts),
-and the runtime view of telemetry state is built in
-[`src/shared/telemetry/runtime.layer.ts`](../src/shared/telemetry/runtime.layer.ts).
-
-When consent is not granted, the tracing layer does not initialize the NDJSON exporter. Debug
-output is gated separately by the telemetry debug flags.
-
-## Local Storage Layout
-
-The tracing path writes local files under:
-
-```text
-SUPABASE_HOME/
-  telemetry.json
-  traces/
-    <date>.ndjson
+```sh
+SUPABASE_TRACE_FILE=/tmp/supabase-trace.jsonl supabase db diff
+bun apps/cli/scripts/trace-report.ts /tmp/supabase-trace.jsonl
 ```
 
-`telemetry.json` stores telemetry state such as consent, device identity, and session identity.
-`traces/` stores exported spans.
+The report prints the heaviest path from `cli.run`, the top span names by self time, repeated span
+names with counts and total time, and failed spans. Pass `--top N` to change list lengths and
+`--json` for machine-readable output. The file appends across runs; delete it to start fresh.
 
-This keeps monitoring data in machine-global CLI state rather than project config.
+## Grafana, Tempo, or Jaeger
 
-## Relation to Sentry
+Run a local OpenTelemetry stack, for example Grafana's all-in-one image:
 
-Sentry belongs on the tracing and monitoring side, not the PostHog analytics side.
+```sh
+docker run --rm -p 3000:3000 -p 4318:4318 grafana/otel-lgtm
+SUPABASE_OTLP_ENDPOINT=http://localhost:4318 supabase start
+```
 
-Current state:
+Open Grafana at `http://localhost:3000`, choose the Tempo data source, and search with TraceQL:
 
-- the CLI already has a span-based tracing path
-- that path exports locally to NDJSON
-- it is not yet using Sentry as the live exporter
+```text
+{ resource.service.name = "supabase-cli" && name = "cli.run" }
+{ resource.service.name = "supabase-cli" && duration > 1s }
+{ resource.service.name = "supabase-cli" && status = error }
+```
 
-Intended direction:
+Any collector that accepts OTLP/HTTP JSON works; pass credentials with `SUPABASE_OTLP_HEADERS`.
 
-- Sentry should consume the tracing path as an observability backend
-- PostHog should continue to receive curated analytics events separately
+## What a trace contains
 
-That separation matters because traces and analytics solve different problems and have different
-volume, retention, and schema needs.
+- Resource: `service.name=supabase-cli`, `service.version`, `os`, `arch`, `is_ci`.
+- `cli.run`: `process.boot_ms`, the time from process start to CLI entry.
+- Command span (`command.<path>`): `command`, `command_run_id`, `device_id`, `session_id`,
+  `is_first_run`.
+- Layer spans such as `CliSettings.load`, `CliProjectContext.load`, and `ProjectLinkState.load`.
+- HTTP client spans with method, host, path, status, and allowlisted headers.
+- Process spans with the executable basename, argument count, and exit code. Children receive a
+  `TRACEPARENT` pointing at their span when a sink is active.
 
-## What Tracing Is Not
+## What is removed before export
 
-Tracing is intentionally not used for:
+Every batch and every console line is sanitized:
 
-- product analytics funnels
-- command adoption reporting
-- organization or project group analytics
-- user-facing milestone events such as `cli_login_completed`
+- `db.query.text` is replaced by `db.operation.name`, `db.query.hash`, and `db.query.length`.
+- `url.full` keeps only scheme, host, and path; `url.query` is dropped.
+- Only `content-type`, `content-length`, `user-agent`, `x-request-id`, `cf-ray`, and `retry-after`
+  headers are kept.
+- Keys that mention tokens, passwords, secrets, API keys, authorization, or cookies are dropped.
+- Remaining strings, including exception messages, stack traces, and status messages, lose URL
+  credentials, bearer tokens, JWTs, Supabase keys and access tokens, and password pairs, and are
+  capped at 2 KB.
 
-Those concerns belong to the analytics path described in [analytics.md](./analytics.md).
+HTTP requests never carry `traceparent` or `b3` headers.
+
+## Lifecycle
+
+The trace scope closes before the process exits. The final flush is uninterruptible and capped at
+2 seconds, so a slow collector cannot hold the CLI open. The file sink always acknowledges a
+batch, so a local write failure never triggers retries or duplicate lines.
+
+## Old trace files
+
+Earlier versions wrote NDJSON files under `SUPABASE_HOME/traces/`. The CLI no longer writes or
+cleans that directory; it is safe to delete.
+
+## What tracing is not
+
+Tracing is not used for product analytics funnels, command adoption reporting, organization or
+project analytics, or milestone events such as `cli_login_completed`. Those belong to the
+analytics path described in [analytics.md](./analytics.md).

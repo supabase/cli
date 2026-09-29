@@ -522,9 +522,7 @@ export function mockAnalytics() {
 export function mockTelemetryRuntime(
   opts: Partial<{
     configDir: string;
-    tracesDir: string;
     consent: "granted" | "denied";
-    showDebug: boolean;
     deviceId: string;
     sessionId: string;
     distinctId: string | undefined;
@@ -540,9 +538,7 @@ export function mockTelemetryRuntime(
     TelemetryRuntime,
     TelemetryRuntime.of({
       configDir: opts.configDir ?? join(defaultTestHomeDir, ".supabase"),
-      tracesDir: opts.tracesDir ?? join(defaultTestHomeDir, ".supabase", "traces"),
       consent: opts.consent ?? "granted",
-      showDebug: opts.showDebug ?? false,
       deviceId: opts.deviceId ?? "test-device-id",
       sessionId: opts.sessionId ?? "test-session-id",
       identity: makeTelemetryIdentity(opts.distinctId),

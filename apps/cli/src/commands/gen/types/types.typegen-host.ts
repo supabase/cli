@@ -10,6 +10,7 @@ import { Effect, Predicate, Stream } from "effect";
 import { ChildProcess, type ChildProcessSpawner } from "effect/unstable/process";
 
 import { collectText } from "../../../command-internal/container-cli.ts";
+import { withProcessSpanScoped } from "../../../shared/telemetry/spans.ts";
 
 export interface TypegenHostOptions {
   /** Where out-of-process tools run: the directory the command was invoked from. */
@@ -51,16 +52,21 @@ const spawnForTypegen = (
         command = shell ? quoteForCmd(resolved) : resolved;
         if (shell) args = request.args.map(quoteForCmd);
       }
-      const child = yield* spawner.spawn(
-        ChildProcess.make(command, [...args], {
-          cwd: request.cwd,
-          env: request.env,
-          extendEnv: true,
-          shell,
-          stdin: "pipe",
-          stdout: "pipe",
-          stderr: "pipe",
-        }),
+      const child = yield* withProcessSpanScoped(
+        "GenTypes.spawnTypegen",
+        { executable: request.command, argCount: args.length },
+        (traceEnv) =>
+          spawner.spawn(
+            ChildProcess.make(command, [...args], {
+              cwd: request.cwd,
+              env: { ...request.env, ...traceEnv },
+              extendEnv: true,
+              shell,
+              stdin: "pipe",
+              stdout: "pipe",
+              stderr: "pipe",
+            }),
+          ),
       );
       // Written here rather than handed to the spawner, so a tool that exits before reading its
       // input fails the write in this fiber, where it is expected, instead of in a forked one.

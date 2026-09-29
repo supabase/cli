@@ -266,6 +266,8 @@ function prepareClient(
       }
       return next;
     }),
+    // Trace context stays local; no API consumer reads it.
+    HttpClient.transformResponse(Effect.provideService(HttpClient.TracerPropagationEnabled, false)),
   );
 
   const retried = applySupabaseRetryPolicy(prefixed, options?.retry);
