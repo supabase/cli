@@ -112,6 +112,12 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")
 
 const PULL_MAX_RETRIES = 4;
 
+/**
+ * Host alias present only in Docker containers' `/etc/hosts`; it resolves to the IPv4 host
+ * gateway, unlike Docker Desktop's DNS for `host.docker.internal`, which answers IPv6 first.
+ */
+export const DOCKER_HOST_ALIAS = "host.supabase.internal";
+
 const pullBackoff = Schedule.exponential("2 seconds").pipe(Schedule.jittered);
 
 /** `docker create` only writes metadata; a healthy daemon answers well within this bound. */
@@ -304,8 +310,14 @@ export const makeContainerRuntime = (options: {
         "--pull",
         "never",
         ...(interactive ? ["--interactive", "--init"] : []),
-        ...(options.engine === "docker" && process.platform === "linux"
-          ? ["--add-host", "host.docker.internal:host-gateway"]
+        ...(options.engine === "docker"
+          ? [
+              "--add-host",
+              `${DOCKER_HOST_ALIAS}:host-gateway`,
+              ...(process.platform === "linux"
+                ? ["--add-host", "host.docker.internal:host-gateway"]
+                : []),
+            ]
           : []),
         "--name",
         name,

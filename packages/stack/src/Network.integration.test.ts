@@ -5,6 +5,7 @@ import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import { HttpClient } from "effect/unstable/http";
 import * as Network from "./Network.ts";
+import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
 import * as State from "./State.ts";
 
 const makeTestState = (root: string) =>
@@ -320,4 +321,27 @@ it.live("releases dedicated HTTP activity after the response while keep-alive st
       yield* Deferred.await(released).pipe(Effect.timeout("2 seconds"));
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("addresses docker runtime endpoints through the stack host alias", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-docker-alias-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack", "auto"));
+      const target = yield* backend;
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "docker", state });
+      const namespace = yield* network.register({
+        id: "one",
+        endpoints: { api: endpoint(target, Effect.succeed(false)) },
+      });
+      yield* namespace.bind;
+      const host = yield* namespace.address("api", "host");
+      const runtime = yield* namespace.address("api", "runtime");
+      expect(host.host).toBe("127.0.0.1");
+      expect(runtime).toEqual({ ...host, host: DOCKER_HOST_ALIAS });
+      yield* namespace.release;
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );

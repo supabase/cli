@@ -19,7 +19,12 @@ import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { HttpClient } from "effect/unstable/http";
-import { ContainerLaunchError, makeContainerRuntime, type ContainerProcess } from "./Container.ts";
+import {
+  ContainerLaunchError,
+  DOCKER_HOST_ALIAS,
+  makeContainerRuntime,
+  type ContainerProcess,
+} from "./Container.ts";
 
 const image = "oven/bun:1.4.1-slim";
 
@@ -136,6 +141,35 @@ describe("container process adapter", () => {
       );
       expect(yield* exists(id)).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("resolves the stack host alias to IPv4 addresses only", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+        yield* runtime.prepare(image);
+        const process = yield* runtime.launchCommand({
+          image,
+          stackId: "e".repeat(64),
+          instanceId: "host-alias",
+          env: {},
+          args: [
+            "-e",
+            `console.log(JSON.stringify(await require("node:dns/promises").lookup("${DOCKER_HOST_ALIAS}", { all: true })))`,
+          ],
+        });
+        const [stdout, exitCode] = yield* Effect.all(
+          [process.stdout.pipe(Stream.decodeText, Stream.mkString), process.exitCode],
+          { concurrency: "unbounded" },
+        );
+        expect(exitCode).toBe(0);
+        const addresses = yield* Schema.decodeEffect(
+          Schema.fromJsonString(Schema.Array(Schema.Struct({ family: Schema.Finite }))),
+        )(stdout.trim());
+        expect(addresses.length).toBeGreaterThan(0);
+        expect(addresses.every(({ family }) => family === 4)).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("names and labels a service container for compose-style grouping", () =>

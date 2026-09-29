@@ -23,6 +23,10 @@ import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import {
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "../../../command-internal/postgres-client.run.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
 import { schemaToCsvField } from "../../../command-internal/schema-flags.ts";
 import { findDropStatements } from "../../../command-internal/sql-split.ts";
@@ -625,13 +629,20 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               setup: shadowBase.setup,
             });
             yield* emitStatus("Diffing local database with current migrations...");
+            const differHost = (host: string) =>
+              toolContainerUsesHostNetwork(shadowBase.networkId)
+                ? host
+                : rewriteDumpHostForToolContainer(host, {
+                    platform: runtimeInfo.platform,
+                    usesHostNetwork: false,
+                  });
             return yield* diffSchemaPgAdmin({
               // `source`/`target` are inverted relative to the migra/pg-delta path below:
               // `source` is the user's db, `target` is the shadow.
-              source: targetUrl,
+              source: toPostgresURL({ ...resolved.conn, host: differHost(resolved.conn.host) }),
               // Hardcoded, not built via `toPostgresURL`: this ignores
               // `SUPABASE_SERVICES_HOSTNAME`/`[db] password` by design, not a bug to fix.
-              target: `postgresql://postgres:postgres@127.0.0.1:${shadowBase.shadowPort}/postgres`,
+              target: `postgresql://postgres:postgres@${differHost("127.0.0.1")}:${shadowBase.shadowPort}/postgres`,
               schema: flags.schema,
               projectEnvValues: cfg.projectEnv,
               projectId: shadowBase.projectId,

@@ -797,6 +797,46 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });
 
+  it.live("points a Windows tool container at the host for a loopback stack db-url", () => {
+    const conn = {
+      host: "127.0.0.1",
+      port: 55432,
+      user: "postgres",
+      password: "postgres",
+      database: "postgres",
+    };
+    const { layer, bundled } = setup({ conn, isLocal: false, platform: "win32", stdout: "" });
+    return Effect.gen(function* () {
+      yield* dbDump(
+        flags({ dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:55432/postgres") }),
+      );
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
+      expect(bundled.lastOpts?.network).toBe("host");
+      expect(bundled.lastOpts?.env).toMatchObject({
+        PGHOST: "host.docker.internal",
+        PGPORT: "55432",
+      });
+    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+  });
+
+  it.live("points a named-network legacy tool container at the host for a loopback db-url", () => {
+    const { layer, docker } = setup({
+      conn: { ...LOCAL_CONN, port: 55432 },
+      isLocal: false,
+      networkId: "custom_net",
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(
+        flags({ dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:55432/postgres") }),
+      );
+      expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "custom_net" });
+      expect(docker.lastOpts?.env).toMatchObject({
+        PGHOST: "host.docker.internal",
+        PGPORT: "55432",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("caches the linked project even when connection resolution fails (Go PostRun)", () => {
     // The project ref is resolved before the connection is built, and the
     // linked-project cache is refreshed unconditionally afterward. So an
