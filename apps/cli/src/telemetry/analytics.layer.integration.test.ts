@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Layer, Option } from "effect";
-import { vi } from "vitest";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { mockRuntimeInfo, mockTty } from "../../tests/helpers/mocks.ts";
@@ -12,14 +12,14 @@ import { analyticsLayer } from "./analytics.layer.ts";
 const tempRoot = useTempWorkdir("supabase-analytics-destination-");
 
 describe("analytics destination", () => {
-  afterEach(() => vi.unstubAllGlobals());
-
   it.live("uses ambient telemetry configuration despite project destination settings", () => {
     const destinations: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
-      destinations.push(String(url));
-      return Response.json({ status: 1 });
-    });
+    const recordingClient = HttpClient.make((request, url) =>
+      Effect.sync(() => {
+        destinations.push(url.toString());
+        return HttpClientResponse.fromWeb(request, Response.json({ status: 1 }));
+      }),
+    );
     const settings = Layer.succeed(CliSettings, {
       apiUrl: "https://api.supabase.com",
       dashboardUrl: "https://supabase.com/dashboard",
@@ -39,6 +39,7 @@ describe("analytics destination", () => {
       Layer.provide(mockRuntimeInfo({ homeDir: tempRoot.current })),
       Layer.provide(mockTty({ stdoutIsTty: false })),
       Layer.provide(BunServices.layer),
+      Layer.provide(Layer.succeed(HttpClient.HttpClient, recordingClient)),
     );
     return Effect.gen(function* () {
       yield* Analytics.use((analytics) => analytics.capture("destination_test")).pipe(
