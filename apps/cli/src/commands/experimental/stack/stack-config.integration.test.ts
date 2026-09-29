@@ -5,6 +5,7 @@ import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
 import { importJWK, jwtVerify } from "jose";
 import { ServiceCreationInput } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
+import { CLI_VERSION } from "../../../shared/cli/version.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
@@ -120,6 +121,26 @@ enabled = true
       });
       expect(recipes.has("pgmeta")).toBe(true);
       expect(recipes.has("imgproxy")).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("hands Studio the API settings it mirrors and its snippets folder", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-studio"
+[api]
+schemas = ["public", "storage"]
+extra_search_path = ["public", "extensions"]
+max_rows = 250
+`);
+      const config = yield* load(root);
+      const studio = byService(yield* config.creations("stack-studio")).get("studio");
+      expect(studio?.service === "studio" ? studio.config : undefined).toMatchObject({
+        snippetsRoot: `${root}/supabase/snippets`,
+        apiSchemas: "public,storage",
+        apiExtraSearchPath: "public,extensions",
+        apiMaxRows: 250,
+        cliVersion: CLI_VERSION,
+      });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

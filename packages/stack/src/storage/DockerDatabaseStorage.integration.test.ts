@@ -650,8 +650,16 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const cacheRoot = path.join(root, "cache");
         const instanceRoot = path.join(storageRoot, "unmarked");
         const dataRoot = path.join(instanceRoot, "data");
+        const checkpointsRoot = path.join(instanceRoot, ".supabase-snapshots");
         yield* fs.makeDirectory(path.join(dataRoot, "base"), { recursive: true });
         yield* fs.writeFileString(path.join(dataRoot, "base", "fixture"), "unmarked");
+        yield* fs.makeDirectory(path.join(checkpointsRoot, "entries", "checkpoint", "data"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(checkpointsRoot, "entries", "checkpoint", "data", "PG_VERSION"),
+          "17",
+        );
         yield* docker([
           "run",
           "--rm",
@@ -660,7 +668,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           helperImage,
           "/bin/sh",
           "-c",
-          "chown -R 100:101 /instance/data; chmod -R 700 /instance/data",
+          "chown -R 100:101 /instance/data /instance/.supabase-snapshots; chmod -R 700 /instance/data /instance/.supabase-snapshots",
         ]);
         const container = yield* makeContainerRuntime({ engine: "docker", root });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -685,6 +693,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
 
         yield* storage.destroyData("17");
         expect(yield* fs.exists(dataRoot)).toBe(false);
+        expect(yield* fs.exists(checkpointsRoot)).toBe(false);
         expect(yield* fs.exists(markerPath)).toBe(false);
         yield* fs.remove(cacheRoot, { recursive: true, force: true });
       }),
@@ -1043,6 +1052,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         ]);
         if (process.platform === "linux") expect(expectedOwnership).toBe("100:101");
         yield* storage.saveSnapshot("17", "adopted");
+        yield* storage.saveSnapshot("17", "checkpoint", "instance");
         const nativeRoot = path.join(root, "native");
         yield* fs.makeDirectory(path.join(nativeRoot, "data"), { recursive: true });
         yield* fs.writeFileString(path.join(nativeRoot, "data", "PG_VERSION"), "17\n");
@@ -1074,11 +1084,14 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           ]),
         ).toBe(expectedOwnership);
         yield* storage.removeData("17");
+        expect(yield* storage.restoreSnapshot("17", "checkpoint", "instance")).toBe(true);
+        yield* storage.removeData("17");
         yield* storage.destroyData("unsupported");
         expect(yield* fs.exists(path.join(instanceRoot, ".supabase-database-storage.json"))).toBe(
           true,
         );
         expect(yield* fs.exists(dataRoot)).toBe(false);
+        expect(yield* fs.exists(path.join(instanceRoot, ".supabase-snapshots"))).toBe(false);
         yield* fs.remove(cacheRoot, { recursive: true });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),

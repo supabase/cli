@@ -1,3 +1,4 @@
+import { defaultRuntime } from "@supabase/stack/internal/artifacts";
 import { Data, Effect } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
@@ -49,10 +50,6 @@ const engineReachable = (
       Effect.orElseSucceed(() => false),
     );
 
-const nativeSupported = (platform: string, arch: string): boolean =>
-  (platform === "linux" && (arch === "x64" || arch === "arm64")) ||
-  (platform === "darwin" && arch === "arm64");
-
 /**
  * Notice for a new stack whose automatic selection skipped Docker, since that runtime is saved with
  * the stack; `undefined` when the runtime was requested, saved, or Docker.
@@ -78,7 +75,7 @@ export const selectStackRuntime = Effect.fn("StackRuntime.select")(function* (
     if (yield* engineReachable(spawner, probe)) return probe.runtime;
   }
   const { platform, arch } = yield* RuntimeInfo;
-  if (nativeSupported(platform, arch)) return "native";
+  if (defaultRuntime({ os: platform, arch }) === "native") return "native";
   return yield* new StackRuntimeSelectionError({
     message: `Neither Docker nor Podman is reachable, and native stacks are not supported on ${platform}/${arch}.`,
     suggestion: "Start Docker or Podman, then rerun the command.",
