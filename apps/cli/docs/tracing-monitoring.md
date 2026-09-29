@@ -63,7 +63,8 @@ Any collector that accepts OTLP/HTTP JSON works; pass credentials with `SUPABASE
   `is_first_run`.
 - Layer spans such as `CliSettings.load`, `CliProjectContext.load`, and `ProjectLinkState.load`.
 - HTTP client spans with method, host, path, status, and allowlisted headers.
-- Process spans with the executable basename, argument count, and exit code. Children receive a
+- Process spans with the executable basename, argument count, exit code, and for docker or
+  podman the verb (such as `container inspect`). Children receive a
   `TRACEPARENT` pointing at their span when a sink is active.
 
 ## What is removed before export

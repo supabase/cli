@@ -13,6 +13,8 @@ export const ChildTracePropagation = Context.Reference<boolean>(
 export interface ProcessSpanTarget {
   readonly executable: string;
   readonly argCount: number;
+  /** A fixed-vocabulary verb such as `container inspect`; never free-form argv. */
+  readonly subcommand?: string;
 }
 
 /** Extra environment for a child process; empty unless a trace sink is active. */
@@ -28,6 +30,7 @@ function basename(executable: string): string {
 const processAttributes = (target: ProcessSpanTarget) => ({
   "process.executable.name": basename(target.executable),
   "process.arg_count": target.argCount,
+  ...(target.subcommand === undefined ? {} : { "process.subcommand": target.subcommand }),
 });
 
 const traceEnvFor = Effect.fnUntraced(function* (span: Tracer.Span) {

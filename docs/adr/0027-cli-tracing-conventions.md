@@ -52,9 +52,9 @@ HTTP trace-header propagation is disabled for all CLI requests.
   and pass `TRACEPARENT` to the child.
 - Build layer spans with `Effect.withSpan` inside the `Layer.effect` constructor. `Layer.withSpan`
   keeps the span open until the scope closes.
-- In `packages/api` call sites, name the span after the generated operation id where the path
-  template is known and annotate `api.operation`; the HTTP span name generator only sees
-  interpolated paths.
+- The `packages/api` client names each request span after its generated operation id and annotates
+  `api.operation`, because the HTTP span name generator only sees interpolated paths. Do not wrap a
+  single API call in another span at the call site.
 
 An integration test caps a representative command at 2,000 spans and 200 spans per name so a
 per-item span in a hot loop fails CI.

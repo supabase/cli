@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, PlatformError, Sink, Stream } from "effect";
+import { Deferred, Effect, PlatformError, Sink, Stream, Tracer } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -125,6 +125,46 @@ describe("containerCliExitCode", () => {
       }),
     );
   });
+});
+
+describe("container CLI process spans", () => {
+  const recordedAttributes = (args: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      yield* containerCliExitCode(mockSpawner().spawner, args).pipe(
+        Effect.withTracer(tracer),
+        Effect.withTracerEnabled(true),
+      );
+      return Object.fromEntries(spans.find((span) => span.name === "ContainerCli.run")!.attributes);
+    });
+
+  it.live("records the docker verb but no free-form arguments", () =>
+    recordedAttributes(["container", "inspect", "supabase_db_secret-project"]).pipe(
+      Effect.map((attributes) => {
+        expect(attributes).toEqual({
+          "process.executable.name": "docker",
+          "process.arg_count": 3,
+          "process.subcommand": "container inspect",
+          "process.exit_code": 0,
+        });
+      }),
+    ),
+  );
+
+  it.live("labels an unknown leading argument as other", () =>
+    recordedAttributes(["--context", "my-private-context", "ps"]).pipe(
+      Effect.map((attributes) => {
+        expect(attributes["process.subcommand"]).toBe("other");
+      }),
+    ),
+  );
 });
 
 describe("dockerSupportsVolumePruneAllFlag", () => {

@@ -78,17 +78,63 @@ export const spawnContainerCliWithRuntime = (
 const dockerRuntime: ContainerRuntime = "docker";
 const podmanRuntime: ContainerRuntime = "podman";
 
+const MANAGEMENT_COMMANDS: ReadonlySet<string> = new Set([
+  "container",
+  "context",
+  "image",
+  "network",
+  "system",
+  "volume",
+]);
+const COMMANDS: ReadonlySet<string> = new Set([
+  "build",
+  "cp",
+  "create",
+  "exec",
+  "images",
+  "info",
+  "inspect",
+  "kill",
+  "load",
+  "logs",
+  "ls",
+  "ps",
+  "prune",
+  "pull",
+  "restart",
+  "rm",
+  "run",
+  "save",
+  "start",
+  "stop",
+  "tag",
+  "version",
+  "wait",
+]);
+
+function containerSubcommand(args: ReadonlyArray<string>): string {
+  const [first, second] = args;
+  if (first === undefined) return "none";
+  if (MANAGEMENT_COMMANDS.has(first)) {
+    return second !== undefined && COMMANDS.has(second) ? `${first} ${second}` : first;
+  }
+  return COMMANDS.has(first) ? first : "other";
+}
+
+const processTarget = (runtime: ContainerRuntime, args: ReadonlyArray<string>) => ({
+  executable: runtime,
+  argCount: args.length,
+  subcommand: containerSubcommand(args),
+});
+
 function spawnRuntime(
   spawner: Spawner,
   runtime: ContainerRuntime,
   args: ReadonlyArray<string>,
   options?: ChildProcess.CommandOptions,
 ) {
-  return withProcessSpanScoped(
-    "ContainerCli.spawn",
-    { executable: runtime, argCount: args.length },
-    (traceEnv) =>
-      spawner.spawn(ChildProcess.make(runtime, args, withChildTraceEnv(options, traceEnv))),
+  return withProcessSpanScoped("ContainerCli.spawn", processTarget(runtime, args), (traceEnv) =>
+    spawner.spawn(ChildProcess.make(runtime, args, withChildTraceEnv(options, traceEnv))),
   );
 }
 
@@ -98,11 +144,8 @@ function runtimeExitCode(
   args: ReadonlyArray<string>,
   options?: ChildProcess.CommandOptions,
 ) {
-  return withProcessSpan(
-    "ContainerCli.run",
-    { executable: runtime, argCount: args.length },
-    (traceEnv) =>
-      spawner.exitCode(ChildProcess.make(runtime, args, withChildTraceEnv(options, traceEnv))),
+  return withProcessSpan("ContainerCli.run", processTarget(runtime, args), (traceEnv) =>
+    spawner.exitCode(ChildProcess.make(runtime, args, withChildTraceEnv(options, traceEnv))),
   );
 }
 
