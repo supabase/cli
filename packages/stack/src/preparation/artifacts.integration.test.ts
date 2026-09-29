@@ -807,13 +807,11 @@ describe("orphaned temp/quarantine sweep", () => {
             Effect.gen(function* () {
               materializeCalls += 1;
               if (materializeCalls > 1) {
-                // A second, concurrent preparation for the same key must never get this far in
-                // a correct design: the leftover reaper it ran on its way here must have left
-                // the first operation's staging directory alone. Refusing here, instead of
-                // racing it to publish, keeps the interleaving deterministic.
+                // The second preparation arrives here after running the reaper; it fails instead
+                // of racing the first to publish, which keeps the interleaving deterministic.
                 yield* Deferred.succeed(secondReachedMaterialize, undefined);
                 return yield* new PreparationError({
-                  message: "a second concurrent materialization must not happen in this test",
+                  message: "the second preparation stops before publishing",
                 });
               }
               yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
