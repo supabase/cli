@@ -7,44 +7,70 @@ import { vi } from "vitest";
 import { rootCommand } from "../../cli/root.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { CliArgs } from "./cli-args.service.ts";
+import { CLI_VERSION } from "./version.ts";
 
 const formatLogArg = (value: unknown): string =>
   typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
 
-describe("CLI --version (text)", () => {
-  const versionLayer = (args: ReadonlyArray<string>) =>
-    Layer.mergeAll(
-      CliOutput.layer(textCliOutputFormatter()),
-      Layer.succeed(CliArgs, { args }),
-      BunServices.layer,
-    );
+const builtinLayer = (args: ReadonlyArray<string>) =>
+  Layer.mergeAll(
+    CliOutput.layer(textCliOutputFormatter()),
+    Layer.succeed(CliArgs, { args }),
+    BunServices.layer,
+  );
 
-  test("CLI prints bare semver on stdout", async () => {
-    const logs: string[] = [];
-    const spy = vi
-      .spyOn(console, "log")
-      .mockImplementation((first?: unknown, ...rest: unknown[]) => {
-        const line =
-          rest.length === 0
-            ? first === undefined
-              ? ""
-              : formatLogArg(first)
-            : [first, ...rest].map(formatLogArg).join(" ");
-        logs.push(line);
-      });
-    try {
-      // `Command.runWith` keeps handler/global-flag services in the effect type even when
-      // `--version` exits early; only BunServices + CliOutput are needed at runtime here.
-      await Effect.runPromise(
-        Command.runWith(rootCommand, { version: "2.99.0-beta.1" })(["--version"]).pipe(
-          Effect.provide(versionLayer(["--version"])),
+/**
+ * Captures `console.log` while `run` executes. Spying on `console.log` alone is reliable here;
+ * `run.integration.test.ts` explains why pairing it with a `console.error` spy is not.
+ */
+async function captureLogs(run: () => Promise<void>): Promise<Array<string>> {
+  const logs: string[] = [];
+  const spy = vi.spyOn(console, "log").mockImplementation((first?: unknown, ...rest: unknown[]) => {
+    const line =
+      rest.length === 0
+        ? first === undefined
+          ? ""
+          : formatLogArg(first)
+        : [first, ...rest].map(formatLogArg).join(" ");
+    logs.push(line);
+  });
+  try {
+    await run();
+  } finally {
+    spy.mockRestore();
+  }
+  return logs;
+}
+
+describe("CLI --help (text)", () => {
+  test("source runs describe themselves as a development build", async () => {
+    // `Command.runWith` keeps handler/global-flag services in the effect type even when the
+    // built-in `--help`/`--version` exits early; only BunServices + CliOutput are needed here.
+    const logs = await captureLogs(() =>
+      Effect.runPromise(
+        Command.runWith(rootCommand, { version: CLI_VERSION })(["--help"]).pipe(
+          Effect.provide(builtinLayer(["--help"])),
         ) as Effect.Effect<void>,
-      );
-    } finally {
-      spy.mockRestore();
-    }
+      ),
+    );
+    const help = logs.join("\n");
+    expect(help).toContain("Supabase CLI (development build).");
+    expect(help).not.toContain("stable channel");
+  });
+});
+
+describe("CLI --version (text)", () => {
+  test("CLI prints bare semver on stdout", async () => {
+    const version = "2.99.0-beta.1";
+    const logs = await captureLogs(() =>
+      Effect.runPromise(
+        Command.runWith(rootCommand, { version })(["--version"]).pipe(
+          Effect.provide(builtinLayer(["--version"])),
+        ) as Effect.Effect<void>,
+      ),
+    );
     expect(logs.length).toBeGreaterThanOrEqual(1);
-    expect(logs[0]).toMatch(/^\d+\.\d+\.\d+/);
+    expect(logs[0]).toBe(version);
     expect(logs[0]).not.toMatch(/supabase\s+v/i);
   });
 

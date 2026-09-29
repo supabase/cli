@@ -18,7 +18,7 @@ import {
   lastGlobalFlagValue,
   rootFlagTokens,
 } from "../shared/cli/run.ts";
-import { CLI_UPGRADE_GUIDE_URL, CLI_VERSION } from "../shared/cli/version.ts";
+import { CLI_UPGRADE_GUIDE_URL, CLI_VERSION, parseSemver } from "../shared/cli/version.ts";
 import { bold, yellow } from "./colors.ts";
 import { parseDotEnv } from "./dotenv.ts";
 import { candidateDotenvFilenames } from "./project-environment.ts";
@@ -61,33 +61,6 @@ function debugEnabled(
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-interface ParsedSemver {
-  readonly nums: readonly [string, string, string];
-  readonly prerelease: string;
-}
-
-function parseSemver(version: string): ParsedSemver | undefined {
-  const match =
-    /^v(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?(?:\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)?(?![\s\S])/.exec(
-      version,
-    );
-  if (match === null) return undefined;
-  const prerelease = match[4] ?? "";
-  if (
-    prerelease
-      .split(".")
-      .some(
-        (identifier) => /^\d+$/.test(identifier) && identifier.length > 1 && identifier[0] === "0",
-      )
-  ) {
-    return undefined;
-  }
-  return {
-    nums: [match[1]!, match[2] ?? "0", match[3] ?? "0"],
-    prerelease,
-  };
-}
-
 function compareNumericIdentifier(left: string, right: string): number {
   if (left.length !== right.length) return left.length < right.length ? -1 : 1;
   if (left === right) return 0;
@@ -99,9 +72,9 @@ function compareNumericIdentifier(left: string, right: string): number {
  * suggests an upgrade; an invalid current version always does.
  */
 export function isNewerCliVersion(latestTag: string, currentVersion: string): boolean {
-  const latest = parseSemver(latestTag);
+  const latest = latestTag.startsWith("v") ? parseSemver(latestTag.slice(1)) : undefined;
   if (latest === undefined) return false;
-  const current = parseSemver(`v${currentVersion}`);
+  const current = parseSemver(currentVersion);
   if (current === undefined) return true;
   for (let index = 0; index < 3; index++) {
     const comparison = compareNumericIdentifier(latest.nums[index]!, current.nums[index]!);
