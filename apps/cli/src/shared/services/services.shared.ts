@@ -211,17 +211,27 @@ export interface ServiceVersionRow {
   readonly remote: string;
 }
 
+/** A release tag's `-r<N>` suffix, matching the slim-services revision grammar. */
+const RELEASE_REVISION_SUFFIX = /^(?<upstream>.+)-r(?:0|[1-9][0-9]*)$/;
+
+/** Strips a slim release tag's `-r<N>` suffix, if any, back to its upstream version. */
+function upstreamVersionFromTag(tag: string): string {
+  return RELEASE_REVISION_SUFFIX.exec(tag)?.groups?.upstream ?? tag;
+}
+
 function toServiceVersionRow(
   service: ServiceImageSpec,
   remote: Partial<Record<RemoteServiceName, string>> = {},
 ): ServiceVersionRow {
-  const tagSeparator = service.image.lastIndexOf(":");
+  // `@`-aware: a slim catalog pin's image carries a `@sha256:…` digest after the tag.
+  const withoutDigest = service.image.split("@")[0] ?? service.image;
+  const tagSeparator = withoutDigest.lastIndexOf(":");
   if (tagSeparator === -1) {
     throw new Error(`Invalid service image entry: ${service.image}`);
   }
 
-  const name = service.image.slice(0, tagSeparator);
-  const local = service.image.slice(tagSeparator + 1);
+  const name = withoutDigest.slice(0, tagSeparator);
+  const local = upstreamVersionFromTag(withoutDigest.slice(tagSeparator + 1));
 
   return {
     name,

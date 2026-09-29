@@ -6,11 +6,42 @@ import {
   fetchLinkedServiceVersions,
   listLocalServiceVersions,
   localServiceImagesFromDockerfile,
+  mergeRemoteServiceVersions,
   parseDockerfileServiceImages,
   postgresImageForDbMajorVersion,
   renderServicesTable,
   renderServicesWarning,
 } from "./services.shared.ts";
+
+// Only `auth` is pinned in this fixture catalog, at the current Dockerfile-independent version
+// `v2.197.0-r0`, with a realistic (non-placeholder) fixture digest built to the real
+// `ArtifactPin`/`NativePin` shape from `@supabase/stack/internal/artifacts`. Every other service
+// is deliberately absent, so `toSlimImage` falls through to the upstream image for them — the
+// expected state until Dependabot catches the Dockerfile up. `vi.mock` factories are hoisted
+// above every other top-level statement, so the fixture is inlined rather than referencing an
+// outer const.
+vi.mock("@supabase/stack/internal/artifacts", () => {
+  const digest = "260e94edb8d402555791146fcf70b8e90efdc6a81877a04e5aa26f0f416a5dd7";
+  const nativePin = { archive: digest, manifest: digest };
+  return {
+    catalogPins: () => [
+      {
+        service: "auth",
+        sourceService: "auth",
+        pin: {
+          upstreamVersion: "v2.197.0",
+          revision: 0,
+          image: `ghcr.io/supabase/cli/auth:v2.197.0-r0@sha256:${digest}`,
+          natives: {
+            "darwin-arm64": nativePin,
+            "linux-amd64": nativePin,
+            "linux-arm64": nativePin,
+          },
+        },
+      },
+    ],
+  };
+});
 
 const ACCESS_TOKEN = Redacted.make(`sbp_${"a".repeat(40)}`);
 const PROJECT_REF = "abcdefghijklmnopqrst";
@@ -85,20 +116,24 @@ describe("services shared", () => {
     expect(postgresImageForDbMajorVersion(15)).toBe("supabase/postgres:15.14.1.167");
   });
 
-  test("lists slim images when SUPABASE_USE_SLIM_IMAGES is set", () => {
+  test("slim-translates a version override that matches a catalog pin", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(listLocalServiceVersions().map((row) => row.name)).toEqual([
-      "ghcr.io/supabase/cli/postgres",
-      "ghcr.io/supabase/cli/auth",
-      "ghcr.io/supabase/cli/postgrest",
-      "ghcr.io/supabase/cli/realtime",
-      "ghcr.io/supabase/cli/storage",
-      "ghcr.io/supabase/cli/edge-runtime",
-      "ghcr.io/supabase/cli/studio",
-      "ghcr.io/supabase/cli/pgmeta",
-      "ghcr.io/supabase/cli/analytics",
-      "ghcr.io/supabase/cli/pooler",
-    ]);
+    expect(listLocalServiceVersions({ serviceVersions: { auth: "v2.197.0" } })).toContainEqual({
+      name: "ghcr.io/supabase/cli/auth",
+      // The catalog's release version (`v2.197.0-r0`) is a Dockerfile/manifest tag; the row shows
+      // the upstream version so a `supabase services` mismatch check compares upstream to upstream.
+      local: "v2.197.0",
+      remote: "",
+    });
+  });
+
+  test("keeps a version override that isn't in the catalog on docker.io", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    expect(listLocalServiceVersions({ serviceVersions: { storage: "v1.70.3" } })).toContainEqual({
+      name: "supabase/storage-api",
+      local: "v1.70.3",
+      remote: "",
+    });
   });
 
   test("keeps historical pins on docker.io when slimCurrentPinOnly is set", () => {
@@ -124,15 +159,6 @@ describe("services shared", () => {
         serviceVersions: { auth: "2.151.0" },
       }),
     ).toContainEqual({ name: "supabase/gotrue", local: "v2.151.0", remote: "" });
-  });
-
-  test("slim-translates catalog version overrides that are not the Dockerfile pin", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(listLocalServiceVersions({ serviceVersions: { storage: "v1.70.3" } })).toContainEqual({
-      name: "ghcr.io/supabase/cli/storage",
-      local: "v1.70.3",
-      remote: "",
-    });
   });
 
   // Explicit overrides keep their registry; a serviceVersions pin still rewrites the tag.
@@ -512,5 +538,22 @@ describe("services shared", () => {
         { name: "supabase/gotrue", local: "v2.189.0", remote: "v2.189.0" },
       ]),
     ).toContain("supabase/postgres:17.6.1.132 => 17.6.1.200");
+  });
+
+  test("compares upstream versions for a slim catalog pin, not the release tag", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    const rows = mergeRemoteServiceVersions(
+      { auth: "v2.197.0" },
+      { serviceVersions: { auth: "v2.197.0" } },
+    );
+
+    expect(rows).toContainEqual({
+      name: "ghcr.io/supabase/cli/auth",
+      local: "v2.197.0",
+      remote: "v2.197.0",
+    });
+    // The pinned image's release tag (`v2.197.0-r0@sha256:…`) never surfaces as a mismatch
+    // against the upstream-only remote version.
+    expect(renderServicesWarning(rows)).toBeUndefined();
   });
 });

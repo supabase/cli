@@ -93,7 +93,9 @@ describe("resolveEdgeRuntimeImage", () => {
       return resolve(dir, 2).pipe(
         Effect.tap((image) =>
           Effect.sync(() => {
-            expect(image).toBe(toSlimImage("edgeruntime", currentEdgeRuntime));
+            expect(image).toBe(
+              toSlimImage("edgeruntime", currentEdgeRuntime) ?? currentEdgeRuntime,
+            );
             rmSync(dir, { recursive: true, force: true });
           }),
         ),

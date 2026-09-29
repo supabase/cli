@@ -75,7 +75,7 @@ const WGET_PROBE_ALIASES = [
 
 function latestImagesToPull(): ReadonlyArray<string> {
   return [...new Set([...PULL_ALIASES, ...WGET_PROBE_ALIASES])].map((alias) =>
-    toSlimImage(alias, dockerfileServiceImageRaw(alias)),
+    expectedSlimImage(alias),
   );
 }
 
@@ -93,7 +93,8 @@ const containerImage = Effect.fnUntraced(function* (name: string) {
 });
 
 function expectedSlimImage(alias: string): string {
-  return toSlimImage(alias, dockerfileServiceImageRaw(alias));
+  const raw = dockerfileServiceImageRaw(alias);
+  return toSlimImage(alias, raw) ?? raw;
 }
 
 const containerHealthcheckTest = Effect.fnUntraced(function* (name: string) {

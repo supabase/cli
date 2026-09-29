@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Effect } from "effect";
 
 import { dockerfileServiceImageRaw } from "../services/dockerfile-images.ts";
+import { toSlimImage } from "../services/slim-images.ts";
 import {
   DENO1_EDGE_RUNTIME_VERSION,
   edgeRuntimeImage,
@@ -26,7 +27,7 @@ describe("edgeRuntimeImage", () => {
   it("rewrites the current Dockerfile tag onto the slim ghcr.io image when the flag is on", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     expect(edgeRuntimeImage(currentEdgeRuntimeTag)).toBe(
-      `ghcr.io/supabase/cli/edge-runtime:${currentEdgeRuntimeTag}`,
+      toSlimImage("edgeruntime", rawEdgeRuntimeImage) ?? rawEdgeRuntimeImage,
     );
   });
 

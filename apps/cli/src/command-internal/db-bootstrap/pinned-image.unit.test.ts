@@ -30,9 +30,11 @@ describe("resolvePinnedImage", () => {
 
   it("resolves slim images when the flag is on and the pin is current", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(resolvePinnedImage("gotrue", "auth", {})).toBe(toSlimImage("gotrue", currentAuth));
+    expect(resolvePinnedImage("gotrue", "auth", {})).toBe(
+      toSlimImage("gotrue", currentAuth) ?? currentAuth,
+    );
     expect(resolvePinnedImage("gotrue", "auth", { auth: currentAuthTag })).toBe(
-      toSlimImage("gotrue", currentAuth),
+      toSlimImage("gotrue", currentAuth) ?? currentAuth,
     );
   });
 
@@ -52,15 +54,18 @@ describe("resolvePinnedImage", () => {
   it("normalizes a current pooler pin onto the slim tag scheme", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     expect(resolvePinnedImage("supavisor", "pooler", { pooler: currentPoolerTag })).toBe(
-      toSlimImage("supavisor", currentPooler),
+      toSlimImage("supavisor", currentPooler) ?? currentPooler,
     );
-    expect(
-      resolvePinnedImage("supavisor", "pooler", {
-        pooler: currentPoolerTag.startsWith("v")
-          ? currentPoolerTag.slice(1)
-          : `v${currentPoolerTag}`,
-      }),
-    ).toBe(toSlimImage("supavisor", currentPooler));
+    // The opposite `v`-prefix variant of the same pin still counts as current (`pinMatchesCurrentImage`
+    // normalizes both before comparing), so it slim-translates the same way, or — with no catalog
+    // match — keeps this variant's own tag rather than the default Dockerfile one.
+    const altPoolerTag = currentPoolerTag.startsWith("v")
+      ? currentPoolerTag.slice(1)
+      : `v${currentPoolerTag}`;
+    const altPooler = currentPooler.replace(/:[^:]+$/, `:${altPoolerTag}`);
+    expect(resolvePinnedImage("supavisor", "pooler", { pooler: altPoolerTag })).toBe(
+      toSlimImage("supavisor", altPooler) ?? altPooler,
+    );
   });
 
   it("keeps a historical postgres pin on docker.io", () => {
@@ -73,7 +78,7 @@ describe("resolvePinnedImage", () => {
       "supabase/postgres:17.4.1.1",
     );
     expect(resolvePinnedImage("pg", "postgres", { postgres: currentPostgresTag })).toBe(
-      toSlimImage("pg", currentPostgres),
+      toSlimImage("pg", currentPostgres) ?? currentPostgres,
     );
   });
 });

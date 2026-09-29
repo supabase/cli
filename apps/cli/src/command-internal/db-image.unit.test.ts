@@ -118,11 +118,15 @@ describe("resolveDbImage", () => {
       const dir = withTemp();
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 15)).toEqual({
-          image: toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15_SLIM),
+          image:
+            toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15_SLIM) ??
+            POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
           configImage: POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
         });
         expect(yield* resolve(dir, 13)).toEqual({
-          image: toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15_SLIM),
+          image:
+            toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15_SLIM) ??
+            POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
           configImage: POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
         });
         rmSync(dir, { recursive: true, force: true });
@@ -148,7 +152,9 @@ describe("resolveDbImage", () => {
       writePin(dir, pg15SlimTag);
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 15)).toEqual({
-          image: toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15_SLIM),
+          image:
+            toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15_SLIM) ??
+            POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
           configImage: POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
         });
         rmSync(dir, { recursive: true, force: true });
@@ -174,7 +180,7 @@ describe("resolveDbImage", () => {
       writePin(dir, currentPostgresTag);
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 17)).toEqual({
-          image: toSlimImage("pg", currentPostgres),
+          image: toSlimImage("pg", currentPostgres) ?? currentPostgres,
           configImage: currentPostgres,
         });
         rmSync(dir, { recursive: true, force: true });

@@ -249,11 +249,11 @@ describe("resolveStartImagePlan under SUPABASE_USE_SLIM_IMAGES", () => {
 
   it("plans slim images when the flag is on, keeping unmapped services on docker.io", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(imageFor("gotrue")).toBe(toSlimImage("gotrue", currentGotrue));
-    expect(imageFor("logflare")).toBe(toSlimImage("logflare", currentLogflare));
-    expect(imageFor("vector")).toBe(toSlimImage("vector", currentVector));
+    expect(imageFor("gotrue")).toBe(toSlimImage("gotrue", currentGotrue) ?? currentGotrue);
+    expect(imageFor("logflare")).toBe(toSlimImage("logflare", currentLogflare) ?? currentLogflare);
+    expect(imageFor("vector")).toBe(toSlimImage("vector", currentVector) ?? currentVector);
     expect(imageFor("supavisor", { pooler: currentPoolerTag })).toBe(
-      toSlimImage("supavisor", currentPooler),
+      toSlimImage("supavisor", currentPooler) ?? currentPooler,
     );
     expect(imageFor("supavisor", { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
     expect(imageFor("kong")).toBe("library/kong:2.8.1");
