@@ -95,6 +95,12 @@ const errorFor = (operation: string, cause: unknown) =>
 const rateLimited = (error: ContainerError) =>
   /toomanyrequests|too many requests|rate limit|rate exceeded/iu.test(error.message);
 
+/** Matches a dropped or unavailable registry connection, not a permanent pull rejection. */
+const transientPullFailure = (error: ContainerError) =>
+  /\bEOF\b|connection reset by peer|i\/o timeout|TLS handshake timeout|net\/http: request canceled|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout|received unexpected HTTP status: 5\d\d/iu.test(
+    error.message,
+  );
+
 /**
  * Matches an engine CLI that is missing or reports a daemon that is not listening, not one that
  * rejects the caller. Podman's connection wrappers and Windows' `error during connect` also wrap
@@ -107,6 +113,10 @@ const engineUnreachable = (error: ContainerError) =>
   /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)/iu.test(
     error.message,
   );
+
+/** A pull worth retrying: rate-limited or a dropped connection, never an unreachable engine. */
+const retryablePull = (error: ContainerError) =>
+  (rateLimited(error) || transientPullFailure(error)) && !engineUnreachable(error);
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -137,8 +147,9 @@ const mountField = (key: string, value: string) => {
 /**
  * Captures the selected local engine; each launch owns one exact container. An image whose pull
  * fails is pulled from the first of its `imageMirrors` that succeeds, and launches of it then use
- * that mirror reference. When every mirror fails, the primary pull error is reported; a
- * rate-limited primary retries the whole chain with backoff.
+ * that mirror reference. When every mirror fails, the primary pull error is reported; a primary
+ * that is rate-limited or hits a transient registry transport failure retries the whole chain
+ * with backoff.
  */
 export const makeContainerRuntime = (options: {
   readonly engine: "docker" | "podman";
@@ -254,9 +265,11 @@ export const makeContainerRuntime = (options: {
         Effect.tapError((error) =>
           rateLimited(error)
             ? Effect.logWarning(`Registry rate-limited the pull of ${image}`)
-            : Effect.void,
+            : transientPullFailure(error)
+              ? Effect.logWarning(`Registry pull of ${image} failed transiently`)
+              : Effect.void,
         ),
-        Effect.retry({ schedule: pullBackoff, times: PULL_MAX_RETRIES, while: rateLimited }),
+        Effect.retry({ schedule: pullBackoff, times: PULL_MAX_RETRIES, while: retryablePull }),
       );
     });
     const prepare = Effect.fn("Container.prepare")((image: string) =>
