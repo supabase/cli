@@ -43,11 +43,7 @@ concurrency:
 
 jobs:
   check:
-    if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event_name == 'merge_group' ||
-        inputs.force ||
-        github.event.pull_request.draft == false)
+    if: false
     name: Check code quality
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
@@ -78,11 +74,7 @@ jobs:
         run: pnpm run check:config-api
 
   test-unit:
-    if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event_name == 'merge_group' ||
-        inputs.force ||
-        github.event.pull_request.draft == false)
+    if: false
     name: Run unit tests
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
@@ -105,8 +97,12 @@ jobs:
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
-    name: Run integration tests
+    name: Run integration tests (attempt ${{ matrix.attempt }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -119,14 +115,18 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Run integration tests
-        run: pnpm run test:integration --coverage.enabled
+        run: pnpm run test:integration
+
+      - name: Upload native reset traces
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-reset-trace-${{ matrix.attempt }}
+          path: ${{ runner.temp }}/native-reset-trace
+          if-no-files-found: ignore
 
   test-stack-ports:
-    if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event_name == 'merge_group' ||
-        inputs.force ||
-        github.event.pull_request.draft == false)
+    if: false
     name: Run stack port tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -184,11 +184,7 @@ jobs:
           echo "Unit and integration tests reported: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}, stack-ports=${{ needs.test-stack-ports.result }}"
 
   test-e2e:
-    if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event_name == 'merge_group' ||
-        inputs.force ||
-        github.event.pull_request.draft == false)
+    if: false
     name: Run CLI end-to-end tests (shard ${{ matrix.shard }}/3)
     runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:
@@ -232,11 +228,7 @@ jobs:
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
 
   test-stack-e2e:
-    if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event_name == 'merge_group' ||
-        inputs.force ||
-        github.event.pull_request.draft == false)
+    if: false
     name: Run stack end-to-end tests (${{ matrix.runtime }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:

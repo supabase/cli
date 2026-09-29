@@ -15,6 +15,8 @@ import {
 } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the test binds a dead owner's exact port.
 import * as Net from "node:net";
+import * as NodeFs from "node:fs";
+import { inspect } from "node:util";
 import { tmpdir } from "node:os";
 import {
   create,
@@ -260,7 +262,25 @@ const resetDataStory = (runtime: "native" | "docker") =>
           };
           yield* current.composition.configure(composition);
 
-          yield* current.composition.start;
+          yield* current.composition.start.pipe(
+            Effect.tapError((error) =>
+              Effect.sync(() => {
+                const dir = `${process.env["RUNNER_TEMP"] ?? tmpdir()}/native-reset-trace`;
+                NodeFs.mkdirSync(dir, { recursive: true });
+                const trace = `${dir}/${runtime}-${Date.now()}.txt`;
+                NodeFs.appendFileSync(trace, `${inspect(error, { depth: 12 })}\n`);
+                const walk = (current: string): void => {
+                  for (const entry of NodeFs.readdirSync(current, { withFileTypes: true })) {
+                    const full = `${current}/${entry.name}`;
+                    if (entry.isDirectory()) walk(full);
+                    else if (/\.(log|json)$/.test(entry.name))
+                      NodeFs.appendFileSync(trace, `---- ${full}\n${NodeFs.readFileSync(full, "utf8").slice(-40000)}\n`);
+                  }
+                };
+                walk(root);
+              }),
+            ),
+          );
           const armed = yield* target.status;
           expect(armed.lifecycle).toBe("stopped");
           expect(armed.wakeEnabled).toBe(true);
