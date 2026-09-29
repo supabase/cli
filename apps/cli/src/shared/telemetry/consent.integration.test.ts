@@ -7,14 +7,14 @@ import {
   Exit,
   FileSystem,
   Fiber,
+  Path,
   PlatformError,
   Ref,
   Result,
+  Schema,
 } from "effect";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { TestClock } from "effect/testing";
+import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { writeTelemetryConfig } from "./consent.ts";
 import type { TelemetryConfig } from "./types.ts";
 
@@ -25,9 +25,22 @@ const config: TelemetryConfig = {
   session_last_active: 1,
 };
 
-function makeDir(): string {
-  return mkdtempSync(path.join(tmpdir(), "supabase-consent-publish-"));
-}
+const tempRoot = useTempWorkdir("supabase-consent-publish-");
+
+const seedPreviousConfig = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = tempRoot.current;
+  const configPath = path.join(dir, "telemetry.json");
+  yield* fs.writeFileString(configPath, "previous config");
+  return { dir, configPath };
+});
+
+const temporaryFiles = (dir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return (yield* fs.readDirectory(dir)).filter((name) => name.includes(".tmp."));
+  });
 
 function injectedFailure(pathOrDescriptor: string, code: string, cause?: unknown) {
   return PlatformError.systemError({
@@ -41,12 +54,9 @@ function injectedFailure(pathOrDescriptor: string, code: string, cause?: unknown
 }
 
 describe("writeTelemetryConfig", () => {
-  it.effect("retries Windows replacement failures, then publishes the config", () => {
-    const dir = makeDir();
-    const configPath = path.join(dir, "telemetry.json");
-    writeFileSync(configPath, "previous config");
-
-    return Effect.gen(function* () {
+  it.effect("retries Windows replacement failures, then publishes the config", () =>
+    Effect.gen(function* () {
+      const { dir, configPath } = yield* seedPreviousConfig;
       const fs = yield* FileSystem.FileSystem;
       const calls = yield* Ref.make(0);
       const remainingFailures = yield* Ref.make(2);
@@ -63,7 +73,7 @@ describe("writeTelemetryConfig", () => {
                 yield* Ref.set(remainingFailures, remaining - 1);
                 yield* Ref.update(temporaryPaths, (paths) => [...paths, from]);
                 yield* Deferred.succeed(firstFailure, undefined);
-                return yield* Effect.fail(injectedFailure(to, call === 1 ? "EPERM" : "EACCES"));
+                return yield* injectedFailure(to, call === 1 ? "EPERM" : "EACCES");
               }
               return yield* fs.rename(from, to);
             }),
@@ -82,20 +92,18 @@ describe("writeTelemetryConfig", () => {
       expect(retries).toHaveLength(2);
       expect(retries[0]).toContain(".tmp.");
       expect(retries[1]).toBe(retries[0]);
-      expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(config);
-      expect(readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
-  });
+      expect(
+        yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          yield* fs.readFileString(configPath),
+        ),
+      ).toEqual(config);
+      expect(yield* temporaryFiles(dir)).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.effect("cleans the temporary file when cancelled during replacement backoff", () => {
-    const dir = makeDir();
-    const configPath = path.join(dir, "telemetry.json");
-    writeFileSync(configPath, "previous config");
-
-    return Effect.gen(function* () {
+  it.effect("cleans the temporary file when cancelled during replacement backoff", () =>
+    Effect.gen(function* () {
+      const { dir, configPath } = yield* seedPreviousConfig;
       const fs = yield* FileSystem.FileSystem;
       const firstFailure = yield* Deferred.make<void>();
       const publishing = yield* writeTelemetryConfig(config, dir, "win32").pipe(
@@ -110,20 +118,14 @@ describe("writeTelemetryConfig", () => {
       );
       yield* Deferred.await(firstFailure);
       yield* Fiber.interrupt(publishing);
-      expect(readFileSync(configPath, "utf8")).toBe("previous config");
-      expect(readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
-  });
+      expect(yield* fs.readFileString(configPath)).toBe("previous config");
+      expect(yield* temporaryFiles(dir)).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.effect("preserves the normalized platform error when retries exhaust", () => {
-    const dir = makeDir();
-    const configPath = path.join(dir, "telemetry.json");
-    writeFileSync(configPath, "previous config");
-
-    return Effect.gen(function* () {
+  it.effect("preserves the normalized platform error when retries exhaust", () =>
+    Effect.gen(function* () {
+      const { dir, configPath } = yield* seedPreviousConfig;
       const fs = yield* FileSystem.FileSystem;
       const calls = yield* Ref.make(0);
       const firstFailure = yield* Deferred.make<void>();
@@ -167,20 +169,14 @@ describe("writeTelemetryConfig", () => {
         }
       }
       expect(yield* Ref.get(calls)).toBe(13);
-      expect(readFileSync(configPath, "utf8")).toBe("previous config");
-      expect(readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
-  });
+      expect(yield* fs.readFileString(configPath)).toBe("previous config");
+      expect(yield* temporaryFiles(dir)).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.effect("does not retry unrelated errors or failures on another platform", () => {
-    const dir = makeDir();
-    const configPath = path.join(dir, "telemetry.json");
-    writeFileSync(configPath, "previous config");
-
-    return Effect.gen(function* () {
+  it.effect("does not retry unrelated errors or failures on another platform", () =>
+    Effect.gen(function* () {
+      const { dir, configPath } = yield* seedPreviousConfig;
       const fs = yield* FileSystem.FileSystem;
       for (const [platform, code] of [
         ["win32", "EINVAL"],
@@ -199,21 +195,15 @@ describe("writeTelemetryConfig", () => {
         );
         expect(Exit.isFailure(result)).toBe(true);
         expect(yield* Ref.get(calls)).toBe(1);
-        expect(readFileSync(configPath, "utf8")).toBe("previous config");
-        expect(readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
+        expect(yield* fs.readFileString(configPath)).toBe("previous config");
+        expect(yield* temporaryFiles(dir)).toEqual([]);
       }
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.effect("removes a partially written temporary file when writing fails", () => {
-    const dir = makeDir();
-    const configPath = path.join(dir, "telemetry.json");
-    writeFileSync(configPath, "previous config");
-
-    return Effect.gen(function* () {
+  it.effect("removes a partially written temporary file when writing fails", () =>
+    Effect.gen(function* () {
+      const { dir, configPath } = yield* seedPreviousConfig;
       const fs = yield* FileSystem.FileSystem;
       const result = yield* writeTelemetryConfig(config, dir).pipe(
         Effect.provideService(FileSystem.FileSystem, {
@@ -228,11 +218,8 @@ describe("writeTelemetryConfig", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(result)).toBe(true);
-      expect(readFileSync(configPath, "utf8")).toBe("previous config");
-      expect(readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
-  });
+      expect(yield* fs.readFileString(configPath)).toBe("previous config");
+      expect(yield* temporaryFiles(dir)).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });
