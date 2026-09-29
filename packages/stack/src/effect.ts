@@ -27,17 +27,23 @@ import {
   launchHost,
   observeHost,
   ownerClient,
+  ownerExitProbe,
   shutdownHost,
   waitForOwnerExit,
   type HostAccess,
+  type HostEndpoint,
 } from "./HostProcess.ts";
-import type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
+import {
+  planSupabaseComposition,
+  type PlannedInstance,
+  type SupabaseCompositionOptions,
+} from "./composition/Supabase.ts";
 import { removeStackContainersCommand } from "./runtime/Container.ts";
 import { volumeDataCleanupCommands } from "./storage/DockerDatabaseStorage.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as State from "./State.ts";
-import type { SavedStack, StackCredentials, StackIdentityInput } from "./State.ts";
+import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
 import { StackError, type Definition, type Observation } from "./Rpc.ts";
 import { reclaimStack } from "./Sweep.ts";
 import {
@@ -45,6 +51,7 @@ import {
   type ServiceCreation,
   type ServiceCreationInput as CatalogServiceCreationInput,
 } from "./services/Catalog.ts";
+import type { SnapshotScope } from "./services/DatabaseSnapshot.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type {
   InitializationCommand,
@@ -52,29 +59,22 @@ import type {
   PostgresCommand,
   CommandInvocation,
 } from "./Commands.ts";
-export {
-  DEFAULT_LOCAL_DATABASE_PASSWORD,
-  DEFAULT_LOCAL_JWT_SECRET,
-  DEFAULT_LOCAL_PUBLISHABLE_KEY,
-  DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
-  DEFAULT_LOCAL_S3_REGION,
-  DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
-  DEFAULT_LOCAL_SECRET_KEY,
-  DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
-  DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
-  DEFAULT_POSTGRES_ROOT_KEY,
-  DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
-  DEFAULT_SIGNING_KEY,
-} from "./Defaults.ts";
 
 export { initialization, postgres } from "./Commands.ts";
 export { resolveNativePostgresUser } from "./runtime/postgres-user.ts";
 export { StackError } from "./Rpc.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
+/** A service creation as `services.create` accepts it, before stack credentials fill its inputs. */
 export type ServiceCreationInput = CatalogServiceCreationInput;
 export type { CompositionConfig } from "./Orchestrator.ts";
-export type { SupabaseCompositionOptions } from "./composition/Supabase.ts";
-export type { StackCredentials, StackIdentityInput };
+export type {
+  CreationChange,
+  PlannedInstance,
+  SupabaseCompositionOptions,
+} from "./composition/Supabase.ts";
+export { StackIdSchema as StackId } from "./identity/StackId.ts";
+export type { SavedStack } from "./State.ts";
+export type { StackCredentials, StackKeysInput };
 export type { Observation } from "./Rpc.ts";
 export type {
   Command,
@@ -129,7 +129,9 @@ const failure = (operation: string, cause: unknown): StackError =>
           ? { reason: "owner-unavailable" as const }
           : hasReason("release-mismatch")(cause)
             ? { reason: "release-mismatch" as const }
-            : {}),
+            : hasReason("runtime-unavailable")(cause)
+              ? { reason: "runtime-unavailable" as const }
+              : {}),
       });
 
 type Kind = ServiceCreation["service"];
@@ -157,10 +159,24 @@ export interface ServiceInstance<K extends Kind = Kind> {
     readonly from?: "host" | "runtime";
   }) => Effect.Effect<Readonly<Record<string, string>>, StackError>;
 }
+/** Snapshot placement; `cache` is the default. */
+export interface DatabaseSnapshotOptions {
+  /**
+   * `cache` shares bounded retention with every stack under the cache root and outlives the
+   * instance; `instance` is never evicted and is removed when the database instance is destroyed.
+   */
+  readonly scope?: SnapshotScope;
+}
 /** A database instance with stopped-data snapshot operations. */
 export interface DatabaseInstance extends ServiceInstance<"database"> {
-  readonly saveSnapshot: (key: string) => Effect.Effect<void, StackError>;
-  readonly restoreSnapshot: (key: string) => Effect.Effect<boolean, StackError>;
+  readonly saveSnapshot: (
+    key: string,
+    options?: DatabaseSnapshotOptions,
+  ) => Effect.Effect<void, StackError>;
+  readonly restoreSnapshot: (
+    key: string,
+    options?: DatabaseSnapshotOptions,
+  ) => Effect.Effect<boolean, StackError>;
   /** Removes database-owned data while preserving the instance registration. */
   readonly resetData: Effect.Effect<void, StackError>;
 }
@@ -233,6 +249,13 @@ export interface Stack {
       services: ReadonlyArray<ServiceCreationInput>,
       options?: SupabaseCompositionOptions,
     ) => Effect.Effect<ReadonlyArray<AnyInstance>, StackError>;
+    /**
+     * Compares the requested creations with every saved instance of the same kinds, ignoring
+     * inputs the composition supplies, without changing state or contacting the owner.
+     */
+    readonly plan: (
+      services: ReadonlyArray<ServiceCreationInput>,
+    ) => Effect.Effect<ReadonlyArray<PlannedInstance>, StackError>;
     readonly configure: (config: Orchestrator.CompositionConfig) => Effect.Effect<void, StackError>;
     readonly describe: Effect.Effect<Orchestrator.CompositionConfig, StackError>;
     readonly start: Effect.Effect<ReadonlyArray<Observation>, StackError>;
@@ -371,6 +394,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     >(),
   );
   const crypto = yield* Crypto.Crypto;
+  const fs = yield* FileSystem.FileSystem;
   const handleScope = yield* Scope.Scope;
   const session = saved.lifetime === "session";
   const launchOptions = { ...locations, stackId: saved.id, lifeline: session };
@@ -572,7 +596,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         onSome: (cause) => failure(operation, cause),
       });
       if (!destroy) return yield* shutdownFailure;
-      const exitResult = yield* waitForOwnerExit(endpoint.pid).pipe(
+      const exitResult = yield* waitForOwnerExit(endpoint.pid, ownerExitProbe(fs)).pipe(
         Effect.mapError((cause) => failure("shutdown-exit", cause)),
         Effect.exit,
       );
@@ -591,12 +615,14 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       }
       return yield* shutdownFailure;
     }
-    yield* waitForOwnerExit(endpoint.pid).pipe(
+    yield* waitForOwnerExit(endpoint.pid, ownerExitProbe(fs)).pipe(
       Effect.mapError((cause) => failure("shutdown-exit", cause)),
     );
     return { runtimeCleanup: "complete" } as const;
   });
 
+  const snapshotScope = (options: DatabaseSnapshotOptions | undefined) =>
+    options?.scope === undefined ? {} : { scope: options.scope };
   const common = <K extends Kind>(id: string, service: K): ServiceInstance<K> => ({
     id,
     service,
@@ -632,9 +658,12 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       case "database":
         return {
           ...common(id, "database"),
-          saveSnapshot: (key) => call("saveSnapshot", (rpc) => rpc.saveSnapshot({ id, key })),
-          restoreSnapshot: (key) =>
-            call("restoreSnapshot", (rpc) => rpc.restoreSnapshot({ id, key })),
+          saveSnapshot: (key, options) =>
+            call("saveSnapshot", (rpc) => rpc.saveSnapshot({ id, key, ...snapshotScope(options) })),
+          restoreSnapshot: (key, options) =>
+            call("restoreSnapshot", (rpc) =>
+              rpc.restoreSnapshot({ id, key, ...snapshotScope(options) }),
+            ),
           resetData: call("resetData", (rpc) => rpc.resetData({ id })),
         };
       case "rest":
@@ -840,9 +869,21 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           rpc.supabaseComposition({
             services,
             ...(options?.reuseIds === undefined ? {} : { reuseIds: options.reuseIds }),
-            ...(options?.identity === undefined ? {} : { identity: options.identity }),
+            ...(options?.keys === undefined ? {} : { keys: options.keys }),
+            ...(options?.eager === undefined ? {} : { eager: options.eager }),
           }),
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
+      plan: (services: ReadonlyArray<ServiceCreationInput>) =>
+        Effect.forEach(services, (service) =>
+          Schema.decodeEffect(ServiceCreationInputSchema)(service),
+        ).pipe(
+          Effect.mapError((cause) => failure("plan", cause)),
+          Effect.flatMap((requested) =>
+            savedDefinition.pipe(
+              Effect.map((current) => planSupabaseComposition(current, requested)),
+            ),
+          ),
+        ),
       configure: (config: Orchestrator.CompositionConfig) =>
         call("configureComposition", (rpc) => rpc.configureComposition(config)),
       describe: savedDefinition.pipe(Effect.map((current) => current.composition)),
@@ -948,4 +989,27 @@ export const discover = Effect.fn("Stack.discover")(
     );
   },
   Effect.mapError((cause) => failure("discover", cause)),
+);
+
+/** Selects a saved stack by id, or by the identity a project root and stack name derive. */
+export type FindOptions = Pick<StackLocations, "stateRoot"> &
+  ({ readonly id: string } | { readonly projectRoot: string; readonly name?: string });
+
+/** A saved stack with the endpoint of the live owner holding its lease, if any. */
+export interface FoundStack {
+  readonly definition: SavedStack;
+  readonly host: HostEndpoint | undefined;
+}
+
+/** Reads the one saved stack a selection names; unreadable state fails instead of being skipped. */
+export const find = Effect.fn("Stack.find")(
+  function* (options: FindOptions) {
+    const state = yield* stateFor(options.stateRoot);
+    const id =
+      "id" in options ? options.id : yield* deriveStackId(yield* resolveStackIdentity(options));
+    const definition = yield* state.read(id);
+    if (definition === undefined) return Option.none<FoundStack>();
+    return Option.some({ definition, host: yield* observeHost(state, definition) });
+  },
+  Effect.mapError((cause) => failure("find", cause)),
 );

@@ -1,21 +1,21 @@
-import { Context, Crypto, Effect, FileSystem, Layer, Path, Scope } from "effect";
+import { Context, Crypto, Effect, FileSystem, Layer, Option, Path, Scope } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   create,
   discover,
+  find,
   open,
   type CreateOptions,
   type DestroyResult,
+  type FindOptions,
+  type FoundStack,
   type OpenOptions,
   type Stack,
+  type StackError,
 } from "@supabase/stack/effect";
-import { resolveStackIdentity } from "@supabase/stack/internal/identity";
 
 type DiscoverResult = Effect.Success<ReturnType<typeof discover>>;
-type StackError = Effect.Error<ReturnType<typeof create>>;
-type IdentityResult = Effect.Success<ReturnType<typeof resolveStackIdentity>>;
-type IdentityError = Effect.Error<ReturnType<typeof resolveStackIdentity>>;
 
 /** Operations used by the CLI stack boundary; a handle lasts until its scope closes. */
 export class StackApi extends Context.Service<
@@ -26,9 +26,7 @@ export class StackApi extends Context.Service<
     readonly discover: (
       options: Parameters<typeof discover>[0],
     ) => Effect.Effect<DiscoverResult, StackError>;
-    readonly resolveIdentity: (
-      options: Parameters<typeof resolveStackIdentity>[0],
-    ) => Effect.Effect<IdentityResult, IdentityError>;
+    readonly find: (options: FindOptions) => Effect.Effect<Option.Option<FoundStack>, StackError>;
   }
 >()("supabase/stack/StackApi") {}
 
@@ -57,15 +55,14 @@ export const stackApiLayer = Layer.effect(
     const discoverStacks = Effect.fn("StackApi.discover")(
       (options: Parameters<typeof discover>[0]) => provideServices(discover(options)),
     );
-    const resolveIdentity = Effect.fn("StackApi.resolveIdentity")(
-      (options: Parameters<typeof resolveStackIdentity>[0]) =>
-        provideServices(resolveStackIdentity(options)),
+    const findStack = Effect.fn("StackApi.find")((options: FindOptions) =>
+      provideServices(find(options)),
     );
     return StackApi.of({
       create: createStack,
       open: openStack,
       discover: discoverStacks,
-      resolveIdentity,
+      find: findStack,
     });
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer));

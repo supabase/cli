@@ -47,6 +47,7 @@ import type { DbStartFlags } from "./start.command.ts";
 import { stackLocalDatabaseConn } from "../../../command-internal/stack-local-database.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
+import { postgresVersion } from "@supabase/stack/internal/artifacts";
 import {
   StackCatalogSetup,
   StackCatalogSetupError,
@@ -361,7 +362,7 @@ function setup(opts: SetupOpts = {}) {
     create: () => Effect.die("unused"),
     open: () => Effect.die("unused"),
     discover: () => Effect.die("unused"),
-    resolveIdentity: () => Effect.die("unused"),
+    find: () => Effect.die("unused"),
   });
 
   const layer = Layer.mergeAll(
@@ -1689,6 +1690,29 @@ describe("db start stack backend", () => {
         }),
       },
       composition: {
+        plan: (creations: ReadonlyArray<ServiceCreationInput>) =>
+          Effect.sync(() =>
+            creations.flatMap((creation) =>
+              creation.service === "database" && registered.includes(database)
+                ? [
+                    postgresVersion(creation.config.version) === postgresVersion(version)
+                      ? {
+                          id: database.id,
+                          service: "database" as const,
+                          member: members.includes(database),
+                          change: "unchanged" as const,
+                        }
+                      : {
+                          id: database.id,
+                          service: "database" as const,
+                          member: members.includes(database),
+                          change: "incompatible" as const,
+                          paths: ["config.version"],
+                        },
+                  ]
+                : [],
+            ),
+          ),
         describe: Effect.sync(() => ({
           members: members.map(({ id }) => ({ id, activation: "eager" as const })),
           dependencies: [],
@@ -1715,27 +1739,24 @@ describe("db start stack backend", () => {
     Layer.succeed(StackApi, {
       create: () => Effect.succeed(fixture.stack),
       open: () => Effect.succeed(fixture.stack),
-      discover: () =>
+      discover: () => Effect.die("unused"),
+      find: () =>
         Effect.succeed(
           existing
-            ? [
-                {
-                  definition: {
-                    id: stackId,
-                    identity: { projectRoot: root, branchContext: "main", stackName: "default" },
-                    runtime: "native",
-                    instances: [],
-                    lifetime: "detached",
-                    composition: { members: [], dependencies: [] },
-                    ports: [],
-                  },
-                  host: undefined,
+            ? Option.some({
+                definition: {
+                  id: stackId,
+                  identity: { projectRoot: root, branchContext: "main", stackName: "default" },
+                  runtime: "native" as const,
+                  instances: [],
+                  lifetime: "detached" as const,
+                  composition: { members: [], dependencies: [] },
+                  ports: [],
                 },
-              ]
-            : [],
+                host: undefined,
+              })
+            : Option.none(),
         ),
-      resolveIdentity: () =>
-        Effect.succeed({ projectRoot: root, branchContext: "main", stackName: "default" }),
     });
 
   it.live("creates and starts only the primary database", () => {

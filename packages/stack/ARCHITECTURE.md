@@ -57,7 +57,9 @@ Organize by cohesive responsibilities. The package shape is:
 - `runtime/`: native and container adapters.
 - `Commands.ts`: public finite-command descriptors.
 - `effect.ts`: Effect-facing composition and services.
-- `index.ts`: Promise-facing public boundary.
+- `index.ts`: Promise-facing public boundary. `PromiseClient.ts` derives its types from the Effect handles and adapts them by shape: Effects become cancellable calls, Streams async iterables, and returned handles are adapted recursively. Only operations whose inputs differ (plain creations, Promise command sinks) and the per-kind creation type are written by hand.
+- `testing.ts`: disposable, composed session stacks for tests, with database checkpoints, in Promise and Effect forms.
+- `Defaults.ts`: shared local-development credentials, exported once as `./defaults`.
 
 This is navigational guidance, not a required file scaffold. Split modules when a responsibility needs it; avoid one folder or interface per operation. Keep service definitions narrow, with graph edges and input wiring in composition. Do not introduce capabilities, projections, recovery journals, reservations, public sleep APIs, or extra lifecycle states to force this shape.
 
@@ -382,16 +384,19 @@ CLI policy remains CLI policy: SQL scripts, migrations, seeds, hosted targets, o
 Expose one awaited `stack.commands.run` operation. PostgreSQL client commands and one-shot service initialization share the same owner-side runner. Initialization runs a service recipe without registering a service instance or changing the service graph.
 
 ```ts
-import { postgres } from "@supabase/stack/commands";
+import { postgres } from "@supabase/stack";
 
 // Connection values are plain data, rendered for the stack runtime.
 const { databaseUrl } = await database.credentials({ from: "runtime" });
-const result = await stack.commands.run(postgres.pgDump({ major: 17 }), {
-  args: ["--dbname", databaseUrl, "--schema-only", "--no-owner"],
-  stdout: (bytes) => destination.write(bytes),
-  stderr: (bytes) => diagnostics.write(bytes),
-  signal,
-});
+const result = await stack.commands.run(
+  postgres.pgDump({ major: 17 }),
+  {
+    args: ["--dbname", databaseUrl, "--schema-only", "--no-owner"],
+    stdout: (bytes) => destination.write(bytes),
+    stderr: (bytes) => diagnostics.write(bytes),
+  },
+  { signal },
+);
 
 // result: { jobId, exitCode }
 
@@ -476,9 +481,11 @@ During Starting, acquire the exclusive stack lease, load the instance definition
 
 **Release handshake.** `/identity` reports the owner's release: the package version plus a build identifier. The identifier is a digest of this package's module sources and its Effect version: the CLI build scripts embed it in every compiled binary and a source checkout computes it, so a binary and a source run of the same sources interoperate, and any change to the owner or its protocol is a new release. Operations fail with an error asking the user to stop or destroy the stack when the releases differ. `stop` and `destroy` use `POST /shutdown` with the bearer secret and a `{ "destroy": boolean }` body, which do not depend on the RPC schema and so reach owners of any release.
 
-**Session lifetime.** A session stack is registered by its owner under the lease, so it never exists without a live owner except after that owner dies. Its spawner keeps the owner's stdin pipe open for the life of the creating handle. End of input means the creator is gone, whether it closed the handle or its process died: the owner destroys the stack and exits. Only the creating handle starts a session stack's owner; other handles attach.
+**Session lifetime.** A session stack is registered by its owner under the lease, so it never exists without a live owner except after that owner dies. Its spawner keeps the owner's stdin pipe open for the life of the creating handle. End of input means the creator is gone, whether it closed the handle or its process died: the owner destroys the stack and exits. Only the creating handle starts a session stack's owner; other handles attach. `create({ startOwner: true })` registers a detached stack through its owner the same way; an owner whose startup fails removes the registration it made, so a failed or interrupted first launch leaves no stack behind.
 
 **Orphan sweep.** Stack-labelled containers and session stacks exist only while their lease is held. After readiness, each owner visits every other stack in its state root in the background, with a bounded time per stack. It skips stacks whose lease is held. For a free lease it takes that lease for the duration of the visit, publishing a sweeper record in `owner.json` so clients wait for the visit instead of mistaking it for a starting owner, removes containers labelled with the stack and its data root, and destroys the stack through the owner's own destroy path when its lifetime is `session`. Filtering on the data-root label keeps other state roots untouched. Creating a stack whose identity belongs to a dead session stack reclaims that stack the same way first.
+
+**Unreachable engine.** An owner of a container stack fails startup with a `runtime-unavailable` reason when its first container sweep finds the engine CLI missing or its daemon not listening; permission, TLS, authentication and timeout failures are ordinary startup errors. `destroy` then proceeds without an owner: it takes the free lease, publishing a sweeper record like the orphan sweep, refuses when any stack data directory cannot be deleted by the current user, removes the host data and the registration with its port claims, and returns the shell commands that remove the stack's containers and engine-volume data once the engine runs. `stop` without a live owner already succeeds without contacting the engine.
 
 During Serving, keep the owner alive independently of callers. Sleeping instances still need its public listeners. This is process lifetime management, not automatic service restart or continuous reconciliation.
 
@@ -654,8 +661,8 @@ Expose `saveSnapshot` and `restoreSnapshot` on `DatabaseInstance` only. The comm
 ```ts
 interface DatabaseInstance extends ServiceInstance {
   readonly service: "database";
-  saveSnapshot(key: string): Promise<void>;
-  restoreSnapshot(key: string): Promise<boolean>;
+  saveSnapshot(key: string, options?: { scope?: "cache" | "instance" }): Promise<void>;
+  restoreSnapshot(key: string, options?: { scope?: "cache" | "instance" }): Promise<boolean>;
 }
 
 // `baseline` has already been initialized; `shadow` is a fresh instance.
@@ -669,7 +676,7 @@ await shadow.start();
 await shadow.ready();
 ```
 
-The database implementation owns the snapshot format, PostgreSQL data selection, compatibility validation, initialization metadata and credential reconciliation. It uses native filesystem clone/copy operations or container volume/helper operations through the runtime backend. Native entries live below `cacheRoot`; Docker entries share the data volume, in a separate namespace derived from `cacheRoot`. Docker cache reuse requires the same daemon, `stateRoot`, and `cacheRoot`. Each store retains three entries by last use; saving a key replaces the previous complete entry for that key. Cache entries are disposable and do not promise durability across power loss. The orchestrator knows only admission, instance ownership and operation settlement; it never needs to understand PostgreSQL data contents.
+The database implementation owns the snapshot format, PostgreSQL data selection, compatibility validation, initialization metadata and credential reconciliation. It uses native filesystem clone/copy operations or container volume/helper operations through the runtime backend. Native entries live below `cacheRoot`; Docker entries share the data volume, in a separate namespace derived from `cacheRoot`. Docker cache reuse requires the same daemon, `stateRoot`, and `cacheRoot`. The cache store retains three entries by last use; saving a key replaces the previous complete entry for that key. Instance-scoped snapshots, which test checkpoints use, live beside the instance's data (native instance root, Docker data namespace or host-backed instance root), are outside cache retention, and are removed when the instance is destroyed; reset keeps them. Cache entries are disposable and do not promise durability across power loss. The orchestrator knows only admission, instance ownership and operation settlement; it never needs to understand PostgreSQL data contents.
 
 Keep the contract narrow:
 
@@ -677,7 +684,7 @@ Keep the contract narrow:
 - Restore requires a confirmed stopped instance with empty data. Validate format, artifact/runtime compatibility and initialization profile before installing restored data. A missing key returns `false`; a compatible published entry returns `true`; reject a nonempty target rather than overwriting it.
 - Both operations occupy the instance's existing serial operation gate and leave lifecycle stopped. Queued start, destroy or another storage operation waits for settlement and revalidates. No new lifecycle states are necessary; the observable pending operation identifies snapshot work. An armed wake route is not a substitute for explicit stop.
 - Native snapshots copy or clone the host data; container snapshots copy database data through a managed volume and helper. Docker data normally lives in a managed volume, while existing host data can be retained through the host-backed fallback. The host storage marker detects a missing or mismatched Docker volume; deleting that volume loses its database data.
-- Restore transfers compatible database contents, not the source instance's identity, public port claims or composition membership. The target retains its own data location and configuration, with database-specific credentials reconciled before readiness. Snapshots survive destruction of the source instance because their managed storage is separate.
+- Restore transfers compatible database contents, not the source instance's identity, public port claims or composition membership. The target retains its own data location and configuration, with database-specific credentials reconciled before readiness. Cache snapshots survive destruction of the source instance because their managed storage is separate; instance snapshots restore only into their own instance.
 
 These are physical database snapshots for the cache use case. A `pg_dump` invocation remains an ordinary client command for logical exports. CLI code owns cache keys, migrations and the decision to fall back to rebuilding a baseline; managed storage owns publication and retention. The snapshot API does not acquire CLI cache policy.
 
@@ -723,13 +730,15 @@ A Functions runtime exit must reach `followStatus` so serve can report it.
 
 ### Established CLI integration boundaries
 
-The Stack package remains the owner of identity semantics. It canonicalizes `projectRoot`, resolves the Git branch context (or ordinary-workspace fallback), and validates the stack name in [`Identity.ts`](./src/identity/Identity.ts); it also owns `deriveStackId` from that complete tuple. The CLI currently calls `resolveStackIdentity` through the internal [`identity` entrypoint](./src/identity/Identity.ts), then uses the result when matching `discover` records for status and related read operations. Resolving identity is read-only and does not create a stack. A follow-up recommendation is to expose an equivalent public, read-only `resolveIdentity` operation so the CLI need not import an internal entrypoint; this is a recommended public API, not an existing export.
+The Stack package remains the owner of identity semantics. It canonicalizes `projectRoot`, resolves the Git branch context (or ordinary-workspace fallback), and validates the stack name in [`Identity.ts`](./src/identity/Identity.ts); it also owns `deriveStackId` from that complete tuple and the `StackId` format. The CLI selects a stack with the public, read-only `find`, by project root and stack name or by ID; `find` derives the ID, reads only that state document, and reports the live owner. It never creates a stack, and an unreadable document fails selection rather than reading as absent. `discover` remains the listing operation for `stack list` and `stack stop --all`.
+
+Composition policy stays in the package. `composition.supabase` owns the managed bindings, the inputs derived from the API endpoint and the stack credentials, and the activation policy; the CLI passes `--eager` as the `eager` preference. Creation schemas make every bound or injected input optional, and a launch without a required input fails with a typed `ServiceError` naming it. Before recomposing a stopped stack, the CLI calls `composition.plan`, which compares requested creations with the saved instances while ignoring package-managed inputs and normalising the shared API port as composition does. The CLI rejects `incompatible` members, recomposes `changed` members with their new configuration under the same identities, and reuses stopped standalone instances that are not incompatible. `stack status` reports the same plan as configuration drift. Required inputs are checked after dependency inputs are merged and before a start or restart changes lifecycle, so a restart without one leaves the instance running.
 
 The Functions recipe publishes a default Edge Runtime main service built from [`serve.main.ts`](./src/functions/serve.main.ts). [`generate-functions-bootstrap.ts`](./scripts/generate-functions-bootstrap.ts) bundles it, with its dependencies inlined for offline use, into the committed module [`serve-main-bundle.ts`](./src/functions/generated/serve-main-bundle.ts); `pnpm generate` refreshes it and a unit test fails when it drifts from the sources. A creation may override it with `bootstrap`; the default is not saved in the stack document. `stack start` and the stack-backed `functions serve` command use the default.
 
 The CLI owns the foreground `functions serve` session. It attaches to an existing composition member and leaves it available on exit. Supported explicit overrides replace its configuration for the session, then restore it on normal cleanup. If Functions is excluded, the CLI creates and later destroys one standalone instance without changing composition. The package needs no session or recovery API: ordinary create, start, restart, status, logs, and destroy suffice. Functions accepts custom environment values and a database URL; its recipe derives default keys, while the composer supplies the runtime database URL without a dependency edge. See the [command lifecycle](../../apps/cli/docs/stack-commands.md) for supported flags and cleanup limits.
 
-PostgreSQL artifact knowledge remains in Stack and is exposed through [`postgres-artifact.ts`](./src/internal/postgres-artifact.ts), including catalog resolution and native artifact preparation and verification. A remote `db dump --db-url` can use those existing helpers and run without creating a local or dummy stack: the CLI owns the external process or container execution, as shown by [`bundled-postgres-client.ts`](../../apps/cli/src/command-internal/bundled-postgres-client.ts), while managed jobs continue to use `stack.commands.run`.
+Artifact knowledge remains in Stack and is exposed to the CLI through the single internal [`artifacts` entrypoint](./src/internal/artifacts.ts), including the service catalog, PostgreSQL version resolution, and native artifact preparation and verification. A remote `db dump --db-url` can use those existing helpers and run without creating a local or dummy stack: the CLI owns the external process or container execution, as shown by [`bundled-postgres-client.ts`](../../apps/cli/src/command-internal/bundled-postgres-client.ts), while managed jobs continue to use `stack.commands.run`.
 
 Changing internal and public-to-repository contracts is acceptable when callers are updated; preserving valuable data is still required. Keep per-instance configuration replacement through `service.restart({ config })`. Validate the candidate configuration and prepare its artifacts before stopping the existing runtime; invalid input must leave it running. The admitted restart then performs ordinary stop and launch without waiting for application health inside the gate. Adding or removing a companion means explicitly adding or removing an ordinary instance and updating composition edges. Validate the graph using the same rules as registration; do not implement private-child expansion or group replacement logic. Defer live shared configuration changes and config-bearing whole-stack restart.
 

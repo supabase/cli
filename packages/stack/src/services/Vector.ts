@@ -1,6 +1,7 @@
 import { Effect, type FileSystem, type Path, Schema } from "effect";
 import { ServiceError } from "../Service.ts";
 import { type CatalogOptions, EndpointIntent, serviceCreation } from "./Recipe.ts";
+import { requiredInput } from "./ServiceConfig.ts";
 import {
   makeProcessRecipe,
   type ProcessDependencies,
@@ -8,7 +9,7 @@ import {
 } from "./ProcessRecipe.ts";
 
 export const Config = Schema.Struct({
-  analyticsUrl: Schema.String,
+  analyticsUrl: Schema.optionalKey(Schema.String),
   apiKey: Schema.optionalKey(Schema.String),
   /** Pipeline config without an `api` block; the recipe adds its own. */
   configPath: Schema.optionalKey(Schema.String),
@@ -82,18 +83,21 @@ const makeSpec = (
     executable: "bin/vector",
     ports: { http: 9001 },
     healthPath: "/health",
-    env: (creation, endpoints, container) => {
-      const http = endpoints.get("http");
-      return Effect.succeed({
-        ...(http === undefined
-          ? {}
-          : { VECTOR_API_ADDRESS: `${container ? "0.0.0.0" : "127.0.0.1"}:${http.port}` }),
-        LOGFLARE_URL: creation.config.analyticsUrl,
-        ...(creation.config.apiKey === undefined
-          ? {}
-          : { LOGFLARE_PRIVATE_ACCESS_TOKEN: creation.config.apiKey }),
-      });
-    },
+    env: (creation, endpoints, container) =>
+      requiredInput("vector", "analyticsUrl", creation.config.analyticsUrl).pipe(
+        Effect.map((analyticsUrl) => {
+          const http = endpoints.get("http");
+          return {
+            ...(http === undefined
+              ? {}
+              : { VECTOR_API_ADDRESS: `${container ? "0.0.0.0" : "127.0.0.1"}:${http.port}` }),
+            LOGFLARE_URL: analyticsUrl,
+            ...(creation.config.apiKey === undefined
+              ? {}
+              : { LOGFLARE_PRIVATE_ACCESS_TOKEN: creation.config.apiKey }),
+          };
+        }),
+      ),
     args: (creation, _endpoints, context) =>
       Effect.succeed(
         context.container

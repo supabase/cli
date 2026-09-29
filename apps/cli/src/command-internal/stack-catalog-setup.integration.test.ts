@@ -20,7 +20,7 @@ import { postgres } from "@supabase/stack/commands";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import type { Command } from "@supabase/stack/commands";
 import { stackCatalogSetupLayer, StackCatalogSetup } from "./stack-catalog-setup.ts";
-import { destroyTestStack } from "../../../../packages/stack/tests/stack-cleanup.ts";
+import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 const jwtSecret = "stack-catalog-setup-integration-secret";
@@ -64,13 +64,12 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                     },
                     {
                       service: "auth",
-                      config: { databaseUrl: "postgresql://placeholder", jwtSecret },
+                      config: { jwtSecret },
                       endpoints: { http: { port: "auto" } },
                     },
                     {
                       service: "storage",
                       config: {
-                        databaseUrl: "postgresql://placeholder",
                         jwtSecret,
                         filePath: `${root}/unused-storage`,
                       },
@@ -78,7 +77,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                     },
                     {
                       service: "realtime",
-                      config: { databaseUrl: "postgresql://placeholder", jwtSecret },
+                      config: { jwtSecret },
                       endpoints: { http: { port: "auto" }, rpc: { port: "auto" } },
                     },
                   ]);

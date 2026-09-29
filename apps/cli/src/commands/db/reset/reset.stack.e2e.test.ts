@@ -7,7 +7,7 @@ import { create as createStack } from "@supabase/stack/effect";
 import { tmpdir } from "node:os";
 
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
-import { destroyTestStack } from "../../../../../../packages/stack/tests/stack-cleanup.ts";
+import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
 
 const COMMAND_TIMEOUT_MS = 8 * 60_000;
 const TEST_TIMEOUT_MS = COMMAND_TIMEOUT_MS + 2 * 60_000;
@@ -136,7 +136,6 @@ const composeStack = Effect.fn("DbResetStackE2e.composeStack")(function* (
     {
       service: "rest",
       config: {
-        databaseUrl: "postgresql://placeholder",
         jwtSecret: JWT_SECRET,
       },
       endpoints: { http: { port: "auto" } },
@@ -144,7 +143,6 @@ const composeStack = Effect.fn("DbResetStackE2e.composeStack")(function* (
     {
       service: "auth",
       config: {
-        databaseUrl: "postgresql://placeholder",
         jwtSecret: JWT_SECRET,
       },
       endpoints: { http: { port: "auto" } },

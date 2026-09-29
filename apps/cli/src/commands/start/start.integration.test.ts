@@ -47,6 +47,7 @@ import {
 } from "../../command-internal/global-flags.ts";
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { serviceContainerIds, serviceContainerName } from "../../command-internal/docker-ids.ts";
+import { HealthCheckTimeoutSeconds } from "../../command-internal/db-bootstrap/health-check.ts";
 import { DbConnection, type DbSession } from "../../command-internal/db-connection.service.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
 import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
@@ -3278,8 +3279,7 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails and rolls back when Postgres itself never becomes healthy within its configured health_timeout",
       () =>
         Effect.gen(function* () {
-          // `db.health_timeout` is config.toml-configurable, unlike the generic 30s
-          // `serviceTimeout` other services wait on, so this keeps the scenario fast.
+          // A zero `db.health_timeout` limits Postgres's wait to a single probe.
           const neverHealthy = new Set<string>();
           const base = defaultRoute({ neverHealthy });
           const route = (args: ReadonlyArray<string>): RouteResult => {
@@ -3290,7 +3290,7 @@ content_path = "./supabase/templates/custom_notice.html"
             return base(args);
           };
           const { layer, child } = yield* setup({
-            configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "2s"\n',
+            configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "0s"\n',
             route,
           });
 
@@ -3328,7 +3328,7 @@ content_path = "./supabase/templates/custom_notice.html"
             return base(args);
           };
           const { layer, out, child, analytics } = yield* setup({
-            configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "2s"\n',
+            configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "0s"\n',
             route,
           });
 
@@ -3352,9 +3352,8 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     // Real time, not `it.effect`/`TestClock`: `start` performs genuine async I/O that never
-    // resolves under a virtualized clock. `waitForHealthyServices` has no config-configurable
-    // timeout seam here (it falls back to the hardcoded 30s default), hence the generous
-    // real-time budget.
+    // resolves under a virtualized clock. A zero `HealthCheckTimeoutSeconds` keeps the single
+    // probe that finds auth unhealthy and skips the default retry budget.
     it.live(
       "fails and rolls back when a non-Postgres service never becomes healthy within the timeout (no --ignore-health-check)",
       () =>
@@ -3383,16 +3382,18 @@ content_path = "./supabase/templates/custom_notice.html"
           }
           expect(out.stderrText).not.toContain("Started");
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
-      45_000,
+        }).pipe(
+          Effect.provideService(HealthCheckTimeoutSeconds, 0),
+          Effect.provide(BunServices.layer),
+        ),
+      10_000,
     );
   });
 
   // Real time, not `it.effect`/`TestClock`: genuine async I/O deep inside the forked effect
   // (HTTP requests and `resolveDbImage`'s file read) needs real Node
   // event-loop turns to settle, so a virtualized clock would never let the fiber reach the
-  // health-check phase. Exercises the real 30s `serviceTimeout` bulk health-check wait, hence
-  // the generous timeout.
+  // health-check phase.
   it.live(
     "exits 0 on --ignore-health-check when a non-Postgres container never turns healthy, without rolling back",
     () =>
@@ -3431,8 +3432,11 @@ content_path = "./supabase/templates/custom_notice.html"
         // `cli_stack_started` never fires on the ignored-unhealthy fallthrough — only a genuine
         // bulk health-check success reaches that capture.
         expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
-    45_000,
+      }).pipe(
+        Effect.provideService(HealthCheckTimeoutSeconds, 0),
+        Effect.provide(BunServices.layer),
+      ),
+    10_000,
   );
 
   describe("--ignore-health-check storage-only recheck and seed on a fresh volume", () => {
@@ -3463,8 +3467,11 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(out.stderrText).toContain("Started");
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
           expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
-      45_000,
+        }).pipe(
+          Effect.provideService(HealthCheckTimeoutSeconds, 0),
+          Effect.provide(BunServices.layer),
+        ),
+      10_000,
     );
 
     it.live(
@@ -3507,8 +3514,11 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(out.stderrText).not.toContain("Do you want to prune it?");
             }).pipe(Effect.provide(layer)),
           );
-        }).pipe(Effect.provide(BunServices.layer)),
-      45_000,
+        }).pipe(
+          Effect.provideService(HealthCheckTimeoutSeconds, 0),
+          Effect.provide(BunServices.layer),
+        ),
+      10_000,
     );
 
     it.live(
@@ -3573,13 +3583,13 @@ content_path = "./supabase/templates/custom_notice.html"
           }
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
           expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
-      45_000,
+        }).pipe(
+          Effect.provideService(HealthCheckTimeoutSeconds, 0),
+          Effect.provide(BunServices.layer),
+        ),
+      10_000,
     );
 
-    // Both the main bulk health check (auth) and this storage-only recheck run out their own
-    // full ~30s real-time retry budget here, hence the doubled timeout relative to every other
-    // real-time health-check test in this file.
     it.live(
       "falls through to the original warning without attempting to seed when the storage recheck itself never turns healthy",
       () =>
@@ -3609,8 +3619,11 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(out.stderrText).toContain("Started");
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
           expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
-      90_000,
+        }).pipe(
+          Effect.provideService(HealthCheckTimeoutSeconds, 0),
+          Effect.provide(BunServices.layer),
+        ),
+      10_000,
     );
   });
 
@@ -5001,7 +5014,7 @@ content_path = "./supabase/templates/custom_notice.html"
       () =>
         withEnvVar(
           "SUPABASE_DB_HEALTH_TIMEOUT",
-          "2s",
+          "0s",
           Effect.gen(function* () {
             const neverHealthy = new Set<string>();
             const base = defaultRoute({ neverHealthy });

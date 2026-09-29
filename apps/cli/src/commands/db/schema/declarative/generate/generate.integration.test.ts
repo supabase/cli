@@ -154,6 +154,7 @@ function generateStackApi(workdir: string) {
     },
     credentials: { get: unusedStack },
     composition: {
+      plan: () => Effect.succeed([]),
       describe: Effect.succeed(composition),
       supabase: unusedStackFn,
       configure: unusedStackFn,
@@ -169,10 +170,10 @@ function generateStackApi(workdir: string) {
   return Layer.succeed(StackApi, {
     create: unusedStackFn,
     open: () => Effect.succeed(stack),
-    resolveIdentity: () => Effect.succeed(identity),
-    discover: () =>
-      Effect.succeed([
-        {
+    discover: () => Effect.die("unused"),
+    find: () =>
+      Effect.succeed(
+        Option.some({
           definition: {
             id: stack.id,
             identity,
@@ -183,8 +184,8 @@ function generateStackApi(workdir: string) {
             ports: [],
           },
           host: undefined,
-        },
-      ]),
+        }),
+      ),
   });
 }
 

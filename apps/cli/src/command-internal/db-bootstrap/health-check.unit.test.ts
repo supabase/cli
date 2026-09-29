@@ -277,6 +277,30 @@ describe("waitForHealthyServices", () => {
       }),
   );
 
+  it.effect("keeps retrying for 30 seconds when the caller passes no timeout", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => runningStarting);
+
+      const fiber = yield* waitForHealthyServices(mock.spawner, ["supabase_kong_proj"]).pipe(
+        Effect.provide(unusedHttpClientLayer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+
+      for (let second = 0; second < 29; second++) {
+        yield* TestClock.adjust("1 seconds");
+      }
+      const pendingAfter29Seconds = fiber.pollUnsafe();
+      yield* TestClock.adjust("1 seconds");
+      const error = yield* Fiber.join(fiber).pipe(Effect.flip);
+
+      expect(pendingAfter29Seconds).toBeUndefined();
+      expect(error).toBeInstanceOf(HealthCheckTimeoutError);
+      expect(
+        mock.spawned.filter((args) => args[0] === "container" && args[1] === "inspect"),
+      ).toHaveLength(31);
+    }),
+  );
+
   it.effect("dumps container logs to stderr on a genuine timeout", () =>
     Effect.gen(function* () {
       const mock = mockHealthSpawner(() => notRunning);

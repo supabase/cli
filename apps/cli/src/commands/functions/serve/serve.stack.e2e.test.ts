@@ -7,7 +7,7 @@ import { homedir, tmpdir } from "node:os";
 
 import { spawnSupabase } from "../../../../tests/helpers/cli.ts";
 import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
-import { destroyTestStack } from "../../../../../../packages/stack/tests/stack-cleanup.ts";
+import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
 
 const jwtSecret = "functions-serve-stack-e2e-secret-at-least-32-characters";
 const nativeSupported =
@@ -78,7 +78,7 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
     },
     {
       service: "rest",
-      config: { databaseUrl: "postgresql://placeholder", jwtSecret },
+      config: { jwtSecret },
       endpoints: { http: { port: "auto" } },
     },
     ...(included

@@ -53,6 +53,7 @@ import {
 } from "./composition/Supabase.ts";
 import {
   makeServiceRecipe,
+  requireInputs,
   ServiceCreation,
   serviceSchemas,
   type CatalogRecipe,
@@ -60,9 +61,10 @@ import {
 } from "./services/Catalog.ts";
 import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
+import { projectSegmentFor } from "./identity/Identity.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
-import type { SavedStack, StackCredentials, StackIdentityInput } from "./State.ts";
+import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
 import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
 
 export interface OwnerOptions {
@@ -175,12 +177,14 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   >();
   const ownerScope = Context.get(services, Scope.Scope);
   const crypto = Context.get(services, Crypto.Crypto);
+  const path = Context.get(services, Path.Path);
   const network = yield* Network.Service;
   const orchestrator = yield* Orchestrator.make<Entry>();
   const helpers = yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4);
   const definitionGate = yield* Semaphore.make(1);
   const draining = yield* Ref.make(false);
   const { id: stackId, runtime } = options.saved;
+  const project = projectSegmentFor(options.saved.identity, path);
   const routeKeys = {
     publishableKey: options.saved.credentials?.publishableKey ?? "",
     secretKey: options.saved.credentials?.secretKey ?? "",
@@ -245,7 +249,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
               ? Effect.void
               : Effect.fail(
                   new CredentialError({
-                    message: `Service ${id} must be stopped with wake disabled before identity changes`,
+                    message: `Service ${id} must be stopped with wake disabled before stack credentials change`,
                   }),
                 ),
           ),
@@ -255,12 +259,12 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
 
   const resolveStackCredentials = Effect.fn("Owner.resolveStackCredentials")(function* (
     overrides: Effect.Success<ReturnType<typeof credentialOverrides>>,
-    identity?: StackIdentityInput,
+    keys?: StackKeysInput,
   ) {
     const credentials = yield* options.state.withLock(
       Effect.gen(function* () {
         const current = yield* readSaved;
-        const next = yield* nextCredentials(current, overrides, identity);
+        const next = yield* nextCredentials(current, overrides, keys);
         if (next === current.credentials) return next;
         if (current.credentials !== undefined) yield* requireStopped(current.composition);
         yield* options.state.save({ ...current, credentials: next });
@@ -284,6 +288,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     makeServiceRecipe(creation, {
       stackId,
       instanceId: id,
+      project,
       root: options.root,
       cacheRoot: options.cacheRoot,
       runtime,
@@ -379,12 +384,14 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       startAt: (revision, inputs, wake, guard) =>
         Ref.get(creation).pipe(
           Effect.flatMap((current) => mergeInputs(current, inputs)),
+          Effect.flatMap(requireInputs),
           Effect.flatMap((candidate) => core.startAt(revision, candidate, wake, guard)),
         ),
       restart: (revision, inputs, candidate, guard) =>
         Ref.get(creation).pipe(
           Effect.flatMap((current) => restartCreation(current, candidate)),
           Effect.flatMap((next) => mergeInputs(next, inputs)),
+          Effect.flatMap(requireInputs),
           Effect.flatMap((next) => core.restart(next, revision, guard)),
         ),
       bind: namespace.bind.pipe(Effect.mapError(serviceError("bind"))),
@@ -445,10 +452,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       inputs: ReadonlyArray<ServiceCreationInput>,
       compositionOptions: SupabaseCompositionOptions,
     ) {
-      yield* resolveStackCredentials(
-        yield* credentialOverrides(inputs),
-        compositionOptions.identity,
-      );
+      yield* resolveStackCredentials(yield* credentialOverrides(inputs), compositionOptions.keys);
       const creations = yield* Effect.forEach(inputs, resolveCredentials);
       return yield* makeSupabaseComposition<ComposeError>(
         {
@@ -631,18 +635,18 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         ),
         rpcError("credentials"),
       ),
-    saveSnapshot: ({ id, key }) =>
+    saveSnapshot: ({ id, key, scope = "cache" }) =>
       databaseData(id, ({ saveDatabaseSnapshot: save }) =>
-        save === undefined ? undefined : (context) => save(context, key),
+        save === undefined ? undefined : (context) => save(context, key, scope),
       ).pipe(rpcError("saveSnapshot")),
-    restoreSnapshot: ({ id, key }) =>
+    restoreSnapshot: ({ id, key, scope = "cache" }) =>
       databaseData(id, ({ restoreDatabaseSnapshot: restore }) =>
-        restore === undefined ? undefined : (context) => restore(context, key),
+        restore === undefined ? undefined : (context) => restore(context, key, scope),
       ).pipe(rpcError("restoreSnapshot")),
     resetData: ({ id }) =>
       databaseData(id, ({ resetDatabaseData }) => resetDatabaseData).pipe(rpcError("resetData")),
-    supabaseComposition: ({ services, reuseIds, identity }) =>
-      definitionChange(compose(services, { reuseIds, identity })).pipe(
+    supabaseComposition: ({ services, reuseIds, keys, eager }) =>
+      definitionChange(compose(services, { reuseIds, keys, eager })).pipe(
         rpcError("supabaseComposition"),
       ),
     configureComposition: (configuration) =>

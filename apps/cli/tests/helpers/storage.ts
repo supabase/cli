@@ -128,7 +128,6 @@ const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
 const storageCreation: Extract<ServiceCreation, { service: "storage" }> = {
   service: "storage",
   config: {
-    databaseUrl: "postgresql://placeholder",
     jwtSecret: STORAGE_TEST_JWT_SECRET,
     serviceRoleKey: stackCredentials.serviceRoleKey,
     filePath: "/tmp/storage",
@@ -254,6 +253,7 @@ export function buildStorageStackApi(
     },
     credentials: { get: Effect.succeed(stackCredentials) },
     composition: {
+      plan: () => Effect.succeed([]),
       supabase: () => Effect.die("unused"),
       configure: () => Effect.die("unused"),
       describe: Effect.succeed({ members, dependencies: [] }),
@@ -284,13 +284,17 @@ export function buildStorageStackApi(
           create: () => Effect.die("Service not found: supabase/stack/StackApi"),
           open: () => Effect.die("Service not found: supabase/stack/StackApi"),
           discover: () => Effect.die("Service not found: supabase/stack/StackApi"),
-          resolveIdentity: () => Effect.die("Service not found: supabase/stack/StackApi"),
+          find: () => Effect.die("Service not found: supabase/stack/StackApi"),
         })
       : Layer.succeed(StackApi, {
           create: () => Effect.die("unused"),
-          resolveIdentity: () => Effect.succeed(definition.identity),
-          discover: () =>
-            Effect.succeed(options.found === false ? [] : [{ definition, host: undefined }]),
+          discover: () => Effect.die("unused"),
+          find: () =>
+            Effect.succeed(
+              options.found === false
+                ? Option.none()
+                : Option.some({ definition, host: undefined }),
+            ),
           open: () => {
             findStackCalls.push({ projectRoot: workdir });
             return Effect.succeed(stack);

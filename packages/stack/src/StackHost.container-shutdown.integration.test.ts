@@ -3,7 +3,13 @@ import { expect, it } from "@effect/vitest";
 import { Context, Crypto, Effect, FileSystem, Layer, Path, Redacted, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as State from "./State.ts";
-import { hasReason, launchHost, ownerClient, waitForOwnerExit } from "./HostProcess.ts";
+import {
+  hasReason,
+  launchHost,
+  ownerClient,
+  ownerExitProbe,
+  waitForOwnerExit,
+} from "./HostProcess.ts";
 import { makeContainerRuntime } from "./runtime/Container.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { shutdownOwner } from "../tests/owner.ts";
@@ -119,7 +125,7 @@ it.live.skipIf(process.platform === "win32")(
         const signalAndWait = (endpoint: { pid: number }, signal: NodeJS.Signals) =>
           Effect.sync(() => process.kill(endpoint.pid, signal)).pipe(
             Effect.andThen(
-              waitForOwnerExit(endpoint.pid).pipe(
+              waitForOwnerExit(endpoint.pid, ownerExitProbe(fs)).pipe(
                 Effect.retry({ while: hasReason("owner-exit-pending") }),
                 Effect.timeout("30 seconds"),
               ),
@@ -226,7 +232,9 @@ it.live.skipIf(process.platform === "win32")(
         activeA = endpointA2;
         stoppedA = false;
         yield* shutdownOwner(accessA2, true);
-        yield* waitForOwnerExit(endpointA2.pid).pipe(Effect.timeout("15 seconds"));
+        yield* waitForOwnerExit(endpointA2.pid, ownerExitProbe(fs)).pipe(
+          Effect.timeout("15 seconds"),
+        );
         stoppedA = true;
         activeA = undefined;
         expect(yield* containers(stackId, dataA), "destroy removes A containers").toEqual([]);
@@ -237,7 +245,9 @@ it.live.skipIf(process.platform === "win32")(
         activeB = endpointB2;
         stoppedB = false;
         yield* shutdownOwner(accessB2, true);
-        yield* waitForOwnerExit(endpointB2.pid).pipe(Effect.timeout("15 seconds"));
+        yield* waitForOwnerExit(endpointB2.pid, ownerExitProbe(fs)).pipe(
+          Effect.timeout("15 seconds"),
+        );
         stoppedB = true;
         activeB = undefined;
         expect(yield* containers(stackId, dataB), "destroy removes B containers").toEqual([]);
