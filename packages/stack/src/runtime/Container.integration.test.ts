@@ -160,7 +160,7 @@ describe("container process adapter", () => {
           project: "My Cool App",
           service: "auth",
           env: {},
-          args: ["-e", "setInterval(() => {}, 1000)"],
+          args: ["-e", stoppableIdleScript],
         });
         expect(process.id).toMatch(/^supabase-My-Cool-App-auth-[0-9a-f]{12}$/u);
         const labels = yield* inspectLabels(process.id);
