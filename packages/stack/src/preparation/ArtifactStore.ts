@@ -447,10 +447,6 @@ const validateFreshRuntimePaths = (
     return Object.fromEntries(entries);
   });
 
-/**
- * Checks each required path against the published tree. A recorded path must keep its kind; an
- * unrecorded one is accepted so the caller can record it.
- */
 const ensureSafePaths = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -480,7 +476,7 @@ const ensureSafePaths = (
         });
       const inspected = yield* inspectFreshPath(fs, path, candidate, realRoot);
       const expectedKind = metadata.requiredRuntimeKinds[relative];
-      if (expectedKind !== undefined && inspected.kind !== expectedKind)
+      if (expectedKind === undefined || inspected.kind !== expectedKind)
         return yield* metadataError("Cached artifact runtime path changed basic kind", {
           path: relative,
           expected: expectedKind,
@@ -519,7 +515,6 @@ const ensureExecutableFile = (
 const identityMismatch = (request: ArtifactRequest, metadata: ArtifactMetadata): boolean =>
   metadata.key !== request.key || metadata.executablePath !== request.executablePath;
 
-/** Required runtime paths the request needs that the recorded metadata has not seen yet. */
 const unrecordedRequiredPaths = (
   request: ArtifactRequest,
   metadata: ArtifactMetadata,
@@ -591,7 +586,6 @@ const cleanup = (fs: FileSystem.FileSystem, path: string): Effect.Effect<void, P
       ),
     );
 
-/** Replaces a published artifact's metadata through a sibling temp file and rename. */
 const updateMetadataAtomic = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -704,30 +698,47 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
       // paths a request needs beyond the recorded ones are checked against the published tree.
       if (identityMismatch(request, metadata)) return Option.none();
       const sha256 = yield* sha256Of(request, metadata);
+      const newPaths = unrecordedRequiredPaths(request, metadata);
+      const newPathSet = new Set(newPaths);
+      const recordedPaths = request.requiredRuntimePaths.filter(
+        (relative) => !newPathSet.has(relative),
+      );
       // Published content is not rehashed on cache hits: metadata and cheap structural checks
       // protect the cache boundary; content tampering may execute or fail later when the
       // workload starts.
-      const safePaths = yield* ensureSafePaths(
+      const recordedSafePaths = yield* ensureSafePaths(
         fs,
         path,
         target,
         realRoot.value,
         metadata,
-        request.requiredRuntimePaths,
+        recordedPaths,
       );
-      const newPaths = unrecordedRequiredPaths(request, metadata);
+      // A path the recorded metadata has not seen yet gets the same containment and safety
+      // validation a fresh publish applies, before its kind is trusted and recorded.
+      const newSafePaths =
+        newPaths.length > 0
+          ? yield* validateFreshRuntimePaths(fs, path, target, realRoot.value, newPaths)
+          : {};
+      const safePaths = { ...recordedSafePaths, ...newSafePaths };
       if (newPaths.length > 0) {
-        const newPathSet = new Set(newPaths);
         const newKinds = Object.fromEntries(
-          Object.entries(safePaths)
-            .filter(([relative]) => newPathSet.has(relative))
-            .map(([relative, inspected]) => [relative, inspected.kind]),
+          Object.entries(newSafePaths).map(([relative, inspected]) => [relative, inspected.kind]),
         );
+        const appendedPaths = newPaths.filter(
+          (relative) => !metadata.requiredRuntimePaths.includes(relative),
+        );
+        // The paths above are already validated; a failed write only loses the recording, so
+        // it must not fail preparation. A later request re-validates and retries the write.
         yield* updateMetadataAtomic(fs, path, crypto, metadataPath, {
           ...metadata,
-          requiredRuntimePaths: [...metadata.requiredRuntimePaths, ...newPaths],
+          requiredRuntimePaths: [...metadata.requiredRuntimePaths, ...appendedPaths],
           requiredRuntimeKinds: { ...metadata.requiredRuntimeKinds, ...newKinds },
-        });
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Unable to record newly validated artifact runtime paths", cause),
+          ),
+        );
       }
       if (request.executablePath !== undefined) {
         const executable = safePaths[request.executablePath];
