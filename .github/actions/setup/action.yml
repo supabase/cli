@@ -56,7 +56,7 @@ runs:
       if: inputs.dependency-cache == 'true'
       id: pnpm-cache
       shell: bash
-      run: echo "path=$(pnpm cache path)" >> "$GITHUB_OUTPUT"
+      run: echo "path=$(pnpm cache path --silent)" >> "$GITHUB_OUTPUT"
 
     # pnpm stores the lockfile's supply-chain verdict in lockfile-verified.jsonl;
     # without it every job re-verifies all entries against registry metadata,
@@ -67,8 +67,6 @@ runs:
       with:
         path: ${{ steps.pnpm-cache.outputs.path }}/lockfile-verified.jsonl
         key: pnpm-verify-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml') }}
-        restore-keys: |
-          pnpm-verify-${{ runner.os }}-
 
     - name: Resolve Go cache paths
       if: inputs.dependency-cache == 'true'
