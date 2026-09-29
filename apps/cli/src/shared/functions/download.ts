@@ -672,10 +672,7 @@ function writeFileWithoutFollowingSymlinks(
   });
 }
 
-const listRemoteFunctionSlugs = Effect.fn("functions.download.listRemoteSlugs")(function* (
-  api: ApiClient,
-  projectRef: string,
-) {
+const listRemoteFunctionSlugs = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
   const response = yield* api
     .executeRaw(operationDefinitions.v1ListAllFunctions, {
       ref: projectRef,
@@ -723,7 +720,7 @@ const listRemoteFunctionSlugs = Effect.fn("functions.download.listRemoteSlugs")(
   });
 });
 
-const getRemoteFunction = Effect.fn("functions.download.getFunction")(function* (
+const getRemoteFunction = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
   slug: string,
@@ -769,7 +766,7 @@ const getRemoteFunction = Effect.fn("functions.download.getFunction")(function* 
   });
 });
 
-const downloadBody = Effect.fn("functions.download.body")(function* (
+const downloadBody = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
   slug: string,
@@ -804,7 +801,7 @@ const downloadBody = Effect.fn("functions.download.body")(function* (
 // negotiated JSON response instead of the raw eszip body. The HTTP transport
 // already transparently decodes `Content-Encoding: br`, so this reads the
 // body as-is with no manual decompression step.
-const downloadEszipBody = Effect.fn("functions.download.eszipBody")(function* (
+const downloadEszipBody = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
   slug: string,

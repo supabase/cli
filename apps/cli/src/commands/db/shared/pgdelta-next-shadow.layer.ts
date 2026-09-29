@@ -376,6 +376,10 @@ export const pgDeltaNextShadowLayer = Layer.effect(
           peek.state === "uncachable" ? cache : { ...cache, precomputedKeyInputs: peek.keyInputs };
         const strategy = resolvePlanShadowStrategy(migrationsPeek, declarativePeek);
         yield* Effect.annotateCurrentSpan({ "shadow.plan_strategy": strategy });
+        // Peeked inputs are reused only when acquire immediately follows peek: always for
+        // migrations, only under `parallel` for declarative. Delayed declarative acquires
+        // re-resolve so a mid-run `roles.sql` edit can't publish under a stale key — identity
+        // still comes from the acquired handles' snapshot keys, so this can't lie about lineage.
         const migrationsOpts = withPeek(cacheOpts(opts, "config"), migrationsPeek);
         const declarativeOpts =
           strategy === "parallel"

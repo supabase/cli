@@ -11,7 +11,11 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { projectsList } from "../../commands/projects/list/list.handler.ts";
-import { withTraceExport, type TraceSettings } from "./trace-export.layer.ts";
+import {
+  TraceExportConfigError,
+  withTraceExport,
+  type TraceSettings,
+} from "./trace-export.layer.ts";
 
 interface ExportedSpan {
   readonly traceId: string;
@@ -25,7 +29,6 @@ const tempRoot = useTempWorkdir("supabase-trace-export-int-");
 
 const fileSink = (path: string): TraceSettings => ({
   sink: Option.some({ _tag: "File", path }),
-  debugConsole: false,
 });
 
 const readBatches = Effect.fnUntraced(function* (tracePath: string) {
@@ -89,6 +92,19 @@ describe("withTraceExport with a trace file", () => {
     }).pipe(Effect.provide(runtime)),
   );
 
+  it.live("restricts an existing file to owner-only permissions", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tracePath = yield* traceFilePath;
+      yield* fs.writeFileString(tracePath, "", { mode: 0o644 });
+      yield* fs.chmod(tracePath, 0o644);
+
+      yield* Effect.void.pipe(withTraceExport(fileSink(tracePath), {}));
+
+      expect((yield* fs.stat(tracePath)).mode & 0o777).toBe(0o600);
+    }).pipe(Effect.provide(runtime)),
+  );
+
   it.live("adopts TRACEPARENT as the parent of cli.run", () =>
     Effect.gen(function* () {
       const tracePath = yield* traceFilePath;
@@ -106,6 +122,31 @@ describe("withTraceExport with a trace file", () => {
 
       const [root] = spansOf(yield* readBatches(tracePath));
       expect(root).toMatchObject({ name: "cli.run", traceId, parentSpanId: parentId });
+    }).pipe(Effect.provide(runtime)),
+  );
+
+  it.live("records the run under an unsampled TRACEPARENT", () =>
+    Effect.gen(function* () {
+      const tracePath = yield* traceFilePath;
+      const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+      const parentId = "00f067aa0ba902b7";
+
+      yield* Effect.void.pipe(
+        Effect.withSpan("Test.child"),
+        withTraceExport(fileSink(tracePath), {}),
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({ TRACEPARENT: `00-${traceId}-${parentId}-00` }),
+          ),
+        ),
+      );
+
+      const spans = spansOf(yield* readBatches(tracePath));
+      expect(spans.map((span) => span.name).sort()).toEqual(["Test.child", "cli.run"]);
+      expect(spans.find((span) => span.name === "cli.run")).toMatchObject({
+        traceId,
+        parentSpanId: parentId,
+      });
     }).pipe(Effect.provide(runtime)),
   );
 
@@ -131,9 +172,9 @@ describe("withTraceExport with a trace file", () => {
       const path = yield* Path.Path;
       const tracePath = path.join(tempRoot.current, "missing", "trace.jsonl");
 
-      const exit = yield* Effect.void.pipe(withTraceExport(fileSink(tracePath), {}), Effect.exit);
+      const error = yield* Effect.void.pipe(withTraceExport(fileSink(tracePath), {}), Effect.flip);
 
-      expect(Exit.isFailure(exit)).toBe(true);
+      expect(error).toBeInstanceOf(TraceExportConfigError);
     }).pipe(Effect.provide(runtime)),
   );
 });

@@ -49,6 +49,7 @@ export const fileTransportLayer = (path: string) =>
       const fs = yield* FileSystem.FileSystem;
       const lock = yield* Semaphore.make(1);
       yield* fs.writeFile(path, new Uint8Array(), { flag: "a", mode: 0o600 });
+      yield* fs.chmod(path, 0o600);
       return HttpClient.make((request) => {
         const write =
           request.body._tag === "Uint8Array"

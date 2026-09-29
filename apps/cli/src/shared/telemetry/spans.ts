@@ -15,6 +15,11 @@ export interface ProcessSpanTarget {
   readonly argCount: number;
   /** A fixed-vocabulary verb such as `container inspect`; never free-form argv. */
   readonly subcommand?: string;
+  /**
+   * Marks an attempt that has a fallback: a failure is recorded as `process.attempt_failed`
+   * instead of failing the span.
+   */
+  readonly hasFallback?: boolean;
 }
 
 /** Extra environment for a child process; empty unless a trace sink is active. */
@@ -60,8 +65,9 @@ export const withProcessSpan = <A, E, R>(
   run: (traceEnv: ChildTraceEnv) => Effect.Effect<A, E, R>,
   exitCode: (result: A) => number | undefined = (result) =>
     typeof result === "number" ? result : undefined,
-): Effect.Effect<A, E, R> =>
-  Effect.useSpan(name, { attributes: processAttributes(target) }, (span) =>
+): Effect.Effect<A, E, R> => {
+  const options = { attributes: processAttributes(target) };
+  const traced = (span: Tracer.Span) =>
     traceEnvFor(span).pipe(
       Effect.flatMap((traceEnv) =>
         run(traceEnv).pipe(Effect.withParentSpan(span, { captureStackTrace: false })),
@@ -72,8 +78,15 @@ export const withProcessSpan = <A, E, R>(
           if (code !== undefined) span.attribute("process.exit_code", code);
         }),
       ),
+    );
+  if (target.hasFallback !== true) return Effect.useSpan(name, options, traced);
+  return Effect.useSpan(name, options, (span) =>
+    traced(span).pipe(
+      Effect.tapCause(() => Effect.sync(() => span.attribute("process.attempt_failed", true))),
+      Effect.exit,
     ),
-  );
+  ).pipe(Effect.flatten);
+};
 
 /**
  * Spawns a child process whose span stays open until the surrounding scope closes and records
@@ -94,7 +107,8 @@ export const withProcessSpanScoped = <E, R>(
       Effect.exit,
     );
     if (Exit.isFailure(spawned)) {
-      yield* endSpan(spawned);
+      if (target.hasFallback === true) span.attribute("process.attempt_failed", true);
+      yield* endSpan(target.hasFallback === true ? Exit.void : spawned);
       return yield* spawned;
     }
     yield* Effect.addFinalizer(endSpan);

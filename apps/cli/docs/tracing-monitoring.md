@@ -12,18 +12,21 @@ Pick one destination per run:
 
 | Variable                 | Effect                                                                   |
 | ------------------------ | ------------------------------------------------------------------------ |
-| `SUPABASE_TRACE_FILE`    | Appends one OTLP/JSON batch per line to this file (created with `0600`). |
+| `SUPABASE_TRACE_FILE`    | Appends one OTLP/JSON batch per line to this file (kept at `0600`).      |
 | `SUPABASE_OTLP_ENDPOINT` | Posts OTLP/HTTP JSON to `<endpoint>/v1/traces`.                          |
 | `SUPABASE_OTLP_HEADERS`  | Extra collector headers as `key=value,key2=value2` (percent-encoded).    |
 | `TRACEPARENT`            | W3C trace context adopted as the parent of `cli.run` when a sink is set. |
 
 Setting both `SUPABASE_TRACE_FILE` and `SUPABASE_OTLP_ENDPOINT` fails the run with a
-configuration error. The generic `OTEL_EXPORTER_OTLP_*` variables are ignored.
+configuration error. The generic `OTEL_EXPORTER_OTLP_*` variables are ignored. A sink records the
+run even when `TRACEPARENT` is marked unsampled.
 
-`--debug`, `SUPABASE_DEBUG=1`, or `SUPABASE_TELEMETRY_DEBUG=1` also prints finished spans to stderr:
-the root, its children and grandchildren, plus every failed span at any depth.
+`SUPABASE_DEBUG=1` or `SUPABASE_TELEMETRY_DEBUG=1`, set in the environment or the project's
+`supabase/.env`, also prints finished command spans to stderr: top-level spans, their children and
+grandchildren, plus every failed span at any depth. Spans that end before CLI settings load, and
+`cli.run` itself, are not printed. The `--debug` flag does not print spans.
 
-Without any of these, spans are no-ops and the CLI does no tracing I/O.
+Without a sink or debug variable, spans are no-ops and the CLI does no tracing I/O.
 
 ## Local trace file
 
@@ -73,12 +76,16 @@ Every batch and every console line is sanitized:
 
 - `db.query.text` is replaced by `db.operation.name`, `db.query.hash`, and `db.query.length`.
 - `url.full` keeps only scheme, host, and path; `url.query` is dropped.
+- Storage object paths in `url.full` and `url.path` keep the operation, such as `sign`, and replace
+  the bucket and object name with `<redacted>`.
 - Only `content-type`, `content-length`, `user-agent`, `x-request-id`, `cf-ray`, and `retry-after`
   headers are kept.
-- Keys that mention tokens, passwords, secrets, API keys, authorization, or cookies are dropped.
-- Remaining strings, including exception messages, stack traces, and status messages, lose URL
-  credentials, bearer tokens, JWTs, Supabase keys and access tokens, and password pairs, and are
-  capped at 2 KB.
+- String values under keys that mention tokens, passwords, secrets, API keys, authorization, or
+  cookies are dropped; numeric and boolean values such as counts are kept.
+- Remaining strings, including event names (which carry log messages), exception messages, stack
+  traces, and status messages, lose URL credentials, bearer tokens, JWTs, Supabase keys and access
+  tokens, password pairs, single-quoted SQL literals, and constraint key values such as
+  `Key (email)=(…)`, and are capped at 2 KB.
 
 HTTP requests never carry `traceparent` or `b3` headers.
 

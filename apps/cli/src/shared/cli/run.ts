@@ -56,6 +56,7 @@ import type { TelemetryRuntime } from "../telemetry/runtime.service.ts";
 import {
   resolveTraceSettings,
   TraceExportConfigError,
+  withDebugConsole,
   withTraceExport,
 } from "../telemetry/trace-export.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
@@ -616,6 +617,7 @@ function cliProgramFor<
   ).pipe(
     Effect.provide(formatterLayerFor(rootCommand, args, outputFormat)),
     Effect.provide(options.analyticsLayer),
+    withDebugConsole,
     Effect.provide(telemetryRuntimeLayer),
     Effect.provide(cliSettingsLayerFor(runtimeLayer)),
     Effect.provide(cliProjectHomeLayerFor(runtimeLayer)),
@@ -766,7 +768,7 @@ export async function runCli<
   ): Effect.Effect<never, unknown, never> =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
-      const exitCode = yield* resolveTraceSettings(args).pipe(
+      const exitCode = yield* resolveTraceSettings.pipe(
         Effect.flatMap((settings) =>
           withTraceExport(settings, { "process.boot_ms": bootMs })(runToExitCode(program)),
         ),

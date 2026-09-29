@@ -27,7 +27,23 @@ const VALUE_SCRUBBERS: ReadonlyArray<readonly [RegExp, string]> = [
     /\b(password|passwd|pwd|secret|token|apikey|api_key)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s&;,]+)/giu,
     `$1$2${REDACTED}`,
   ],
+  // Postgres constraint details such as `Key (email)=(a@b.c) already exists.`
+  [/(\bkey \((?:[^()]|\([^()]*\))*\)=\()(?:[^()]|\([^()]*\))*\)/giu, `$1${REDACTED})`],
+  // SQL string literals; the lookarounds leave apostrophes inside words alone.
+  [/(?<![\w'])'(?:[^']|'')*'(?!\w)/gu, `'${REDACTED}'`],
 ];
+
+const STORAGE_OBJECT_PATH = "/storage/v1/object/";
+const STORAGE_OBJECT_VERBS: ReadonlySet<string> = new Set([
+  "sign",
+  "public",
+  "authenticated",
+  "list",
+  "info",
+  "move",
+  "copy",
+  "upload",
+]);
 
 /** Removes credentials from free text and caps its length. */
 export function scrubString(value: string): string {
@@ -40,13 +56,34 @@ export function scrubString(value: string): string {
     : scrubbed;
 }
 
+function redactStorageObjectPath(pathname: string): string {
+  const start = pathname.indexOf(STORAGE_OBJECT_PATH);
+  if (start === -1) return pathname;
+  const prefixEnd = start + STORAGE_OBJECT_PATH.length;
+  const [first = "", ...rest] = pathname.slice(prefixEnd).split("/");
+  if (STORAGE_OBJECT_VERBS.has(first)) {
+    return rest.join("/").length === 0
+      ? pathname
+      : `${pathname.slice(0, prefixEnd)}${first}/${REDACTED}`;
+  }
+  return first.length === 0 && rest.length === 0
+    ? pathname
+    : `${pathname.slice(0, prefixEnd)}${REDACTED}`;
+}
+
 function urlWithoutQuery(value: string): string {
   try {
     const url = new URL(value);
-    return `${url.protocol}//${url.host}${url.pathname}`;
+    return `${url.protocol}//${url.host}${redactStorageObjectPath(url.pathname)}`;
   } catch {
     return scrubString(value);
   }
+}
+
+function sanitizeUrlAttribute(key: string, value: string): string | undefined {
+  if (key === "url.full") return urlWithoutQuery(value);
+  if (key === "url.path") return scrubString(redactStorageObjectPath(value));
+  return undefined;
 }
 
 function queryAttributes(text: string): ReadonlyArray<readonly [string, string | number]> {
@@ -63,15 +100,24 @@ type AttributeDecision =
   | { readonly _tag: "Keep" }
   | { readonly _tag: "Query" };
 
-function decide(key: string): AttributeDecision {
+/** `numericOrBoolean` values such as `secret.count` carry no credential and survive the key denylist. */
+function decide(key: string, numericOrBoolean: boolean): AttributeDecision {
   if (key === "db.query.text") return { _tag: "Query" };
   if (key === "url.query") return { _tag: "Drop" };
   const header = HEADER_ATTRIBUTE.exec(key);
   if (header !== null) {
     return ALLOWED_HEADERS.has(header[1]!.toLowerCase()) ? { _tag: "Keep" } : { _tag: "Drop" };
   }
-  if (DENIED_KEY.test(key)) return { _tag: "Drop" };
+  if (!numericOrBoolean && DENIED_KEY.test(key)) return { _tag: "Drop" };
   return { _tag: "Keep" };
+}
+
+function isNumericOrBoolean(value: unknown): boolean {
+  return typeof value === "number" || typeof value === "bigint" || typeof value === "boolean";
+}
+
+function isNumericOrBooleanAnyValue(value: AnyValue): boolean {
+  return value.intValue != null || value.doubleValue != null || value.boolValue != null;
 }
 
 function scrubUnknown(value: unknown): unknown {
@@ -86,7 +132,7 @@ export function sanitizeAttributeEntries(
 ): Array<readonly [string, unknown]> {
   const result: Array<readonly [string, unknown]> = [];
   for (const [key, value] of entries) {
-    const decision = decide(key);
+    const decision = decide(key, isNumericOrBoolean(value));
     switch (decision._tag) {
       case "Drop":
         break;
@@ -96,9 +142,8 @@ export function sanitizeAttributeEntries(
       default:
         result.push([
           key,
-          key === "url.full" && typeof value === "string"
-            ? urlWithoutQuery(value)
-            : scrubUnknown(value),
+          (typeof value === "string" ? sanitizeUrlAttribute(key, value) : undefined) ??
+            scrubUnknown(value),
         ]);
     }
   }
@@ -125,7 +170,7 @@ function toAnyValue(value: string | number): AnyValue {
 function sanitizeKeyValues(attributes: ReadonlyArray<KeyValue>): Array<KeyValue> {
   const result: Array<KeyValue> = [];
   for (const attribute of attributes) {
-    const decision = decide(attribute.key);
+    const decision = decide(attribute.key, isNumericOrBooleanAnyValue(attribute.value));
     switch (decision._tag) {
       case "Drop":
         break;
@@ -140,12 +185,11 @@ function sanitizeKeyValues(attributes: ReadonlyArray<KeyValue>): Array<KeyValue>
       }
       default: {
         const text = attribute.value.stringValue;
+        const url =
+          typeof text === "string" ? sanitizeUrlAttribute(attribute.key, text) : undefined;
         result.push({
           key: attribute.key,
-          value:
-            attribute.key === "url.full" && typeof text === "string"
-              ? { stringValue: urlWithoutQuery(text) }
-              : scrubAnyValue(attribute.value),
+          value: url === undefined ? scrubAnyValue(attribute.value) : { stringValue: url },
         });
       }
     }
@@ -169,6 +213,7 @@ export function sanitizeTraceData(data: TraceData): TraceData {
           attributes: sanitizeKeyValues(span.attributes),
           events: span.events.map((event) => ({
             ...event,
+            name: scrubString(event.name),
             attributes: sanitizeKeyValues(event.attributes),
           })),
           links: span.links.map((link) => ({

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, PlatformError, Sink, Stream, Tracer } from "effect";
+import { Deferred, Effect, Exit, PlatformError, Sink, Stream, Tracer } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -164,6 +164,62 @@ describe("container CLI process spans", () => {
         expect(attributes["process.subcommand"]).toBe("other");
       }),
     ),
+  );
+
+  it.live("records a missing docker as a failed attempt, not a failed span, on podman hosts", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const mock = mockSpawner({ dockerMissing: true });
+
+      yield* containerCliExitCode(mock.spawner, ["ps"]).pipe(
+        Effect.andThen(spawnContainerCli(mock.spawner, ["ps"]).pipe(Effect.scoped)),
+        Effect.withTracer(tracer),
+        Effect.withTracerEnabled(true),
+      );
+
+      const docker = spans.filter(
+        (span) => span.attributes.get("process.executable.name") === "docker",
+      );
+      expect(docker.map((span) => span.name)).toEqual(["ContainerCli.run", "ContainerCli.spawn"]);
+      expect(docker.map((span) => span.attributes.get("process.attempt_failed"))).toEqual([
+        true,
+        true,
+      ]);
+      expect(
+        spans.map((span) => span.status._tag === "Ended" && Exit.isSuccess(span.status.exit)),
+      ).toEqual([true, true, true, true]);
+    }),
+  );
+
+  it.live("fails the podman span when neither runtime can be spawned", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+
+      yield* containerCliExitCode(mockSpawner({ bothMissing: true }).spawner, ["ps"]).pipe(
+        Effect.ignore,
+        Effect.withTracer(tracer),
+        Effect.withTracerEnabled(true),
+      );
+
+      const podman = spans.find(
+        (span) => span.attributes.get("process.executable.name") === "podman",
+      );
+      expect(podman?.status._tag === "Ended" && Exit.isFailure(podman.status.exit)).toBe(true);
+    }),
   );
 });
 

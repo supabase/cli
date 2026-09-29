@@ -394,6 +394,8 @@ const readiness = Effect.fn("ProcessRecipe.readiness")(function* (
             new ServiceError({ operation: "health", message: `HTTP ${response.status}` }),
           ),
     ),
+    // Probes emit no spans; the attempt count on this span stands in for them.
+    Effect.withTracerEnabled(false),
   );
   return yield* attempt.pipe(
     Effect.retry({ schedule: Schedule.spaced("250 millis") }),

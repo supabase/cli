@@ -2,10 +2,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Layer, Option, Redacted, Sink, Stdio } from "effect";
 import { BunServices } from "@effect/platform-bun";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
+import { CliSettings } from "../config/cli-settings.service.ts";
 import {
-  debugFlagEnabled,
   resolveTraceSettings,
   TraceExportConfigError,
+  withDebugConsole,
   withTraceExport,
 } from "./trace-export.layer.ts";
 
@@ -15,7 +16,7 @@ const withEnv = (env: Record<string, string>) =>
 describe("resolveTraceSettings", () => {
   it.effect("rejects a trace file and an OTLP endpoint set together", () =>
     Effect.gen(function* () {
-      const error = yield* resolveTraceSettings([]).pipe(
+      const error = yield* resolveTraceSettings.pipe(
         withEnv({
           SUPABASE_TRACE_FILE: "/tmp/trace.jsonl",
           SUPABASE_OTLP_ENDPOINT: "http://localhost:4318",
@@ -30,7 +31,7 @@ describe("resolveTraceSettings", () => {
 
   it.effect("appends the OTLP traces path to a collector base URL", () =>
     Effect.gen(function* () {
-      const settings = yield* resolveTraceSettings([]).pipe(
+      const settings = yield* resolveTraceSettings.pipe(
         withEnv({
           SUPABASE_OTLP_ENDPOINT: "http://localhost:4318/",
           SUPABASE_OTLP_HEADERS: "x-api-key=abc%3D,x-tenant = team",
@@ -51,7 +52,7 @@ describe("resolveTraceSettings", () => {
 
   it.effect("keeps an endpoint that already targets the traces path", () =>
     Effect.gen(function* () {
-      const settings = yield* resolveTraceSettings([]).pipe(
+      const settings = yield* resolveTraceSettings.pipe(
         withEnv({ SUPABASE_OTLP_ENDPOINT: "https://otel.example.com/v1/traces" }),
       );
 
@@ -63,7 +64,7 @@ describe("resolveTraceSettings", () => {
 
   it.effect("rejects a non-http endpoint", () =>
     Effect.gen(function* () {
-      const error = yield* resolveTraceSettings([]).pipe(
+      const error = yield* resolveTraceSettings.pipe(
         withEnv({ SUPABASE_OTLP_ENDPOINT: "localhost:4318" }),
         Effect.flip,
       );
@@ -72,78 +73,105 @@ describe("resolveTraceSettings", () => {
     }),
   );
 
-  it.effect("is off without a sink or debug switch", () =>
+  it.effect("is off without a sink, even with SUPABASE_DEBUG set", () =>
     Effect.gen(function* () {
-      const settings = yield* resolveTraceSettings(["projects", "list"]).pipe(withEnv({}));
+      const settings = yield* resolveTraceSettings.pipe(withEnv({ SUPABASE_DEBUG: "1" }));
 
-      expect(settings).toEqual({ sink: Option.none(), debugConsole: false });
-    }),
-  );
-
-  it.effect("enables the console from SUPABASE_DEBUG", () =>
-    Effect.gen(function* () {
-      const settings = yield* resolveTraceSettings([]).pipe(withEnv({ SUPABASE_DEBUG: "1" }));
-
-      expect(settings.debugConsole).toBe(true);
+      expect(settings).toEqual({ sink: Option.none() });
     }),
   );
 });
 
-describe("debugFlagEnabled", () => {
-  it.each([
-    [["--debug"], true],
-    [["--debug", "--debug=false"], false],
-    [["--debug=false", "--debug"], true],
-    [["db", "push", "--", "--debug"], undefined],
-    [["db", "push"], undefined],
-  ] as const)("reads %j as %s", (args, expected) => {
-    expect(debugFlagEnabled(args)).toBe(expected);
-  });
+const debugSettings = (debug: Partial<Record<"debug" | "telemetryDebug", string>>) =>
+  Layer.succeed(
+    CliSettings,
+    CliSettings.of({
+      apiUrl: "https://api.supabase.com",
+      dashboardUrl: "https://supabase.com/dashboard",
+      projectHost: "supabase.co",
+      telemetryPosthogHost: "https://eu.i.posthog.com",
+      telemetryPosthogKey: Option.none(),
+      accessToken: Option.none(),
+      noKeyring: Option.none(),
+      supabaseHome: "/tmp/supabase-cli-test-home",
+      debug: Option.fromUndefinedOr(debug.debug),
+      telemetryDebug: Option.fromUndefinedOr(debug.telemetryDebug),
+      telemetryDisabled: Option.none(),
+      doNotTrack: Option.none(),
+    }),
+  );
+
+const runWithDebugConsole = Effect.fnUntraced(function* (
+  debug: Partial<Record<"debug" | "telemetryDebug", string>>,
+  program: Effect.Effect<void>,
+) {
+  const written: Array<string> = [];
+  const stderr = Sink.forEach((chunk: string | Uint8Array) =>
+    Effect.sync(() => {
+      written.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+    }),
+  );
+  yield* program.pipe(
+    withDebugConsole,
+    withTraceExport({ sink: Option.none() }, {}),
+    Effect.provide(
+      Layer.mergeAll(
+        BunServices.layer,
+        Stdio.layerTest({ stderr: () => stderr }),
+        mockRuntimeInfo(),
+        debugSettings(debug),
+      ),
+    ),
+  );
+  return written.join("");
 });
 
-describe("debug console", () => {
+describe("withDebugConsole", () => {
   it.effect("prints spans up to depth 2 and deeper failures, sanitized", () =>
     Effect.gen(function* () {
-      const written: Array<string> = [];
-      const stderr = Sink.forEach((chunk: string | Uint8Array) =>
-        Effect.sync(() => {
-          written.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-        }),
-      );
       const program = Effect.void.pipe(
-        Effect.withSpan("Depth.four"),
-        Effect.andThen(
-          Effect.fail("boom").pipe(Effect.withSpan("Depth.fourFailed"), Effect.ignore),
-        ),
         Effect.withSpan("Depth.three"),
-        Effect.withSpan("Depth.two", {
+        Effect.andThen(
+          Effect.fail("boom").pipe(Effect.withSpan("Depth.threeFailed"), Effect.ignore),
+        ),
+        Effect.withSpan("Depth.two"),
+        Effect.withSpan("Depth.one", {
           attributes: { "url.full": "https://api.supabase.com/v1/projects?token=abc" },
         }),
-        Effect.withSpan("Depth.one"),
+        Effect.withSpan("Depth.zero"),
       );
 
-      yield* withTraceExport(
-        { sink: Option.none(), debugConsole: true },
-        {},
-      )(program).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            BunServices.layer,
-            Stdio.layerTest({ stderr: () => stderr }),
-            mockRuntimeInfo(),
-          ),
-        ),
-      );
+      const output = yield* runWithDebugConsole({ debug: "1" }, program);
 
-      const output = written.join("");
-      expect(output).toContain("cli.run");
+      expect(output).toContain("Depth.zero");
       expect(output).toContain("Depth.one");
       expect(output).toContain("Depth.two");
-      expect(output).toContain("Depth.fourFailed");
+      expect(output).toContain("Depth.threeFailed (");
       expect(output).toContain("failed");
-      expect(output).not.toContain("Depth.three");
-      expect(output).not.toContain("Depth.four ");
+      expect(output).not.toContain("Depth.three (");
       expect(output).not.toContain("token=abc");
+    }),
+  );
+
+  it.effect("prints spans for SUPABASE_TELEMETRY_DEBUG=1", () =>
+    Effect.gen(function* () {
+      const output = yield* runWithDebugConsole(
+        { telemetryDebug: "1" },
+        Effect.void.pipe(Effect.withSpan("Probe.span")),
+      );
+
+      expect(output).toContain("Probe.span");
+    }),
+  );
+
+  it.effect("prints nothing unless a debug setting is exactly 1", () =>
+    Effect.gen(function* () {
+      const output = yield* runWithDebugConsole(
+        { debug: "true", telemetryDebug: "0" },
+        Effect.void.pipe(Effect.withSpan("Probe.span")),
+      );
+
+      expect(output).toBe("");
     }),
   );
 });

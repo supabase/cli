@@ -18,6 +18,7 @@ import {
 } from "effect";
 import { Headers, HttpTraceContext } from "effect/unstable/http";
 import { CLI_VERSION } from "../cli/version.ts";
+import { CliSettings } from "../config/cli-settings.service.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import {
   actionability,
@@ -30,7 +31,6 @@ import { ChildTracePropagation } from "./spans.ts";
 
 const FLUSH_TIMEOUT = Duration.seconds(2);
 const OTLP_TRACES_PATH = "/v1/traces";
-const TRUE_VALUES: ReadonlySet<string> = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
 /** Raised when the trace export environment is contradictory or malformed. */
 export class TraceExportConfigError extends Data.TaggedError("TraceExportConfigError")<{
@@ -49,10 +49,9 @@ type TraceSink =
       readonly headers: Redacted.Redacted<Readonly<Record<string, string>>>;
     };
 
-/** Tracing decision for one CLI run. */
+/** Trace export decision for one CLI run. */
 export interface TraceSettings {
   readonly sink: Option.Option<TraceSink>;
-  readonly debugConsole: boolean;
 }
 
 const optionalEnv = (name: string) =>
@@ -60,17 +59,6 @@ const optionalEnv = (name: string) =>
     Effect.map(Option.filter((value) => value.trim().length > 0)),
     Effect.mapError((error) => new TraceExportConfigError({ message: error.message })),
   );
-
-/** Whether argv enables `--debug`; the last occurrence before `--` wins. */
-export function debugFlagEnabled(args: ReadonlyArray<string>): boolean | undefined {
-  let enabled: boolean | undefined;
-  for (const arg of args) {
-    if (arg === "--") break;
-    if (arg === "--debug") enabled = true;
-    else if (arg.startsWith("--debug=")) enabled = TRUE_VALUES.has(arg.slice("--debug=".length));
-  }
-  return enabled;
-}
 
 function otlpTracesUrl(endpoint: string): Option.Option<string> {
   try {
@@ -138,30 +126,30 @@ const resolveSink = Effect.fnUntraced(function* (
   });
 });
 
-/** Reads the trace sink and debug console switch for this run. */
-export const resolveTraceSettings = Effect.fnUntraced(function* (args: ReadonlyArray<string>) {
+/** Reads the trace sink for this run. */
+export const resolveTraceSettings = Effect.gen(function* () {
   const sink = yield* resolveSink(
     yield* optionalEnv("SUPABASE_TRACE_FILE"),
     yield* optionalEnv("SUPABASE_OTLP_ENDPOINT"),
   );
-  const debugFlag = debugFlagEnabled(args);
-  const debugConsole =
-    debugFlag ??
-    ((yield* optionalEnv("SUPABASE_DEBUG")).pipe(Option.exists((v) => TRUE_VALUES.has(v))) ||
-      (yield* optionalEnv("SUPABASE_TELEMETRY_DEBUG")).pipe(
-        Option.exists((v) => TRUE_VALUES.has(v)),
-      ));
-  return { sink, debugConsole } satisfies TraceSettings;
+  return { sink } satisfies TraceSettings;
 });
 
-function tracingEnabled(settings: TraceSettings): boolean {
-  return Option.isSome(settings.sink) || settings.debugConsole;
-}
-
+// An explicitly configured sink records the run even when the caller's context is unsampled.
 const externalParent = optionalEnv("TRACEPARENT").pipe(
   Effect.map(
     Option.flatMap((traceparent) =>
       HttpTraceContext.w3c(Headers.fromRecordUnsafe({ traceparent })),
+    ),
+  ),
+  Effect.map(
+    Option.map((parent) =>
+      Tracer.externalSpan({
+        traceId: parent.traceId,
+        spanId: parent.spanId,
+        sampled: true,
+        annotations: parent.annotations,
+      }),
     ),
   ),
 );
@@ -217,9 +205,7 @@ class ObservedSpan implements Tracer.Span {
   }
 }
 
-const nativeTracer = Tracer.make({ span: (options) => new Tracer.NativeSpan(options) });
-
-const withDebugConsole = Effect.fnUntraced(function* (base: Tracer.Tracer) {
+const debugConsoleTracer = Effect.fnUntraced(function* (base: Tracer.Tracer) {
   const stdio = yield* Stdio.Stdio;
   const exportSpan = makeDebugConsoleExporter((line) =>
     Stream.make(line).pipe(Stream.run(stdio.stderr()), Effect.asVoid),
@@ -267,16 +253,32 @@ const sinkTracer = Effect.fnUntraced(function* (sink: TraceSink) {
   }
 });
 
-const traceExportLayer = (settings: TraceSettings) =>
-  Layer.effect(
-    Tracer.Tracer,
-    Effect.gen(function* () {
-      const base = Option.isSome(settings.sink)
-        ? yield* sinkTracer(settings.sink.value)
-        : nativeTracer;
-      return settings.debugConsole ? yield* withDebugConsole(base) : base;
-    }),
-  );
+/**
+ * Prints the finished spans of `effect` to stderr when `SUPABASE_DEBUG=1` or
+ * `SUPABASE_TELEMETRY_DEBUG=1`, on top of the active sink tracer when there is one.
+ */
+export const withDebugConsole = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R | CliSettings | Stdio.Stdio> =>
+  Effect.gen(function* () {
+    const settings = yield* CliSettings;
+    const enabled =
+      Option.exists(settings.debug, (value) => value === "1") ||
+      Option.exists(settings.telemetryDebug, (value) => value === "1");
+    if (!enabled) return yield* effect;
+    const base = yield* Effect.tracer;
+    return yield* Effect.acquireUseRelease(
+      Scope.make(),
+      (scope) =>
+        debugConsoleTracer(base).pipe(
+          Scope.provide(scope),
+          Effect.flatMap((tracer) =>
+            effect.pipe(Effect.withTracer(tracer), Effect.withTracerEnabled(true)),
+          ),
+        ),
+      (scope, exit) => Scope.close(scope, exit),
+    );
+  });
 
 /**
  * Runs `effect` as the `cli.run` root span with the configured exporter, then flushes it within a
@@ -286,16 +288,16 @@ export const withTraceExport =
   (settings: TraceSettings, attributes: Readonly<Record<string, unknown>>) =>
   <A, E, R>(
     effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<
-    A,
-    E | TraceExportConfigError,
-    R | FileSystem.FileSystem | RuntimeInfo | Stdio.Stdio
-  > => {
-    if (!tracingEnabled(settings)) return effect.pipe(Effect.withTracerEnabled(false));
+  ): Effect.Effect<A, E | TraceExportConfigError, R | FileSystem.FileSystem | RuntimeInfo> => {
+    if (Option.isNone(settings.sink)) return effect.pipe(Effect.withTracerEnabled(false));
+    const sink = settings.sink.value;
     return Effect.gen(function* () {
-      const parent = Option.isSome(settings.sink) ? yield* externalParent : Option.none();
+      const parent = yield* externalParent;
       const scope = yield* Scope.make();
-      const context = yield* Layer.buildWithScope(traceExportLayer(settings), scope).pipe(
+      const context = yield* Layer.buildWithScope(
+        Layer.effect(Tracer.Tracer, sinkTracer(sink)),
+        scope,
+      ).pipe(
         Effect.catchCause((cause) => {
           const reason = Cause.squash(cause);
           return Scope.close(scope, Exit.failCause(cause)).pipe(
@@ -314,7 +316,7 @@ export const withTraceExport =
           attributes,
           ...(Option.isSome(parent) ? { parent: parent.value } : {}),
         }),
-        Effect.provideService(ChildTracePropagation, Option.isSome(settings.sink)),
+        Effect.provideService(ChildTracePropagation, true),
         Effect.provide(context),
         Effect.exit,
       );

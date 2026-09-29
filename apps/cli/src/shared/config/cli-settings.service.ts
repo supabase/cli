@@ -10,6 +10,8 @@ interface CliSettingsShape {
   readonly accessToken: Option.Option<Redacted.Redacted<string>>;
   readonly noKeyring: Option.Option<string>;
   readonly supabaseHome: string;
+  readonly debug: Option.Option<string>;
+  readonly telemetryDebug: Option.Option<string>;
   readonly telemetryDisabled: Option.Option<string>;
   readonly doNotTrack: Option.Option<string>;
 }

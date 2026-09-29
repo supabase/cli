@@ -149,15 +149,11 @@ const projectScoped404 = Effect.fnUntraced(function* (projectRef: string, body: 
   return yield* notEnrolled(projectRef);
 });
 
-export const listCompute = Effect.fn("Compute.list")(function* (
-  api: ApiClient,
-  projectRef: string,
-) {
+export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
   const operation = "list compute";
   const response = yield* api
     .executeRaw(operationDefinitions.v2ListAllComputeInstances, { ref: projectRef })
     .pipe(Effect.mapError(mapRequestError(operation)));
-  yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
 
   if (response.status === 404) {
     return yield* projectScoped404(projectRef, yield* bodyText(response));
@@ -170,12 +166,8 @@ export const listCompute = Effect.fn("Compute.list")(function* (
   return decoded.data.map(toComputeRecord);
 });
 
-/**
- * One compute, or `None` when this project has no record of it — see the 404 notes above.
- * Untraced: shared by the single-call {@link getCompute} (spanned) and {@link awaitComputeBuild}'s
- * poll loop, which must not create a span per poll iteration.
- */
-const getComputeUntraced = Effect.fnUntraced(function* (
+/** One compute, or `None` when this project has no record of it — see the 404 notes above. */
+export const getCompute = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
   name: string,
@@ -197,15 +189,7 @@ const getComputeUntraced = Effect.fnUntraced(function* (
   return Option.some(toComputeRecord(decoded.data));
 });
 
-export const getCompute = Effect.fn("Compute.get")(function* (
-  api: ApiClient,
-  projectRef: string,
-  name: string,
-) {
-  return yield* getComputeUntraced(api, projectRef, name);
-});
-
-export const createComputeUpload = Effect.fn("Compute.createUpload")(function* (
+export const createComputeUpload = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
   name: string,
@@ -214,7 +198,6 @@ export const createComputeUpload = Effect.fn("Compute.createUpload")(function* (
   const response = yield* api
     .executeRaw(operationDefinitions.v2CreateComputeInstanceUpload, { ref: projectRef, name })
     .pipe(Effect.mapError(mapRequestError(operation)));
-  yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
 
   if (response.status === 404) {
     return yield* projectScoped404(projectRef, yield* bodyText(response));
@@ -279,7 +262,7 @@ export const uploadBuildContext = Effect.fn("Compute.uploadContext")(function* (
   }
 });
 
-export const deployCompute = Effect.fn("Compute.deploy")(function* (
+export const deployCompute = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
   name: string,
@@ -301,7 +284,6 @@ export const deployCompute = Effect.fn("Compute.deploy")(function* (
       },
     })
     .pipe(Effect.mapError(mapRequestError(operation)));
-  yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
 
   if (response.status === 404) {
     return yield* projectScoped404(projectRef, yield* bodyText(response));
@@ -314,7 +296,7 @@ export const deployCompute = Effect.fn("Compute.deploy")(function* (
   return toComputeRecord(decoded.data);
 });
 
-export const deleteCompute = Effect.fn("Compute.delete")(function* (
+export const deleteCompute = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
   name: string,
@@ -323,7 +305,6 @@ export const deleteCompute = Effect.fn("Compute.delete")(function* (
   const response = yield* api
     .executeRaw(operationDefinitions.v2DeleteAComputeInstance, { ref: projectRef, name })
     .pipe(Effect.mapError(mapRequestError(operation)));
-  yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
 
   // A 404 no other condition claimed is the caller's own "not deployed" verdict
   // to report; a delete that races another one is still a delete that happened.
@@ -384,10 +365,11 @@ export const awaitComputeBuild = Effect.fn("Compute.awaitBuild")(function* (
   } = {},
 ) {
   let attempts = 0;
+  // Polls emit no request spans; this span's attempt count stands in for them.
   const poll = Effect.gen(function* () {
     attempts += 1;
     // A build runs for minutes; one blip on one read must not abandon a deploy that is fine.
-    const compute = yield* getComputeUntraced(api, projectRef, name).pipe(
+    const compute = yield* getCompute(api, projectRef, name).pipe(
       Effect.retry({
         schedule: options.retrySchedule ?? COMPUTE_POLL_READ_RETRY,
         while: (error) => !isPermanentReadFailure(error),
@@ -401,7 +383,7 @@ export const awaitComputeBuild = Effect.fn("Compute.awaitBuild")(function* (
       yield* options.onPoll(compute.value);
     }
     return compute.value.buildState === "building" ? undefined : compute.value;
-  });
+  }).pipe(Effect.withTracerEnabled(false));
 
   const settled = yield* poll.pipe(
     Effect.repeat({

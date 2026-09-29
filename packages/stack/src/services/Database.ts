@@ -273,6 +273,8 @@ const health = Effect.fn("Database.health")(function* (
         }),
       ),
     ),
+    // Probes emit no spans; the attempt count on this span stands in for them.
+    Effect.withTracerEnabled(false),
   );
   const retryProbe = probe.pipe(
     Effect.retry(Schedule.spaced("250 millis")),

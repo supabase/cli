@@ -14,24 +14,29 @@ OpenTelemetry backend, costs nothing when unused, and never exports secrets.
 
 Each run produces one trace rooted at `cli.run`, exported to at most one sink:
 
-- `SUPABASE_TRACE_FILE=<path>` appends one OTLP/JSON batch per line. The file is created with mode
-  `0600`.
+- `SUPABASE_TRACE_FILE=<path>` appends one OTLP/JSON batch per line. The file is created with, or
+  restricted to, mode `0600`.
 - `SUPABASE_OTLP_ENDPOINT=<base URL>` posts OTLP/HTTP JSON to `<base>/v1/traces`, with optional
   `SUPABASE_OTLP_HEADERS=k=v,k2=v2`.
 - Setting both is a configuration error. Generic `OTEL_EXPORTER_OTLP_*` variables are ignored, so
   a global collector setting never receives CLI internals.
-- `TRACEPARENT` becomes the parent of `cli.run` when a sink is active, and spawned processes
-  receive a `TRACEPARENT` for their process span.
-- `--debug` (or `SUPABASE_DEBUG=1`) prints finished spans up to depth 2 plus every failed span to
-  stderr.
+- `TRACEPARENT` becomes the parent of `cli.run` when a sink is active, even when its sampled flag
+  is off, and spawned processes receive a `TRACEPARENT` for their process span.
+- `SUPABASE_DEBUG=1` or `SUPABASE_TELEMETRY_DEBUG=1`, read from the project `.env` or the
+  environment, prints finished command spans up to depth 2 plus every failed span to stderr.
+  `--debug` does not print spans. The console starts once CLI settings load, so spans that end
+  earlier, including `cli.run`, reach only the sink.
 
-With no sink and no debug switch, the root runs with `References.TracerEnabled = false`. Spans are
-Effect's no-op spans, no exporter module is loaded, and no trace file or network I/O happens.
+With no sink, the root runs with `References.TracerEnabled = false`. Spans are Effect's no-op
+spans, no exporter module is loaded, and no trace file or network I/O happens; the debug console
+enables tracing only for the command it wraps.
 
 Every exported batch and console line goes through `shared/telemetry/trace-sanitize.ts`:
 `db.query.text` becomes `db.operation.name`, `db.query.hash`, and `db.query.length`; `url.full`
-loses its query; `url.query` and non-allowlisted headers are dropped; credential-named keys are
-dropped; remaining strings, exception events, and status messages are scrubbed and capped at 2 KB.
+loses its query; `url.full` and `url.path` hide Storage bucket and object names; `url.query` and
+non-allowlisted headers are dropped; string values under credential-named keys are dropped;
+remaining strings, event names, exception events, and status messages are scrubbed of
+credentials, SQL literals, and constraint key values, and capped at 2 KB.
 HTTP trace-header propagation is disabled for all CLI requests.
 
 ### Instrumentation rules
@@ -45,8 +50,9 @@ HTTP trace-header propagation is disabled for all CLI requests.
   captures a stack on every call even when tracing is off.
 - Never annotate secrets, connection strings, environment values, file contents, argv, or query
   results. The sanitizer is a safety net, not a license.
-- Do not create spans per row, byte, stream element, or poll iteration. Per-item spans are fine
-  for bounded, heavy fan-outs such as migrations, services, functions, and images.
+- Do not create spans per row, byte, stream element, or poll iteration. Run each poll attempt with
+  the tracer disabled and record the attempt count on the enclosing wait span. Per-item spans are
+  fine for bounded, heavy fan-outs such as migrations, services, functions, and images.
 - Wrap child processes with `withProcessSpan` or `withProcessSpanScoped` from
   `shared/telemetry/spans.ts`, which record the executable basename, argument count, and exit code
   and pass `TRACEPARENT` to the child.
@@ -56,8 +62,9 @@ HTTP trace-header propagation is disabled for all CLI requests.
   `api.operation`, because the HTTP span name generator only sees interpolated paths. Do not wrap a
   single API call in another span at the call site.
 
-An integration test caps a representative command at 2,000 spans and 200 spans per name so a
-per-item span in a hot loop fails CI.
+An integration test caps one representative command, `projects list`, at 2,000 spans and 200
+spans per name. It catches hot-loop spans only on that command's path; other paths rely on these
+rules and review.
 
 ## Consequences
 
@@ -65,7 +72,7 @@ per-item span in a hot loop fails CI.
 - Old `~/.supabase/traces/*.ndjson` files are no longer written or cleaned up; they are safe to
   delete.
 - A traced point costs about 1 µs when tracing is off, so overhead grows with span count; the span
-  budget test guards against hot-loop instrumentation.
+  budget test guards the representative command only.
 - `runCli` closes the trace scope with a bounded, uninterruptible 2-second flush before
   `processControl.exit`, which skips finalizers.
 

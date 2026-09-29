@@ -14,7 +14,7 @@ vi.mock("./otlp-trace-sink.ts", () => {
   return {};
 });
 
-describe("withTraceExport without a sink or debug console", () => {
+describe("withTraceExport without a sink", () => {
   it.effect("runs with the tracer disabled and never loads the OTLP sink", () =>
     Effect.gen(function* () {
       const observed = yield* Effect.gen(function* () {
@@ -23,7 +23,7 @@ describe("withTraceExport without a sink or debug console", () => {
         return { tracerEnabled, spanName: span.name, spanAttributes: span.attributes.size };
       }).pipe(
         Effect.withSpan("Probe.span", { attributes: { a: 1 } }),
-        withTraceExport({ sink: Option.none(), debugConsole: false }, {}),
+        withTraceExport({ sink: Option.none() }, {}),
         Effect.provide(runtime),
       );
 
@@ -35,10 +35,7 @@ describe("withTraceExport without a sink or debug console", () => {
   it.effect("loads the sink module once a sink is configured", () =>
     Effect.gen(function* () {
       const error = yield* Effect.void.pipe(
-        withTraceExport(
-          { sink: Option.some({ _tag: "File", path: "/unused" }), debugConsole: false },
-          {},
-        ),
+        withTraceExport({ sink: Option.some({ _tag: "File", path: "/unused" }) }, {}),
         Effect.provide(runtime),
         Effect.flip,
       );

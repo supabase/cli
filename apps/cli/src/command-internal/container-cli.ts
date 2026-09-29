@@ -125,6 +125,7 @@ const processTarget = (runtime: ContainerRuntime, args: ReadonlyArray<string>) =
   executable: runtime,
   argCount: args.length,
   subcommand: containerSubcommand(args),
+  hasFallback: runtime === dockerRuntime,
 });
 
 function spawnRuntime(

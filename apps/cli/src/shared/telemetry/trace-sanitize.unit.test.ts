@@ -82,6 +82,27 @@ describe("scrubString", () => {
   it("keeps ordinary text unchanged", () => {
     expect(scrubString("migration 20240101 applied")).toBe("migration 20240101 applied");
   });
+
+  it.each([
+    ["a SQL literal", "syntax error near 'hunter2'", "syntax error near '<redacted>'"],
+    ["an escaped SQL literal", "value 'it''s hunter2' rejected", "value '<redacted>' rejected"],
+    [
+      "a constraint detail",
+      "Key (email)=(a@b.c) already exists.",
+      "Key (email)=(<redacted>) already exists.",
+    ],
+    [
+      "a composite constraint detail",
+      "Key (org_id, lower(email))=(7, a@b.c) is not present in table",
+      "Key (org_id, lower(email))=(<redacted>) is not present in table",
+    ],
+  ])("redacts %s", (_label, input, expected) => {
+    expect(scrubString(input)).toBe(expected);
+  });
+
+  it("keeps apostrophes inside words", () => {
+    expect(scrubString("can't read the project's config")).toBe("can't read the project's config");
+  });
 });
 
 describe("sanitizeAttributeEntries", () => {
@@ -106,7 +127,27 @@ describe("sanitizeAttributeEntries", () => {
     );
 
     expect(attributes).toEqual({
-      "url.full": "https://x.supabase.co/storage/v1/object/sign/a.png",
+      "url.full": "https://x.supabase.co/storage/v1/object/sign/<redacted>",
+    });
+  });
+
+  it.each([
+    ["/storage/v1/object/sign/avatars/u1/a.png", "/storage/v1/object/sign/<redacted>"],
+    ["/storage/v1/object/avatars/u1/a.png", "/storage/v1/object/<redacted>"],
+    ["/storage/v1/object/list/avatars", "/storage/v1/object/list/<redacted>"],
+    ["/storage/v1/object/move", "/storage/v1/object/move"],
+    ["/v1/projects/abc/functions", "/v1/projects/abc/functions"],
+  ])("redacts the Storage object in url.path and url.full for %s", (path, expected) => {
+    const attributes = Object.fromEntries(
+      sanitizeAttributeEntries([
+        ["url.path", path],
+        ["url.full", `https://x.supabase.co${path}`],
+      ]),
+    );
+
+    expect(attributes).toEqual({
+      "url.path": expected,
+      "url.full": `https://x.supabase.co${expected}`,
     });
   });
 
@@ -136,6 +177,23 @@ describe("sanitizeAttributeEntries", () => {
     );
 
     expect(attributes).toEqual({ service: "db" });
+  });
+
+  it("keeps numeric and boolean values under credential-named keys", () => {
+    const attributes = Object.fromEntries(
+      sanitizeAttributeEntries([
+        ["secret.count", 3],
+        ["secret.batch_count", 1],
+        ["config.access_token_from_env", true],
+        ["secret.name", "STRIPE_KEY"],
+      ]),
+    );
+
+    expect(attributes).toEqual({
+      "secret.count": 3,
+      "secret.batch_count": 1,
+      "config.access_token_from_env": true,
+    });
   });
 });
 
@@ -192,6 +250,50 @@ describe("sanitizeTraceData", () => {
 
     expect(firstSpan(sanitizeTraceData(data)).attributes).toEqual([
       { key: "http.response.status_code", value: { intValue: 302 } },
+    ]);
+  });
+
+  it("scrubs event names, which carry log messages", () => {
+    const data = traceWith({
+      events: [
+        {
+          name: "connecting to postgresql://postgres:hunter2@db.example.com:5432/postgres",
+          timeUnixNano: "1",
+          droppedAttributesCount: 0,
+          attributes: [],
+        },
+      ],
+    });
+
+    const [event] = firstSpan(sanitizeTraceData(data)).events;
+
+    expect(event?.name).toBe("connecting to postgresql://<redacted>@db.example.com:5432/postgres");
+  });
+
+  it("keeps numeric and boolean values under credential-named keys", () => {
+    const data = traceWith({
+      attributes: [
+        { key: "vault.secret_count", value: { intValue: 2 } },
+        { key: "config.access_token_from_env", value: { boolValue: false } },
+        { key: "secret.value", value: { stringValue: "hunter2" } },
+      ],
+    });
+
+    expect(firstSpan(sanitizeTraceData(data)).attributes).toEqual([
+      { key: "vault.secret_count", value: { intValue: 2 } },
+      { key: "config.access_token_from_env", value: { boolValue: false } },
+    ]);
+  });
+
+  it("redacts the Storage object key in url.path", () => {
+    const data = traceWith({
+      attributes: [
+        { key: "url.path", value: { stringValue: "/storage/v1/object/public/avatars/u1.png" } },
+      ],
+    });
+
+    expect(firstSpan(sanitizeTraceData(data)).attributes).toEqual([
+      { key: "url.path", value: { stringValue: "/storage/v1/object/public/<redacted>" } },
     ]);
   });
 });
