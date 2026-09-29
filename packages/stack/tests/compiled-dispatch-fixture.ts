@@ -1,5 +1,5 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
-import { Data, Effect, Layer, Option, Stream } from "effect";
+import { Data, Effect, FileSystem, Layer, Option, Stream } from "effect";
 import {
   runHostProcessIfDispatched,
   runNativeProcessIfDispatched,
@@ -8,6 +8,7 @@ import {
   connectHost,
   launchHost,
   shutdownHost,
+  ownerExitProbe,
   waitForOwnerExit,
   type HostEndpoint,
 } from "../src/HostProcess.ts";
@@ -34,7 +35,10 @@ if (!(await runHostProcessIfDispatched(argv)) && !(await runNativeProcessIfDispa
           const refusal = yield* shutdownHost(access, false);
           if (Option.isSome(refusal))
             return yield* new FixtureError({ message: refusal.value.message });
-          yield* waitForOwnerExit(access.endpoint.pid);
+          yield* waitForOwnerExit(
+            access.endpoint.pid,
+            ownerExitProbe(yield* FileSystem.FileSystem),
+          );
         }
         output(access.endpoint);
       }),

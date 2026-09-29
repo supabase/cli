@@ -8,8 +8,10 @@ import {
   Effect,
   Exit,
   Fiber,
+  FileSystem,
   Layer,
   Option,
+  Path,
   Ref,
   Schema,
   Sink,
@@ -21,7 +23,13 @@ import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/u
 import { HttpClient } from "effect/unstable/http";
 import { ContainerLaunchError, makeContainerRuntime, type ContainerProcess } from "./Container.ts";
 
-const image = "oven/bun:1.4.1-slim";
+const image = await Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = yield* path.fromFileUrl(new URL("../../../../.bun-version", import.meta.url));
+  const version = yield* fs.readFileString(file);
+  return `oven/bun:${version.trim()}-slim`;
+}).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
 
 class ContainerTestError extends Data.TaggedError("ContainerTestError")<{
   readonly message: string;
