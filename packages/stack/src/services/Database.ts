@@ -521,6 +521,7 @@ export const makeDatabase = (
             runtime: options.runtime,
             stackId: String(options.stackId),
             instanceId: options.instanceId,
+            ...(options.project === undefined ? {} : { project: options.project }),
             instanceRoot,
             root: options.root,
             cacheRoot: options.cacheRoot,
