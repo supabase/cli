@@ -54,9 +54,8 @@ function cliSettingsLayer(token = Option.none<Redacted.Redacted<string>>()) {
       accessToken: token,
       noKeyring: Option.none(),
       supabaseHome: "/tmp/supabase-cli-test-home",
-      debug: Option.none(),
-      telemetryDebug: Option.none(),
       telemetryDisabled: Option.none(),
+
       doNotTrack: Option.none(),
     }),
   );

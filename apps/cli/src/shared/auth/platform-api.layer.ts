@@ -36,4 +36,4 @@ export const makePlatformApiServices = Effect.gen(function* () {
 
   const api = yield* makeApiClient(config);
   return Layer.succeed(PlatformApi, api);
-});
+}).pipe(Effect.withSpan("PlatformApi.build"));

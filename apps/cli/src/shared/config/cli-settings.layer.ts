@@ -43,8 +43,6 @@ const makeCliSettings = Effect.gen(function* () {
     ),
     noKeyring: yield* read(Config.option(Config.string("SUPABASE_NO_KEYRING"))),
     supabaseHome: resolveSupabaseHomeValue(path, supabaseHome, runtimeInfo.homeDir),
-    debug: yield* read(Config.option(Config.string("SUPABASE_DEBUG"))),
-    telemetryDebug: yield* read(Config.option(Config.string("SUPABASE_TELEMETRY_DEBUG"))),
     telemetryDisabled: yield* read(Config.option(Config.string("SUPABASE_TELEMETRY_DISABLED"))),
     doNotTrack: yield* read(Config.option(Config.string("DO_NOT_TRACK"))),
   });

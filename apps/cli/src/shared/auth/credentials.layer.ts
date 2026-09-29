@@ -58,15 +58,19 @@ const makeCredentials = Effect.gen(function* () {
       ? Option.none<KeyringModule>()
       : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
 
+  yield* Effect.annotateCurrentSpan({ "keyring.enabled": Option.isSome(keyringModule) });
+
   return Credentials.of({
     getAccessToken: Effect.gen(function* () {
       if (Option.isSome(keyringModule)) {
         const token = yield* tryKeyringRead(keyringModule.value, ACCOUNT);
         if (Option.isSome(token)) {
+          yield* Effect.annotateCurrentSpan({ "credential.source": "keyring" });
           return Option.some(Redacted.make(normalizeKeyringToken(token.value)));
         }
         const legacyToken = yield* tryKeyringRead(keyringModule.value, LEGACY_ACCOUNT);
         if (Option.isSome(legacyToken)) {
+          yield* Effect.annotateCurrentSpan({ "credential.source": "keyring_legacy" });
           return Option.some(Redacted.make(normalizeKeyringToken(legacyToken.value)));
         }
       }
@@ -75,22 +79,31 @@ const makeCredentials = Effect.gen(function* () {
       if (exists) {
         const content = yield* fs.readFileString(fallbackPath);
         const trimmed = content.trim();
-        if (trimmed) return Option.some(Redacted.make(trimmed));
+        if (trimmed) {
+          yield* Effect.annotateCurrentSpan({ "credential.source": "file" });
+          return Option.some(Redacted.make(trimmed));
+        }
       }
 
+      yield* Effect.annotateCurrentSpan({ "credential.source": "none" });
       return Option.none();
-    }),
+    }).pipe(Effect.withSpan("Credentials.getAccessToken")),
 
-    saveAccessToken: (token: string | Redacted.Redacted<string>) =>
-      Effect.gen(function* () {
-        const plainToken = typeof token === "string" ? token : Redacted.value(token);
-        if (Option.isSome(keyringModule)) {
-          if (yield* tryKeyringWrite(keyringModule.value, ACCOUNT, plainToken)) return;
+    saveAccessToken: Effect.fn("Credentials.saveAccessToken")(function* (
+      token: string | Redacted.Redacted<string>,
+    ) {
+      const plainToken = typeof token === "string" ? token : Redacted.value(token);
+      if (Option.isSome(keyringModule)) {
+        if (yield* tryKeyringWrite(keyringModule.value, ACCOUNT, plainToken)) {
+          yield* Effect.annotateCurrentSpan({ "credential.destination": "keyring" });
+          return;
         }
+      }
 
-        yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o700 });
-        yield* fs.writeFileString(fallbackPath, plainToken, { mode: 0o600 });
-      }),
+      yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o700 });
+      yield* fs.writeFileString(fallbackPath, plainToken, { mode: 0o600 });
+      yield* Effect.annotateCurrentSpan({ "credential.destination": "file" });
+    }),
 
     deleteAccessToken: Effect.gen(function* () {
       let anyDeleted = false;
@@ -115,9 +128,13 @@ const makeCredentials = Effect.gen(function* () {
         anyDeleted ||= removed;
       }
 
+      yield* Effect.annotateCurrentSpan({ "credential.deleted": anyDeleted });
       return anyDeleted;
-    }),
+    }).pipe(Effect.withSpan("Credentials.deleteAccessToken")),
   });
 });
 
-export const credentialsLayer = Layer.effect(Credentials, makeCredentials);
+export const credentialsLayer = Layer.effect(
+  Credentials,
+  makeCredentials.pipe(Effect.withSpan("Credentials.load")),
+);

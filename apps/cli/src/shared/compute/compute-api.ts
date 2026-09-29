@@ -149,11 +149,15 @@ const projectScoped404 = Effect.fnUntraced(function* (projectRef: string, body: 
   return yield* notEnrolled(projectRef);
 });
 
-export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
+export const listCompute = Effect.fn("Compute.list")(function* (
+  api: ApiClient,
+  projectRef: string,
+) {
   const operation = "list compute";
   const response = yield* api
     .executeRaw(operationDefinitions.v2ListAllComputeInstances, { ref: projectRef })
     .pipe(Effect.mapError(mapRequestError(operation)));
+  yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
 
   if (response.status === 404) {
     return yield* projectScoped404(projectRef, yield* bodyText(response));
@@ -166,8 +170,12 @@ export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectR
   return decoded.data.map(toComputeRecord);
 });
 
-/** One compute, or `None` when this project has no record of it — see the 404 notes above. */
-export const getCompute = Effect.fnUntraced(function* (
+/**
+ * One compute, or `None` when this project has no record of it — see the 404 notes above.
+ * Untraced: shared by the single-call {@link getCompute} (spanned) and {@link awaitComputeBuild}'s
+ * poll loop, which must not create a span per poll iteration.
+ */
+const getComputeUntraced = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
   name: string,
@@ -189,7 +197,15 @@ export const getCompute = Effect.fnUntraced(function* (
   return Option.some(toComputeRecord(decoded.data));
 });
 
-export const createComputeUpload = Effect.fnUntraced(function* (
+export const getCompute = Effect.fn("Compute.get")(function* (
+  api: ApiClient,
+  projectRef: string,
+  name: string,
+) {
+  return yield* getComputeUntraced(api, projectRef, name);
+});
+
+export const createComputeUpload = Effect.fn("Compute.createUpload")(function* (
   api: ApiClient,
   projectRef: string,
   name: string,
@@ -198,6 +214,7 @@ export const createComputeUpload = Effect.fnUntraced(function* (
   const response = yield* api
     .executeRaw(operationDefinitions.v2CreateComputeInstanceUpload, { ref: projectRef, name })
     .pipe(Effect.mapError(mapRequestError(operation)));
+  yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
 
   if (response.status === 404) {
     return yield* projectScoped404(projectRef, yield* bodyText(response));
@@ -220,11 +237,13 @@ export const createComputeUpload = Effect.fnUntraced(function* (
  * signature in the URL is the authorization. That's also why `httpClientLayer` redacts query
  * strings before logging: under `--debug` this URL is a write-capable credential.
  */
-export const uploadBuildContext = Effect.fnUntraced(function* (
+export const uploadBuildContext = Effect.fn("Compute.uploadContext")(function* (
   slot: ComputeUploadSlot,
   archive: Uint8Array,
 ) {
   const client = yield* HttpClient.HttpClient;
+
+  yield* Effect.annotateCurrentSpan({ "upload.bytes": archive.byteLength });
 
   // The slot names its own method; anything other than `POST` falls back to `PUT`, the only
   // method documented for a presigned object-store destination.
@@ -247,6 +266,7 @@ export const uploadBuildContext = Effect.fnUntraced(function* (
         }),
     ),
   );
+  yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
 
   if (response.status < 200 || response.status >= 300) {
     const body = yield* bodyText(response);
@@ -259,7 +279,7 @@ export const uploadBuildContext = Effect.fnUntraced(function* (
   }
 });
 
-export const deployCompute = Effect.fnUntraced(function* (
+export const deployCompute = Effect.fn("Compute.deploy")(function* (
   api: ApiClient,
   projectRef: string,
   name: string,
@@ -281,6 +301,7 @@ export const deployCompute = Effect.fnUntraced(function* (
       },
     })
     .pipe(Effect.mapError(mapRequestError(operation)));
+  yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
 
   if (response.status === 404) {
     return yield* projectScoped404(projectRef, yield* bodyText(response));
@@ -293,7 +314,7 @@ export const deployCompute = Effect.fnUntraced(function* (
   return toComputeRecord(decoded.data);
 });
 
-export const deleteCompute = Effect.fnUntraced(function* (
+export const deleteCompute = Effect.fn("Compute.delete")(function* (
   api: ApiClient,
   projectRef: string,
   name: string,
@@ -302,6 +323,7 @@ export const deleteCompute = Effect.fnUntraced(function* (
   const response = yield* api
     .executeRaw(operationDefinitions.v2DeleteAComputeInstance, { ref: projectRef, name })
     .pipe(Effect.mapError(mapRequestError(operation)));
+  yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
 
   // A 404 no other condition claimed is the caller's own "not deployed" verdict
   // to report; a delete that races another one is still a delete that happened.
@@ -344,7 +366,7 @@ const isPermanentReadFailure = (error: unknown) =>
   error instanceof ComputeUnavailableError ||
   error instanceof ComputeProjectNotFoundError;
 
-export const awaitComputeBuild = Effect.fnUntraced(function* (
+export const awaitComputeBuild = Effect.fn("Compute.awaitBuild")(function* (
   api: ApiClient,
   projectRef: string,
   name: string,
@@ -361,9 +383,11 @@ export const awaitComputeBuild = Effect.fnUntraced(function* (
     readonly refSuffix?: string;
   } = {},
 ) {
+  let attempts = 0;
   const poll = Effect.gen(function* () {
+    attempts += 1;
     // A build runs for minutes; one blip on one read must not abandon a deploy that is fine.
-    const compute = yield* getCompute(api, projectRef, name).pipe(
+    const compute = yield* getComputeUntraced(api, projectRef, name).pipe(
       Effect.retry({
         schedule: options.retrySchedule ?? COMPUTE_POLL_READ_RETRY,
         while: (error) => !isPermanentReadFailure(error),
@@ -385,6 +409,7 @@ export const awaitComputeBuild = Effect.fnUntraced(function* (
       until: (result) => result !== undefined,
     }),
   );
+  yield* Effect.annotateCurrentSpan({ "poll.attempts": attempts });
 
   if (settled === undefined) {
     return yield* new ComputeBuildTimeoutError({

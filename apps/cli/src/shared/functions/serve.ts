@@ -565,7 +565,7 @@ interface ServeLocalAuthArtifacts {
  * the DB assertion, so a config error here still surfaces before a
  * docker-down error.
  */
-const resolveLocalAuthArtifacts = Effect.fnUntraced(function* (
+const resolveLocalAuthArtifacts = Effect.fn("functions.serve.resolveLocalAuthArtifacts")(function* (
   auth: PlainServeAuthConfig,
   configPath: string | undefined,
 ) {
@@ -672,7 +672,9 @@ const resolveLocalAuthArtifacts = Effect.fnUntraced(function* (
  * {@link resolveLocalAuthArtifacts} so `startEdgeRuntime` can run it strictly
  * after the DB assertion — with Docker down, no external JWKS request is made.
  */
-const finalizeAuthArtifacts = Effect.fnUntraced(function* (local: ServeLocalAuthArtifacts) {
+const finalizeAuthArtifacts = Effect.fn("functions.serve.finalizeAuthArtifacts")(function* (
+  local: ServeLocalAuthArtifacts,
+) {
   const keys: unknown[] = [];
   if (local.issuerUrl !== undefined) {
     const issuerUrl = local.issuerUrl;
@@ -695,7 +697,7 @@ const finalizeAuthArtifacts = Effect.fnUntraced(function* (local: ServeLocalAuth
   } satisfies ServeAuthArtifacts;
 });
 
-const resolveServeConfig = Effect.fnUntraced(function* (
+const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* (
   projectRoot: string,
   projectIdOverride: Option.Option<string>,
   goViperCompat: boolean,
@@ -884,7 +886,7 @@ const filterCustomEnv = Effect.fnUntraced(function* (env: Readonly<Record<string
   return Object.fromEntries(filtered);
 });
 
-const parseCustomEnvFile = Effect.fnUntraced(function* (
+const parseCustomEnvFile = Effect.fn("functions.serve.parseCustomEnv")(function* (
   envFileFlag: Option.Option<string>,
   projectRoot: string,
   flagCwd: string,
@@ -900,7 +902,9 @@ const parseCustomEnvFile = Effect.fnUntraced(function* (
   return Object.entries(filtered).map(([name, value]) => `${name}=${value}`);
 });
 
-const parseFunctionEnvFile = Effect.fnUntraced(function* (pathname: string) {
+const parseFunctionEnvFile = Effect.fn("functions.serve.parseFunctionEnv")(function* (
+  pathname: string,
+) {
   return yield* readDotEnvFile(pathname, true).pipe(Effect.flatMap(filterCustomEnv));
 });
 
@@ -940,7 +944,7 @@ function splitEnvEntry(entry: string) {
     : ([entry.slice(0, separatorIndex), entry.slice(separatorIndex + 1)] as const);
 }
 
-const writeDockerEnvFile = Effect.fnUntraced(function* (
+const writeDockerEnvFile = Effect.fn("functions.serve.writeDockerEnvFile")(function* (
   { fs, path }: { readonly fs: FileSystem.FileSystem; readonly path: Path.Path },
   env: Readonly<Record<string, string>>,
   dir: string,
@@ -977,63 +981,65 @@ const writeDockerEnvFile = Effect.fnUntraced(function* (
   return { path: pathname };
 });
 
-const writeDockerMultilineEnvScript = Effect.fnUntraced(function* (
-  { fs, path }: { readonly fs: FileSystem.FileSystem; readonly path: Path.Path },
-  env: ReadonlyArray<readonly [string, string]>,
-  containerDir: string,
-  dir: string,
-) {
-  // Self-healing — see the matching comment in `writeDockerEnvFile`. Runs
-  // unconditionally, before the length check, so a stale directory from an
-  // earlier invocation that needed multiline secrets is still reclaimed.
-  yield* fs
-    .remove(dir, { recursive: true, force: true })
-    .pipe(Effect.mapError((error) => nativePlatformFailure(error, dir)));
+const writeDockerMultilineEnvScript = Effect.fn("functions.serve.writeDockerMultilineEnvScript")(
+  function* (
+    { fs, path }: { readonly fs: FileSystem.FileSystem; readonly path: Path.Path },
+    env: ReadonlyArray<readonly [string, string]>,
+    containerDir: string,
+    dir: string,
+  ) {
+    // Self-healing — see the matching comment in `writeDockerEnvFile`. Runs
+    // unconditionally, before the length check, so a stale directory from an
+    // earlier invocation that needed multiline secrets is still reclaimed.
+    yield* fs
+      .remove(dir, { recursive: true, force: true })
+      .pipe(Effect.mapError((error) => nativePlatformFailure(error, dir)));
 
-  if (env.length === 0) {
-    return undefined;
-  }
+    if (env.length === 0) {
+      return undefined;
+    }
 
-  yield* fs
-    .makeDirectory(dir, { recursive: true, mode: 0o700 })
-    .pipe(Effect.mapError((error) => nativePlatformFailure(error, dir)));
-  const scriptName = "multiline-env.sh";
-  const pathname = path.join(dir, scriptName);
-  const envDir = path.join(containerDir, "values");
-  const hostEnvDir = path.join(dir, "values");
-  // Names are validated by `validateDockerMultilineEnvNames` before this runs.
-  const script = env
-    .map(([name], index) => {
-      const valueFile = `env-${index}`;
-      const valuePath = path.join(envDir, valueFile).replaceAll("\\", "/");
-      return `${name}="$(cat ${valuePath}; printf x)"
+    yield* fs
+      .makeDirectory(dir, { recursive: true, mode: 0o700 })
+      .pipe(Effect.mapError((error) => nativePlatformFailure(error, dir)));
+    const scriptName = "multiline-env.sh";
+    const pathname = path.join(dir, scriptName);
+    const envDir = path.join(containerDir, "values");
+    const hostEnvDir = path.join(dir, "values");
+    // Names are validated by `validateDockerMultilineEnvNames` before this runs.
+    const script = env
+      .map(([name], index) => {
+        const valueFile = `env-${index}`;
+        const valuePath = path.join(envDir, valueFile).replaceAll("\\", "/");
+        return `${name}="$(cat ${valuePath}; printf x)"
 export ${name}="\${${name}%x}"`;
-    })
-    .join("\n");
-  yield* fs
-    .makeDirectory(hostEnvDir, { recursive: true, mode: 0o700 })
-    .pipe(Effect.mapError((error) => nativePlatformFailure(error, hostEnvDir)));
-  // The value files hold secret env values, so keep them owner-only.
-  yield* Effect.all(
-    env.map(([, value], index) => {
-      const valuePath = path.join(hostEnvDir, `env-${index}`);
-      return fs
-        .writeFileString(valuePath, value, { mode: 0o600 })
-        .pipe(Effect.mapError((error) => nativePlatformFailure(error, valuePath)));
-    }),
-    { concurrency: "unbounded" },
-  );
-  yield* fs
-    .writeFileString(pathname, script, { mode: 0o600 })
-    .pipe(Effect.mapError((error) => nativePlatformFailure(error, pathname)));
+      })
+      .join("\n");
+    yield* fs
+      .makeDirectory(hostEnvDir, { recursive: true, mode: 0o700 })
+      .pipe(Effect.mapError((error) => nativePlatformFailure(error, hostEnvDir)));
+    // The value files hold secret env values, so keep them owner-only.
+    yield* Effect.all(
+      env.map(([, value], index) => {
+        const valuePath = path.join(hostEnvDir, `env-${index}`);
+        return fs
+          .writeFileString(valuePath, value, { mode: 0o600 })
+          .pipe(Effect.mapError((error) => nativePlatformFailure(error, valuePath)));
+      }),
+      { concurrency: "unbounded" },
+    );
+    yield* fs
+      .writeFileString(pathname, script, { mode: 0o600 })
+      .pipe(Effect.mapError((error) => nativePlatformFailure(error, pathname)));
 
-  return {
-    // `Z`: private SELinux relabel of this CLI-staged dir (supabase/cli#5989);
-    // single-consumer bind, no-op without SELinux.
-    bind: `${dir}:${containerDir}:ro,Z`,
-    scriptPath: path.join(containerDir, scriptName).replaceAll("\\", "/"),
-  };
-});
+    return {
+      // `Z`: private SELinux relabel of this CLI-staged dir (supabase/cli#5989);
+      // single-consumer bind, no-op without SELinux.
+      bind: `${dir}:${containerDir}:ro,Z`,
+      scriptPath: path.join(containerDir, scriptName).replaceAll("\\", "/"),
+    };
+  },
+);
 
 function partitionDockerEnvEntries(env: Readonly<Record<string, string>>) {
   const singleLine: Record<string, string> = {};
@@ -1101,54 +1107,53 @@ function ambientProjectEnv() {
   );
 }
 
-const loadServeCliProjectEnvironment = Effect.fnUntraced(function* (
-  projectRoot: string,
-  options: { readonly search: boolean },
-) {
-  const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
-  const paths = yield* findCliProjectPaths(projectRoot, { search: options.search });
-  if (paths === null) {
-    return null;
-  }
+const loadServeCliProjectEnvironment = Effect.fn("functions.serve.loadProjectEnvironment")(
+  function* (projectRoot: string, options: { readonly search: boolean }) {
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const paths = yield* findCliProjectPaths(projectRoot, { search: options.search });
+    if (paths === null) {
+      return null;
+    }
 
-  const values: Record<string, string> = ambientProjectEnv();
-  const sources: Record<string, "ambient" | ".env" | ".env.local"> = Object.fromEntries(
-    Object.keys(values).map((key) => [key, "ambient"]),
-  );
-  const loadedPaths: string[] = [];
-  const env = values["SUPABASE_ENV"] || defaultSupabaseEnv;
+    const values: Record<string, string> = ambientProjectEnv();
+    const sources: Record<string, "ambient" | ".env" | ".env.local"> = Object.fromEntries(
+      Object.keys(values).map((key) => [key, "ambient"]),
+    );
+    const loadedPaths: string[] = [];
+    const env = values["SUPABASE_ENV"] || defaultSupabaseEnv;
 
-  for (const dir of [paths.supabaseDir, paths.projectRoot]) {
-    for (const filename of loadDefaultEnvFilenames(env)) {
-      const envPath = path.join(dir, filename);
-      const contents = yield* readFileUtf8(fs, envPath).pipe(
-        Effect.catch((error) =>
-          Predicate.isTagged(error.reason, "NotFound")
-            ? Effect.void
-            : nativePlatformFailure(error, envPath),
-        ),
-      );
-      if (contents === undefined) {
-        continue;
-      }
-      loadedPaths.push(envPath);
-      const parsed = yield* Effect.try({
-        try: () => parseDotEnv(contents),
-        catch: (cause) => nativeFailure(sanitizeDotEnvParseError(envPath, cause)),
-      });
-      for (const [key, value] of Object.entries(parsed)) {
-        if (values[key] !== undefined) {
+    for (const dir of [paths.supabaseDir, paths.projectRoot]) {
+      for (const filename of loadDefaultEnvFilenames(env)) {
+        const envPath = path.join(dir, filename);
+        const contents = yield* readFileUtf8(fs, envPath).pipe(
+          Effect.catch((error) =>
+            Predicate.isTagged(error.reason, "NotFound")
+              ? Effect.void
+              : nativePlatformFailure(error, envPath),
+          ),
+        );
+        if (contents === undefined) {
           continue;
         }
-        values[key] = value;
-        sources[key] = filename.includes(".local") ? ".env.local" : ".env";
+        loadedPaths.push(envPath);
+        const parsed = yield* Effect.try({
+          try: () => parseDotEnv(contents),
+          catch: (cause) => nativeFailure(sanitizeDotEnvParseError(envPath, cause)),
+        });
+        for (const [key, value] of Object.entries(parsed)) {
+          if (values[key] !== undefined) {
+            continue;
+          }
+          values[key] = value;
+          sources[key] = filename.includes(".local") ? ".env.local" : ".env";
+        }
       }
     }
-  }
 
-  return { paths, values, loadedPaths, sources } satisfies CliProjectEnvironment;
-});
+    return { paths, values, loadedPaths, sources } satisfies CliProjectEnvironment;
+  },
+);
 
 /**
  * Whether any bind mounts something at `containerPath` or below it, i.e. whether
@@ -1168,7 +1173,7 @@ function hasBindUnder(binds: Iterable<DockerBind>, containerPath: string): boole
   return false;
 }
 
-const buildWatchSpecs = Effect.fnUntraced(function* (
+const buildWatchSpecs = Effect.fn("functions.serve.buildWatchSpecs")(function* (
   binds: ReadonlyArray<DockerBind>,
   { fs, path }: { readonly fs: FileSystem.FileSystem; readonly path: Path.Path },
 ) {
@@ -1226,7 +1231,9 @@ function eventMatchesSpec(spec: WatchSpec, event: FileWatchEvent) {
  */
 const goFileEventOp = { create: "CREATE", update: "WRITE", delete: "REMOVE" } as const;
 
-const waitForRestartSignal = Effect.fnUntraced(function* (watchSpecs: ReadonlyArray<WatchSpec>) {
+const waitForRestartSignal = Effect.fn("functions.serve.waitForRestart")(function* (
+  watchSpecs: ReadonlyArray<WatchSpec>,
+) {
   if (watchSpecs.length === 0) {
     return yield* Effect.never;
   }
@@ -1375,7 +1382,7 @@ function attachToContainerLogsOnce(
   );
 }
 
-const streamContainerLogs = Effect.fnUntraced(function* (
+const streamContainerLogs = Effect.fn("functions.serve.streamContainerLogs")(function* (
   containerId: string,
   retryDelay: Duration.Duration,
 ) {
@@ -1483,7 +1490,9 @@ const streamContainerLogs = Effect.fnUntraced(function* (
   }
 });
 
-const assertLocalDbRunning = Effect.fnUntraced(function* (projectId: string) {
+const assertLocalDbRunning = Effect.fn("functions.serve.assertLocalDbRunning")(function* (
+  projectId: string,
+) {
   const dbId = localDockerId("db", projectId);
   // A spawn failure (neither `docker` nor `podman` on PATH) must keep its
   // cause: blanking stderr here would demote it to a bare "failed to inspect
@@ -1515,7 +1524,9 @@ const assertLocalDbRunning = Effect.fnUntraced(function* (projectId: string) {
   });
 });
 
-const bestEffortRemoveContainer = Effect.fnUntraced(function* (containerId: string) {
+const bestEffortRemoveContainer = Effect.fn("functions.serve.removeContainer")(function* (
+  containerId: string,
+) {
   yield* runChildProcess("docker", ["container", "rm", "-f", "-v", containerId], {
     stdout: "ignore",
     stderr: "ignore",
@@ -1524,7 +1535,7 @@ const bestEffortRemoveContainer = Effect.fnUntraced(function* (containerId: stri
 
 // One step of Edge Runtime's create → cp → start bring-up. Only the cp step
 // passes a `messagePrefix`, since its raw stderr is uninterpretable alone.
-const runEdgeRuntimeDockerStep = Effect.fnUntraced(function* (
+const runEdgeRuntimeDockerStep = Effect.fn("functions.serve.dockerStep")(function* (
   args: ReadonlyArray<string>,
   opts: { readonly messagePrefix?: string; readonly stdin?: Stream.Stream<Uint8Array> } = {},
 ) {
@@ -1545,7 +1556,7 @@ const runEdgeRuntimeDockerStep = Effect.fnUntraced(function* (
   }
 });
 
-const reloadKong = Effect.fnUntraced(function* (projectId: string) {
+const reloadKong = Effect.fn("functions.serve.reloadKong")(function* (projectId: string) {
   const output = yield* Output;
   const kongId = localDockerId("kong", projectId);
   // Needs the `--nginx-conf` flag pointing at the custom template
@@ -1601,7 +1612,7 @@ export function buildServeEntrypointCommand(
 `;
 }
 
-const resolveServeFunctionConfigs = Effect.fnUntraced(function* (
+const resolveServeFunctionConfigs = Effect.fn("functions.serve.resolveFunctionConfigs")(function* (
   projectRoot: string,
   supabaseDir: string,
   config: Pick<
@@ -1888,7 +1899,9 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         ...buildFunctionsServeInspectArgs(input.inspectMode, input.inspectMain),
         ...(input.debug ? ["--verbose"] : []),
       ];
-      const serveMainTemplate = yield* Effect.promise(() => getFunctionsServeMainTemplate());
+      const serveMainTemplate = yield* Effect.promise(() => getFunctionsServeMainTemplate()).pipe(
+        Effect.withSpan("functions.serve.bundleMainTemplate"),
+      );
       // Streamed in via `docker cp` between create and start: embedding the template in the
       // `sh -c` argv hits Windows ENAMETOOLONG (#5711), and a single-file host bind mounts as
       // an empty directory on daemons that cannot see this host's filesystem (#6254, #4190).
@@ -1971,7 +1984,7 @@ const defaultServeDbUrl = "postgresql://postgres:postgres@db:5432/postgres";
  * only this wrapper — reloads Kong so its routing table picks up the
  * freshly (re)started container.
  */
-const startEdgeRuntime = Effect.fnUntraced(function* (input: {
+const startEdgeRuntime = Effect.fn("functions.serve.startEdgeRuntime")(function* (input: {
   readonly flags: FunctionsServeFlags;
   readonly dependencies: FunctionsServeDependencies;
   readonly debug: boolean;

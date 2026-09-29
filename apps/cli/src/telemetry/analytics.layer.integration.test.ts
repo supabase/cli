@@ -29,9 +29,8 @@ describe("analytics destination", () => {
       accessToken: Option.none(),
       noKeyring: Option.none(),
       supabaseHome: tempRoot.current,
-      debug: Option.none(),
-      telemetryDebug: Option.none(),
       telemetryDisabled: Option.none(),
+
       doNotTrack: Option.none(),
     });
     const layer = analyticsLayer.pipe(

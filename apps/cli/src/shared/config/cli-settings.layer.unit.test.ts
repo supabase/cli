@@ -69,14 +69,14 @@ describe("cliSettingsLayer", () => {
           path.join(cwd, "supabase", "config.toml"),
           'project_id = "demo"\n',
         );
-        yield* fs.writeFileString(path.join(cwd, "supabase", ".env"), "SUPABASE_DEBUG=\n");
+        yield* fs.writeFileString(path.join(cwd, "supabase", ".env"), "SUPABASE_NO_KEYRING=\n");
         yield* Effect.gen(function* () {
           const settings = yield* CliSettings;
-          expect(settings.debug).toEqual(Option.some(""));
+          expect(settings.noKeyring).toEqual(Option.some(""));
           expect(yield* getEffectiveConsent(Option.none())).toBe("denied");
         }).pipe(
           Effect.provide(
-            buildLayer(path, { cwd, providerEnv: { [optOut]: "1", SUPABASE_DEBUG: "true" } }),
+            buildLayer(path, { cwd, providerEnv: { [optOut]: "1", SUPABASE_NO_KEYRING: "true" } }),
           ),
         );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
@@ -220,7 +220,6 @@ describe("cliSettingsLayer", () => {
           ConfigProvider.fromEnvRecord(
             {
               SUPABASE_NO_KEYRING: "",
-              SUPABASE_DEBUG: "",
               SUPABASE_TELEMETRY_DISABLED: "",
             },
             { preserveEmptyStrings: true },
@@ -232,7 +231,6 @@ describe("cliSettingsLayer", () => {
       const cliSettings = yield* CliSettings;
 
       expect(cliSettings.noKeyring).toEqual(Option.some(""));
-      expect(cliSettings.debug).toEqual(Option.some(""));
       expect(cliSettings.telemetryDisabled).toEqual(Option.some(""));
     }).pipe(Effect.provide(settingsLayer));
   });
