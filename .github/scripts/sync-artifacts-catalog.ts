@@ -221,52 +221,21 @@ function serializePin(pin: ResolvedPin): string {
   return `{ upstreamVersion: "${pin.upstreamVersion}", revision: ${pin.revision}, image: "${pin.image}", natives: { ${natives} } }`;
 }
 
-/** Matches `Artifacts.ts`'s emitted pin literal, in the exact shape `serializePin` writes. */
-function pinLiteralSource(): string {
-  const nativeEntries = NATIVE_TARGETS.map(
-    (target) =>
-      `"${target}":\\s*\\{\\s*archive:\\s*"([0-9a-f]{64})"\\s*,\\s*manifest:\\s*"([0-9a-f]{64})"\\s*\\},?`,
-  ).join("\\s*");
-  return `\\{\\s*upstreamVersion:\\s*"([^"]+)"\\s*,\\s*revision:\\s*(\\d+)\\s*,\\s*image:\\s*"([^"]+)"\\s*,\\s*natives:\\s*\\{\\s*${nativeEntries}\\s*\\},?\\s*\\}`;
-}
-
-/** `placeholderPin("<repository>", "<upstreamVersion>")`, B1's stand-in for an unresolved pin. */
-function placeholderCallSource(): string {
-  return `placeholderPin\\(\\s*"[a-z0-9-]+"\\s*,\\s*"([^"]+)"\\s*\\)`;
-}
-
 interface PinSpan {
   readonly start: number;
   readonly end: number;
   readonly version: string;
 }
 
-/** Matches a pin expression (placeholder call or resolved literal) starting exactly at `index`. */
-function matchPinAt(source: string, index: number): PinSpan | undefined {
-  const placeholder = new RegExp(placeholderCallSource(), "y");
-  placeholder.lastIndex = index;
-  const placeholderMatch = placeholder.exec(source);
-  if (placeholderMatch !== null) {
-    return {
-      start: index,
-      end: index + placeholderMatch[0].length,
-      version: placeholderMatch[1] ?? "",
-    };
-  }
-  const literal = new RegExp(pinLiteralSource(), "y");
-  literal.lastIndex = index;
-  const literalMatch = literal.exec(source);
-  if (literalMatch !== null) {
-    return { start: index, end: index + literalMatch[0].length, version: literalMatch[1] ?? "" };
-  }
-  return undefined;
-}
-
-/** Index right after the matching `)` for the `(` at `afterOpenParenIndex - 1`. */
-function scanToMatchingParen(source: string, afterOpenParenIndex: number): number {
-  let depth = 1;
-  let index = afterOpenParenIndex;
-  while (index < source.length && depth > 0) {
+/**
+ * Index right after the matching close-bracket for the open-bracket character at `openIndex`
+ * (which must itself be `open`). Skips string contents, so a formatter's line-wrapping, trailing
+ * commas, or reordered properties never confuse the boundary — only bracket balance matters.
+ */
+function scanBalanced(source: string, openIndex: number, open: string, close: string): number {
+  let depth = 0;
+  let index = openIndex;
+  for (; index < source.length; index++) {
     const ch = source[index];
     if (ch === '"' || ch === "'" || ch === "`") {
       const quote = ch;
@@ -275,11 +244,44 @@ function scanToMatchingParen(source: string, afterOpenParenIndex: number): numbe
         if (source[index] === "\\") index++;
         index++;
       }
-    } else if (ch === "(") depth++;
-    else if (ch === ")") depth--;
-    index++;
+      continue;
+    }
+    if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) return index + 1;
+    }
   }
-  return index;
+  throw new InvalidPayloadError(`unterminated '${open}' while parsing ${CATALOG_PATH}`);
+}
+
+const PLACEHOLDER_PREFIX = /placeholderPin\s*\(/y;
+/** Loosely finds `placeholderPin`'s second (version) argument anywhere inside its call text. */
+const PLACEHOLDER_VERSION = /"[a-z0-9-]+"\s*,\s*"([^"]+)"/;
+/** Loosely finds `upstreamVersion` anywhere inside a resolved pin literal's text. */
+const PIN_UPSTREAM_VERSION = /upstreamVersion:\s*"([^"]+)"/;
+
+/**
+ * Matches a pin expression (B1's `placeholderPin(...)` call, or a resolved `ArtifactPin` object
+ * literal) starting exactly at `index`. The span is found by bracket balance, then the version is
+ * pulled out with a loose field search — so a formatter's whitespace, line breaks, trailing
+ * commas, or property order never break matching, only the two literal shapes themselves would.
+ */
+function matchPinAt(source: string, index: number): PinSpan | undefined {
+  PLACEHOLDER_PREFIX.lastIndex = index;
+  const placeholderPrefix = PLACEHOLDER_PREFIX.exec(source);
+  if (placeholderPrefix !== null) {
+    const openParen = index + placeholderPrefix[0].length - 1;
+    const end = scanBalanced(source, openParen, "(", ")");
+    const version = PLACEHOLDER_VERSION.exec(source.slice(index, end))?.[1];
+    return version === undefined ? undefined : { start: index, end, version };
+  }
+  if (source[index] === "{") {
+    const end = scanBalanced(source, index, "{", "}");
+    const version = PIN_UPSTREAM_VERSION.exec(source.slice(index, end))?.[1];
+    return version === undefined ? undefined : { start: index, end, version };
+  }
+  return undefined;
 }
 
 type SelectedEntry =
@@ -305,7 +307,7 @@ function selectEntry(source: string, service: string, version: string | undefine
   }
 
   const openParenIndex = prefixMatch.index + prefixMatch[0].indexOf("(");
-  const callEnd = scanToMatchingParen(source, openParenIndex + 1);
+  const callEnd = scanBalanced(source, openParenIndex, "(", ")");
 
   const additional: Array<{ version: string; span: PinSpan }> = [];
   const keyPattern = /"([^"]+)"\s*:\s*/g;

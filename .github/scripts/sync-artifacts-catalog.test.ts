@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { parseDockerfileServiceImages } from "../../apps/cli/src/shared/services/parse-dockerfile-service-images.ts";
 import { isOrioleImage, slimCatalogPin } from "../../apps/cli/src/shared/services/slim-images.ts";
@@ -44,6 +47,28 @@ function matchingS3(
     byUrl.set(nativeObjectUrl(service, releaseVersion, files.manifest), digests[target].manifest);
   }
   return async (url) => byUrl.get(url);
+}
+
+/**
+ * Runs the repo's pinned `oxfmt` binary over `source`, the way `sync-artifacts-catalog.yml`
+ * formats the catalog after every write, so parsing tests exercise real formatter output
+ * (line-wrapping, trailing commas) instead of a hand-written single-line literal.
+ */
+async function formatWithOxfmt(source: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "sync-artifacts-catalog-"));
+  const filePath = join(dir, "Artifacts.ts");
+  try {
+    await writeFile(filePath, source);
+    const proc = Bun.spawn(["node_modules/.bin/oxfmt", "--config", ".oxfmtrc.json", filePath], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`oxfmt failed: ${stderr}`);
+    return await readFile(filePath, "utf8");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 const fixture = `const workloadCatalog = {
@@ -268,6 +293,102 @@ describe("refreshCatalogPin", () => {
       `image: "ghcr.io/supabase/cli/analytics:v1.50.9-r1@${digest("h")}"`,
     );
   });
+
+  test("a resolved pin survives real formatting and can be refreshed again", async () => {
+    const first = nativeDigests("i");
+    const firstIo: RevisionIo = {
+      listReleaseTags: async () => ["postgrest-v16.2-r0"],
+      fetchChecksums: async () => checksumsFor("postgrest", "v16.2-r0", first),
+      imageDigest: async () => digest("j"),
+      s3Sha256: matchingS3("postgrest", "v16.2-r0", first),
+    };
+    const written = await refreshCatalogPin({
+      catalog: fixture,
+      service: "postgrest",
+      io: firstIo,
+    });
+    expect(written.update?.revision).toBe(0);
+
+    const formatted = await formatWithOxfmt(written.source);
+    // The formatter actually wrapped the literal onto several lines with trailing commas;
+    // otherwise this test would not be exercising what it claims to.
+    expect(formatted.split("\n").length).toBeGreaterThan(written.source.split("\n").length);
+
+    const second = nativeDigests("k");
+    const secondIo: RevisionIo = {
+      listReleaseTags: async () => ["postgrest-v16.2-r0", "postgrest-v16.2-r1"],
+      fetchChecksums: async () => checksumsFor("postgrest", "v16.2-r1", second),
+      imageDigest: async () => digest("l"),
+      s3Sha256: matchingS3("postgrest", "v16.2-r1", second),
+    };
+    const refreshed = await refreshCatalogPin({
+      catalog: formatted,
+      service: "postgrest",
+      io: secondIo,
+    });
+
+    expect(refreshed.update).toEqual({
+      service: "postgrest",
+      version: "v16.2",
+      revision: 1,
+      previousVersion: "v16.2",
+      target: "default",
+    });
+    expect(refreshed.source).toContain("revision: 1");
+    expect(refreshed.source).toContain(second["darwin-arm64"].archive);
+  });
+
+  test("refreshes the Postgres 15 additional pin, including after formatting", async () => {
+    const digests = nativeDigests("m");
+    const io: RevisionIo = {
+      listReleaseTags: async () => ["postgres-15.14.1.168-r0"],
+      fetchChecksums: async () => checksumsFor("postgres", "15.14.1.168-r0", digests),
+      imageDigest: async () => digest("n"),
+      s3Sha256: matchingS3("postgres", "15.14.1.168-r0", digests),
+    };
+
+    const written = await refreshCatalogPin({
+      catalog: fixture,
+      service: "postgres",
+      upstream: "15.14.1.168",
+      io,
+    });
+    expect(written.update).toEqual({
+      service: "postgres",
+      version: "15.14.1.168",
+      revision: 0,
+      previousVersion: "15.14.1.168",
+      target: "additional",
+    });
+    // The default (17.x) postgres line is untouched.
+    expect(written.source).toContain('placeholderPin("postgres", "17.6.1.168")');
+
+    const formatted = await formatWithOxfmt(written.source);
+    const nextDigests = nativeDigests("o");
+    const nextIo: RevisionIo = {
+      listReleaseTags: async () => ["postgres-15.14.1.168-r0", "postgres-15.14.1.168-r1"],
+      fetchChecksums: async () => checksumsFor("postgres", "15.14.1.168-r1", nextDigests),
+      imageDigest: async () => digest("p"),
+      s3Sha256: matchingS3("postgres", "15.14.1.168-r1", nextDigests),
+    };
+
+    const refreshed = await refreshCatalogPin({
+      catalog: formatted,
+      service: "postgres",
+      upstream: "15.14.1.168",
+      io: nextIo,
+    });
+
+    expect(refreshed.update).toEqual({
+      service: "postgres",
+      version: "15.14.1.168",
+      revision: 1,
+      previousVersion: "15.14.1.168",
+      target: "additional",
+    });
+    expect(refreshed.source).toContain('placeholderPin("postgres", "17.6.1.168")');
+    expect(refreshed.source).toContain(nextDigests["linux-arm64"].manifest);
+  });
 });
 
 describe("against the real catalog", () => {
@@ -318,5 +439,45 @@ describe("against the real catalog", () => {
     const plan = await planArtifactCatalogUpdate({ dockerfile, catalog, io });
 
     expect(plan.skipped.filter((skip) => skip.blocking)).toEqual([]);
+  });
+
+  test("a real catalog entry survives real formatting and can be refreshed again", async () => {
+    const catalog = await Bun.file(CATALOG_PATH).text();
+
+    const first = nativeDigests("q");
+    const firstIo: RevisionIo = {
+      listReleaseTags: async () => ["auth-v2.196.0-r0"],
+      fetchChecksums: async () => checksumsFor("auth", "v2.196.0-r0", first),
+      imageDigest: async () => digest("r"),
+      s3Sha256: matchingS3("auth", "v2.196.0-r0", first),
+    };
+    const written = await refreshCatalogPin({ catalog, service: "auth", io: firstIo });
+    expect(written.update?.revision).toBe(0);
+
+    const formatted = await formatWithOxfmt(written.source);
+    expect(formatted).toContain('upstreamVersion: "v2.196.0"');
+
+    const second = nativeDigests("s");
+    const secondIo: RevisionIo = {
+      listReleaseTags: async () => ["auth-v2.196.0-r0", "auth-v2.196.0-r1"],
+      fetchChecksums: async () => checksumsFor("auth", "v2.196.0-r1", second),
+      imageDigest: async () => digest("t"),
+      s3Sha256: matchingS3("auth", "v2.196.0-r1", second),
+    };
+    const refreshed = await refreshCatalogPin({
+      catalog: formatted,
+      service: "auth",
+      io: secondIo,
+    });
+
+    expect(refreshed.update).toEqual({
+      service: "auth",
+      version: "v2.196.0",
+      revision: 1,
+      previousVersion: "v2.196.0",
+      target: "default",
+    });
+    expect(refreshed.source).toContain("revision: 1");
+    expect(refreshed.source).toContain(second["darwin-arm64"].manifest);
   });
 });
