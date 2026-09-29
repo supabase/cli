@@ -15,13 +15,16 @@ tiers, naming, and flake-resistance rules this skill assumes.
 
 ## Authoring gate
 
-Before adding any test, answer all four questions. A missing answer means don't add it yet:
+Before adding any test, answer all four questions. A missing answer means don't add it yet. Apply
+the same questions to review suggestions that add tests or assertions, and push back when they
+protect nothing:
 
 1. What behavior does it protect?
 2. What credible regression makes it fail?
 3. Why doesn't existing coverage already catch that failure?
-4. Does it need a test-only production seam (an export, flag, wrapper, or injection hook)? If so,
-   move the test to the real boundary instead.
+4. Does it need a test-only production seam that only exposes internals (an export, flag, or
+   wrapper)? If so, move the test to the real boundary. A controlled clock, or a budget or config
+   value production also reads, is fine.
 
 ## Level rule
 
@@ -49,9 +52,9 @@ Reject a new test, or flag an existing one, that matches any of these:
 
 ## Retention bar
 
-Always keep a test that independently guards public CLI behavior, config, persistence, security,
-platform, or a published package contract, regardless of tier. Being slow or static is never a
-reason to delete it.
+Always keep the test that gives a public CLI behavior, config, persistence, security, platform,
+or published package contract its distinct proof. Being slow or static is never a reason to delete
+it; a copy at another tier asserting the same thing can still be consolidated.
 
 ## Regression tests
 
@@ -74,4 +77,5 @@ Then mark it in a short ledger, one evidence line per mark:
 - `C` consolidate — names the owner absorbing it (a sibling table row, a stronger boundary suite)
 - `D` delete — names the proof that remains, or that no contract exists
 
-Prefer a few high-confidence candidates over a large speculative sweep.
+Report the ledger in the audit response, or in the campaign's tracking issue when there is one,
+never in a PR description. Prefer a few high-confidence candidates over a large speculative sweep.
