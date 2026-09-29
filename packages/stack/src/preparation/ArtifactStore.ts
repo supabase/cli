@@ -71,6 +71,11 @@ type ArtifactStoreError = PreparationError | ArtifactIntegrityError;
 const ARTIFACT_FORMAT = "supabase-stack-artifact-v3";
 const METADATA_NAME = ".artifact.json";
 const EXECUTABLE_MODE = 0o755;
+/**
+ * Child of the staging directory that sources materialize into: GNU tar resets its extraction
+ * target's mtime from the archive, which must not make a staging directory look like a leftover.
+ */
+const STAGING_CONTENT_NAME = "content";
 
 type ArtifactPathKind = "file" | "directory" | "symlink";
 
@@ -778,11 +783,12 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
         }),
       ),
     );
-    const temporary = path.join(targetParent, `.${path.basename(target)}.${token}.tmp`);
+    const staging = path.join(targetParent, `.${path.basename(target)}.${token}.tmp`);
+    const content = path.join(staging, STAGING_CONTENT_NAME);
     const published = yield* Effect.gen(function* () {
-      yield* ensureDirectory(fs, path, temporary, cacheRoot);
-      const temporaryRoot = yield* ensureSafeRoot(fs, path, temporary, cacheRoot);
-      yield* source.materialize(request, temporary, expectedSha256, onProgress).pipe(
+      yield* ensureDirectory(fs, path, content, cacheRoot);
+      const contentRoot = yield* ensureSafeRoot(fs, path, content, cacheRoot);
+      yield* source.materialize(request, content, expectedSha256, onProgress).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.provideService(Crypto.Crypto, crypto),
@@ -793,8 +799,8 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
       const runtimePaths = yield* validateFreshRuntimePaths(
         fs,
         path,
-        temporary,
-        temporaryRoot,
+        content,
+        contentRoot,
         request.requiredRuntimePaths,
       );
       const runtimeKinds = Object.fromEntries(
@@ -802,7 +808,7 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
       );
       yield* writeMetadataSync(
         fs,
-        path.join(temporary, METADATA_NAME),
+        path.join(content, METADATA_NAME),
         metadataFor(request, expectedSha256, runtimeKinds),
       );
       if (request.executablePath !== undefined) {
@@ -820,7 +826,7 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
       }
       const beforePublish = yield* inspectCache();
       if (Option.isSome(beforePublish)) return beforePublish.value;
-      const rename = mapFs(temporary, "publish artifact", fs.rename(temporary, target)).pipe(
+      const rename = mapFs(content, "publish artifact", fs.rename(content, target)).pipe(
         Effect.as(undefined),
       );
       const recoverPublish = (): Effect.Effect<PreparedArtifact | undefined, ArtifactStoreError> =>
@@ -832,7 +838,7 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
       const recovered: Effect.Effect<PreparedArtifact | undefined, ArtifactStoreError> =
         rename.pipe(Effect.catch(recoverPublish));
       return yield* recovered;
-    }).pipe(Effect.onExit(() => cleanup(fs, temporary)));
+    }).pipe(Effect.onExit(() => cleanup(fs, staging)));
     if (published !== undefined) return published;
     return {
       key: request.key,
