@@ -4,6 +4,8 @@ import { InvalidProjectRootError, InvalidStackIdentityError } from "./Errors.ts"
 import { StackIdSchema } from "./StackId.ts";
 import { resolveGitBranchContext } from "./GitBranchContext.ts";
 
+const DEFAULT_STACK_NAME = "default";
+
 export interface StackIdentity {
   readonly projectRoot: string;
   readonly branchContext: string;
@@ -88,7 +90,7 @@ export const resolveStackIdentity = Effect.fn("Identity.resolveStackIdentity")(f
       });
     }
 
-    const stackName = options.name ?? "default";
+    const stackName = options.name ?? DEFAULT_STACK_NAME;
     if (stackName.trim().length === 0) {
       return yield* identityFailure("The stack name must not be blank", { name: options.name });
     }
@@ -112,10 +114,11 @@ export const resolveStackIdentity = Effect.fn("Identity.resolveStackIdentity")(f
 });
 
 /**
- * Names a stack for container grouping labels: the project root's folder name, falling back to
- * the stack name when the root has none (for example the filesystem root).
+ * Names a stack for container names and grouping labels: the project root's folder name plus any
+ * non-default stack name, or the stack name alone when the root has no folder name.
  */
 export const projectSegmentFor = (identity: StackIdentity, path: Path.Path): string => {
   const base = path.basename(identity.projectRoot);
-  return base.trim().length > 0 ? base : identity.stackName;
+  if (base.trim().length === 0) return identity.stackName;
+  return identity.stackName === DEFAULT_STACK_NAME ? base : `${base}-${identity.stackName}`;
 };
