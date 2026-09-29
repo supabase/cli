@@ -54,7 +54,8 @@ Keep the local feedback loop fast; full CI runs for ready PRs targeting `develop
   Run targeted E2E when the subprocess boundary matters; run full E2E only on explicit request.
 - Repeat checks only after changes or failures that could affect their result.
 - Fix failures caused by the change and report any unresolved validation blockers. Investigate
-  unexpected failures without automatically expanding the task into unrelated repairs.
+  other unexpected failures without expanding the task into unrelated repairs; flaky tests are
+  the exception (see below).
 
 Use `pnpm test` only when its scope fits the change; the CLI's aggregate script includes full E2E,
 so use `pnpm run test:unit` and `pnpm run test:integration` with affected test files locally.
@@ -150,6 +151,7 @@ resulting state and user-visible behavior, not mock call details. See
 
 Keep tests flake-resistant:
 
+- A flaky test is a defect wherever it surfaces, including in unrelated changes and CI runs: fix its root cause as part of the current work. Never rerun to green, add retries, skip, or loosen guards to hide it.
 - Subscribe before triggering a transition; use observable readiness/completion, never sleeps or polling delays for propagation, startup, cancellation, cleanup, or port release. Timeouts are guards; use controlled clocks or fake timers for timing semantics.
 - Assume file-level parallelism: use unique IDs, roots, process markers, and derived resources; never disable parallelism globally.
 - Never release and reuse an ephemeral port or assume a released endpoint is a dead backend; own a refusal listener or inject the failure.
