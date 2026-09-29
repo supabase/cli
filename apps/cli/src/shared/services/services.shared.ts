@@ -14,7 +14,12 @@ import {
   parseDockerfileServiceImages,
   type DockerfileImageSpec,
 } from "./dockerfile-images.ts";
-import { slimImageForAlias, slimImageForCurrentPin, slimImagesEnabled } from "./slim-images.ts";
+import {
+  replaceImageTag,
+  slimImageForAlias,
+  slimImageForCurrentPin,
+  slimImagesEnabled,
+} from "./slim-images.ts";
 
 export { parseDockerfileServiceImages } from "./dockerfile-images.ts";
 
@@ -132,14 +137,6 @@ export function postgresImageForDbMajorVersion(majorVersion: number): string | u
   }
 }
 
-function replaceImageTag(image: string, tag: string): string {
-  const index = image.lastIndexOf(":");
-  if (index === -1) {
-    return image;
-  }
-  return `${image.slice(0, index + 1)}${tag.trim()}`;
-}
-
 /** Applies that service's image-tag prefix when the version does not already start with it. */
 export function tagForServiceVersion(service: LocalServiceVersionName, version: string): string {
   const trimmed = version.trim();
@@ -178,9 +175,11 @@ function localServiceImagesForOptions(
     if (version === undefined || version.trim().length === 0) {
       return baseImage === service.image ? service : { ...service, image: baseImage };
     }
+    // `slim-images.ts`'s `replaceImageTag` doesn't trim (its own callers already do), so this
+    // path — the only one that skips `tagForServiceVersion`'s trim — trims here.
     const pin = normalizeVersionTags
       ? tagForServiceVersion(service.localService, version)
-      : version;
+      : version.trim();
     if (override === undefined && slim) {
       return {
         ...service,

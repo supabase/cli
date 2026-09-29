@@ -141,7 +141,7 @@ export function imageTag(image: string): string | undefined {
 }
 
 /** Replaces `image`'s tag with `tag`, dropping any `@sha256:…` digest — a new tag invalidates it. */
-function replaceImageTag(image: string, tag: string): string {
+export function replaceImageTag(image: string, tag: string): string {
   const withoutDigest = image.split("@")[0] ?? image;
   const tagSeparator = withoutDigest.lastIndexOf(":");
   return tagSeparator === -1 ? image : `${withoutDigest.slice(0, tagSeparator + 1)}${tag}`;

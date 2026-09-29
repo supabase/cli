@@ -181,6 +181,27 @@ describe("services shared", () => {
     );
   });
 
+  // A digest-carrying override paired with a serviceVersions pin exercises the same
+  // `replaceImageTag` used for the plain-tag case above; it must drop the stale digest
+  // rather than splice the new tag into it (`…-r0@sha256:<pin>`).
+  test("rewrites the tag on a digest-carrying image override, dropping the stale digest", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    const rows = listLocalServiceVersions({
+      imageOverrides: {
+        postgres:
+          "ghcr.io/supabase/cli/postgres:17.6.1.173-r0@sha256:24e96b8d5daf90f67a62b5593d3008446744007e0a57e302d269c02a4e459e8f",
+      },
+      normalizeVersionTags: false,
+      serviceVersions: { postgres: "17.6.1.200" },
+    });
+
+    expect(rows).toContainEqual({
+      name: "ghcr.io/supabase/cli/postgres",
+      local: "17.6.1.200",
+      remote: "",
+    });
+  });
+
   test("can preserve raw local service version overrides", () => {
     expect(
       listLocalServiceVersions({
