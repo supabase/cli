@@ -2,6 +2,7 @@
 export {
   ArtifactError,
   artifactServiceKinds,
+  defaultRuntime,
   postgresVersion,
   prepareNativeArtifact,
   resolveArtifact,

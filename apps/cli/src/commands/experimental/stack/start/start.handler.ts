@@ -1,9 +1,11 @@
+import { defaultRuntime } from "@supabase/stack/internal/artifacts";
 import { endpointReports } from "../stack-endpoints.format.ts";
 import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import {
   automaticRuntimeNotice,
   selectStackRuntime,
 } from "../../../../command-internal/stack-runtime.ts";
+import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { Effect, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
 import {
   resolveNativePostgresUser,
@@ -92,6 +94,35 @@ const stackError = (
     message: cause.message,
     ...(detail === undefined ? {} : { detail }),
     cause,
+  });
+};
+
+// A saved stack keeps its runtime, so only a new stack can switch to native.
+const dockerUnavailableSuggestion = (
+  runtimeInfo: { readonly platform: string; readonly arch: string },
+  creating: boolean,
+) =>
+  creating && defaultRuntime({ os: runtimeInfo.platform, arch: runtimeInfo.arch }) === "native"
+    ? "Docker CLI or daemon isn't reachable. Install or start Docker, or run with --runtime native."
+    : "Docker CLI or daemon isn't reachable. Install or start Docker.";
+
+const stackAcquireError = (
+  cause: StackError,
+  runtimeContext: {
+    readonly selectedRuntime: "native" | "docker" | "podman";
+    readonly runtime: { readonly platform: string; readonly arch: string };
+    readonly creating: boolean;
+  },
+) => {
+  const base = stackError(cause);
+  if (cause.reason !== "runtime-unavailable" || runtimeContext.selectedRuntime !== "docker")
+    return base;
+  return new StackCommandStartError({
+    reason: "runtime",
+    message: base.message,
+    ...(base.detail === undefined ? {} : { detail: base.detail }),
+    suggestion: dockerUnavailableSuggestion(runtimeContext.runtime, runtimeContext.creating),
+    cause: base.cause,
   });
 };
 
@@ -193,6 +224,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         runtime: flags.runtime,
       })
       .pipe(Effect.mapError(mapTargetError));
+    const runtime = yield* RuntimeInfo;
     const selectedRuntime = yield* selectStackRuntime(target.runtime).pipe(
       Effect.mapError(
         (error) =>
@@ -247,7 +279,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
                 ),
           ),
         ),
-    ).pipe(Effect.mapError(stackError));
+    ).pipe(
+      Effect.mapError((cause) =>
+        stackAcquireError(cause, { selectedRuntime, runtime, creating: target.id === undefined }),
+      ),
+    );
     const runtimeNotice =
       target.id === undefined ? automaticRuntimeNotice(target.runtime, selectedRuntime) : undefined;
     if (runtimeNotice !== undefined) yield* output.info(runtimeNotice);
@@ -406,6 +442,19 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               new StackCommandStartError({
                 reason: "invalid-config",
                 message: `Unable to create the Functions directory: ${cause.message}`,
+                cause,
+              }),
+          ),
+        );
+    if (requested.some(({ service }) => service === "studio"))
+      yield* fs
+        .makeDirectory(path.join(target.projectRoot, "supabase", "snippets"), { recursive: true })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new StackCommandStartError({
+                reason: "invalid-config",
+                message: `Unable to create the Studio snippets directory: ${cause.message}`,
                 cause,
               }),
           ),

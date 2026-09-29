@@ -460,6 +460,49 @@ describe("database component", { timeout: 180_000 }, () => {
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     );
 
+  it.live("groups the database and its storage helper under one compose project", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const stackId = "stack-compose-group";
+        const root = yield* makeDockerDatabaseRoot("stack-database-group-", stackId);
+        const database = yield* makeDatabase({
+          stackId,
+          instanceId: "database",
+          project: "my.app",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "docker",
+        });
+        const service = yield* makeService(database.definition, {
+          id: "database:group",
+          config,
+        });
+        yield* service.start;
+        yield* service.ready;
+        const listed = yield* runDocker([
+          "ps",
+          "--filter",
+          `label=com.supabase.stack-root=${path.resolve(root)}`,
+          "--format",
+          '{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}',
+        ]);
+        const rows = listed.output
+          .split("\n")
+          .filter((line) => line.trim().length > 0)
+          .map((line) => line.trim().split("|"));
+        expect(rows.some(([name]) => name?.startsWith("supabase-db-helper-"))).toBe(true);
+        expect(new Set(rows.map(([, project]) => project))).toEqual(
+          new Set(["supabase-my-app-stack-compos"]),
+        );
+        expect(new Set(rows.map(([, , group]) => group))).toEqual(
+          new Set(["database", "database-helper"]),
+        );
+        yield* service.destroy;
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
   it.live("shuts PostgreSQL down fast while a client stays connected across stop", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -490,9 +533,11 @@ describe("database component", { timeout: 180_000 }, () => {
           "--format",
           "{{.Names}}",
         ]);
+        // The shared volume helper carries the same stack-root/instance labels; exclude it by name.
         const containers = listed.output
           .split("\n")
-          .filter((name) => /^supabase-[0-9a-f]{8}-[0-9a-f-]+$/u.test(name));
+          .map((name) => name.trim())
+          .filter((name) => name.length > 0 && !name.startsWith("supabase-db-helper-"));
         expect(containers).toHaveLength(1);
         const container = containers.join("");
         const startedAt = yield* runDocker([
