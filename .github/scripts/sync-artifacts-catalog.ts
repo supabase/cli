@@ -14,6 +14,13 @@
  * when `--upstream` is omitted).
  *
  *   bun .github/scripts/sync-artifacts-catalog.ts --service <service> [--upstream <U>]
+ *
+ * Hotfix-matches mode (used by the `slim-release-published` dispatch
+ * workflow): prints, as JSON, which of a service's catalog pins a hotfix
+ * revision should refresh.
+ *
+ *   bun .github/scripts/sync-artifacts-catalog.ts hotfix-matches --service <service> \
+ *     --upstream <U> --revision <N>
  */
 
 import { parseDockerfileServiceImages } from "../../apps/cli/src/shared/services/parse-dockerfile-service-images.ts";
@@ -260,6 +267,8 @@ const PLACEHOLDER_PREFIX = /placeholderPin\s*\(/y;
 const PLACEHOLDER_VERSION = /"[a-z0-9-]+"\s*,\s*"([^"]+)"/;
 /** Loosely finds `upstreamVersion` anywhere inside a resolved pin literal's text. */
 const PIN_UPSTREAM_VERSION = /upstreamVersion:\s*"([^"]+)"/;
+/** Loosely finds `revision` anywhere inside a resolved pin literal's text. Absent for a `placeholderPin`. */
+const PIN_REVISION = /revision:\s*(\d+)/;
 
 /**
  * Matches a pin expression (B1's `placeholderPin(...)` call, or a resolved `ArtifactPin` object
@@ -284,32 +293,28 @@ function matchPinAt(source: string, index: number): PinSpan | undefined {
   return undefined;
 }
 
-type SelectedEntry =
-  | { readonly kind: "default" | "additional"; readonly version: string; readonly span: PinSpan }
-  | { readonly kind: "unmodelled-service" }
-  | { readonly kind: "unmodelled-release-line"; readonly known: ReadonlyArray<string> };
+interface ServicePins {
+  readonly defaultPin: PinSpan;
+  readonly additional: ReadonlyArray<PinSpan>;
+}
 
 /**
- * Locates `service`'s pin expression in `source`: the `definition("<service>", <pin>, ...)`
- * default pin, and, when `version` is given, whichever pin (default or additional) sits on its
- * release line. With no `version`, returns the default pin unconditionally.
+ * Finds every pin expression `service` carries in `source`: the `definition("<service>", <pin>,
+ * ...)` default pin, plus any additional (release-line-keyed) pins in its trailing object
+ * argument. Both `selectEntry` and `findHotfixMatches` build on this single traversal.
  */
-function selectEntry(source: string, service: string, version: string | undefined): SelectedEntry {
+function collectServicePins(source: string, service: string): ServicePins | undefined {
   const prefix = new RegExp(`definition\\(\\s*"${escapeRegExp(service)}"\\s*,\\s*`);
   const prefixMatch = prefix.exec(source);
-  if (prefixMatch === null) return { kind: "unmodelled-service" };
+  if (prefixMatch === null) return undefined;
   const pinIndex = prefixMatch.index + prefixMatch[0].length;
   const defaultPin = matchPinAt(source, pinIndex);
-  if (defaultPin === undefined) return { kind: "unmodelled-service" };
-
-  if (version === undefined) {
-    return { kind: "default", version: defaultPin.version, span: defaultPin };
-  }
+  if (defaultPin === undefined) return undefined;
 
   const openParenIndex = prefixMatch.index + prefixMatch[0].indexOf("(");
   const callEnd = scanBalanced(source, openParenIndex, "(", ")");
 
-  const additional: Array<{ version: string; span: PinSpan }> = [];
+  const additional: PinSpan[] = [];
   const keyPattern = /"([^"]+)"\s*:\s*/g;
   keyPattern.lastIndex = defaultPin.end;
   for (
@@ -324,8 +329,30 @@ function selectEntry(source: string, service: string, version: string | undefine
       keyPattern.lastIndex = valueStart;
       continue;
     }
-    additional.push({ version: pin.version, span: pin });
+    additional.push(pin);
     keyPattern.lastIndex = pin.end;
+  }
+
+  return { defaultPin, additional };
+}
+
+type SelectedEntry =
+  | { readonly kind: "default" | "additional"; readonly version: string; readonly span: PinSpan }
+  | { readonly kind: "unmodelled-service" }
+  | { readonly kind: "unmodelled-release-line"; readonly known: ReadonlyArray<string> };
+
+/**
+ * Locates `service`'s pin expression in `source`: the `definition("<service>", <pin>, ...)`
+ * default pin, and, when `version` is given, whichever pin (default or additional) sits on its
+ * release line. With no `version`, returns the default pin unconditionally.
+ */
+function selectEntry(source: string, service: string, version: string | undefined): SelectedEntry {
+  const pins = collectServicePins(source, service);
+  if (pins === undefined) return { kind: "unmodelled-service" };
+  const { defaultPin, additional } = pins;
+
+  if (version === undefined) {
+    return { kind: "default", version: defaultPin.version, span: defaultPin };
   }
 
   const bumpsDefault =
@@ -333,14 +360,60 @@ function selectEntry(source: string, service: string, version: string | undefine
   if (bumpsDefault) {
     return { kind: "default", version: defaultPin.version, span: defaultPin };
   }
-  const sameLine = additional.find((entry) => releaseLine(entry.version) === releaseLine(version));
+  const sameLine = additional.find((pin) => releaseLine(pin.version) === releaseLine(version));
   if (sameLine === undefined) {
     return {
       kind: "unmodelled-release-line",
-      known: [defaultPin.version, ...additional.map((entry) => entry.version)],
+      known: [defaultPin.version, ...additional.map((pin) => pin.version)],
     };
   }
-  return { kind: "additional", version: sameLine.version, span: sameLine.span };
+  return { kind: "additional", version: sameLine.version, span: sameLine };
+}
+
+/** The `{service, upstream_version, revision, release_version}` payload a `slim-release-published` dispatch carries. */
+export interface SlimReleasePublishedPayload {
+  readonly service: string;
+  readonly upstream_version: string;
+  readonly revision: number;
+  readonly release_version: string;
+}
+
+export interface HotfixMatch {
+  /** Which of `service`'s catalog pins (default, or one of the additional release lines) matched. */
+  readonly target: "default" | "additional";
+  /** The revision currently pinned; `-1` when the entry is still an unresolved `placeholderPin`. */
+  readonly currentRevision: number;
+}
+
+/**
+ * Every pin `payload.service` carries in `catalog` (default or additional) whose
+ * `upstreamVersion` equals `payload.upstream_version` and whose currently pinned revision is
+ * lower than `payload.revision` — i.e. the entries a `slim-release-published` hotfix dispatch
+ * should refresh. Pure: callers own running the actual refresh and PR flow.
+ */
+export function findHotfixMatches(
+  catalog: string,
+  payload: SlimReleasePublishedPayload,
+): ReadonlyArray<HotfixMatch> {
+  const pins = collectServicePins(catalog, payload.service);
+  if (pins === undefined) return [];
+
+  const candidates: Array<{ target: "default" | "additional"; span: PinSpan }> = [
+    { target: "default", span: pins.defaultPin },
+    ...pins.additional.map((span) => ({ target: "additional" as const, span })),
+  ];
+
+  const matches: HotfixMatch[] = [];
+  for (const candidate of candidates) {
+    if (candidate.span.version !== payload.upstream_version) continue;
+    const text = catalog.slice(candidate.span.start, candidate.span.end);
+    const revisionMatch = PIN_REVISION.exec(text);
+    const currentRevision = revisionMatch === null ? -1 : Number(revisionMatch[1]);
+    if (currentRevision < payload.revision) {
+      matches.push({ target: candidate.target, currentRevision });
+    }
+  }
+  return matches;
 }
 
 function skipReason(alias: string, version: string, entry: SelectedEntry): string | undefined {
@@ -616,7 +689,35 @@ async function runManual(argv: ReadonlyArray<string>): Promise<void> {
   );
 }
 
+async function runHotfixMatches(argv: ReadonlyArray<string>): Promise<void> {
+  const flags = parseFlags(argv);
+  const service = flags.get("service");
+  const upstream = flags.get("upstream");
+  const revisionFlag = flags.get("revision");
+  if (service === undefined || upstream === undefined || revisionFlag === undefined) {
+    throw new InvalidPayloadError(
+      "Usage: sync-artifacts-catalog.ts hotfix-matches --service <service> --upstream <U> --revision <N>",
+    );
+  }
+  if (!/^(0|[1-9][0-9]*)$/.test(revisionFlag)) {
+    throw new InvalidPayloadError(`invalid --revision '${revisionFlag}'`);
+  }
+  const revision = Number(revisionFlag);
+  const catalog = await Bun.file(CATALOG_PATH).text();
+  const matches = findHotfixMatches(catalog, {
+    service,
+    upstream_version: upstream,
+    revision,
+    release_version: `${upstream}-r${revision}`,
+  });
+  console.log(JSON.stringify(matches));
+}
+
 async function main(argv: ReadonlyArray<string>): Promise<void> {
+  if (argv[0] === "hotfix-matches") {
+    await runHotfixMatches(argv.slice(1));
+    return;
+  }
   if (argv[0]?.startsWith("--") === true) {
     await runManual(argv);
     return;

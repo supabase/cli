@@ -1,0 +1,176 @@
+name: Slim Release Published
+
+# supabase/slim-services sends this dispatch after it mints an immutable release
+# `<service>-<upstream_version>-r<revision>`. When that revision is a hotfix of an upstream
+# version the workload catalog (packages/stack/src/Artifacts.ts) already pins, this refreshes the
+# pin and opens a pull request.
+#
+# The payload arrives with whatever authority holds the dispatch token, so it is treated as
+# untrusted: fields are pattern- and shape-checked before use, and never interpolated directly
+# into a `run:` script (only passed through `env:`). The matching logic itself lives in
+# `.github/scripts/sync-artifacts-catalog.ts`'s `findHotfixMatches`, which is unit-tested; this
+# workflow only wires it to a PR.
+
+on:
+  repository_dispatch:
+    types:
+      - slim-release-published
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slim-release-published-${{ github.event.client_payload.service }}-${{ github.event.client_payload.upstream_version }}
+  cancel-in-progress: false
+
+jobs:
+  pickup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      - name: Validate payload
+        id: validate
+        env:
+          SERVICE: ${{ github.event.client_payload.service }}
+          UPSTREAM_VERSION: ${{ github.event.client_payload.upstream_version }}
+          REVISION: ${{ github.event.client_payload.revision }}
+          RELEASE_VERSION: ${{ github.event.client_payload.release_version }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$SERVICE" =~ ^[a-z0-9-]+$ ]]; then
+            echo "::error ::invalid service '${SERVICE}'"
+            exit 1
+          fi
+          if [ -z "$UPSTREAM_VERSION" ]; then
+            echo "::error ::missing upstream_version"
+            exit 1
+          fi
+          if ! [[ "$REVISION" =~ ^(0|[1-9][0-9]*)$ ]]; then
+            echo "::error ::invalid revision '${REVISION}'"
+            exit 1
+          fi
+          expected="${UPSTREAM_VERSION}-r${REVISION}"
+          if [ "$RELEASE_VERSION" != "$expected" ]; then
+            echo "::error ::release_version '${RELEASE_VERSION}' does not match derived '${expected}'"
+            exit 1
+          fi
+          {
+            echo "service=${SERVICE}"
+            echo "upstream_version=${UPSTREAM_VERSION}"
+            echo "revision=${REVISION}"
+            echo "release_version=${RELEASE_VERSION}"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Find hotfix matches
+        id: matches
+        env:
+          SERVICE: ${{ steps.validate.outputs.service }}
+          UPSTREAM_VERSION: ${{ steps.validate.outputs.upstream_version }}
+          REVISION: ${{ steps.validate.outputs.revision }}
+        run: |
+          set -euo pipefail
+          result="$(bun .github/scripts/sync-artifacts-catalog.ts hotfix-matches \
+            --service "$SERVICE" --upstream "$UPSTREAM_VERSION" --revision "$REVISION")"
+          count="$(bun -e 'console.log(JSON.parse(await Bun.stdin.text()).length)' <<<"$result")"
+          echo "count=${count}" >>"$GITHUB_OUTPUT"
+
+      - name: No matching catalog pin
+        if: steps.matches.outputs.count == '0'
+        env:
+          SERVICE: ${{ steps.validate.outputs.service }}
+          RELEASE_VERSION: ${{ steps.validate.outputs.release_version }}
+        run: echo "No catalog pin for ${SERVICE} needs ${RELEASE_VERSION}; nothing to do."
+
+      - name: Install toolchains
+        if: steps.matches.outputs.count != '0'
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.0
+
+      - name: Install regctl
+        if: steps.matches.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          install -d "${RUNNER_TEMP}/regctl-bin"
+          curl -fsSLo "${RUNNER_TEMP}/regctl-bin/regctl" \
+            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
+          echo "c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467  ${RUNNER_TEMP}/regctl-bin/regctl" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/regctl-bin/regctl"
+          echo "${RUNNER_TEMP}/regctl-bin" >>"$GITHUB_PATH"
+          "${RUNNER_TEMP}/regctl-bin/regctl" version
+
+      - name: Generate token
+        if: steps.matches.outputs.count != '0'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Pin the catalog to the hotfix revision
+        if: steps.matches.outputs.count != '0'
+        env:
+          SERVICE: ${{ steps.validate.outputs.service }}
+          UPSTREAM_VERSION: ${{ steps.validate.outputs.upstream_version }}
+        run: bun .github/scripts/sync-artifacts-catalog.ts --service "$SERVICE" --upstream "$UPSTREAM_VERSION"
+
+      - name: Format catalog
+        if: steps.matches.outputs.count != '0'
+        run: bun x oxfmt@0.65.0 --config .oxfmtrc.json packages/stack/src/Artifacts.ts
+
+      - name: Open pull request
+        if: steps.matches.outputs.count != '0'
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SERVICE: ${{ steps.validate.outputs.service }}
+          UPSTREAM_VERSION: ${{ steps.validate.outputs.upstream_version }}
+          REVISION: ${{ steps.validate.outputs.revision }}
+          RELEASE_VERSION: ${{ steps.validate.outputs.release_version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- packages/stack/src/Artifacts.ts; then
+            echo "Workload catalog already pins ${SERVICE} ${RELEASE_VERSION}."
+            exit 0
+          fi
+
+          manual_command="bun .github/scripts/sync-artifacts-catalog.ts --service ${SERVICE} --upstream ${UPSTREAM_VERSION}"
+          branch="slim-hotfix/${SERVICE}-${RELEASE_VERSION}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add -- packages/stack/src/Artifacts.ts
+          git commit -m "chore(stack): pin ${SERVICE} ${RELEASE_VERSION}"
+          git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          if ! git push origin "HEAD:refs/heads/${branch}"; then
+            echo "::error ::Failed to push ${branch}. Run manually: ${manual_command}, then open a pull request by hand."
+            exit 1
+          fi
+
+          body="$(printf 'supabase/slim-services published a hotfix revision `%s` for `%s`. This pins the workload catalog to it.\n\nhttps://github.com/supabase/slim-services/releases/tag/%s-%s\n' \
+            "$RELEASE_VERSION" "$SERVICE" "$SERVICE" "$RELEASE_VERSION")"
+
+          if ! gh pr create \
+            --title "chore(stack): pin ${SERVICE} ${RELEASE_VERSION}" \
+            --body "$body" \
+            --assignee jgoux \
+            --head "$branch" \
+            --base "$DEFAULT_BRANCH"; then
+            echo "::error ::Pushed ${branch} but failed to open the pull request. Run manually: ${manual_command}, then open a pull request from ${branch} against ${DEFAULT_BRANCH} by hand."
+            exit 1
+          fi

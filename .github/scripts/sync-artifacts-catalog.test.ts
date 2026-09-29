@@ -8,6 +8,7 @@ import { isOrioleImage, slimCatalogPin } from "../../apps/cli/src/shared/service
 import { InvalidPayloadError, nativeFileNames, nativeObjectUrl } from "./slim-mirror-payload.ts";
 import {
   CATALOG_PATH,
+  findHotfixMatches,
   planArtifactCatalogUpdate,
   refreshCatalogPin,
   type RevisionIo,
@@ -88,6 +89,86 @@ const fixture = `const workloadCatalog = {
   ),
 };
 `;
+
+/** A catalog whose Postgres 15 additional pin is already resolved (not a `placeholderPin`), at `r3`. */
+const resolvedFixture = fixture.replace(
+  '{ "15.14.1.168": placeholderPin("postgres", "15.14.1.168") },',
+  '{ "15.14.1.168": { upstreamVersion: "15.14.1.168", revision: 3, image: "ghcr.io/supabase/cli/postgres:15.14.1.168-r3@sha256:0000000000000000000000000000000000000000000000000000000000000", natives: {} } },',
+);
+
+describe("findHotfixMatches", () => {
+  test("selects the Postgres 15 entry for a higher revision of the same upstream", () => {
+    const matches = findHotfixMatches(resolvedFixture, {
+      service: "postgres",
+      upstream_version: "15.14.1.168",
+      revision: 4,
+      release_version: "15.14.1.168-r4",
+    });
+
+    expect(matches).toEqual([{ target: "additional", currentRevision: 3 }]);
+  });
+
+  test("ignores an equal or lower revision of the same upstream", () => {
+    for (const revision of [3, 2]) {
+      const matches = findHotfixMatches(resolvedFixture, {
+        service: "postgres",
+        upstream_version: "15.14.1.168",
+        revision,
+        release_version: `15.14.1.168-r${revision}`,
+      });
+      expect(matches).toEqual([]);
+    }
+  });
+
+  test("ignores a higher revision of a different upstream version", () => {
+    const matches = findHotfixMatches(resolvedFixture, {
+      service: "postgres",
+      upstream_version: "15.14.1.999",
+      revision: 4,
+      release_version: "15.14.1.999-r4",
+    });
+
+    expect(matches).toEqual([]);
+  });
+
+  test("matches the default pin too, once it is resolved", () => {
+    const withResolvedDefault = resolvedFixture.replace(
+      'placeholderPin("postgres", "17.6.1.168")',
+      '{ upstreamVersion: "17.6.1.168", revision: 1, image: "ghcr.io/supabase/cli/postgres:17.6.1.168-r1@sha256:1111111111111111111111111111111111111111111111111111111111111", natives: {} }',
+    );
+    const matches = findHotfixMatches(withResolvedDefault, {
+      service: "postgres",
+      upstream_version: "17.6.1.168",
+      revision: 2,
+      release_version: "17.6.1.168-r2",
+    });
+
+    expect(matches).toEqual([{ target: "default", currentRevision: 1 }]);
+  });
+
+  test("treats an unresolved placeholderPin as always eligible for a hotfix", () => {
+    const matches = findHotfixMatches(fixture, {
+      service: "postgrest",
+      upstream_version: "v16.2",
+      revision: 0,
+      release_version: "v16.2-r0",
+    });
+
+    expect(matches).toEqual([{ target: "default", currentRevision: -1 }]);
+  });
+
+  test("survives real oxfmt formatting", async () => {
+    const formatted = await formatWithOxfmt(resolvedFixture);
+    const matches = findHotfixMatches(formatted, {
+      service: "postgres",
+      upstream_version: "15.14.1.168",
+      revision: 4,
+      release_version: "15.14.1.168-r4",
+    });
+
+    expect(matches).toEqual([{ target: "additional", currentRevision: 3 }]);
+  });
+});
 
 describe("planArtifactCatalogUpdate", () => {
   test("pins to the highest committed revision, writing every native target's digests", async () => {
