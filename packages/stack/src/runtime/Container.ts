@@ -559,13 +559,27 @@ export const makeContainerRuntime = (options: {
               }
               const logProcess =
                 attached ??
-                (yield* spawner
-                  .spawn(
-                    ChildProcess.make(options.engine, ["logs", "--follow", name], {
-                      stdin: "ignore",
-                    }),
-                  )
-                  .pipe(Effect.mapError((cause) => errorFor("logs", cause))));
+                (yield* Effect.gen(function* () {
+                  // Released on exit, since a release left for service stop can hit a reused pid.
+                  const followerScope = yield* Scope.fork(owner);
+                  const follower = yield* spawner
+                    .spawn(
+                      ChildProcess.make(options.engine, ["logs", "--follow", name], {
+                        stdin: "ignore",
+                      }),
+                    )
+                    .pipe(
+                      Scope.provide(followerScope),
+                      Effect.mapError((cause) => errorFor("logs", cause)),
+                    );
+                  yield* Effect.forkIn(
+                    Effect.exit(follower.exitCode).pipe(
+                      Effect.andThen(Scope.close(followerScope, Exit.void)),
+                    ),
+                    owner,
+                  );
+                  return follower;
+                }));
               return {
                 ...partial,
                 ports,
