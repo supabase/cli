@@ -19,10 +19,13 @@ export class StackError extends Schema.TaggedError<StackError>()("StackError", {
   message: Schema.String,
   outcomes: Schema.optionalKey(Schema.Array(Outcome)),
   /**
-   * Why the client could not use an owner: none serves the stack (`owner-unavailable`), or one of
-   * another release does (`release-mismatch`).
+   * Why the client could not use an owner: none serves the stack (`owner-unavailable`), one of
+   * another release does (`release-mismatch`), or its container engine is unreachable
+   * (`runtime-unavailable`).
    */
-  reason: Schema.optionalKey(Schema.Literals(["owner-unavailable", "release-mismatch"])),
+  reason: Schema.optionalKey(
+    Schema.Literals(["owner-unavailable", "release-mismatch", "runtime-unavailable"]),
+  ),
 }) {}
 
 /** Maps an owner failure to the RPC error, preserving per-member composition outcomes. */

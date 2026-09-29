@@ -27,6 +27,7 @@ import {
   launchHost,
   observeHost,
   ownerClient,
+  ownerExitProbe,
   shutdownHost,
   waitForOwnerExit,
   type HostAccess,
@@ -128,7 +129,9 @@ const failure = (operation: string, cause: unknown): StackError =>
           ? { reason: "owner-unavailable" as const }
           : hasReason("release-mismatch")(cause)
             ? { reason: "release-mismatch" as const }
-            : {}),
+            : hasReason("runtime-unavailable")(cause)
+              ? { reason: "runtime-unavailable" as const }
+              : {}),
       });
 
 type Kind = ServiceCreation["service"];
@@ -391,6 +394,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     >(),
   );
   const crypto = yield* Crypto.Crypto;
+  const fs = yield* FileSystem.FileSystem;
   const handleScope = yield* Scope.Scope;
   const session = saved.lifetime === "session";
   const launchOptions = { ...locations, stackId: saved.id, lifeline: session };
@@ -592,7 +596,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         onSome: (cause) => failure(operation, cause),
       });
       if (!destroy) return yield* shutdownFailure;
-      const exitResult = yield* waitForOwnerExit(endpoint.pid).pipe(
+      const exitResult = yield* waitForOwnerExit(endpoint.pid, ownerExitProbe(fs)).pipe(
         Effect.mapError((cause) => failure("shutdown-exit", cause)),
         Effect.exit,
       );
@@ -611,7 +615,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       }
       return yield* shutdownFailure;
     }
-    yield* waitForOwnerExit(endpoint.pid).pipe(
+    yield* waitForOwnerExit(endpoint.pid, ownerExitProbe(fs)).pipe(
       Effect.mapError((cause) => failure("shutdown-exit", cause)),
     );
     return { runtimeCleanup: "complete" } as const;
