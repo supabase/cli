@@ -230,6 +230,29 @@ const escapeLiteral = "syntax error at or near E'it\\'s-e-literal-secret'";
 const storageError = "Object not found: bucket/private/key.pdf";
 
 describe("trace data", () => {
+  it("exports only allowlisted resource attributes", () => {
+    const data = traceWith({});
+    const withResource: TraceData = {
+      resourceSpans: data.resourceSpans.map((resourceSpan) => ({
+        ...resourceSpan,
+        resource: {
+          ...resourceSpan.resource,
+          attributes: [
+            { key: "service.name", value: { stringValue: "supabase-cli" } },
+            { key: "os", value: { stringValue: "darwin" } },
+            { key: "deployment.owner", value: { stringValue: "alice@example.com" } },
+          ],
+        },
+      })),
+    };
+
+    expect(
+      sanitizeTraceData(withResource).resourceSpans[0]!.resource.attributes.map(
+        (attribute) => attribute.key,
+      ),
+    ).toEqual(["service.name", "os"]);
+  });
+
   it("exports exception events with only the error type and drops the status message", () => {
     const data = traceWith({
       statusMessage: failingMigration,
@@ -363,9 +386,17 @@ describe("sqlStateOf", () => {
   });
 
   it("ignores node errno codes and successful exits", () => {
-    const socketError = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+    const errno = (code: string) => Object.assign(new Error(`failed ${code}`), { code });
 
-    expect(sqlStateOf(Exit.fail(socketError))).toBeUndefined();
+    for (const code of ["ECONNREFUSED", "EPERM", "EPIPE", "E2BIG"]) {
+      expect(sqlStateOf(Exit.fail(errno(code)))).toBeUndefined();
+    }
     expect(sqlStateOf(Exit.void)).toBeUndefined();
+  });
+
+  it("accepts letter-class SQLSTATEs", () => {
+    expect(sqlStateOf(Exit.fail(new DbExecError({ message: "raise", code: "P0001" })))).toBe(
+      "P0001",
+    );
   });
 });

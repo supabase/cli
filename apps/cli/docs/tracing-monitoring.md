@@ -18,8 +18,9 @@ Pick one destination per run:
 | `TRACEPARENT`            | W3C trace context adopted as the parent of `cli.run` when a sink is set. |
 
 Setting both `SUPABASE_TRACE_FILE` and `SUPABASE_OTLP_ENDPOINT` fails the run with a
-configuration error. The generic `OTEL_EXPORTER_OTLP_*` variables are ignored. A sink records the
-run even when `TRACEPARENT` is marked unsampled.
+configuration error. The generic `OTEL_EXPORTER_OTLP_*`, `OTEL_SERVICE_NAME`, and
+`OTEL_RESOURCE_ATTRIBUTES` variables are ignored. A sink records the run even when `TRACEPARENT`
+is marked unsampled.
 
 `SUPABASE_DEBUG=1` or `SUPABASE_TELEMETRY_DEBUG=1`, set in the environment or the project's
 `supabase/.env`, also prints finished command spans to stderr: top-level spans, their children and

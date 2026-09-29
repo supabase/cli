@@ -2,13 +2,25 @@ import { createHmac } from "node:crypto";
 import { Cause, Crypto, Effect, Exit } from "effect";
 import type { KeyValue, AnyValue } from "effect/unstable/observability/OtlpResource";
 import type { ScopeSpan, TraceData } from "effect/unstable/observability/OtlpTracer";
-import { isSqlState } from "../../command-internal/connect-errors.ts";
 
 const MAX_STRING_LENGTH = 2048;
 const REDACTED = "<redacted>";
 const QUERY_HASH_SALT_BYTES = 32;
 const QUERY_HASH_HEX_LENGTH = 16;
 const MAX_CAUSE_DEPTH = 6;
+/** SQLSTATE classes start with a digit or `F0`/`HV`/`P0`/`XX`, which excludes errno names like `E2BIG`. */
+const POSTGRES_SQLSTATE = /^(?:[0-9][0-9A-Z]|F0|HV|P0|XX)[0-9A-Z]{3}$/u;
+/** Effect also merges `OTEL_RESOURCE_ATTRIBUTES` into the resource; only these keys are exported. */
+const RESOURCE_ATTRIBUTE_KEPT: ReadonlySet<string> = new Set([
+  "service.name",
+  "service.version",
+  "os",
+  "arch",
+  "is_ci",
+  "telemetry.sdk.name",
+  "telemetry.sdk.language",
+  "telemetry.sdk.version",
+]);
 const EXCEPTION_EVENT = "exception";
 const LOG_EVENT = "log";
 const EVENT_ATTRIBUTE_KEPT = {
@@ -244,7 +256,12 @@ function sanitizeTraceData(data: TraceData, hashQuery: QueryHasher): TraceData {
       ...resourceSpan,
       resource: {
         ...resourceSpan.resource,
-        attributes: sanitizeKeyValues(resourceSpan.resource.attributes, hashQuery),
+        attributes: sanitizeKeyValues(
+          resourceSpan.resource.attributes.filter((attribute) =>
+            RESOURCE_ATTRIBUTE_KEPT.has(attribute.key),
+          ),
+          hashQuery,
+        ),
       },
       scopeSpans: resourceSpan.scopeSpans.map((scopeSpan) => ({
         ...scopeSpan,
@@ -305,7 +322,7 @@ export function sqlStateOf(exit: Exit.Exit<unknown, unknown>): string | undefine
       depth++
     ) {
       const code = Reflect.get(current, "code");
-      if (typeof code === "string" && isSqlState(code)) return code;
+      if (typeof code === "string" && POSTGRES_SQLSTATE.test(code)) return code;
       current = Reflect.get(current, "cause");
     }
   }

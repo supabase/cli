@@ -18,8 +18,9 @@ Each run produces one trace rooted at `cli.run`, exported to at most one sink:
   restricted to, mode `0600`.
 - `SUPABASE_OTLP_ENDPOINT=<base URL>` posts OTLP/HTTP JSON to `<base>/v1/traces`, with optional
   `SUPABASE_OTLP_HEADERS=k=v,k2=v2`.
-- Setting both is a configuration error. Generic `OTEL_EXPORTER_OTLP_*` variables are ignored, so
-  a global collector setting never receives CLI internals.
+- Setting both is a configuration error. Generic `OTEL_EXPORTER_OTLP_*`, `OTEL_SERVICE_NAME`, and
+  `OTEL_RESOURCE_ATTRIBUTES` are ignored, so a global collector setting never receives CLI
+  internals.
 - `TRACEPARENT` becomes the parent of `cli.run` when a sink is active, even when its sampled flag
   is off, and spawned processes receive a `TRACEPARENT` for their process span.
 - `SUPABASE_DEBUG=1` or `SUPABASE_TELEMETRY_DEBUG=1`, read from the project `.env` or the
