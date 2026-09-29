@@ -100,6 +100,34 @@ jobs:
       - name: Run unit tests
         run: pnpm run test:unit
 
+      # Every workspace's Vitest results cache lands under its own
+      # `node_modules/.vite/vitest/`; staging them under one directory first (rather than
+      # uploading the raw glob) keeps each workspace's subtree in the artifact regardless of
+      # how many workspaces ran, so the weekly report (tools/test-health-report.ts) can tell
+      # them apart. See `.github/workflows/test.yml`'s e2e-timings upload for the sibling case.
+      - name: Stage unit test timings
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p .timings-staging
+          shopt -s nullglob
+          for cache in apps/*/node_modules/.vite/vitest/*/results.json packages/*/node_modules/.vite/vitest/*/results.json; do
+            workspace="${cache%%/node_modules/*}"
+            hash_dir="$(basename "$(dirname "$cache")")"
+            dest=".timings-staging/${workspace}/${hash_dir}"
+            mkdir -p "$dest"
+            cp "$cache" "$dest/results.json"
+          done
+
+      - name: Upload unit test timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unit-timings
+          path: .timings-staging
+          retention-days: 14
+          if-no-files-found: warn
+
   test-integration:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
@@ -122,6 +150,30 @@ jobs:
 
       - name: Run integration tests
         run: pnpm run test:integration
+
+      # See the matching step in test-unit for why results caches are staged before upload.
+      - name: Stage integration test timings
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p .timings-staging
+          shopt -s nullglob
+          for cache in apps/*/node_modules/.vite/vitest/*/results.json packages/*/node_modules/.vite/vitest/*/results.json; do
+            workspace="${cache%%/node_modules/*}"
+            hash_dir="$(basename "$(dirname "$cache")")"
+            dest=".timings-staging/${workspace}/${hash_dir}"
+            mkdir -p "$dest"
+            cp "$cache" "$dest/results.json"
+          done
+
+      - name: Upload integration test timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-timings
+          path: .timings-staging
+          retention-days: 14
+          if-no-files-found: warn
 
   test-stack-ports:
     if: |
@@ -248,15 +300,41 @@ jobs:
         env:
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
 
-      # Vitest writes its results cache under a sha1-named directory. The refresh script
-      # (apps/cli/scripts/refresh-e2e-timings.ts) merges these into tests/e2e-timings.json.
+      # Vitest writes its results cache under a sha1-named directory, under whichever
+      # workspace's suite ran on this matrix leg. Staging first (see the matching step in
+      # test-unit) keeps that workspace identifiable in the artifact. The refresh script
+      # (apps/cli/scripts/refresh-e2e-timings.ts) and the weekly report
+      # (tools/test-health-report.ts) both merge these back in from the results caches.
+      - name: Stage e2e test timings
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p .timings-staging
+          shopt -s nullglob
+          for cache in apps/*/node_modules/.vite/vitest/*/results.json; do
+            workspace="${cache%%/node_modules/*}"
+            hash_dir="$(basename "$(dirname "$cache")")"
+            dest=".timings-staging/${workspace}/${hash_dir}"
+            mkdir -p "$dest"
+            cp "$cache" "$dest/results.json"
+          done
+
       - name: Upload e2e timings
         if: always() && matrix.suite == 'cli'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-timings-${{ matrix.shard }}
-          path: apps/cli/node_modules/.vite/vitest/**/results.json
-          retention-days: 7
+          path: .timings-staging
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload cli-e2e timings
+        if: always() && matrix.suite == 'cli-e2e'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-e2e-timings
+          path: .timings-staging
+          retention-days: 14
           if-no-files-found: warn
 
   test-stack-e2e:

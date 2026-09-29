@@ -26,6 +26,7 @@
     "knip:check": "knip-bun",
     "knip:fix": "knip-bun --fix",
     "check:config-api": "bun tools/config-api-compare.ts",
+    "test-health-report": "bun tools/test-health-report.ts",
     "repos:install": "git submodule sync && git submodule update --init",
     "repos:pull": "git submodule sync && git submodule update --init --remote",
     "local-registry": "bun tools/release/local-registry.ts",
