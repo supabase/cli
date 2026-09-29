@@ -74,6 +74,12 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
         | typeof V1UpdateNetworkRestrictionsOutput.Type
         | typeof V1PatchNetworkRestrictionsOutput.Type;
 
+      yield* Effect.annotateCurrentSpan({
+        "network_restrictions.strategy": flags.append ? "append" : "replace",
+        "network_restrictions.cidr_v4_count": v4.length,
+        "network_restrictions.cidr_v6_count": v6.length,
+      });
+
       if (flags.append) {
         const response = yield* api.v1
           .patchNetworkRestrictions({

@@ -143,6 +143,8 @@ export const computeList = Effect.fn("compute.list")(function* (flags: ComputeLi
       };
     });
 
+    yield* Effect.annotateCurrentSpan({ "compute.count": rows.length });
+
     const payload = {
       project_ref: projectRef,
       compute: rows.map((row) => ({

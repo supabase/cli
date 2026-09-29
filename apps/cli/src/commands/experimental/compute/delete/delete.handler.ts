@@ -150,11 +150,13 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
 
     // Skipped only when the GET confirmed nothing exists; an unreadable compute
     // still gets the DELETE, since that's the request the credential may hold.
-    if (deployed !== undefined || !lookup.readable) {
+    const deleteSent = deployed !== undefined || !lookup.readable;
+    if (deleteSent) {
       const deleting = yield* output.task("Deleting compute...");
       yield* deleteCompute(api, projectRef, name).pipe(Effect.tapError(() => deleting.fail()));
       yield* deleting.clear();
     }
+    yield* Effect.annotateCurrentSpan({ "compute.confirmed": yes, "compute.deleted": deleteSent });
 
     // A compute deployed from another checkout has neither a local entry nor a
     // local directory, so there is nothing here that was kept.

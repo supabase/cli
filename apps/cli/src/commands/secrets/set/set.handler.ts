@@ -266,6 +266,11 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
       batches.push(body.slice(i, i + SECRETS_PER_REQUEST));
     }
 
+    yield* Effect.annotateCurrentSpan({
+      "secret.count": body.length,
+      "secret.batch_count": batches.length,
+    });
+
     // Validated up front so a schema-invalid entry in a later batch can't leave the project
     // partially updated after earlier batches already uploaded.
     yield* Effect.forEach(

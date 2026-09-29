@@ -46,7 +46,7 @@ interface LoadedStorageConfig {
  * read `config` at all. `appliedRemote` is set when a `[remotes.<name>]` block
  * matches the linked ref.
  */
-export const loadStorageConfig = Effect.fnUntraced(function* (
+export const loadStorageConfig = Effect.fn("Storage.loadConfig")(function* (
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
   projectRef: string,
 ) {

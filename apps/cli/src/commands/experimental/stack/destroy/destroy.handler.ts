@@ -102,6 +102,10 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       ),
       Effect.mapError(destroyError),
     );
+    yield* Effect.annotateCurrentSpan({
+      "stack.confirmed": confirmed,
+      "stack.runtime_cleanup": result.runtimeCleanup,
+    });
     if (result.runtimeCleanup === "skipped")
       yield* output.warn(skippedRuntimeCleanupWarning(`stack ${target.id}`, result));
     if (output.format !== "text")

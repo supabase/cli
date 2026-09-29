@@ -265,6 +265,11 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
         }
       }
 
+      yield* Effect.annotateCurrentSpan({
+        "compute.log_count": entries.length,
+        "compute.follow": flags.follow,
+      });
+
       const payload = {
         compute_name: name,
         project_ref: projectRef,

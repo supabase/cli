@@ -277,22 +277,24 @@ const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
   };
 });
 
-const observe = (stack: Stack, owner: StackReport["owner"]) =>
-  Effect.gen(function* () {
-    const instances = yield* stack.services.list.pipe(Effect.mapError(mapStackError));
-    const composition = yield* stack.composition.describe.pipe(Effect.mapError(mapStackError));
-    const observed = yield* Effect.forEach(instances, (instance): Effect.Effect<ObservedService> =>
-      owner === "unavailable"
-        ? Effect.succeed({ instance, observation: undefined })
-        : instance.status.pipe(
-            Effect.map((observation) => ({ instance, observation })),
-            Effect.catchTag("StackError", (error) =>
-              Effect.succeed({ instance, observation: undefined, error }),
-            ),
+const observe = Effect.fn("experimental.stack.status.observe")(function* (
+  stack: Stack,
+  owner: StackReport["owner"],
+) {
+  const instances = yield* stack.services.list.pipe(Effect.mapError(mapStackError));
+  const composition = yield* stack.composition.describe.pipe(Effect.mapError(mapStackError));
+  const observed = yield* Effect.forEach(instances, (instance): Effect.Effect<ObservedService> =>
+    owner === "unavailable"
+      ? Effect.succeed({ instance, observation: undefined })
+      : instance.status.pipe(
+          Effect.map((observation) => ({ instance, observation })),
+          Effect.catchTag("StackError", (error) =>
+            Effect.succeed({ instance, observation: undefined, error }),
           ),
-    );
-    return { observed, members: composition.members };
-  });
+        ),
+  );
+  return { observed, members: composition.members };
+});
 
 const driftFrom = (planned: ReadonlyArray<PlannedInstance>): StackReport["config_drift"] => {
   const paths = planned.flatMap((entry) =>
@@ -317,8 +319,8 @@ const unavailableDrift = (message: string): StackReport["config_drift"] => ({
   message,
 });
 
-const configDrift = (stack: Stack, projectRoot: string, functionsIsMember: boolean) =>
-  Effect.gen(function* () {
+const configDrift = Effect.fn("experimental.stack.status.configDrift")(
+  function* (stack: Stack, projectRoot: string, functionsIsMember: boolean) {
     const loaded = yield* loadStackConfig(projectRoot);
     const creations = yield* loaded.creations(stack.id);
     // Drift ignores non-members, so a Functions dotenv only matters when Functions is a member.
@@ -326,22 +328,25 @@ const configDrift = (stack: Stack, projectRoot: string, functionsIsMember: boole
       ? yield* Effect.forEach(creations, withProjectFunctionsEnv)
       : creations;
     return driftFrom(yield* stack.composition.plan(requested));
-  }).pipe(
-    Effect.catchTags({
-      StackConfigError: (error) =>
-        Effect.succeed(
-          unavailableDrift(`Project configuration could not be compared: ${error.message}`),
-        ),
-      StackFunctionsEnvError: (error) =>
-        Effect.succeed(
-          unavailableDrift(`Project configuration could not be compared: ${error.message}`),
-        ),
-      StackError: (error) =>
-        Effect.succeed(
-          unavailableDrift(`Saved configuration could not be compared: ${error.message}`),
-        ),
-    }),
-  );
+  },
+  (effect) =>
+    effect.pipe(
+      Effect.catchTags({
+        StackConfigError: (error) =>
+          Effect.succeed(
+            unavailableDrift(`Project configuration could not be compared: ${error.message}`),
+          ),
+        StackFunctionsEnvError: (error) =>
+          Effect.succeed(
+            unavailableDrift(`Project configuration could not be compared: ${error.message}`),
+          ),
+        StackError: (error) =>
+          Effect.succeed(
+            unavailableDrift(`Saved configuration could not be compared: ${error.message}`),
+          ),
+      }),
+    ),
+);
 
 export const stackStatus = Effect.fn("experimental.stack.status")(function* (
   flags: StackStatusFlags,

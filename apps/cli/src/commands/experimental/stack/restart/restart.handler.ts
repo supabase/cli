@@ -98,6 +98,7 @@ export const stackRestart = Effect.fn("experimental.stack.restart")(function* (
       health,
       wake_enabled: wakeEnabled,
     }));
+    yield* Effect.annotateCurrentSpan({ "stack.service_count": services.length });
     if (output.format === "text") {
       yield* output.raw(`Stack ${stack.id} restarted using its saved configuration.\n`);
       for (const service of services)

@@ -296,6 +296,15 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     // `--profile`, otherwise the config layer's.
     const apiUrl = Option.getOrElse(profileApiUrl, () => cliSettings.apiUrl);
 
+    yield* Effect.annotateCurrentSpan({
+      "sso.metadata_source": Option.isSome(metadataFile)
+        ? "file"
+        : Option.isSome(metadataUrl)
+          ? "url"
+          : "none",
+      "sso.domain_count": domains.length + addDomains.length + removeDomains.length,
+    });
+
     yield* Effect.gen(function* () {
       const fetching =
         output.format === "text" ? yield* output.task("Updating SSO provider...") : undefined;
