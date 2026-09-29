@@ -8,8 +8,10 @@ import {
   Effect,
   Exit,
   Fiber,
+  FileSystem,
   Layer,
   Option,
+  Path,
   Ref,
   Schema,
   Sink,
@@ -26,7 +28,15 @@ import {
   type ContainerProcess,
 } from "./Container.ts";
 
-const image = "oven/bun:1.4.1-slim";
+const image = await Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = yield* path.fromFileUrl(new URL("../../../../.bun-version", import.meta.url));
+  const version = yield* fs.readFileString(file);
+  return `oven/bun:${version.trim()}-slim`;
+}).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
+const stoppableIdleScript =
+  "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)";
 
 class ContainerTestError extends Data.TaggedError("ContainerTestError")<{
   readonly message: string;
@@ -184,7 +194,7 @@ describe("container process adapter", () => {
           project: "My Cool App",
           service: "auth",
           env: {},
-          args: ["-e", "setInterval(() => {}, 1000)"],
+          args: ["-e", stoppableIdleScript],
         });
         expect(process.id).toMatch(/^supabase-My-Cool-App-auth-[0-9a-f]{12}$/u);
         const labels = yield* inspectLabels(process.id);
@@ -364,6 +374,71 @@ describe("container process adapter", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("releases a log follower that exits while its container keeps running", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const released = yield* Deferred.make<void>();
+        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeLogFollowerSpawner(
+              delegate,
+              released,
+              "console.error('injected log stream failure'); process.exit(1)",
+            ),
+          ),
+        );
+        yield* runtime.prepare(image);
+        const process = yield* runtime.launch({
+          image,
+          stackId: "s".repeat(64),
+          instanceId: "dropped-log-follower",
+          env: {},
+          args: ["-e", "setInterval(() => {}, 1000)"],
+        });
+        yield* Deferred.await(released).pipe(Effect.timeout("10 seconds"));
+        expect(
+          yield* process.stderr.pipe(
+            Stream.decodeText,
+            Stream.mkString,
+            Effect.timeout("10 seconds"),
+          ),
+        ).toContain("injected log stream failure");
+        expect(yield* running(process.id)).toBe(true);
+        yield* process.discard;
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("releases a still running log follower when its launch scope closes", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const released = yield* Deferred.make<void>();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              makeLogFollowerSpawner(delegate, released, "setInterval(() => {}, 1000)"),
+            ),
+          );
+          yield* runtime.prepare(image);
+          const process = yield* runtime.launch({
+            image,
+            stackId: "t".repeat(64),
+            instanceId: "live-log-follower",
+            env: {},
+            args: ["-e", "setInterval(() => {}, 1000)"],
+          });
+          expect(yield* Deferred.isDone(released)).toBe(false);
+          yield* process.discard;
+        }),
+      );
+      expect(yield* Deferred.isDone(released)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("treats an externally removed container as already stopped", () =>
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
@@ -379,7 +454,7 @@ describe("container process adapter", () => {
               stackId: "x".repeat(64),
               instanceId,
               env: {},
-              args: ["-e", "setInterval(() => {}, 1000)"],
+              args: ["-e", stoppableIdleScript],
             });
             yield* removeExternally(process.id);
             yield* process.stop;
@@ -411,7 +486,7 @@ describe("container process adapter", () => {
                 stackId: "k".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               yield* process.remove;
@@ -448,7 +523,7 @@ describe("container process adapter", () => {
                 stackId: "l".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               const removeResult = yield* process.remove.pipe(Effect.exit);
@@ -490,7 +565,7 @@ describe("container process adapter", () => {
                 stackId: "m".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               const removeResult = yield* process.remove.pipe(Effect.exit);
@@ -534,7 +609,7 @@ describe("container process adapter", () => {
                 stackId: "n".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               yield* process.remove;
@@ -573,7 +648,7 @@ describe("container process adapter", () => {
                 stackId: "p".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               const removeResult = yield* process.remove.pipe(Effect.exit);
@@ -620,7 +695,7 @@ describe("container process adapter", () => {
                 stackId: "o".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               const remover = yield* process.remove.pipe(
@@ -933,6 +1008,26 @@ const makeStopFailureSpawner = (
         );
       });
     }
+    return delegate.spawn(command);
+  });
+
+const makeLogFollowerSpawner = (
+  delegate: ChildProcessSpawnerService["Service"],
+  released: Deferred.Deferred<void>,
+  script: string,
+) =>
+  ChildProcessSpawner.make((command) => {
+    if (
+      ChildProcess.isStandardCommand(command) &&
+      command.command === "docker" &&
+      command.args[0] === "logs"
+    )
+      return Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined));
+        return yield* delegate.spawn(
+          ChildProcess.make(process.execPath, ["-e", script], { stdin: "ignore" }),
+        );
+      });
     return delegate.spawn(command);
   });
 

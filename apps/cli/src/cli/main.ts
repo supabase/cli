@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Stdio } from "effect";
+import { Effect, Exit, Layer, Stdio } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 import { runCli } from "../shared/cli/run.ts";
 import { upgradeNoticeHook } from "../command-internal/upgrade-notice.ts";
 import { analyticsLayer } from "../telemetry/analytics.layer.ts";
@@ -40,7 +41,7 @@ if (
   ))
 ) {
   await runCli(selectedRoot, {
-    analyticsLayer: analyticsLayer,
+    analyticsLayer: analyticsLayer.pipe(Layer.provide(FetchHttpClient.layer)),
     afterSuccess: upgradeNoticeHook,
     ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
   });
