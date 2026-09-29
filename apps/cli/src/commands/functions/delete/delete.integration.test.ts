@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { BunCrypto } from "@effect/platform-bun";
 import { Effect, Layer, Option, Stdio } from "effect";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -85,7 +86,7 @@ describe("functions delete", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           analytics,
         }),
-        commandRuntimeLayer(["functions", "delete"]),
+        commandRuntimeLayer(["functions", "delete"]).pipe(Layer.provide(BunCrypto.layer)),
         Stdio.layerTest({
           args: Effect.succeed([
             "functions",

@@ -184,7 +184,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: [] }),
     Stdio.layerTest({ args: Effect.succeed(args) }),
-    commandRuntimeLayer(["db", "test"]),
+    commandRuntimeLayer(["db", "test"]).pipe(Layer.provide(BunServices.layer)),
     BunServices.layer,
   );
   return { layer, out, analytics, processControl, connection, docker };

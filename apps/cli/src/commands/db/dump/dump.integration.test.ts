@@ -1,7 +1,18 @@
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
@@ -1095,13 +1106,24 @@ describe("db dump integration", () => {
 
   // A shell pipeline gets a genuine FIFO for the pipe probe below; Bun's spawnSync
   // "pipe" stdio is a socketpair, which fstats as a socket instead.
-  const PROBE = 'process.stdout.write(String(require("node:fs").fstatSync(1).isFIFO()));';
+  const ttyProbe = Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const module = (file: string) =>
+      path
+        .fromFileUrl(new URL(`../../../shared/runtime/${file}`, import.meta.url))
+        .pipe(Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.String))));
+    const service = yield* module("tty.service.ts");
+    const layer = yield* module("tty.layer.ts");
+    return `import { Effect } from "effect"; import { Tty } from ${service}; import { ttyLayer } from ${layer}; Effect.runPromise(Tty.pipe(Effect.provide(ttyLayer))).then((tty) => process.stdout.write(String(tty.stdoutIsPipe)));`;
+  });
 
   it.live.skipIf(process.platform === "win32")("classifies a real piped stdout as a pipe", () =>
     Effect.gen(function* () {
+      const probe = yield* ttyProbe;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
-        ChildProcess.make("/bin/sh", ["-c", `"${process.execPath}" -e '${PROBE}' | cat`], {
+        ChildProcess.make("/bin/sh", ["-c", '"$1" -e "$2" | cat', "sh", process.execPath, probe], {
+          cwd: import.meta.dirname,
           stdin: "ignore",
           stderr: "ignore",
         }),
@@ -1121,13 +1143,19 @@ describe("db dump integration", () => {
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const file = path.join(tmp.current, "pipe-probe.txt");
+        const probe = yield* ttyProbe;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const exitCode = yield* spawner.exitCode(
-          ChildProcess.make("/bin/sh", ["-c", `"${process.execPath}" -e '${PROBE}' > "${file}"`], {
-            stdin: "ignore",
-            stdout: "ignore",
-            stderr: "inherit",
-          }),
+          ChildProcess.make(
+            "/bin/sh",
+            ["-c", '"$1" -e "$2" > "$3"', "sh", process.execPath, probe, file],
+            {
+              cwd: import.meta.dirname,
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "inherit",
+            },
+          ),
         );
         expect(exitCode).toBe(0);
         expect(yield* readUtf8(file)).toBe("false");
