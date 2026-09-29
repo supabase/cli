@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import type { StackCredentials } from "@supabase/stack/effect";
+import { formatEnvValue } from "../../../../command-internal/go-output.encoders.ts";
 import { StackCommandStatusError } from "./status.errors.ts";
 
 const variableNames = [
@@ -82,30 +83,10 @@ export const stackEnvValues = (
   );
 };
 
-const dotenvQuote = (value: string): string | undefined => {
-  if (!value.includes("'")) return "'";
-  if (!/["\\$`!]/u.test(value)) return '"';
-  return undefined;
+/** Encodes values in the same dotenv shape as `status -o env`, sorted by key. */
+export const encodeStackEnv = (values: Readonly<Record<string, string>>): string => {
+  const lines = Object.keys(values)
+    .sort()
+    .map((name) => `${name}=${formatEnvValue(values[name] ?? "")}`);
+  return `${lines.join("\n")}\n`;
 };
-
-/**
- * Quotes so that both dotenv parsers and a shell that sources the file read every
- * value literally: double quotes are used only without `"`, `\`, `$`, backtick, or
- * `!`, and backticks are never a delimiter.
- */
-export const encodeStackEnv = (values: Readonly<Record<string, string>>) =>
-  Effect.forEach(
-    Object.entries(values).sort(([left], [right]) => left.localeCompare(right)),
-    ([name, value]) => {
-      const quote = dotenvQuote(value);
-      if (quote === undefined || value.includes("\r"))
-        return Effect.fail(
-          new StackCommandStatusError({
-            reason: "output",
-            message:
-              "A credential cannot be written safely as dotenv. Use --env --output-format json.",
-          }),
-        );
-      return Effect.succeed(`${name}=${quote}${value}${quote}`);
-    },
-  ).pipe(Effect.map((lines) => `${lines.join("\n")}\n`));

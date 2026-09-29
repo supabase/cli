@@ -53,8 +53,9 @@ Unavailable optional credentials and endpoints are omitted. The derived
 `--override-name` renames an exported variable, accepting repeated flags or a
 comma-separated list of `EXPORTED_VARIABLE=VALID_ENV_NAME` entries. It requires
 `--env` and rejects an unknown source variable, duplicate source, invalid target,
-malformed entry, or destination collision. Dotenv values that cannot be quoted
-without shell expansion fail with a pointer to `--output-format json`.
+malformed entry, or destination collision. Text output quotes each value the
+same way the legacy `status -o env` renderer does: an integer-parseable value
+is unquoted, everything else is double-quoted with control characters escaped.
 
 ## Files read and written
 
@@ -67,6 +68,5 @@ no management API routes and writes no files besides `telemetry.json`.
 Exit status is `0` for a successful report, including a stopped stack or an
 absent or unreachable owner, and `130` if interrupted. It is `1` for flag
 validation, an unknown target, a typed stack failure, an invalid configuration,
-a lifecycle failure during `--env`, or a value that dotenv cannot represent
-losslessly. Standard command telemetry is flushed after successful and failed
-runs.
+or a lifecycle failure during `--env`. Standard command telemetry is flushed
+after successful and failed runs.

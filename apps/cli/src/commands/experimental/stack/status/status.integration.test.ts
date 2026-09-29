@@ -536,13 +536,13 @@ it.live("exports saved credentials only for a running database", () =>
     });
     yield* run.effect;
     expect(run.out.stdoutText).toContain(
-      "DB_URL='postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres?connect_timeout=10'",
+      'DB_URL="postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres?connect_timeout=10"',
     );
-    expect(run.out.stdoutText).toContain("API_URL='http://127.0.0.1:54321'");
-    expect(run.out.stdoutText).toContain("ANON_KEY='saved-anon-token'");
-    expect(run.out.stdoutText).toContain("SERVICE_ROLE_KEY='saved-service-token'");
-    expect(run.out.stdoutText).toContain("PUBLISHABLE_KEY='saved-publishable-key'");
-    expect(run.out.stdoutText).toContain("SECRET_KEY='saved-secret-key'");
+    expect(run.out.stdoutText).toContain('API_URL="http://127.0.0.1:54321"');
+    expect(run.out.stdoutText).toContain('ANON_KEY="saved-anon-token"');
+    expect(run.out.stdoutText).toContain('SERVICE_ROLE_KEY="saved-service-token"');
+    expect(run.out.stdoutText).toContain('PUBLISHABLE_KEY="saved-publishable-key"');
+    expect(run.out.stdoutText).toContain('SECRET_KEY="saved-secret-key"');
   }),
 );
 
