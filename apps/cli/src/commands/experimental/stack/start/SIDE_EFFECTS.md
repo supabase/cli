@@ -24,7 +24,9 @@ S3 protocol/vector controls, and configured Vector ports are forwarded to their 
 Encrypted JWT secrets are decrypted before shared credentials are derived. `db.health_timeout`
 controls database readiness; package JWT and PostgreSQL root-key defaults apply when omitted, and
 the effective root key is supplied through a stack-owned key file.
-Studio receives the Functions management directory/URL and Analytics credentials when present.
+Studio receives the database connection, the Functions management directory/URL, and Analytics
+credentials when present. Starting with Studio creates `supabase/snippets/`, where Studio saves SQL
+snippets.
 Email template `content_path` values and third-party identity providers remain unsupported: they
 require template serving and shared external JWKS verification respectively.
 

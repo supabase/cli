@@ -8,6 +8,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 
 import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
+import { CLI_VERSION } from "../shared/cli/version.ts";
 import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { parseGoDuration } from "./go-duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
@@ -1310,6 +1311,11 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   {
                     service: "studio" as const,
                     config: {
+                      snippetsRoot: `${projectRoot}/supabase/snippets`,
+                      apiSchemas: validatedConfig.api.schemas.join(","),
+                      apiExtraSearchPath: validatedConfig.api.extra_search_path.join(","),
+                      apiMaxRows: validatedConfig.api.max_rows,
+                      cliVersion: CLI_VERSION,
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       ...(validatedConfig.studio.openai_api_key === undefined
                         ? {}

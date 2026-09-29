@@ -1,8 +1,8 @@
+import { defaultRuntime } from "@supabase/stack/internal/artifacts";
 import { endpointReports } from "../stack-endpoints.format.ts";
 import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import {
   automaticRuntimeNotice,
-  nativeSupported,
   selectStackRuntime,
 } from "../../../../command-internal/stack-runtime.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
@@ -102,7 +102,7 @@ const dockerUnavailableSuggestion = (
   runtimeInfo: { readonly platform: string; readonly arch: string },
   creating: boolean,
 ) =>
-  creating && nativeSupported(runtimeInfo.platform, runtimeInfo.arch)
+  creating && defaultRuntime({ os: runtimeInfo.platform, arch: runtimeInfo.arch }) === "native"
     ? "Docker CLI or daemon isn't reachable. Install or start Docker, or run with --runtime native."
     : "Docker CLI or daemon isn't reachable. Install or start Docker.";
 
@@ -442,6 +442,19 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               new StackCommandStartError({
                 reason: "invalid-config",
                 message: `Unable to create the Functions directory: ${cause.message}`,
+                cause,
+              }),
+          ),
+        );
+    if (requested.some(({ service }) => service === "studio"))
+      yield* fs
+        .makeDirectory(path.join(target.projectRoot, "supabase", "snippets"), { recursive: true })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new StackCommandStartError({
+                reason: "invalid-config",
+                message: `Unable to create the Studio snippets directory: ${cause.message}`,
                 cause,
               }),
           ),

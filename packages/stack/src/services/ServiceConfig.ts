@@ -7,7 +7,7 @@ import {
   DEFAULT_LOCAL_SECRET_KEY,
   DEFAULT_SIGNING_KEY,
 } from "../Defaults.ts";
-import type { StackCredentials, StackIdentityInput } from "../State.ts";
+import type { StackCredentials, StackKeysInput } from "../State.ts";
 
 const serviceError = (operation: string, cause: unknown): ServiceError =>
   cause instanceof ServiceError
@@ -69,7 +69,7 @@ const jsonArray = (value: string, field: string) =>
   );
 
 export const resolveStackKeys = Effect.fn("ServiceConfig.resolveStackKeys")(
-  (jwtSecret: string, input: StackIdentityInput | undefined, saved: StackCredentials | undefined) =>
+  (jwtSecret: string, input: StackKeysInput | undefined, saved: StackCredentials | undefined) =>
     Effect.gen(function* () {
       if (input === undefined && saved !== undefined) return saved;
       const defaults = yield* defaultStackKeys(jwtSecret);
