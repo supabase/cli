@@ -115,8 +115,13 @@ describe("readTimings", () => {
   const writeTimings = (content: string) =>
     writeFileSync(join(root, "tests", "e2e-timings.json"), content);
 
-  test("reads a map of durations", () => {
-    writeTimings(JSON.stringify({ "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": 300 }));
+  test("reads the files map from a version 1 envelope", () => {
+    writeTimings(
+      JSON.stringify({
+        version: 1,
+        files: { "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": 300 },
+      }),
+    );
 
     expect(readTimings(root)).toEqual({ "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": 300 });
   });
@@ -126,13 +131,30 @@ describe("readTimings", () => {
   });
 
   test("reads as absent rather than half-applying when any duration is not a number", () => {
-    writeTimings(JSON.stringify({ "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": "300" }));
+    writeTimings(
+      JSON.stringify({
+        version: 1,
+        files: { "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": "300" },
+      }),
+    );
 
     expect(readTimings(root)).toBeUndefined();
   });
 
   test("reads as absent when the file is not JSON", () => {
     writeTimings("{ not json");
+
+    expect(readTimings(root)).toBeUndefined();
+  });
+
+  test("reads as absent for a flat map with no envelope", () => {
+    writeTimings(JSON.stringify({ "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": 300 }));
+
+    expect(readTimings(root)).toBeUndefined();
+  });
+
+  test("reads as absent for an unknown envelope version", () => {
+    writeTimings(JSON.stringify({ version: 2, files: { "src/a.e2e.test.ts": 1200 } }));
 
     expect(readTimings(root)).toBeUndefined();
   });

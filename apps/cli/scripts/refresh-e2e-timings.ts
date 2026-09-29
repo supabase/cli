@@ -158,7 +158,7 @@ if (import.meta.main) {
       warn: (message) => console.error(message),
     });
     const target = fileURLToPath(new URL("../tests/e2e-timings.json", import.meta.url));
-    writeFileSync(target, `${JSON.stringify(timings, null, 2)}\n`);
+    writeFileSync(target, `${JSON.stringify({ version: 1, files: timings }, null, 2)}\n`);
     console.error(`wrote ${Object.keys(timings).length} timings to ${target}`);
   } catch (cause) {
     console.error(`error: ${cause instanceof Error ? cause.message : String(cause)}`);

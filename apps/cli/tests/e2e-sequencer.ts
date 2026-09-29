@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { BaseSequencer, type TestSpecification } from "vitest/node";
 
-/** Measured e2e file durations in ms, keyed by root-relative path; refreshed from CI artifacts. */
+/** Bun `--timings` file of measured e2e file durations, refreshed from CI artifacts. */
 const TIMINGS_FILE = "tests/e2e-timings.json";
 
 /** Duration assumed for every file while no timing has been measured yet. */
@@ -57,7 +57,7 @@ export function packShards(
   return shards.map((shard) => shard.keys);
 }
 
-function isTimings(value: unknown): value is Readonly<Record<string, number>> {
+function isFilesMap(value: unknown): value is Readonly<Record<string, number>> {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -68,11 +68,24 @@ function isTimings(value: unknown): value is Readonly<Record<string, number>> {
   );
 }
 
-/** Reads the committed timings file under `root`; anything but a map of finite numbers reads as absent. */
+function isTimingsEnvelope(
+  value: unknown,
+): value is { version: 1; files: Readonly<Record<string, number>> } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "version" in value &&
+    value.version === 1 &&
+    "files" in value &&
+    isFilesMap(value.files)
+  );
+}
+
+/** Reads the committed Bun `--timings` file under `root`; anything but that envelope reads as absent. */
 export function readTimings(root: string): Readonly<Record<string, number>> | undefined {
   try {
     const parsed: unknown = JSON.parse(readFileSync(resolve(root, TIMINGS_FILE), "utf8"));
-    return isTimings(parsed) ? parsed : undefined;
+    return isTimingsEnvelope(parsed) ? parsed.files : undefined;
   } catch {
     return undefined;
   }
