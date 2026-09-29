@@ -519,6 +519,7 @@ describe("experimental stack start", () => {
         }),
       );
       expect(fixture.members.map(({ service }) => service)).toEqual(["database"]);
+      expect(yield* fs.exists(`${root}/supabase/snippets`)).toBe(false);
       expect(fixture.composed).toBe(1);
       const repeatedOutput = mockOutput();
       yield* stackStart(flags(excluded)).pipe(
@@ -536,6 +537,7 @@ describe("experimental stack start", () => {
       yield* fixture.stack.composition.stop;
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.some(({ service }) => service === "rest")).toBe(true);
+      expect(yield* fs.exists(`${root}/supabase/snippets`)).toBe(true);
       expect(fixture.composed).toBe(2);
       yield* fixture.stack.composition.stop;
       yield* stackStart(flags(["studio"])).pipe(Effect.provide(layers(root, fixture)));

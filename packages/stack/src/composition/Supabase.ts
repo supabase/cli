@@ -59,6 +59,13 @@ const managedBindings: ReadonlyArray<{
   {
     sourceKind: "database",
     sourceEndpoint: "sql",
+    output: "databaseUrl",
+    targetKind: "studio",
+    input: "databaseUrl",
+  },
+  {
+    sourceKind: "database",
+    sourceEndpoint: "sql",
     output: "internalDatabaseUrl",
     targetKind: "analytics",
     input: "databaseUrl",
@@ -123,6 +130,7 @@ const derivedInputs: Partial<
     apiUrl: "api",
     publicApiUrl: "api",
     analyticsApiKey: "analytics",
+    analyticsBackend: "analytics",
     functionsRoot: "functions",
   },
   functions: { apiUrl: "api", databaseUrl: "database" },
@@ -581,11 +589,12 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
             const values = { ...configInputs.get(entry.id), ...extra };
             if (entry.creation.service === "studio") {
               const analytics = entriesByKind.get("analytics");
-              if (
-                analytics?.creation.service === "analytics" &&
-                analytics.creation.config.apiKey !== undefined
-              )
-                values.analyticsApiKey = analytics.creation.config.apiKey;
+              if (analytics?.creation.service === "analytics") {
+                if (analytics.creation.config.apiKey !== undefined)
+                  values.analyticsApiKey = analytics.creation.config.apiKey;
+                if (analytics.creation.config.backend !== undefined)
+                  values.analyticsBackend = analytics.creation.config.backend;
+              }
               const functions = entriesByKind.get("functions");
               if (functions?.creation.service === "functions")
                 values.functionsRoot = functions.creation.config.functionsRoot;

@@ -410,6 +410,19 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               }),
           ),
         );
+    if (requested.some(({ service }) => service === "studio"))
+      yield* fs
+        .makeDirectory(path.join(target.projectRoot, "supabase", "snippets"), { recursive: true })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new StackCommandStartError({
+                reason: "invalid-config",
+                message: `Unable to create the Studio snippets directory: ${cause.message}`,
+                cause,
+              }),
+          ),
+        );
     const initialComposition = composition.members.length === 0;
     const serviceKindsChanged = !sameKinds(currentInstances, requested);
     const planned = yield* stack.composition.plan(requested).pipe(Effect.mapError(stackError));
