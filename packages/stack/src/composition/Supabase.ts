@@ -3,7 +3,7 @@ import { postgresVersion } from "../Artifacts.ts";
 import { causeMessage, type CompositionConfig } from "../Orchestrator.ts";
 import type { Observation } from "../Rpc.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
-import type { SavedStack, StackIdentityInput } from "../State.ts";
+import type { SavedStack, StackKeysInput } from "../State.ts";
 import { credentialInputNames } from "../host/Credentials.ts";
 import { apiRoute, endpointNames, endpointPort } from "../host/Endpoints.ts";
 
@@ -54,6 +54,13 @@ const managedBindings: ReadonlyArray<{
     sourceEndpoint: "sql",
     output: "databaseUrl",
     targetKind: "pgmeta",
+    input: "databaseUrl",
+  },
+  {
+    sourceKind: "database",
+    sourceEndpoint: "sql",
+    output: "databaseUrl",
+    targetKind: "studio",
     input: "databaseUrl",
   },
   {
@@ -123,6 +130,7 @@ const derivedInputs: Partial<
     apiUrl: "api",
     publicApiUrl: "api",
     analyticsApiKey: "analytics",
+    analyticsBackend: "analytics",
     functionsRoot: "functions",
   },
   functions: { apiUrl: "api", databaseUrl: "database" },
@@ -194,7 +202,7 @@ export interface SupabaseCompositionOperations<E = SupabaseCompositionError> {
 export interface SupabaseCompositionOptions {
   /** Reuses stopped instances; inputs declare desired bindings, not previous resolved creations. */
   readonly reuseIds?: ReadonlyArray<string>;
-  readonly keys?: StackIdentityInput;
+  readonly keys?: StackKeysInput;
   /**
    * Starts every member with the composition. By default the database and members without an
    * endpoint start eagerly, and other members start on their first connection.
@@ -581,11 +589,12 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
             const values = { ...configInputs.get(entry.id), ...extra };
             if (entry.creation.service === "studio") {
               const analytics = entriesByKind.get("analytics");
-              if (
-                analytics?.creation.service === "analytics" &&
-                analytics.creation.config.apiKey !== undefined
-              )
-                values.analyticsApiKey = analytics.creation.config.apiKey;
+              if (analytics?.creation.service === "analytics") {
+                if (analytics.creation.config.apiKey !== undefined)
+                  values.analyticsApiKey = analytics.creation.config.apiKey;
+                if (analytics.creation.config.backend !== undefined)
+                  values.analyticsBackend = analytics.creation.config.backend;
+              }
               const functions = entriesByKind.get("functions");
               if (functions?.creation.service === "functions")
                 values.functionsRoot = functions.creation.config.functionsRoot;

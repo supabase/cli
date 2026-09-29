@@ -90,6 +90,7 @@ describe("service catalog", () => {
             {
               service: "studio",
               config: {
+                databaseUrl,
                 pgmetaUrl: `http://${pgmetaRelay.host}:${pgmetaRelay.port}`,
                 analyticsApiKey: "catalog-analytics-key",
                 apiUrl: "http://localhost:8000",
@@ -112,6 +113,13 @@ describe("service catalog", () => {
             ),
           );
           expect(profileResponse.status).toBe(200);
+          const queryResponse = yield* client.execute(
+            HttpClientRequest.post(
+              `http://${studioEndpoint.host}:${studioEndpoint.port}/api/platform/pg-meta/default/query`,
+            ).pipe(HttpClientRequest.bodyJsonUnsafe({ query: "select current_user" })),
+          );
+          expect(queryResponse.status).toBe(200);
+          expect(yield* queryResponse.text).toContain('"current_user":"postgres"');
 
           yield* studio.stop;
           yield* pgmeta.stop;
