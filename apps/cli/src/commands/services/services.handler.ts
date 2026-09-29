@@ -128,11 +128,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
               projectRef: validLinkedRef.value,
               accessToken: accessToken.value,
               userAgent: cliSettings.userAgent,
-            }).pipe(
-              Effect.withSpan("services.fetchRemoteVersions", {
-                attributes: { "project.ref": validLinkedRef.value },
-              }),
-            )
+            })
           : {};
       const result = yield* stackServiceVersions(cliSettings.workdir, remote);
       if (result.configError !== undefined) {
@@ -199,11 +195,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
           projectRef: validLinkedRef.value,
           accessToken: accessToken.value,
           userAgent: cliSettings.userAgent,
-        }).pipe(
-          Effect.withSpan("services.fetchRemoteVersions", {
-            attributes: { "project.ref": validLinkedRef.value },
-          }),
-        );
+        });
         rows = mergeRemoteServiceVersions(remote, localImageOptions);
       }
     }

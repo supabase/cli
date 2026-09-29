@@ -48,9 +48,6 @@ export const branchesList = Effect.fn("branches.list")(function* (flags: Branche
     const branches: Branches = yield* api.v1.listAllBranches({ ref }).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(mapListError),
-      Effect.withSpan("branches.list.listBranches", {
-        attributes: { "api.operation": "v1ListAllBranches" },
-      }),
     );
     yield* Effect.annotateCurrentSpan("branch.count", branches.length);
     yield* fetching?.clear() ?? Effect.void;

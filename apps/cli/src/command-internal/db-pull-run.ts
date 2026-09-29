@@ -414,7 +414,6 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           );
           const written = yield* writeDeclarativeSchemas(fs, path, declarativeDir, exported).pipe(
             Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
-            Effect.withSpan("db.pull.writeDeclarative"),
           );
           yield* warnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
           // Preserve the legacy schema_paths workflow only when pg-delta is disabled.
@@ -824,9 +823,6 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                   writtenSoFar: writtenMigrations.map((written) => written.path),
                 }),
             ),
-            Effect.withSpan("db.pull.updateHistory", {
-              attributes: { "migration.count": writtenMigrations.length },
-            }),
           );
           remoteHistoryUpdated = true;
         }

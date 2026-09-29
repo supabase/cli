@@ -628,7 +628,7 @@ export const planConfigPullRun = Effect.fn("ConfigPull.plan")(function* (
   }
   const destination = scopeResult.destination;
   yield* Effect.annotateCurrentSpan({
-    "supabase.project_ref": ref,
+    "project.ref": ref,
     "config.destination.kind": destination.kind,
   });
   yield* output.raw(configPullDestinationLine({ projectRef: ref, branch }, destination), "stderr");
@@ -654,7 +654,6 @@ export const planConfigPullRun = Effect.fn("ConfigPull.plan")(function* (
   const fetching =
     output.format === "text" ? yield* output.task("Fetching remote config...") : undefined;
   const response = yield* api.executeRaw(operationDefinitions.v2GetProjectConfig, { ref }).pipe(
-    Effect.withSpan("ConfigPull.fetch", { attributes: { "api.operation": "v2GetProjectConfig" } }),
     Effect.tapError(() => fetching?.fail() ?? Effect.void),
     Effect.mapError(
       (cause) =>
@@ -731,7 +730,7 @@ export const planConfigPullRun = Effect.fn("ConfigPull.plan")(function* (
   const hasBlockToCreate = finalPlan.createdTable !== undefined;
   const hasWork = finalPlan.writes.length > 0 || hasBlockToCreate;
   yield* Effect.annotateCurrentSpan({
-    "diff.change_count": changeSet.changes.length,
+    "change.count": changeSet.changes.length,
     "config.write_count": finalPlan.writes.length,
     "config.skip_count": finalPlan.skipped.length,
   });

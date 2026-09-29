@@ -96,12 +96,12 @@ export const runConfigPull = Effect.fn("config.pull.run")(function* (input: Conf
     target: input.target,
     remoteLabel: input.remoteLabel,
     source: input.source,
-  }).pipe(Effect.withSpan("config.pull.plan"));
+  });
   const { changeSet, scope, plan: finalPlan, context, configFilePath } = runPlan;
   const ref = context.projectRef;
   yield* Effect.annotateCurrentSpan({
     "project.ref": ref,
-    dry_run: input.dryRun,
+    "config.dry_run": input.dryRun,
     "change.count": changeSet.counts.total,
     "config.write_count": finalPlan.writes.length,
   });
@@ -145,9 +145,7 @@ export const runConfigPull = Effect.fn("config.pull.run")(function* (input: Conf
   // automatically.
   let dirty = false;
   if (!input.force) {
-    const dirtyOption = yield* pathHasUncommittedChanges(configFilePath).pipe(
-      Effect.withSpan("config.pull.checkGitStatus"),
-    );
+    const dirtyOption = yield* pathHasUncommittedChanges(configFilePath);
     dirty = Option.getOrElse(dirtyOption, () => false);
     if (dirty) {
       const tty = yield* Tty;
@@ -202,9 +200,7 @@ export const runConfigPull = Effect.fn("config.pull.run")(function* (input: Conf
   }
 
   // Re-read against the baseline, apply, and write.
-  yield* applyConfigPullRun({ runPlan, source: input.source }).pipe(
-    Effect.withSpan("config.pull.apply"),
-  );
+  yield* applyConfigPullRun({ runPlan, source: input.source });
 
   yield* emitOutcome(planForRender, { dryRun: false, declined: false });
 });
@@ -251,14 +247,14 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
     // Opens the base config source (no [remotes.*] overlay, paired with its on-disk text)
     // before any network call or target resolution, so a missing file points at supabase init
     // and a malformed document doesn't burn a branch-resolution round trip.
-    const source = yield* openConfigPullSource().pipe(Effect.withSpan("config.pull.loadConfig"));
+    const source = yield* openConfigPullSource();
 
     // Resolves the pull target via resolveConfigTarget, shared with config diff/config push.
     const { ref, branch } = yield* resolveConfigTarget(
       requested,
       configTargetErrors,
       mapBranchResolveError,
-    ).pipe(Effect.withSpan("config.pull.resolveTarget"));
+    );
     resolvedRef = ref;
     yield* Effect.annotateCurrentSpan("config.target_is_branch", branch !== undefined);
 

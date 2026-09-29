@@ -228,7 +228,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       requestedRef,
       configTargetErrors,
       mapPushBranchResolveError,
-    ).pipe(Effect.withSpan("config.push.resolveTarget"));
+    );
     resolvedRef = ref;
     yield* Effect.annotateCurrentSpan({
       "project.ref": ref,
@@ -367,9 +367,6 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
             message: `failed to read project config: ${cause}`,
           }),
       ),
-      Effect.withSpan("config.push.fetchRemoteConfig", {
-        attributes: { "api.operation": "v2GetProjectConfig" },
-      }),
     );
     if (response.status !== 200) {
       const body = sanitizeErrorBody(yield* response.text.pipe(Effect.orElseSucceed(() => "")));
@@ -695,9 +692,6 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
                 `unexpected enable webhook status ${status}: ${body}`,
             }),
           ),
-          Effect.withSpan("config.push.enableWebhooks", {
-            attributes: { "api.operation": "v1EnableDatabaseWebhook" },
-          }),
         );
         services.push({
           service: "experimental.webhooks",

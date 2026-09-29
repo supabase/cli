@@ -94,7 +94,7 @@ export const startStackEdgeRuntimeContainer = Effect.fn("start.edgeRuntime")(fun
   input: EdgeRuntimeBringUpInput,
 ) {
   yield* Effect.annotateCurrentSpan({
-    "container.image": input.image,
+    "image.name": input.image,
     "function.count": Object.keys(input.configFunctions).length,
   });
   return yield* startEdgeRuntimeContainer({

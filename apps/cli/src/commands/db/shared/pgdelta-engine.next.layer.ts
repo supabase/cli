@@ -228,7 +228,7 @@ export const pgDeltaNextEngineLayer = Layer.effect(
           : undefined;
       yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage, input.debug);
       yield* Effect.annotateCurrentSpan({
-        "diff.changes": result.changes,
+        "diff.empty": !result.changes,
         "diff.hazard_count": result.hazards.kinds.length,
       });
       return normalizeNextDiff(result, debugDirectory);

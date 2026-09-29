@@ -162,6 +162,10 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
 
     const hasExplicitTarget =
       Option.isSome(flags.local) || Option.isSome(flags.linked) || Option.isSome(flags.dbUrl);
+    yield* Effect.annotateCurrentSpan({
+      "declarative.target_mode": hasExplicitTarget ? "explicit" : "smart",
+      "schema.count": flags.schema.length,
+    });
 
     let target: PgDeltaDatabaseEndpoint;
     let overwrite: boolean;

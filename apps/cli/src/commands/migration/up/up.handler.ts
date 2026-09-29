@@ -129,10 +129,6 @@ const runUp = Effect.fnUntraced(function* (
             path,
             migrationPath,
             (message) => new MigrationApplyError({ message }),
-          ).pipe(
-            Effect.withSpan("migration.up.applyMigration", {
-              attributes: { "migration.version": path.basename(migrationPath) },
-            }),
           );
         }
 

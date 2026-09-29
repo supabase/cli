@@ -54,9 +54,6 @@ export const functionsList = Effect.fn("functions.list")(function* (flags: Funct
     const response = yield* api.executeRaw(operationDefinitions.v1ListAllFunctions, { ref }).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(mapListError),
-      Effect.withSpan("functions.list.listFunctions", {
-        attributes: { "api.operation": "v1ListAllFunctions" },
-      }),
     );
     if (response.status !== 200) {
       const body = sanitizeErrorBody(yield* response.text.pipe(Effect.orElseSucceed(() => "")));

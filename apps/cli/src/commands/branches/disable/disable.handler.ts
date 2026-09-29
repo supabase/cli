@@ -39,9 +39,6 @@ export const branchesDisable = Effect.fn("branches.disable")(function* (
     yield* api.v1.disablePreviewBranching({ ref }).pipe(
       Effect.tapError(() => disabling?.fail() ?? Effect.void),
       Effect.catch(mapDisableError),
-      Effect.withSpan("branches.disable.disableBranching", {
-        attributes: { "api.operation": "v1DisablePreviewBranching" },
-      }),
     );
     yield* disabling?.clear() ?? Effect.void;
 

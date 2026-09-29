@@ -45,9 +45,6 @@ export const branchesUnpause = Effect.fn("branches.unpause")(function* (
     yield* api.v1.restoreAProject({ ref: branchRef }).pipe(
       Effect.tapError(() => restoring?.fail() ?? Effect.void),
       Effect.catch(mapUnpauseError),
-      Effect.withSpan("branches.unpause.restoreBranch", {
-        attributes: { "api.operation": "v1RestoreAProject" },
-      }),
     );
     yield* restoring?.clear() ?? Effect.void;
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));

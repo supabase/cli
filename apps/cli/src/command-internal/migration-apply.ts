@@ -437,14 +437,15 @@ const execMigrationBatch = <E>(
     // above) — only execution failures get a suggestion attached; callers rely on this tag.
     yield* Effect.gen(function* () {
       const { statements, transactionMode } = parseMigrationContent(content);
-      yield* Effect.annotateCurrentSpan({
-        "statement.count": statements.length,
-        "migration.transaction_mode": transactionMode,
-      });
       const filename = path.basename(migrationPath);
       const matches = MIGRATE_FILE_PATTERN.exec(filename);
       const version = forceNoVersion ? "" : (matches?.[1] ?? "");
       const name = matches?.[2] ?? "";
+      yield* Effect.annotateCurrentSpan({
+        "statement.count": statements.length,
+        "migration.transaction_mode": transactionMode,
+        ...(version !== "" ? { "migration.version": version } : {}),
+      });
 
       const restoreRole = session.restoreRoleSql;
 

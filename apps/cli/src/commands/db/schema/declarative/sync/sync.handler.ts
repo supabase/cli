@@ -164,6 +164,10 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent;
     yield* warnFormerDeclarativeDefault(fs, path, cliSettings.workdir, toml.pgDelta);
     const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
+    yield* Effect.annotateCurrentSpan({
+      "declarative.bootstrap": !declarativeFilesExist,
+      "schema.count": flags.schema.length,
+    });
 
     // Warns (rather than masking the apply error) and treats the bundle path as empty when the
     // debug directory cannot be created, so an apply failure still surfaces without claiming a
@@ -248,7 +252,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     }
 
     // Step 2: diff migrations state vs declarative; on error, save a debug bundle.
-    const stageNextExport = Effect.fnUntraced(function* () {
+    const stageNextExport = Effect.fn("db.schema.declarative.sync.stageNextExport")(function* () {
       const stagedDir = path.resolve(cliSettings.workdir, stagedDirRel);
       // Reject the active directory itself AND anything nested under it: a
       // staged export inside the declarative tree would be loaded recursively
@@ -494,6 +498,10 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       result = replanned.value;
     }
 
+    yield* Effect.annotateCurrentSpan({
+      "diff.empty": result.diffSQL.trim().length < 2,
+      "diff.drop_statement_count": result.dropWarnings.length,
+    });
     // Step 3: empty diff.
     if (result.diffSQL.trim().length < 2) {
       yield* output.raw("No schema changes found\n", "stderr");
@@ -563,6 +571,10 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
           : yield* output.promptConfirm("Apply this migration to local database?", {
               defaultValue: true,
             });
+    yield* Effect.annotateCurrentSpan({
+      "migration.count": migrationPaths.length,
+      "declarative.apply": shouldApply,
+    });
     if (!shouldApply) return;
 
     // Step 8: apply the migration to the local database (native).
@@ -728,4 +740,9 @@ const applyMigrationToLocal = (
         (message) => new DeclarativeApplyError({ message }),
       );
     }
-  }).pipe(Effect.scoped);
+  }).pipe(
+    Effect.scoped,
+    Effect.withSpan("db.schema.declarative.sync.apply", {
+      attributes: { "migration.count": migrationPaths.length },
+    }),
+  );

@@ -294,7 +294,7 @@ export const makeContainerRuntime = (options: {
       const owner = yield* Scope.Scope;
       const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
       yield* Effect.annotateCurrentSpan({
-        "container.image": image,
+        "image.name": image,
         ...(spec.service === undefined ? {} : { "container.service": spec.service }),
         "container.ports": spec.ports ?? [],
       });

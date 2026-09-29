@@ -119,7 +119,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
       requested,
       configTargetErrors,
       mapBranchResolveError,
-    ).pipe(Effect.withSpan("config.diff.resolveTarget"));
+    );
     resolvedRef = ref;
     yield* Effect.annotateCurrentSpan({
       "project.ref": ref,
@@ -157,9 +157,6 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
             message: `failed to read project config: ${cause}`,
           }),
       ),
-      Effect.withSpan("config.diff.fetchRemoteConfig", {
-        attributes: { "api.operation": "v2GetProjectConfig" },
-      }),
     );
     if (response.status !== 200) {
       const body = sanitizeErrorBody(yield* response.text.pipe(Effect.orElseSucceed(() => "")));

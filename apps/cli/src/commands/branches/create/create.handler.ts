@@ -120,9 +120,6 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
               }),
           ),
         ),
-        Effect.withSpan("branches.create.createBranch", {
-          attributes: { "api.operation": "v1CreateABranch" },
-        }),
       );
     yield* creating?.clear() ?? Effect.void;
 

@@ -728,6 +728,7 @@ export function createContainer(
   }).pipe(
     Effect.withSpan("ContainerLifecycle.createContainer", {
       attributes: {
+        "container.name": spec.containerName,
         "image.name": spec.image,
         "container.pre_start_archive_count": spec.preStartArchives?.length ?? 0,
       },

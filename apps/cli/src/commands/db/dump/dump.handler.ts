@@ -350,7 +350,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     yield* Effect.annotateCurrentSpan({
       "db.dump.mode": mode.verb,
       "db.is_local": isLocal,
-      dry_run: flags.dryRun,
+      "db.dump.dry_run": flags.dryRun,
     });
 
     // 6. Diagnostic to stderr (printed for both real and dry-run paths).

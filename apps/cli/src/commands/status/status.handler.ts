@@ -102,9 +102,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     // Runs before any daemon/stack work so the printed line stays visible even if status later
     // fails to reach Docker, and inside the telemetry-ensured scope so an interrupted lookup
     // still flushes telemetry state.
-    const linkedState = yield* resolveLinkedState().pipe(
-      Effect.withSpan("status.resolveLinkedState"),
-    );
+    const linkedState = yield* resolveLinkedState();
     if (output.format === "text" && (goFmt === undefined || goFmt === "pretty")) {
       yield* output.raw(formatLinkedStateBlock(linkedState));
     }
@@ -137,7 +135,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     const context = yield* loadLocalProjectContext(
       cliSettings.workdir,
       (message) => new StatusConfigLoadError({ message }),
-    ).pipe(Effect.withSpan("status.loadConfig"));
+    );
 
     // 3. Config validation runs entirely before the health check/container listing below, so a
     // config error (`InvalidJwtSecretError`, a malformed `SUPABASE_*_PORT`/`_ENABLED` override, a

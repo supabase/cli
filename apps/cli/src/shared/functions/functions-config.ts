@@ -47,7 +47,7 @@ export interface FunctionsGoConfigCompat {
  * `goConfigCompat` run its dotenv/config-validate pipeline before any
  * Docker/API work; callers that don't fall back to `loadCliConfig`.
  */
-export const loadFunctionsCliConfig = Effect.fn("functions.config.load")(function* (input: {
+export const loadFunctionsCliConfig = Effect.fn("FunctionsConfig.load")(function* (input: {
   readonly projectRoot: string;
   readonly projectRef: string | undefined;
   readonly goConfigCompat: FunctionsGoConfigCompat | undefined;

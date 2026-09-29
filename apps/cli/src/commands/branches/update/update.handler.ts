@@ -83,9 +83,6 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
               }),
           ),
         ),
-        Effect.withSpan("branches.update.updateBranch", {
-          attributes: { "api.operation": "v1UpdateABranchConfig" },
-        }),
       );
     yield* patching?.clear() ?? Effect.void;
 

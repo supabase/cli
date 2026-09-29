@@ -185,9 +185,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       }).pipe(Effect.withSpan("bootstrap.initProject"));
     }
 
-    yield* ensureLogin({ openBrowser: tty.stdinIsTty }).pipe(
-      Effect.withSpan("bootstrap.ensureLogin"),
-    );
+    yield* ensureLogin({ openBrowser: tty.stdinIsTty });
 
     const seededPassword = Option.isSome(flags.password)
       ? flags.password.value
@@ -205,7 +203,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       postgresEngine: undefined,
       templateUrl: starter.url.length > 0 ? starter.url : undefined,
       emitStructuredResult: false,
-    }).pipe(Effect.withSpan("bootstrap.createProject"));
+    });
     const projectRef = created.ref;
     createdRef = projectRef.length > 0 ? projectRef : undefined;
     yield* Effect.annotateCurrentSpan("project.ref", projectRef);
@@ -232,17 +230,15 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
 
-    yield* Effect.gen(function* () {
-      yield* linkServicesCore({
-        ref: projectRef,
-        serviceKey: anon,
-        skipPooler: false,
-        workdir,
-      });
-      const paths = tempPaths(path, workdir);
-      yield* fs.makeDirectory(path.dirname(paths.projectRef), { recursive: true });
-      yield* fs.writeFileString(paths.projectRef, projectRef);
-    }).pipe(Effect.withSpan("bootstrap.linkProject"));
+    yield* linkServicesCore({
+      ref: projectRef,
+      serviceKey: anon,
+      skipPooler: false,
+      workdir,
+    });
+    const paths = tempPaths(path, workdir);
+    yield* fs.makeDirectory(path.dirname(paths.projectRef), { recursive: true });
+    yield* fs.writeFileString(paths.projectRef, projectRef);
 
     const healthNotify = bootstrapRetryNotify();
     yield* Effect.gen(function* () {
@@ -313,7 +309,6 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       Effect.catchTag("DbConfigIpv6Error", (error) =>
         output.raw(`${error.message}\n`, "stderr").pipe(Effect.as(dbConfig)),
       ),
-      Effect.withSpan("bootstrap.resolveConnection"),
     );
     const conn = { ...resolvedConn, suggestionContext };
     // Passes workdir/projectRef/toml through directly rather than calling the full `dbPush`

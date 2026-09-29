@@ -402,7 +402,7 @@ const readiness = Effect.fn("ProcessRecipe.readiness")(function* (
     Effect.asVoid,
     Effect.ensuring(
       Ref.get(attempts).pipe(
-        Effect.flatMap((count) => Effect.annotateCurrentSpan({ "retry.attempts": count })),
+        Effect.flatMap((count) => Effect.annotateCurrentSpan({ "retry.attempt_count": count })),
       ),
     ),
   );

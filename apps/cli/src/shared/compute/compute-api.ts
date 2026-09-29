@@ -409,7 +409,7 @@ export const awaitComputeBuild = Effect.fn("Compute.awaitBuild")(function* (
       until: (result) => result !== undefined,
     }),
   );
-  yield* Effect.annotateCurrentSpan({ "poll.attempts": attempts });
+  yield* Effect.annotateCurrentSpan({ "poll.attempt_count": attempts });
 
   if (settled === undefined) {
     return yield* new ComputeBuildTimeoutError({

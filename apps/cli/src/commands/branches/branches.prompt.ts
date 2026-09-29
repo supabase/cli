@@ -61,12 +61,9 @@ export const promptBranchId = Effect.fnUntraced(function* (
   }
 
   const api = yield* CommandPlatformApi;
-  const branches = yield* api.v1.listAllBranches({ ref: projectRef }).pipe(
-    Effect.catch(mapListError),
-    Effect.withSpan("Branches.listForPrompt", {
-      attributes: { "api.operation": "v1ListAllBranches" },
-    }),
-  );
+  const branches = yield* api.v1
+    .listAllBranches({ ref: projectRef })
+    .pipe(Effect.catch(mapListError));
   if (branches.length === 0) {
     return yield* new BranchesBranchingDisabledError({
       message: "branching is disabled",

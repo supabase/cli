@@ -169,7 +169,6 @@ const resolveLinkBranchRef = Effect.fn("link.resolveBranch")(function* (value: s
   );
   yield* task?.clear() ?? Effect.void;
   yield* Effect.annotateCurrentSpan({
-    "api.operation": "v1ListAllBranches",
     "project.parent_ref": parentRef,
     "branch.count": branches.length,
   });
@@ -260,11 +259,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
     // 1. Check remote project status (404 tolerated for branch projects).
     const project = yield* api.v1
       .getProject({ ref })
-      .pipe(
-        Effect.asSome,
-        Effect.catch(classifyProjectError),
-        Effect.withSpan("link.fetchProject", { attributes: { "api.operation": "v1GetProject" } }),
-      );
+      .pipe(Effect.asSome, Effect.catch(classifyProjectError));
     yield* Effect.annotateCurrentSpan(
       "project.status",
       Option.isSome(project) ? project.value.status : "not_found",
@@ -294,12 +289,9 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
     }
 
     // 2. Resolve service keys (auth check).
-    const keys = yield* api.v1.getProjectApiKeys({ ref, reveal: true }).pipe(
-      Effect.catch(mapApiKeysError),
-      Effect.withSpan("link.fetchApiKeys", {
-        attributes: { "api.operation": "v1GetProjectApiKeys" },
-      }),
-    );
+    const keys = yield* api.v1
+      .getProjectApiKeys({ ref, reveal: true })
+      .pipe(Effect.catch(mapApiKeysError));
     const { anon, serviceRole } = extractServiceKeys(keys);
     if (anon.length === 0 && serviceRole.length === 0) {
       return yield* new LinkMissingKeyError({ message: "Anon key not found." });
@@ -311,9 +303,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       serviceKey: serviceRole,
       skipPooler: flags.skipPooler,
       workdir: cliSettings.workdir,
-    }).pipe(
-      Effect.withSpan("link.linkServices", { attributes: { skip_pooler: flags.skipPooler } }),
-    );
+    });
 
     // 4. Save project ref (mandatory — a write failure fails the command).
     yield* writeTempFile(paths.projectRef, ref);
@@ -417,9 +407,6 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
           Effect.orElseSucceed(() => false),
           Effect.ensuring(correlating?.clear() ?? Effect.void),
           Effect.tap((result) => Effect.annotateCurrentSpan("link.parent_verified", result)),
-          Effect.withSpan("link.verifyBranchParent", {
-            attributes: { "api.operation": "v1ListAllBranches" },
-          }),
         );
         if (!verified) {
           yield* fs.remove(paths.linkedProjectCache, { force: true }).pipe(Effect.ignore);

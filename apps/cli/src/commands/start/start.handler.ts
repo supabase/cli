@@ -449,7 +449,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const context = yield* loadLocalProjectContext(
       cliSettings.workdir,
       (message) => new StartConfigLoadError({ message }),
-    ).pipe(Effect.withSpan("start.loadConfig"));
+    );
     const values = yield* Effect.try({
       try: () =>
         resolveLocalConfigValues(
@@ -782,13 +782,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       : undefined;
     // Pre-pull only touches non-excluded services; the one-shot setup-job images are resolved
     // lazily, only when the fresh-DB setup job actually runs.
-    const imagesToCache = [
-      postgresImage,
-      ...imagePlan.map((entry) => entry.image),
-      ...(edgeRuntimeDefaultImage !== undefined ? [edgeRuntimeDefaultImage] : []),
-    ];
-    const resolvedImages = yield* ensureImagesCached(spawner, imagesToCache, projectEnvValues).pipe(
-      Effect.withSpan("start.pullImages", { attributes: { "image.count": imagesToCache.length } }),
+    const resolvedImages = yield* ensureImagesCached(
+      spawner,
+      [
+        postgresImage,
+        ...imagePlan.map((entry) => entry.image),
+        ...(edgeRuntimeDefaultImage !== undefined ? [edgeRuntimeDefaultImage] : []),
+      ],
+      projectEnvValues,
     );
     const resolveImage = (image: string) => resolvedImages.get(image) ?? image;
 
@@ -817,7 +818,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       Effect.tap((functions) =>
         Effect.annotateCurrentSpan({ "function.count": Object.keys(functions).length }),
       ),
-      Effect.withSpan("start.inferFunctions"),
     );
     const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
     // Resolve once during preflight so a missing function source cannot fail only after stopped
@@ -1493,11 +1493,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         onFreshVolumeResolved: (resolved) => {
           isFreshVolume = resolved;
         },
-      }).pipe(
-        Effect.tap(() => Effect.annotateCurrentSpan({ "db.fresh_volume": isFreshVolume })),
-        Effect.withSpan("start.startDatabase"),
-        Effect.result,
-      );
+      }).pipe(Effect.result);
 
       if (Result.isFailure(dbBootstrapResult)) {
         const error = dbBootstrapResult.failure;
@@ -1630,11 +1626,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             ),
           ),
         );
-        yield* createContainer(spawner, spec, startOpts).pipe(
-          Effect.withSpan("start.startService", {
-            attributes: { "service.name": entry.service, "container.image": spec.image },
-          }),
-        );
+        yield* createContainer(spawner, spec, startOpts);
         if (excludeFromHealthWatch !== true) {
           started.set(spec.containerName, spec.image);
         }
@@ -1666,9 +1658,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       // including a SIGINT interrupt. `tapError` is built on `Cause.findError`, which only
       // matches `Fail` reasons — a pure fiber interrupt never reaches it.
       Effect.onError(() =>
-        rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug).pipe(
-          Effect.withSpan("start.rollback", { attributes: { "db.fresh_volume": isFreshVolume } }),
-        ),
+        rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
       ),
     );
 
@@ -1785,10 +1775,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             edgeRuntime: edgeRuntimeGateway,
             images: started,
           }),
-        ).pipe(
-          Effect.withSpan("start.waitHealthy", { attributes: { "service.count": started.size } }),
-          Effect.result,
-        );
+        ).pipe(Effect.result);
         if (Result.isFailure(healthResult)) {
           const error = healthResult.failure;
           if (flags.ignoreHealthCheck && isUnhealthyStartError(error)) {
@@ -1805,7 +1792,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                 waitForHealthyServices(spawner, [storageContainerId], {
                   images: started,
                 }),
-              ).pipe(Effect.withSpan("start.waitStorageHealthy"), Effect.result);
+              ).pipe(Effect.result);
               if (Result.isSuccess(storageHealthResult)) {
                 const seedResult = yield* seedBucketsRun({
                   projectRef: "",
@@ -1864,9 +1851,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         }
       }).pipe(
         Effect.onError(() =>
-          rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug).pipe(
-            Effect.withSpan("start.rollback", { attributes: { "db.fresh_volume": isFreshVolume } }),
-          ),
+          rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
         ),
       );
     }

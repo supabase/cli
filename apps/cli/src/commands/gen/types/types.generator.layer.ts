@@ -78,7 +78,7 @@ export const genTypesGeneratorLayer = Layer.effect(
         yield* Effect.annotateCurrentSpan({
           "typegen.lang": input.lang,
           "typegen.schema_count": input.includedSchemas.length,
-          "db.local": input.isLocal,
+          "db.is_local": input.isLocal,
         });
         const language = findLanguage(input.lang);
         if (language === undefined) {

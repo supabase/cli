@@ -52,7 +52,7 @@ const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilte
   const context = yield* loadLocalProjectContext(
     cliSettings.workdir,
     (message) => new StopConfigLoadError({ message }),
-  ).pipe(Effect.withSpan("stop.loadConfig"));
+  );
 
   // Runs full config validation before touching Docker, unlike the `--all`/`--project-id`
   // branches above which bypass config loading. `resolveLocalConfigValues` is reused purely for

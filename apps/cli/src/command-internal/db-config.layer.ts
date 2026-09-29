@@ -102,9 +102,10 @@ const tcpReachable = (host: string, port: number): Effect.Effect<boolean> =>
 // `CommandPlatformApi` stack), so the access token is resolved only here — when a temp role is
 // actually minted. `--linked --password` returns before reaching this, so it stays auth-free;
 // `--local`/`--db-url` never build this layer at all.
-const initLoginRole = Effect.fn("DbConfig.initLoginRole", {
-  attributes: { "api.operation": "v1CreateLoginRole" },
-})(function* (ref: string, conn: PgConnInput) {
+const initLoginRole = Effect.fn("DbConfig.initLoginRole")(function* (
+  ref: string,
+  conn: PgConnInput,
+) {
   const output = yield* Output;
   const api = yield* (yield* CommandPlatformApiFactory).make;
   // Written to stderr unconditionally (not gated on --debug).
@@ -138,7 +139,7 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
     // The temp-role probe always targets the remote Supavisor pooler, so it connects with TLS
     // and honors `--dns-resolver`.
     Effect.scoped(dbConn.connect(conn, { isLocal: false, dnsResolver }).pipe(Effect.asVoid)).pipe(
-      Effect.ensuring(Effect.annotateCurrentSpan("retry.attempts", n)),
+      Effect.ensuring(Effect.annotateCurrentSpan("retry.attempt_count", n)),
       Effect.catch((cause) => {
         // 8 retries after the initial attempt allows 9 total attempts. `n` is 1-based, so give
         // up only after attempt 9 (`n > MAX_RETRIES`), not at attempt 8.

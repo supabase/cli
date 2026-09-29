@@ -550,5 +550,9 @@ export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
       return versions;
     }).pipe(Effect.exit);
     return Exit.isSuccess(exit) ? exit.value : ({} as Partial<Record<RemoteServiceName, string>>);
-  }).pipe(Effect.withSpan("Services.fetchLinkedVersions"));
+  }).pipe(
+    Effect.withSpan("Services.fetchLinkedVersions", {
+      attributes: { "project.ref": input.projectRef },
+    }),
+  );
 }

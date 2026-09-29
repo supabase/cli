@@ -71,7 +71,7 @@ const formatImplicitExtensionLoadFailure = (
  * The pg-delta engine owns both sides of the plan, planning against its scoped
  * migrations/declarative shadows.
  */
-export const diffDeclarativeToMigrations = Effect.fnUntraced(function* (
+export const diffDeclarativeToMigrations = Effect.fn("DeclarativeSchema.plan")(function* (
   run: DeclarativeRunContext,
   toml: DbTomlValues,
 ) {
@@ -91,6 +91,10 @@ export const diffDeclarativeToMigrations = Effect.fnUntraced(function* (
   const manifest = yield* ReadPgDeltaExportManifest(fs, path, run.declarativeDir).pipe(
     Effect.mapError((error) => declarativeError(error.message)),
   );
+  yield* Effect.annotateCurrentSpan({
+    "file.count": files.length,
+    "declarative.manifest_present": manifest !== undefined,
+  });
   const result = yield* engine
     .planDeclarativeSchema({
       context: run.pgDelta,
@@ -120,15 +124,20 @@ export const diffDeclarativeToMigrations = Effect.fnUntraced(function* (
         });
       }),
     );
+  const dropWarnings =
+    result.hazards !== undefined
+      ? result.hazards.dataLoss.map((action) => action.sql)
+      : findDropStatements(result.sql);
+  yield* Effect.annotateCurrentSpan({
+    "diff.empty": result.sql.trim().length === 0,
+    "diff.drop_statement_count": dropWarnings.length,
+  });
   return {
     diffSQL: result.sql,
     files: result.files,
     sourceRef: result.sourceRef,
     targetRef: result.targetRef,
-    dropWarnings:
-      result.hazards !== undefined
-        ? result.hazards.dataLoss.map((action) => action.sql)
-        : findDropStatements(result.sql),
+    dropWarnings,
     manifestPresent: manifest !== undefined,
     removals: result.removals ?? { extensions: [], extensionIntents: [] },
   } satisfies DeclarativeSyncResult;

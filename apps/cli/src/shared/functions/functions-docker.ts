@@ -250,7 +250,7 @@ export function isUserDefinedDockerNetwork(networkMode: string) {
   );
 }
 
-export const ensureDockerNetwork = Effect.fn("functions.docker.ensureNetwork")(function* (
+export const ensureDockerNetwork = Effect.fn("FunctionsDocker.ensureNetwork")(function* (
   networkMode: string,
   projectId: string,
 ) {
@@ -289,7 +289,7 @@ export const ensureDockerNetwork = Effect.fn("functions.docker.ensureNetwork")(f
   }
 });
 
-export const ensureDockerNamedVolume = Effect.fn("functions.docker.ensureVolume")(function* (
+export const ensureDockerNamedVolume = Effect.fn("FunctionsDocker.ensureVolume")(function* (
   volumeName: string,
   projectId: string,
   projectEnvValues?: Readonly<Record<string, string>>,
@@ -320,7 +320,7 @@ export const ensureDockerNamedVolume = Effect.fn("functions.docker.ensureVolume"
   }
 });
 
-export const isDockerRunning = Effect.fn("functions.docker.isRunning")(function* () {
+export const isDockerRunning = Effect.fn("FunctionsDocker.isRunning")(function* () {
   const result = yield* runChildProcess("docker", ["info"], {
     stdout: "ignore",
     stderr: "ignore",
@@ -360,7 +360,7 @@ export function resolveEdgeRuntimeVersion(
  * answered. Shared by every `functions` Docker path (`deploy`, `download`,
  * `serve`).
  */
-export const resolveFunctionsDockerImage = Effect.fn("functions.docker.resolveImage")(function* (
+export const resolveFunctionsDockerImage = Effect.fn("FunctionsDocker.resolveImage")(function* (
   image: string,
   projectEnvValues?: Readonly<Record<string, string>>,
 ) {

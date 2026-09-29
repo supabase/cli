@@ -93,12 +93,9 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
 
     let branchIdOrRef = branchInput;
     if (!BRANCH_UUID_PATTERN.test(branchInput) && !BRANCH_PROJECT_REF_PATTERN.test(branchInput)) {
-      const lookup = yield* api.v1.getABranch({ ref, name: branchInput }).pipe(
-        Effect.catch(mapFindError),
-        Effect.withSpan("branches.get.findBranch", {
-          attributes: { "api.operation": "v1GetABranch" },
-        }),
-      );
+      const lookup = yield* api.v1
+        .getABranch({ ref, name: branchInput })
+        .pipe(Effect.catch(mapFindError));
       branchIdOrRef = lookup.project_ref;
     }
 
@@ -109,9 +106,6 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
       .pipe(
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch(mapGetError),
-        Effect.withSpan("branches.get.fetchBranchConfig", {
-          attributes: { "api.operation": "v1GetABranchConfig" },
-        }),
       );
     yield* fetching?.clear() ?? Effect.void;
     const detail: BranchDetail = {
@@ -130,18 +124,12 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
       return;
     }
 
-    const keys: ApiKeys = yield* api.v1.getProjectApiKeys({ ref: detail.ref }).pipe(
-      Effect.catch(mapApiKeysError),
-      Effect.withSpan("branches.get.fetchApiKeys", {
-        attributes: { "api.operation": "v1GetProjectApiKeys" },
-      }),
-    );
-    const poolers: Pooler = yield* api.v1.getPoolerConfig({ ref: detail.ref }).pipe(
-      Effect.catch(mapPoolerError),
-      Effect.withSpan("branches.get.fetchPoolerConfig", {
-        attributes: { "api.operation": "v1GetPoolerConfig" },
-      }),
-    );
+    const keys: ApiKeys = yield* api.v1
+      .getProjectApiKeys({ ref: detail.ref })
+      .pipe(Effect.catch(mapApiKeysError));
+    const poolers: Pooler = yield* api.v1
+      .getPoolerConfig({ ref: detail.ref })
+      .pipe(Effect.catch(mapPoolerError));
     const primary = poolers.find((p) => p.database_type === "PRIMARY");
     if (primary === undefined) {
       return yield* new BranchesPrimaryNotFoundError({

@@ -125,14 +125,16 @@ export const browserLogin = Effect.fn("Login.browser")(function* (opts: BrowserL
       return yield* loginApi
         .fetchLoginSession(apiHost, sessionId, code.trim())
         .pipe(
-          Effect.tap(() => Effect.annotateCurrentSpan("login.verify_attempts", failuresSoFar + 1)),
+          Effect.tap(() =>
+            Effect.annotateCurrentSpan("login.verify_attempt_count", failuresSoFar + 1),
+          ),
         );
     }).pipe(
       Effect.catchTag("LoginVerificationError", (err: LoginVerificationError) =>
         Effect.gen(function* () {
           const failures = failuresSoFar + 1;
           if (failures > MAX_LOGIN_RETRIES) {
-            yield* Effect.annotateCurrentSpan("login.verify_attempts", failures);
+            yield* Effect.annotateCurrentSpan("login.verify_attempt_count", failures);
             return yield* Effect.fail(
               new LoginFailedError({
                 message: err.message,

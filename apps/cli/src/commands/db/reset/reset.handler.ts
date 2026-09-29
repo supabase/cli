@@ -283,7 +283,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
         );
         if (resolvedSeed.enabled) {
           const seeds = yield* getPendingSeeds(session, fs, path, resolvedSeed.sqlPaths, workdir);
-          yield* Effect.annotateCurrentSpan({ "seed.file.count": seeds.length });
+          yield* Effect.annotateCurrentSpan({ "seed.count": seeds.length });
           yield* seedData(session, fs, workdir, path, seeds, applyError);
         }
       }).pipe(Effect.withSpan("db.reset.applyMigrations")),

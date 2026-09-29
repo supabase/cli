@@ -219,7 +219,6 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   const config = yield* loadStackConfig(settings.workdir);
   yield* Effect.annotateCurrentSpan("functions.instance", "temporary");
   const refreshedJwks = yield* config.remoteJwks.pipe(
-    Effect.withSpan("functions.serve.refreshJwks"),
     Effect.catch((cause) =>
       output
         .raw(

@@ -46,9 +46,6 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
     yield* api.v1.deleteABranch({ branch_id_or_ref: branchRef }).pipe(
       Effect.tapError(() => deleting?.fail() ?? Effect.void),
       Effect.catch(mapDeleteError),
-      Effect.withSpan("branches.delete.deleteBranch", {
-        attributes: { "api.operation": "v1DeleteABranch" },
-      }),
     );
     yield* deleting?.clear() ?? Effect.void;
 

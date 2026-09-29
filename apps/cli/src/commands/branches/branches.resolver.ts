@@ -1,5 +1,3 @@
-import { Effect } from "effect";
-
 import { mapHttpError } from "../../command-internal/http-errors.ts";
 import { resolveBranchProjectRef as resolveBranchProjectRefShared } from "../../command-internal/branch-ref.resolver.ts";
 import {
@@ -28,7 +26,5 @@ const mapGetError = mapHttpError({
  * `command-internal/branch-ref.resolver.ts` for resolution semantics.
  */
 export function resolveBranchProjectRef(input: string, projectRef: string) {
-  return resolveBranchProjectRefShared(input, projectRef, { mapGetError, mapFindError }).pipe(
-    Effect.withSpan("Branches.resolveProjectRef"),
-  );
+  return resolveBranchProjectRefShared(input, projectRef, { mapGetError, mapFindError });
 }

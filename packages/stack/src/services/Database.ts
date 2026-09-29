@@ -278,7 +278,7 @@ const health = Effect.fn("Database.health")(function* (
     Effect.retry(Schedule.spaced("250 millis")),
     Effect.ensuring(
       Ref.get(retryAttempts).pipe(
-        Effect.flatMap((count) => Effect.annotateCurrentSpan({ "retry.attempts": count })),
+        Effect.flatMap((count) => Effect.annotateCurrentSpan({ "retry.attempt_count": count })),
       ),
     ),
   );

@@ -273,7 +273,6 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       }),
       Effect.flatMap(requireProjectConfigWhenExplicit),
       Effect.tap((loaded) => Effect.annotateCurrentSpan("config.found", loaded !== null)),
-      Effect.withSpan("gen.types.loadConfig"),
     );
 
   // An explicit --workdir that holds no project must not silently resolve to the embedded
@@ -397,9 +396,6 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       if (lang !== "typescript") {
         const projectResult = yield* api.v1.getProject({ ref: projectRef }).pipe(
           Effect.catch(mapProjectDatabaseHostError),
-          Effect.withSpan("gen.types.getProject", {
-            attributes: { "api.operation": "v1GetProject" },
-          }),
           Effect.as("project" as const),
           Effect.catch((cause) =>
             isProjectNotFound(cause)
@@ -441,12 +437,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           ref: projectRef,
           included_schemas: includedSchemas.join(","),
         })
-        .pipe(
-          Effect.catch(mapProjectTypesError),
-          Effect.withSpan("gen.types.generateTypescriptTypes", {
-            attributes: { "api.operation": "v1GenerateTypescriptTypes" },
-          }),
-        );
+        .pipe(Effect.catch(mapProjectTypesError));
 
       yield* output.raw(response.types);
     }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
@@ -455,12 +446,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     Effect.gen(function* () {
       const api = yield* platformApi.make;
       yield* Effect.annotateCurrentSpan("typegen.preview_branch", true);
-      const branch = yield* api.v1.getABranchConfig({ branch_id_or_ref: branchRef }).pipe(
-        Effect.catch(mapBranchDatabaseConfigError),
-        Effect.withSpan("gen.types.getBranchConfig", {
-          attributes: { "api.operation": "v1GetABranchConfig" },
-        }),
-      );
+      const branch = yield* api.v1
+        .getABranchConfig({ branch_id_or_ref: branchRef })
+        .pipe(Effect.catch(mapBranchDatabaseConfigError));
 
       if (branch.db_user === undefined || branch.db_pass === undefined) {
         return yield* new GenTypesBranchCredentialsUnavailableError({
@@ -484,9 +472,6 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             : Option.none<PgConnInput>();
         }),
         Effect.orElseSucceed(() => Option.none<PgConnInput>()),
-        Effect.withSpan("gen.types.getPoolerConfig", {
-          attributes: { "api.operation": "v1GetPoolerConfig" },
-        }),
       );
 
       yield* runGenerate({

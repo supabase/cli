@@ -98,7 +98,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
     yield* Effect.annotateCurrentSpan({
       "db.conn_type": connType,
       "db.is_local": cfg.isLocal,
-      dry_run: flags.dryRun,
+      "db.push.dry_run": flags.dryRun,
       "db.push.include_all": flags.includeAll,
       "db.push.include_roles": flags.includeRoles,
       "db.push.include_seed": flags.includeSeed,
