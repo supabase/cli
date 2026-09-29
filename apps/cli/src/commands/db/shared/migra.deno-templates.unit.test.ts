@@ -10,6 +10,7 @@ import { listSchemasSql } from "./migra.ts";
 
 type Side = "source" | "target";
 type Verify = (connection: FakeConnection, done: (err?: Error) => void) => void;
+type SetupFailure = "denyRole" | "dropConnection";
 
 class SessionSetupError extends Data.TaggedError("SessionSetupError")<{
   readonly message: string;
@@ -19,10 +20,11 @@ class FakeConnection extends EventEmitter {
   readonly session = { role: "cli_login_postgres", searchPath: '"$user", public' };
   readonly events: string[] = [];
   readonly setupErrorListeners: number[] = [];
+  readonly dropErrorListeners: number[] = [];
 
   constructor(
     readonly id: number,
-    private readonly denyRole: boolean,
+    private readonly failure: SetupFailure | undefined,
   ) {
     super();
   }
@@ -30,10 +32,20 @@ class FakeConnection extends EventEmitter {
   query(stmt: string): Promise<void> {
     this.events.push("query");
     this.setupErrorListeners.push(this.listenerCount("error"));
+    if (this.failure === "dropConnection") {
+      return Promise.resolve().then(() => {
+        const err = new Error("Connection terminated unexpectedly");
+        this.dropErrorListeners.push(this.listenerCount("error"));
+        this.emit("error", err);
+        throw err;
+      });
+    }
     return Promise.resolve().then(() => {
       for (const part of stmt.split(";").map((s) => s.trim())) {
         if (part === "set role postgres") {
-          if (this.denyRole) throw new Error('permission denied to set role "postgres"');
+          if (this.failure === "denyRole") {
+            throw new Error('permission denied to set role "postgres"');
+          }
           this.session.role = "postgres";
         } else if (part === "set search_path = ''") {
           this.session.searchPath = "";
@@ -46,7 +58,7 @@ class FakeConnection extends EventEmitter {
 
 // Runs the embedded script against in-memory pools whose new connections start with server
 // defaults; `replaceConnections` hands out a fresh connection on every checkout.
-const runMigraScript = (opts: { replaceConnections?: boolean; denyRole?: boolean } = {}) =>
+const runMigraScript = (opts: { replaceConnections?: boolean; failure?: SetupFailure } = {}) =>
   Effect.suspend(() => {
     const inspections: Array<
       { side: Side; id: number; errorListeners: number } & FakeConnection["session"]
@@ -70,7 +82,7 @@ const runMigraScript = (opts: { replaceConnections?: boolean; denyRole?: boolean
       const openConnection = (): Effect.Effect<FakeConnection, SessionSetupError> => {
         const fresh = new FakeConnection(
           connections.length + 1,
-          opts.denyRole === true && side === "target",
+          side === "target" ? opts.failure : undefined,
         );
         connections.push(fresh);
         const setup =
@@ -190,7 +202,7 @@ describe("embedded migra templates", () => {
 
   it.effect("report a failed session setup through the error sentinel", () =>
     Effect.gen(function* () {
-      const run = yield* runMigraScript({ denyRole: true });
+      const run = yield* runMigraScript({ failure: "denyRole" });
 
       expect(run.stdout).toEqual([]);
       expect(run.stderr).toEqual([
@@ -198,6 +210,29 @@ describe("embedded migra templates", () => {
         EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL,
       ]);
       expect(run.ended.toSorted()).toEqual(["source", "target"]);
+    }),
+  );
+
+  it.effect("report a connection dropped during session setup through the error sentinel", () =>
+    Effect.gen(function* () {
+      const run = yield* runMigraScript({ failure: "dropConnection" });
+
+      expect(run.stdout).toEqual([]);
+      expect(run.stderr).toEqual([
+        "set role postgres; set search_path = '': Connection terminated unexpectedly",
+        EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL,
+      ]);
+      expect(run.ended.toSorted()).toEqual(["source", "target"]);
+      const dropped = run.connections.filter(
+        (connection) => connection.dropErrorListeners.length > 0,
+      );
+      expect(dropped).toHaveLength(1);
+      expect(dropped[0]).toMatchObject({
+        events: ["query", "failed"],
+        setupErrorListeners: [1],
+        dropErrorListeners: [1],
+      });
+      expect(dropped[0]?.listenerCount("error")).toBe(0);
     }),
   );
 });
