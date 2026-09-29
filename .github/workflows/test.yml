@@ -138,7 +138,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [blacksmith-8vcpu-ubuntu-2404, macos-latest, windows-latest]
+        # Linux coverage for these files comes from the integration job, which
+        # runs the whole stack integration project.
+        os: [macos-latest, windows-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

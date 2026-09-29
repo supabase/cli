@@ -141,8 +141,8 @@ flowchart TD
     build["build job<br/>sync-versions then build.ts then nfpm<br/>upload artifact"]
     smoke["smoke-test matrix<br/>ubuntu / macos-latest / macos-15-intel / windows-latest"]
     publish["publish job<br/>bun publish × 8 platform pkgs<br/>then bun publish umbrella"]
-    ghRelease["draft GitHub Release<br/>tar/zip/deb/rpm/apk/checksums"]
-    finalize["gh release edit --draft=false"]
+    ghRelease["empty draft GitHub Release<br/>gh release upload --clobber per asset<br/>tar/zip/deb/rpm/apk/checksums"]
+    finalize["verify assets then<br/>gh release edit --draft=false"]
     hbUpdate["update-homebrew.ts<br/>Formula push"]
     scoopUpdate["update-scoop.ts<br/>manifest push"]
 
@@ -197,7 +197,7 @@ Production bucket: `supabase/scoop-bucket`.
 
 #### GitHub Releases
 
-Draft + finalize by the shared workflow:
+Draft, upload, verify, and finalize by the shared workflow:
 
 ```yaml
 # .github/workflows/release-shared.yml (publish job, excerpt)
@@ -206,13 +206,12 @@ Draft + finalize by the shared workflow:
     tag_name: v${{ inputs.version }}
     draft: true
     prerelease: ${{ inputs.prerelease }}
-    files: |
-      dist/supabase_…_darwin_arm64.tar.gz
-      dist/supabase_…_linux_amd64.deb
-      …
-      dist/checksums.txt
-- run: gh release edit v${{ inputs.version }} --draft=false
+- run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts upload --version "${VERSION}"
+- run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts verify --version "${VERSION}"
+- run: gh release edit v${VERSION} --draft=false
 ```
+
+Assets go through [`upload-release-assets.ts`](../../apps/cli/scripts/upload-release-assets.ts), which calls `gh release upload` one asset at a time with a retry and then verifies the asset set, instead of the action's `files:` input: `uploads.github.com` fails single uploads often enough that one per release is routine, and the action uploads everything in parallel with no retry. Details in [release-process.md](../../apps/cli/docs/release-process.md).
 
 Archive layout (per-platform):
 

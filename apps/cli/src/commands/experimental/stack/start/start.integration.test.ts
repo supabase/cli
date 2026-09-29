@@ -519,6 +519,7 @@ describe("experimental stack start", () => {
         }),
       );
       expect(fixture.members.map(({ service }) => service)).toEqual(["database"]);
+      expect(yield* fs.exists(`${root}/supabase/snippets`)).toBe(false);
       expect(fixture.composed).toBe(1);
       const repeatedOutput = mockOutput();
       yield* stackStart(flags(excluded)).pipe(
@@ -536,6 +537,7 @@ describe("experimental stack start", () => {
       yield* fixture.stack.composition.stop;
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.members.some(({ service }) => service === "rest")).toBe(true);
+      expect(yield* fs.exists(`${root}/supabase/snippets`)).toBe(true);
       expect(fixture.composed).toBe(2);
       yield* fixture.stack.composition.stop;
       yield* stackStart(flags(["studio"])).pipe(Effect.provide(layers(root, fixture)));
@@ -1105,6 +1107,11 @@ describe("experimental stack start", () => {
         Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
       );
       expect(error.message).toContain("Cannot connect to the Docker daemon");
+      expect(error).toBeInstanceOf(StackCommandStartError);
+      if (error instanceof StackCommandStartError) {
+        expect(error.reason).toBe("runtime");
+        expect(error.suggestion).toContain("Docker CLI or daemon isn't reachable");
+      }
       expect(output.stderrText).not.toContain("Failed to stop");
 
       const stacks = yield* StackApi.pipe(

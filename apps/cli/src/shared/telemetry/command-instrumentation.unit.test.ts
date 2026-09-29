@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Data, Effect, Exit, Layer, Option, Stdio } from "effect";
+import { Cause, Data, Effect, Exit, Layer, Option, Schema, Stdio } from "effect";
 import { commandRuntimeLayer } from "../runtime/command-runtime.layer.ts";
 import { CurrentAnalyticsContext } from "./analytics-context.ts";
 import { Analytics } from "./analytics.service.ts";
@@ -29,6 +29,8 @@ const FAILURE_PROPERTY_NAMES = [
   PropSuggestedCommand,
   PropWorkflow,
 ] as const;
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 class InstrumentationAuthError extends Data.TaggedError("InstrumentationAuthError")<{
   readonly message: string;
@@ -107,14 +109,14 @@ describe("withCommandInstrumentation", () => {
       expect(typeof span.attributes.get("command_run_id")).toBe("string");
     }).pipe(
       withCommandInstrumentation({ analytics: false }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["branches", "list"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["branches", "list"]) }),
+          commandRuntimeLayer(["branches", "list"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["branches", "list"])),
     );
   });
 
@@ -130,14 +132,14 @@ describe("withCommandInstrumentation", () => {
       });
     }).pipe(
       withCommandInstrumentation(),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["start", "--detach", "--exclude=auth"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["start", "--detach", "--exclude=auth"]) }),
+          commandRuntimeLayer(["start"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["start"])),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(2);
@@ -174,17 +176,17 @@ describe("withCommandInstrumentation", () => {
     const failure = new InstrumentationAuthError(secrets);
 
     const program = withCommandInstrumentation()(Effect.fail(failure)).pipe(
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["login"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["login"]) }),
+          commandRuntimeLayer(["login"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["login"])),
       Effect.exit,
       Effect.tap((exit) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           expect(analytics.captured).toHaveLength(1);
           const event = analytics.captured[0];
           expect(event?.event).toBe("cli_command_executed");
@@ -198,7 +200,7 @@ describe("withCommandInstrumentation", () => {
             suggested_command: "supabase login",
           });
           expect(event?.properties).not.toHaveProperty(PropWorkflow);
-          const encoded = JSON.stringify(event);
+          const encoded = yield* encodeJson(event);
           for (const secret of Object.values(secrets)) expect(encoded).not.toContain(secret);
 
           expect(Exit.isFailure(exit)).toBe(true);
@@ -218,13 +220,17 @@ describe("withCommandInstrumentation", () => {
 
     return Effect.die(new TypeError(secret)).pipe(
       withCommandInstrumentation(),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["branches", "list"]) })),
-      Effect.provide(commandRuntimeLayer(["branches", "list"])),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["branches", "list"]) }),
+          commandRuntimeLayer(["branches", "list"]),
+        ),
+      ),
       Effect.exit,
       Effect.tap(() =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           expect(analytics.captured[0]?.properties).toMatchObject({
             exit_code: 1,
             error_kind: "internal_bug",
@@ -233,7 +239,7 @@ describe("withCommandInstrumentation", () => {
             has_suggestion: true,
             suggestion_type: "rerun_debug",
           });
-          expect(JSON.stringify(analytics.captured[0])).not.toContain(secret);
+          expect(yield* encodeJson(analytics.captured[0])).not.toContain(secret);
         }),
       ),
       Effect.asVoid,
@@ -252,10 +258,14 @@ describe("withCommandInstrumentation", () => {
 
     return Effect.fail(failure).pipe(
       withCommandInstrumentation(),
-      Effect.provide(failingAnalytics(new Error("telemetry defect"))),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["login"]) })),
-      Effect.provide(commandRuntimeLayer(["login"])),
+      Effect.provide(
+        Layer.mergeAll(
+          failingAnalytics(new Error("telemetry defect")),
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["login"]) }),
+          commandRuntimeLayer(["login"]),
+        ),
+      ),
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
@@ -276,10 +286,14 @@ describe("withCommandInstrumentation", () => {
     // is being cancelled and swallowing would fight the cancellation.
     return Effect.void.pipe(
       withCommandInstrumentation(),
-      Effect.provide(interruptingAnalytics()),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["login"]) })),
-      Effect.provide(commandRuntimeLayer(["login"])),
+      Effect.provide(
+        Layer.mergeAll(
+          interruptingAnalytics(),
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["login"]) }),
+          commandRuntimeLayer(["login"]),
+        ),
+      ),
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
@@ -307,22 +321,24 @@ describe("withCommandInstrumentation", () => {
         },
         allowedFlagValues: ["exclude", "mode", "stack"],
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "start",
-            "--detach",
-            "--mode=docker",
-            "--exclude",
-            "auth",
-            "--exclude",
-            "storage",
-          ]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "start",
+              "--detach",
+              "--mode=docker",
+              "--exclude",
+              "auth",
+              "--exclude",
+              "storage",
+            ]),
+          }),
+          commandRuntimeLayer(["start"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["start"])),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -352,14 +368,16 @@ describe("withCommandInstrumentation", () => {
         },
         allowedFlagValues: ["token", "name", "noBrowser"],
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["login", "--name", "my-machine", "--no-browser"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["login", "--name", "my-machine", "--no-browser"]),
+          }),
+          commandRuntimeLayer(["login"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["login"])),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -376,16 +394,16 @@ describe("withCommandInstrumentation", () => {
   it.live("skips analytics capture when analytics are disabled", () => {
     const analytics = mockContextualAnalytics();
 
-    return Effect.sync(() => "ok").pipe(
+    return Effect.succeed("ok").pipe(
       withCommandInstrumentation({ analytics: false }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["telemetry", "enable"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["telemetry", "enable"]) }),
+          commandRuntimeLayer(["telemetry", "enable"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["telemetry", "enable"])),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toEqual([]);

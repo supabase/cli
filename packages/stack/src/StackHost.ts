@@ -38,6 +38,7 @@ import {
   type HostEndpoint,
   type ShutdownFailure,
 } from "./HostProcess.ts";
+import { projectSegmentFor } from "./identity/Identity.ts";
 import * as Owner from "./Owner.ts";
 import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
 import * as State from "./State.ts";
@@ -425,6 +426,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
           const dataRootPath = path.join(options.stateRoot, saved.id, "data");
           yield* fs.makeDirectory(dataRootPath, { recursive: true });
           const dataRoot = yield* fs.realPath(dataRootPath);
+          const project = projectSegmentFor(saved.identity, path);
           yield* Owner.sweepContainers(saved, dataRoot).pipe(
             Effect.mapError((cause) =>
               hostError(
@@ -443,6 +445,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
               }),
               CommandRunner.layer({
                 stackId: saved.id,
+                project,
                 root: dataRoot,
                 cacheRoot: options.cacheRoot,
                 runtime: saved.runtime,

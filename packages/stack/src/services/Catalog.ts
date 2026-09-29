@@ -31,6 +31,7 @@ import {
 } from "./Recipe.ts";
 import { makeProcessRecipe, type ProcessDependencies } from "./ProcessRecipe.ts";
 import { missingInput } from "./ServiceConfig.ts";
+import type { SnapshotScope } from "./DatabaseSnapshot.ts";
 import { slimImageMirrors, type ServiceKind } from "../Artifacts.ts";
 import type { ServiceInstanceContext } from "../Service.ts";
 
@@ -239,10 +240,10 @@ const databaseRecipe = (
       : Effect.fail(
           new CatalogError({ operation: "reset", message: "Service kind cannot change" }),
         ),
-  saveDatabaseSnapshot: (context, key) =>
+  saveDatabaseSnapshot: (context, key, scope) =>
     context.config.service === "database"
       ? component
-          .saveSnapshot({ ...context, config: context.config.config }, key)
+          .saveSnapshot({ ...context, config: context.config.config }, key, scope)
           .pipe(
             Effect.mapError(
               (cause) =>
@@ -252,10 +253,10 @@ const databaseRecipe = (
       : Effect.fail(
           new CatalogError({ operation: "snapshot-save", message: "Service kind cannot change" }),
         ),
-  restoreDatabaseSnapshot: (context, key) =>
+  restoreDatabaseSnapshot: (context, key, scope) =>
     context.config.service === "database"
       ? component
-          .restoreSnapshot({ ...context, config: context.config.config }, key)
+          .restoreSnapshot({ ...context, config: context.config.config }, key, scope)
           .pipe(
             Effect.mapError(
               (cause) =>
@@ -322,6 +323,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         const component = yield* makeDatabase({
           stackId: options.stackId,
           instanceId: options.instanceId,
+          project: options.project,
           root: options.root,
           cacheRoot: options.cacheRoot,
           runtime: options.runtime,
@@ -432,9 +434,11 @@ export type CatalogRecipe = RecipeCatalogRecipe<ServiceCreation> & {
   readonly saveDatabaseSnapshot?: (
     context: ServiceInstanceContext<ServiceCreation>,
     key: string,
+    scope: SnapshotScope,
   ) => Effect.Effect<void, CatalogError>;
   readonly restoreDatabaseSnapshot?: (
     context: ServiceInstanceContext<ServiceCreation>,
     key: string,
+    scope: SnapshotScope,
   ) => Effect.Effect<boolean, CatalogError>;
 };

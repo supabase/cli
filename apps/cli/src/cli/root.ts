@@ -52,6 +52,7 @@ import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
 import { OutputFormatFlag } from "../shared/cli/global-flags.ts";
+import { CLI_VERSION, cliBuildChannel } from "../shared/cli/version.ts";
 import { outputLayerFor } from "../shared/output/output.layer.ts";
 import { quietProgressTextOutputLayer } from "../output/quiet-progress-text-output.layer.ts";
 import { makeGoProxyLayer } from "../command-internal/go-proxy.layer.ts";
@@ -89,6 +90,20 @@ const stackStatusAliasCommand = stackStatusCommand.pipe(
   Command.provide(stackRuntimeLayer),
 );
 
+/** Stable builds carry no label; other builds say what they are so help output never claims stability it lacks. */
+export function rootDescription(version: string): string {
+  switch (cliBuildChannel(version)) {
+    case "stable":
+      return "Supabase CLI.";
+    case "beta":
+      return "Supabase CLI (beta channel).";
+    case "preview":
+      return "Supabase CLI (preview build).";
+    case "development":
+      return "Supabase CLI (development build).";
+  }
+}
+
 export const rootCommandForFeatures = (
   options: {
     readonly stackBackend?: StackBackend;
@@ -96,7 +111,7 @@ export const rootCommandForFeatures = (
   } = {},
 ): CliRootCommand =>
   Command.make("supabase").pipe(
-    Command.withDescription("Supabase CLI (stable channel)."),
+    Command.withDescription(rootDescription(CLI_VERSION)),
     Command.withSubcommands([
       backupsCommand,
       bootstrapCommand,
