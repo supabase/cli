@@ -24,6 +24,7 @@ import {
   launchHost,
   ownerAuthorization,
   ownerClient,
+  ownerExitProbe,
   waitForOwnerExit,
   type HostAccess,
 } from "./HostProcess.ts";
@@ -561,7 +562,7 @@ it.live(
                 : shutdownOwner(access, true).pipe(
                     // A destroy request is refused once the test started a plain shutdown.
                     Effect.ignore,
-                    Effect.andThen(waitForOwnerExit(endpoint.pid)),
+                    Effect.andThen(waitForOwnerExit(endpoint.pid, ownerExitProbe(fs))),
                     Effect.ignore,
                   ),
             ),
@@ -687,7 +688,7 @@ it.live(
         if (Exit.isFailure(drainingToolExit))
           expect(Cause.pretty(drainingToolExit.cause)).toContain("Stack host is draining");
         // The owner still releases its state files after acknowledging shutdown.
-        yield* waitForOwnerExit(endpoint.pid);
+        yield* waitForOwnerExit(endpoint.pid, ownerExitProbe(fs));
         yield* Ref.set(stopped, true);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
