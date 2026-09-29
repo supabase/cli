@@ -377,7 +377,7 @@ describe("slim-services artifact source", () => {
     ),
   );
 
-  it.live("reports the primary checksum failure when every checksum source fails", () =>
+  it.live("names every failed checksum source in the aggregated error", () =>
     Effect.gen(function* () {
       const mirrored: SlimServicesArtifact = {
         ...artifact,
@@ -391,7 +391,16 @@ describe("slim-services artifact source", () => {
         requested.push(requestUrl(input));
         return Promise.resolve(new Response("", { status: 403 }));
       }, slimServicesChecksum(mirrored, immediate).pipe(Effect.exit));
-      expect(errorOf(failed)?.message).toBe("Unable to download https://release.test/SHA256SUMS");
+      expect(errorOf(failed)?.message).toBe(
+        "Unable to resolve the slim-services checksum: https://release.test/SHA256SUMS " +
+          "(Unable to download https://release.test/SHA256SUMS: HTTP 403); " +
+          "registry.test/supabase/cli/demo:v1.0.0-native-linux-amd64 (Unable to download " +
+          "https://registry.test/token?scope=repository:supabase/cli/demo:pull&service=registry.test: HTTP 403)",
+      );
+      expect(errorOf(failed)).toMatchObject({
+        service: artifact.service,
+        version: artifact.version,
+      });
       expect(requested).toEqual([
         "https://release.test/SHA256SUMS",
         "https://registry.test/token?scope=repository:supabase/cli/demo:pull&service=registry.test",
@@ -445,7 +454,10 @@ describe("slim-services artifact source", () => {
             .materialize(request, rejected, expected)
             .pipe(Effect.exit),
         );
-        expect(errorOf(failed)?.message).toBe("Unable to download slim-services archive");
+        const message = errorOf(failed)?.message;
+        expect(message).toContain("Unable to download the slim-services archive");
+        expect(message).toContain("https://release.test/demo.tar.zst");
+        expect(message).toContain("https://bucket.test/bad.tar.zst");
         expect(yield* fs.exists(`${rejected}/bin/demo`)).toBe(false);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),

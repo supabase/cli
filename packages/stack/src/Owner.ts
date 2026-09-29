@@ -64,7 +64,7 @@ import * as Container from "./runtime/Container.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
-import type { SavedStack, StackCredentials, StackIdentityInput } from "./State.ts";
+import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
 import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
 
 export interface OwnerOptions {
@@ -259,7 +259,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
 
   const resolveStackCredentials = Effect.fn("Owner.resolveStackCredentials")(function* (
     overrides: Effect.Success<ReturnType<typeof credentialOverrides>>,
-    keys?: StackIdentityInput,
+    keys?: StackKeysInput,
   ) {
     const credentials = yield* options.state.withLock(
       Effect.gen(function* () {
@@ -635,13 +635,13 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         ),
         rpcError("credentials"),
       ),
-    saveSnapshot: ({ id, key }) =>
+    saveSnapshot: ({ id, key, scope = "cache" }) =>
       databaseData(id, ({ saveDatabaseSnapshot: save }) =>
-        save === undefined ? undefined : (context) => save(context, key),
+        save === undefined ? undefined : (context) => save(context, key, scope),
       ).pipe(rpcError("saveSnapshot")),
-    restoreSnapshot: ({ id, key }) =>
+    restoreSnapshot: ({ id, key, scope = "cache" }) =>
       databaseData(id, ({ restoreDatabaseSnapshot: restore }) =>
-        restore === undefined ? undefined : (context) => restore(context, key),
+        restore === undefined ? undefined : (context) => restore(context, key, scope),
       ).pipe(rpcError("restoreSnapshot")),
     resetData: ({ id }) =>
       databaseData(id, ({ resetDatabaseData }) => resetDatabaseData).pipe(rpcError("resetData")),

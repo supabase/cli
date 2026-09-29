@@ -26,7 +26,7 @@ import { StackError } from "@supabase/stack/effect";
 import type { InitializationCommandOptions, PostgresCommandOptions } from "@supabase/stack/effect";
 import type { Stack } from "@supabase/stack/effect";
 import type { InitializationCommand, PostgresCommand } from "@supabase/stack/commands";
-import { destroyTestStack } from "../../../../packages/stack/tests/stack-cleanup.ts";
+import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
