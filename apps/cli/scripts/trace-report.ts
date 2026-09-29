@@ -12,7 +12,20 @@ const OtlpSpan = Schema.Struct({
   name: Schema.String,
   startTimeUnixNano: Schema.String,
   endTimeUnixNano: Schema.String,
-  status: Schema.Struct({ code: Schema.Number, message: Schema.optional(Schema.String) }),
+  status: Schema.Struct({ code: Schema.Number }),
+  events: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        attributes: Schema.Array(
+          Schema.Struct({
+            key: Schema.String,
+            value: Schema.Struct({ stringValue: Schema.optional(Schema.String) }),
+          }),
+        ),
+      }),
+    ),
+  ),
 });
 
 const TraceBatch = Schema.fromJsonString(
@@ -33,7 +46,7 @@ export interface ReportSpan {
   readonly startMs: number;
   readonly endMs: number;
   readonly failed: boolean;
-  readonly statusMessage: string | undefined;
+  readonly errorType: string | undefined;
 }
 
 export interface TraceReport {
@@ -45,7 +58,10 @@ export interface TraceReport {
     readonly count: number;
     readonly totalMs: number;
   }>;
-  readonly failures: ReadonlyArray<{ readonly name: string; readonly message: string | undefined }>;
+  readonly failures: ReadonlyArray<{
+    readonly name: string;
+    readonly errorType: string | undefined;
+  }>;
 }
 
 const STATUS_ERROR = 2;
@@ -119,7 +135,7 @@ export function analyzeTrace(spans: ReadonlyArray<ReportSpan>, top: number): Tra
       .slice(0, top),
     failures: spans
       .filter((span) => span.failed)
-      .map((span) => ({ name: span.name, message: span.statusMessage })),
+      .map((span) => ({ name: span.name, errorType: span.errorType })),
   };
 }
 
@@ -137,7 +153,9 @@ function formatReport(report: TraceReport): string {
   lines.push("", "failures:");
   if (report.failures.length === 0) lines.push("  none");
   for (const failure of report.failures) {
-    lines.push(`  ${failure.name}${failure.message === undefined ? "" : `: ${failure.message}`}`);
+    lines.push(
+      `  ${failure.name}${failure.errorType === undefined ? "" : `: ${failure.errorType}`}`,
+    );
   }
   return lines.join("\n");
 }
@@ -160,7 +178,10 @@ const readSpans = Effect.fnUntraced(function* (file: string) {
             startMs: nanosToMs(span.startTimeUnixNano),
             endMs: nanosToMs(span.endTimeUnixNano),
             failed: span.status.code === STATUS_ERROR,
-            statusMessage: span.status.message,
+            errorType: span.events
+              ?.find((event) => event.name === "exception")
+              ?.attributes.find((attribute) => attribute.key === "exception.type")?.value
+              .stringValue,
           });
         }
       }

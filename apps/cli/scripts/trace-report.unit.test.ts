@@ -16,7 +16,7 @@ const span = (
   startMs,
   endMs,
   failed,
-  statusMessage: failed ? "boom" : undefined,
+  errorType: failed ? "SqlError" : undefined,
 });
 
 describe("analyzeTrace", () => {
@@ -48,6 +48,6 @@ describe("analyzeTrace", () => {
     const report = analyzeTrace(spans, 5);
 
     expect(report.repeated).toEqual([{ name: "Db.query", count: 2, totalMs: 80 }]);
-    expect(report.failures).toEqual([{ name: "Db.query", message: "boom" }]);
+    expect(report.failures).toEqual([{ name: "Db.query", errorType: "SqlError" }]);
   });
 });
