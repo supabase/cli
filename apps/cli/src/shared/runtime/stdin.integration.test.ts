@@ -1,7 +1,9 @@
 import { fileURLToPath } from "node:url";
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Duration, Effect, Fiber, Layer, Option, Queue, Ref, Stream } from "effect";
+import { Cause, Duration, Effect, Fiber, Layer, Option, Queue, Ref, Stream } from "effect";
 import { systemError, type PlatformError } from "effect/PlatformError";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { TestClock } from "effect/testing";
 
 import { mockTty } from "../../../tests/helpers/mocks.ts";
@@ -270,11 +272,18 @@ describe("stdinLayer", () => {
   });
 });
 
-const awaitFileSink = (operation: () => number | Promise<number>) =>
-  Effect.suspend(() => {
-    const result = operation();
-    return typeof result === "number" ? Effect.succeed(result) : Effect.promise(() => result);
-  });
+const killOnTimeout =
+  (child: ChildProcessSpawner.ChildProcessHandle, stderr: Fiber.Fiber<string, PlatformError>) =>
+  <A, E, R>(self: Effect.Effect<A, E, R>) =>
+    self.pipe(
+      Effect.timeout("20 seconds"),
+      Effect.catchTag("TimeoutError", () =>
+        child.kill().pipe(
+          Effect.andThen(Fiber.join(stderr)),
+          Effect.flatMap((text) => Effect.die(new Error(`child timed out: ${text}`))),
+        ),
+      ),
+    );
 
 describe("stdinLayer over fd 0", () => {
   it.live(
@@ -292,19 +301,20 @@ describe("stdinLayer over fd 0", () => {
         }
         const here = (file: string) =>
           JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
-        const child = yield* Effect.acquireRelease(
-          Effect.try(() =>
-            Bun.spawn(
-              [
-                perl,
-                "-e",
-                `use Fcntl;
+        const input = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const child = yield* spawner.spawn(
+          ChildProcess.make(
+            perl,
+            [
+              "-e",
+              `use Fcntl;
          fcntl(STDIN, F_SETFL, O_NONBLOCK) or die "fcntl: $!";
          print STDERR ((fcntl(STDIN, F_GETFL, 0) & O_NONBLOCK) ? "nonblock\\n" : "block\\n");
          exec @ARGV or die "exec: $!";`,
-                bun,
-                "-e",
-                `import { Effect, Layer, Option } from "effect";
+              bun,
+              "-e",
+              `import { Effect, Layer, Option } from "effect";
          import { Stdin } from ${here("./stdin.service.ts")};
          import { stdinLayer } from ${here("./stdin.layer.ts")};
          import { ttyLayer } from ${here("./tty.layer.ts")};
@@ -316,49 +326,44 @@ describe("stdinLayer over fd 0", () => {
          Effect.runPromise(program.pipe(Effect.provide(stdinLayer.pipe(Layer.provide(ttyLayer))))).then(
            () => process.exit(0),
          );`,
-              ],
-              {
-                cwd: import.meta.dirname,
-                stdin: "pipe",
-                stdout: "pipe",
-                stderr: "pipe",
-                timeout: 20_000,
-              },
+            ],
+            {
+              cwd: import.meta.dirname,
+              stdin: Stream.fromQueue(input),
+              stdout: "pipe",
+              stderr: "pipe",
+            },
+          ),
+        );
+        const lines = yield* Stream.toQueue(Stream.splitLines(Stream.decodeText(child.stdout)), {
+          capacity: "unbounded",
+        });
+        const stderrFiber = yield* Effect.forkChild(
+          Stream.mkString(Stream.decodeText(child.stderr)),
+        );
+        const nextLine = Queue.take(lines).pipe(
+          Effect.catchTag("Done", () =>
+            Fiber.join(stderrFiber).pipe(
+              Effect.flatMap((stderr) => Effect.die(new Error(`child exited early: ${stderr}`))),
             ),
           ),
-          // A failed assertion must not leave the child waiting on its second prompt.
-          (child) => Effect.sync(() => child.kill()),
         );
-        const stdout = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
-        let buffered = "";
-        const nextLine = Effect.gen(function* () {
-          while (!buffered.includes("\n")) {
-            const { value, done } = yield* Effect.promise(() => stdout.read());
-            if (done) {
-              const stderr = yield* Effect.promise(() => new Response(child.stderr).text());
-              return yield* Effect.die(new Error(`child exited early: ${stderr}`));
-            }
-            buffered += value;
-          }
-          const [line, ...rest] = buffered.split("\n");
-          buffered = rest.join("\n");
-          return line;
-        });
-        expect(yield* nextLine).toBe("<none>");
-        yield* awaitFileSink(() => child.stdin.write("y\n"));
-        yield* awaitFileSink(() => child.stdin.flush());
-        expect(yield* nextLine).toBe("y");
-        yield* awaitFileSink(() => child.stdin.end());
-        const [exitCode, stderr] = yield* Effect.all(
-          [
-            Effect.promise(() => child.exited),
-            Effect.promise(() => new Response(child.stderr).text()),
-          ],
-          { concurrency: "unbounded" },
-        );
-        expect(exitCode, stderr).toBe(0);
-        expect(stderr).toContain("nonblock");
-      }),
+        yield* Effect.gen(function* () {
+          expect(yield* nextLine).toBe("<none>");
+          yield* Queue.offer(input, enc("y\n"));
+          expect(yield* nextLine).toBe("y");
+          yield* Queue.end(input);
+          const [exitCode, stderr] = yield* Effect.all([child.exitCode, Fiber.join(stderrFiber)], {
+            concurrency: "unbounded",
+          });
+          expect(exitCode, stderr).toBe(0);
+          expect(stderr).toContain("nonblock");
+        }).pipe(killOnTimeout(child, stderrFiber));
+      }).pipe(
+        // A failed assertion must not leave the child waiting on its second prompt.
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+      ),
     30_000,
   );
 
@@ -378,13 +383,13 @@ describe("stdinLayer over fd 0", () => {
         const payload = enc(
           Array.from({ length: 200_000 }, (_, index) => `line-${index}\n`).join(""),
         );
-        const child = yield* Effect.acquireRelease(
-          Effect.try(() =>
-            Bun.spawn(
-              [
-                bun,
-                "-e",
-                `import { Effect, Layer, Option } from "effect";
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const child = yield* spawner.spawn(
+          ChildProcess.make(
+            bun,
+            [
+              "-e",
+              `import { Effect, Layer, Option } from "effect";
          import { Stdin } from ${here("./stdin.service.ts")};
          import { stdinLayer } from ${here("./stdin.layer.ts")};
          import { ttyLayer } from ${here("./tty.layer.ts")};
@@ -404,33 +409,33 @@ describe("stdinLayer over fd 0", () => {
          Effect.runPromise(program.pipe(Effect.provide(stdinLayer.pipe(Layer.provide(ttyLayer))))).then(
            () => process.exit(0),
          );`,
-              ],
-              // Prompts give up after 3 x 5 s; a child that hangs anyway is killed at 20 s, ahead of
-              // vitest's 30 s guard, so the failure still carries its stderr.
-              {
-                cwd: import.meta.dirname,
-                stdin: payload,
-                stdout: "pipe",
-                stderr: "pipe",
-                timeout: 20_000,
-              },
-            ),
+            ],
+            {
+              cwd: import.meta.dirname,
+              stdin: Stream.make(payload),
+              stdout: "pipe",
+              stderr: "pipe",
+            },
           ),
-          (child) => Effect.sync(() => child.kill()),
         );
+        const stderrFiber = yield* Effect.forkChild(
+          Stream.mkString(Stream.decodeText(child.stderr)),
+        );
+        // Prompts give up after 3 x 5 s; a child that hangs anyway is killed at 20 s, ahead of
+        // vitest's 30 s guard, so the failure still carries its stderr.
         const [exitCode, stdout, stderr] = yield* Effect.all(
           [
-            Effect.promise(() => child.exited),
-            Effect.promise(() => new Response(child.stdout).text()),
-            Effect.promise(() => new Response(child.stderr).text()),
+            child.exitCode,
+            Stream.mkString(Stream.decodeText(child.stdout)),
+            Fiber.join(stderrFiber),
           ],
           { concurrency: "unbounded" },
-        );
+        ).pipe(killOnTimeout(child, stderrFiber));
         expect(exitCode, stderr).toBe(0);
         const [answers, left] = stdout.trim().split("\n");
         expect(answers).toBe("line-0 line-1 line-2");
         expect(payload.length - Number(left)).toBeLessThanOrEqual(256 * 1024);
-      }),
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     30_000,
   );
 });

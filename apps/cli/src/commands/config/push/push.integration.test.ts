@@ -3600,7 +3600,7 @@ describe("config push telemetry wiring", () => {
   const wiringLayer = (analytics: ReturnType<typeof mockAnalytics>, projectRef: string) =>
     Layer.mergeAll(
       setup({ toml: `project_id = "test"\n`, yes: true, analytics }).layer,
-      commandRuntimeLayer(["config", "push"]),
+      commandRuntimeLayer(["config", "push"]).pipe(Layer.provide(BunServices.layer)),
       Stdio.layerTest({
         args: Effect.succeed(["config", "push", "--project-ref", projectRef]),
       }),

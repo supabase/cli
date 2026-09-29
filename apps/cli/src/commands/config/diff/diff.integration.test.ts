@@ -1158,7 +1158,7 @@ describe("config diff telemetry wiring", () => {
   const wiringLayer = (analytics: ReturnType<typeof mockContextualAnalytics>, projectRef: string) =>
     Layer.mergeAll(
       setup({ toml: 'project_id = "test"\n', analytics }).layer,
-      commandRuntimeLayer(["config", "diff"]),
+      commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunServices.layer)),
       Stdio.layerTest({
         args: Effect.succeed(["config", "diff", "--project-ref", projectRef]),
       }),
@@ -1208,7 +1208,7 @@ describe("config diff -o/--output wrapper wiring", () => {
       Effect.provide(
         Layer.mergeAll(
           layer,
-          commandRuntimeLayer(["config", "diff"]),
+          commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunServices.layer)),
           Stdio.layerTest({ args: Effect.succeed(["config", "diff", "-o", "table"]) }),
         ),
       ),

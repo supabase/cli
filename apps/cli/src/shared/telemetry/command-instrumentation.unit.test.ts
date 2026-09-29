@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { BunCrypto } from "@effect/platform-bun";
 import { Cause, Data, Effect, Exit, Layer, Option, Schema, Stdio } from "effect";
 import { commandRuntimeLayer } from "../runtime/command-runtime.layer.ts";
 import { CurrentAnalyticsContext } from "./analytics-context.ts";
@@ -114,7 +115,7 @@ describe("withCommandInstrumentation", () => {
           analytics.layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["branches", "list"]) }),
-          commandRuntimeLayer(["branches", "list"]),
+          commandRuntimeLayer(["branches", "list"]).pipe(Layer.provide(BunCrypto.layer)),
         ),
       ),
     );
@@ -137,7 +138,7 @@ describe("withCommandInstrumentation", () => {
           analytics.layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["start", "--detach", "--exclude=auth"]) }),
-          commandRuntimeLayer(["start"]),
+          commandRuntimeLayer(["start"]).pipe(Layer.provide(BunCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -181,7 +182,7 @@ describe("withCommandInstrumentation", () => {
           analytics.layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["login"]) }),
-          commandRuntimeLayer(["login"]),
+          commandRuntimeLayer(["login"]).pipe(Layer.provide(BunCrypto.layer)),
         ),
       ),
       Effect.exit,
@@ -225,7 +226,7 @@ describe("withCommandInstrumentation", () => {
           analytics.layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["branches", "list"]) }),
-          commandRuntimeLayer(["branches", "list"]),
+          commandRuntimeLayer(["branches", "list"]).pipe(Layer.provide(BunCrypto.layer)),
         ),
       ),
       Effect.exit,
@@ -263,7 +264,7 @@ describe("withCommandInstrumentation", () => {
           failingAnalytics(new Error("telemetry defect")),
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["login"]) }),
-          commandRuntimeLayer(["login"]),
+          commandRuntimeLayer(["login"]).pipe(Layer.provide(BunCrypto.layer)),
         ),
       ),
       Effect.exit,
@@ -291,7 +292,7 @@ describe("withCommandInstrumentation", () => {
           interruptingAnalytics(),
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["login"]) }),
-          commandRuntimeLayer(["login"]),
+          commandRuntimeLayer(["login"]).pipe(Layer.provide(BunCrypto.layer)),
         ),
       ),
       Effect.exit,
@@ -336,7 +337,7 @@ describe("withCommandInstrumentation", () => {
               "storage",
             ]),
           }),
-          commandRuntimeLayer(["start"]),
+          commandRuntimeLayer(["start"]).pipe(Layer.provide(BunCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -375,7 +376,7 @@ describe("withCommandInstrumentation", () => {
           Stdio.layerTest({
             args: Effect.succeed(["login", "--name", "my-machine", "--no-browser"]),
           }),
-          commandRuntimeLayer(["login"]),
+          commandRuntimeLayer(["login"]).pipe(Layer.provide(BunCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -401,7 +402,7 @@ describe("withCommandInstrumentation", () => {
           analytics.layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["telemetry", "enable"]) }),
-          commandRuntimeLayer(["telemetry", "enable"]),
+          commandRuntimeLayer(["telemetry", "enable"]).pipe(Layer.provide(BunCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
