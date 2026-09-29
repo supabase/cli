@@ -293,6 +293,11 @@ export const makeContainerRuntime = (options: {
     ) {
       const owner = yield* Scope.Scope;
       const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
+      yield* Effect.annotateCurrentSpan({
+        "container.image": image,
+        ...(spec.service === undefined ? {} : { "container.service": spec.service }),
+        "container.ports": spec.ports ?? [],
+      });
       for (const [key, value] of Object.entries(spec.env)) {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || /[\0\r\n]/u.test(value)) {
           return yield* errorFor(

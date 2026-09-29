@@ -197,29 +197,28 @@ const reconcileContainerPassword = Effect.fn("Database.reconcileContainerPasswor
   ) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const child = yield* spawner.spawn(
-          ChildProcess.make(
-            engine,
-            [
-              "exec",
-              "-i",
-              id,
-              "/opt/postgres/bin/psql",
-              "-h",
-              "/tmp",
-              "-p",
-              "5432",
-              "-U",
-              "supabase_admin",
-              "-d",
-              "postgres",
-              "-X",
-              "-v",
-              "ON_ERROR_STOP=1",
-            ],
-            { stdin: "pipe" },
-          ),
-        );
+        const args = [
+          "exec",
+          "-i",
+          id,
+          "/opt/postgres/bin/psql",
+          "-h",
+          "/tmp",
+          "-p",
+          "5432",
+          "-U",
+          "supabase_admin",
+          "-d",
+          "postgres",
+          "-X",
+          "-v",
+          "ON_ERROR_STOP=1",
+        ];
+        yield* Effect.annotateCurrentSpan({
+          "process.executable.name": engine,
+          "process.arg_count": args.length,
+        });
+        const child = yield* spawner.spawn(ChildProcess.make(engine, args, { stdin: "pipe" }));
         const statement = `BEGIN; SET LOCAL log_statement = 'none'; SET LOCAL log_min_error_statement = 'panic'; SET LOCAL log_min_duration_statement = -1; SET LOCAL log_min_duration_sample = -1; SET LOCAL standard_conforming_strings = on; ALTER ROLE supabase_admin PASSWORD '${Redacted.value(password).replaceAll("'", "''")}'; COMMIT;`;
         const [, , , code] = yield* Effect.all(
           [
@@ -230,6 +229,7 @@ const reconcileContainerPassword = Effect.fn("Database.reconcileContainerPasswor
           ],
           { concurrency: "unbounded" },
         );
+        yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
         if (Number(code) !== 0)
           return yield* errorFor("health", "Local database credential setup has not succeeded");
       }),
@@ -240,7 +240,7 @@ const reconcileContainerPassword = Effect.fn("Database.reconcileContainerPasswor
 );
 
 /** Idempotent readiness reconciliation, so a session also re-runs it as its probe. */
-const health = Effect.fn("Database.health")((
+const health = Effect.fn("Database.health")(function* (
   endpoint: BackendEndpoint,
   config: DatabaseConfig,
   reconcile: Effect.Effect<void, ServiceError>,
@@ -251,26 +251,38 @@ const health = Effect.fn("Database.health")((
     readonly runtime: DatabaseRuntime;
     readonly markInitialized?: Effect.Effect<void, ServiceError>;
   },
-): Effect.Effect<void, ServiceError> => {
+) {
   const host = endpoint.kind === "unix" ? endpoint.path : endpoint.host;
-  const probe = Effect.scoped(
-    Effect.gen(function* () {
-      const layer = yield* Layer.build(
-        PgClient.layer({
-          host,
-          port: endpoint.port,
-          database: "postgres",
-          username: "supabase_admin",
-          password: config.databasePassword,
-          connectTimeout: "2 seconds",
+  const retryAttempts = yield* Ref.make(0);
+  const probe = Ref.update(retryAttempts, (count) => count + 1).pipe(
+    Effect.andThen(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const layer = yield* Layer.build(
+            PgClient.layer({
+              host,
+              port: endpoint.port,
+              database: "postgres",
+              username: "supabase_admin",
+              password: config.databasePassword,
+              connectTimeout: "2 seconds",
+            }),
+          );
+          const client = Context.get(layer, PgClient.PgClient);
+          yield* client.unsafe("SELECT 1");
         }),
-      );
-      const client = Context.get(layer, PgClient.PgClient);
-      yield* client.unsafe("SELECT 1");
-    }),
+      ),
+    ),
   );
-  const retryProbe = probe.pipe(Effect.retry(Schedule.spaced("250 millis")));
-  return reconcile.pipe(
+  const retryProbe = probe.pipe(
+    Effect.retry(Schedule.spaced("250 millis")),
+    Effect.ensuring(
+      Ref.get(retryAttempts).pipe(
+        Effect.flatMap((count) => Effect.annotateCurrentSpan({ "retry.attempts": count })),
+      ),
+    ),
+  );
+  return yield* reconcile.pipe(
     Effect.andThen(retryProbe),
     Effect.andThen(
       Effect.scoped(

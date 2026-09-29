@@ -376,27 +376,37 @@ const collectNativeOutput = Effect.fn("ProcessRecipe.collectNativeOutput")(funct
   return { bindReady, bindError, stdout, stderr, drained };
 });
 
-const readiness = Effect.fn("ProcessRecipe.readiness")(
-  (
-    client: HttpClient.HttpClient,
-    endpoint: ServiceEndpoint,
-    path: string,
-    timeout: Duration.Input = "60 seconds",
-  ): Effect.Effect<void, ServiceError> =>
-    client.execute(HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}${path}`)).pipe(
-      Effect.flatMap((response) =>
-        (response.status >= 200 && response.status < 300) || response.status === 401
-          ? Effect.void
-          : Effect.fail(
-              new ServiceError({ operation: "health", message: `HTTP ${response.status}` }),
-            ),
-      ),
-      Effect.retry({ schedule: Schedule.spaced("250 millis") }),
-      Effect.timeout(timeout),
-      Effect.mapError((cause) => serviceError("health", cause)),
-      Effect.asVoid,
+const readiness = Effect.fn("ProcessRecipe.readiness")(function* (
+  client: HttpClient.HttpClient,
+  endpoint: ServiceEndpoint,
+  path: string,
+  timeout: Duration.Input = "60 seconds",
+) {
+  const attempts = yield* Ref.make(0);
+  const attempt = Ref.update(attempts, (count) => count + 1).pipe(
+    Effect.andThen(
+      client.execute(HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}${path}`)),
     ),
-);
+    Effect.flatMap((response) =>
+      (response.status >= 200 && response.status < 300) || response.status === 401
+        ? Effect.void
+        : Effect.fail(
+            new ServiceError({ operation: "health", message: `HTTP ${response.status}` }),
+          ),
+    ),
+  );
+  return yield* attempt.pipe(
+    Effect.retry({ schedule: Schedule.spaced("250 millis") }),
+    Effect.timeout(timeout),
+    Effect.mapError((cause) => serviceError("health", cause)),
+    Effect.asVoid,
+    Effect.ensuring(
+      Ref.get(attempts).pipe(
+        Effect.flatMap((count) => Effect.annotateCurrentSpan({ "retry.attempts": count })),
+      ),
+    ),
+  );
+});
 
 export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>>(
   creation: C,
