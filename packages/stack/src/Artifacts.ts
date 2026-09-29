@@ -30,10 +30,34 @@ export class ArtifactError extends Data.TaggedError("ArtifactError")<{
   readonly cause?: unknown;
 }> {}
 
+/** Lowercase hexadecimal SHA-256 digest. */
+type Sha256 = string;
+
+/** Content digests of one native target's published archive and manifest. */
+export interface NativePin {
+  readonly archive: Sha256;
+  readonly manifest: Sha256;
+}
+
+/** One published slim-services revision of an upstream version, pinned by content. */
+export interface ArtifactPin {
+  readonly upstreamVersion: string;
+  readonly revision: number;
+  /** `ghcr.io/supabase/cli/<service>:<release version>@sha256:<digest>`. */
+  readonly image: string;
+  readonly natives: Readonly<Record<NativeTarget, NativePin>>;
+}
+
+/** The published release version, `<upstream>-r<revision>`. */
+const releaseVersion = (pin: ArtifactPin): string => `${pin.upstreamVersion}-r${pin.revision}`;
+
 interface ArtifactResolution {
   readonly service: ServiceKind;
+  /** Upstream version. */
   readonly version: string;
+  readonly releaseVersion: string;
   readonly image: string;
+  readonly natives: ArtifactPin["natives"];
   readonly executablePath: string;
   readonly requiredRuntimePaths: ReadonlyArray<string>;
 }
@@ -48,97 +72,81 @@ export interface PreparedNativeArtifact {
 interface ArtifactDefinition {
   readonly sourceService: string;
   readonly defaultVersion: string;
-  readonly images: Readonly<Record<string, string>>;
+  /** Pins keyed by upstream version. */
+  readonly pins: Readonly<Record<string, ArtifactPin>>;
   readonly requiredRuntimePaths: ReadonlyArray<string>;
   readonly executablePath: string;
 }
 
 const definition = (
   sourceService: string,
-  defaultVersion: string,
-  image: string,
+  pin: ArtifactPin,
   executablePath: string,
   requiredRuntimePaths: ReadonlyArray<string> = [executablePath],
-  additionalImages: Readonly<Record<string, string>> = {},
+  additionalPins: Readonly<Record<string, ArtifactPin>> = {},
 ): ArtifactDefinition => ({
   sourceService,
-  defaultVersion,
-  images: { [defaultVersion]: image, ...additionalImages },
+  defaultVersion: pin.upstreamVersion,
+  pins: { [pin.upstreamVersion]: pin, ...additionalPins },
   requiredRuntimePaths,
   executablePath,
 });
 
+const SLIM_IMAGE_GHCR_REGISTRY = "ghcr.io/supabase/cli/";
+
+/** Stand-in digest of every catalog pin that no published revision backs yet. */
+export const PLACEHOLDER_PINS = "0".repeat(64);
+
+const placeholderPin = (repository: string, upstreamVersion: string): ArtifactPin => {
+  const native = { archive: PLACEHOLDER_PINS, manifest: PLACEHOLDER_PINS };
+  return {
+    upstreamVersion,
+    revision: 0,
+    image: `${SLIM_IMAGE_GHCR_REGISTRY}${repository}:${upstreamVersion}-r0@sha256:${PLACEHOLDER_PINS}`,
+    natives: { "darwin-arm64": native, "linux-amd64": native, "linux-arm64": native },
+  };
+};
+
 const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   database: definition(
     "postgres",
-    "17.6.1.173",
-    "ghcr.io/supabase/cli/postgres:17.6.1.173@sha256:9d6e542382946cad5eb1f11f1c8108a51297902ee42fe5098358816d3784ba5a",
+    placeholderPin("postgres", "17.6.1.173"),
     "bin/supabase-postgres-start",
     ["bin/supabase-postgres-start", "bin/pg_dump", "bin/pg_dumpall", "bin/pg_prove", "bin/psql"],
-    {
-      "15.14.1.173":
-        "ghcr.io/supabase/cli/postgres:15.14.1.173@sha256:3abb20e89700d6211e741148b85c3a052bb290cae3b4f751311442f4a5fe2324",
-    },
+    { "15.14.1.173": placeholderPin("postgres", "15.14.1.173") },
   ),
-  rest: definition("postgrest", "v16.2", "ghcr.io/supabase/cli/postgrest:v16.2", "bin/postgrest"),
-  auth: definition("auth", "v2.196.0", "ghcr.io/supabase/cli/auth:v2.196.0", "bin/auth"),
-  realtime: definition(
-    "realtime",
-    "v2.134.5",
-    "ghcr.io/supabase/cli/realtime:v2.134.5@sha256:ee672ffd06ca0a1712a06aea1307c134c366ec082a51b051a8d59a8ad0c72755",
+  rest: definition("postgrest", placeholderPin("postgrest", "v16.2"), "bin/postgrest"),
+  auth: definition("auth", placeholderPin("auth", "v2.196.0"), "bin/auth"),
+  realtime: definition("realtime", placeholderPin("realtime", "v2.134.5"), "bin/server", [
     "bin/server",
-    ["bin/server", "bin/prepare"],
-  ),
-  storage: definition(
-    "storage",
-    "v1.73.0",
-    "ghcr.io/supabase/cli/storage:v1.73.0@sha256:69590a75f916837641976d4018e5ead7c7d2c2305312d9bfb06d86aec8fb1cdd",
+    "bin/prepare",
+  ]),
+  storage: definition("storage", placeholderPin("storage", "v1.73.0"), "bin/storage", [
     "bin/storage",
-    ["bin/storage", "bin/prepare"],
-  ),
-  imgproxy: definition(
-    "imgproxy",
-    "v3.8.0",
-    "ghcr.io/supabase/cli/imgproxy:v3.8.0",
-    "bin/imgproxy",
-  ),
+    "bin/prepare",
+  ]),
+  imgproxy: definition("imgproxy", placeholderPin("imgproxy", "v3.8.0"), "bin/imgproxy"),
   functions: definition(
     "edge-runtime",
-    "v1.77.1",
-    "ghcr.io/supabase/cli/edge-runtime:v1.77.1@sha256:db55555ba640180671be297179797ea39c8c6cf09a22a0b883923cb86938f5e1",
+    placeholderPin("edge-runtime", "v1.77.1"),
     "bin/edge-runtime",
   ),
-  studio: definition(
-    "studio",
-    "2026.09.04-sha-5a67366",
-    "ghcr.io/supabase/cli/studio:2026.09.04-sha-5a67366@sha256:9823a31668028f1846e87331bc21598d9cd74bcaa1466c72dab58c33c9c82720",
-    "bin/studio",
-  ),
-  pgmeta: definition(
-    "pgmeta",
-    "v0.99.0",
-    "ghcr.io/supabase/cli/pgmeta:v0.99.0@sha256:90de2dcf03ac548ae2d1d3e71b3cd10bde4c627572720a42e4c3946b7090292e",
-    "bin/pgmeta",
-  ),
-  mail: definition("mailpit", "v1.30.2", "ghcr.io/supabase/cli/mailpit:v1.30.2", "bin/mailpit"),
-  analytics: definition(
-    "analytics",
-    "v1.50.9",
-    "ghcr.io/supabase/cli/analytics:v1.50.9@sha256:7db85cc6cb0cdeb4b71f2fadb49c0f9197bea0492daf7896f6ae69edad76d28e",
+  studio: definition("studio", placeholderPin("studio", "2026.09.04-sha-5a67366"), "bin/studio"),
+  pgmeta: definition("pgmeta", placeholderPin("pgmeta", "v0.99.0"), "bin/pgmeta"),
+  mail: definition("mailpit", placeholderPin("mailpit", "v1.30.2"), "bin/mailpit"),
+  analytics: definition("analytics", placeholderPin("analytics", "v1.50.9"), "bin/logflare", [
     "bin/logflare",
-    ["bin/logflare", "bin/prepare"],
-  ),
-  vector: definition("vector", "0.53.0", "ghcr.io/supabase/cli/vector:0.53.0", "bin/vector", [
+    "bin/prepare",
+  ]),
+  vector: definition("vector", placeholderPin("vector", "0.53.0"), "bin/vector", [
     "bin/vector",
     "share/doc/vector/config/vector.yaml",
   ]),
-  pooler: definition(
-    "pooler",
-    "v2.9.12",
-    "ghcr.io/supabase/cli/pooler:v2.9.12@sha256:12bb9dcb7ddace79bee173ccb7327c6646af2236679f3bd932a86b3a06479aac",
+  pooler: definition("pooler", placeholderPin("pooler", "v2.9.12"), "bin/server", [
     "bin/server",
-    ["bin/server", "bin/prepare", "bin/provision-tenant"],
-  ),
+    "bin/prepare",
+    "bin/provision-tenant",
+  ]),
 };
 
 const targetForPlatform = (platform: {
@@ -174,10 +182,6 @@ const SLIM_NATIVE_GITHUB_RELEASES = "https://github.com/supabase/slim-services/r
  */
 const SLIM_NATIVE_SUPABASE_S3_MIRROR = "https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com";
 
-const SLIM_NATIVE_GHCR_REGISTRY = "ghcr.io";
-const SLIM_NATIVE_GHCR_REPOSITORY = "supabase/cli";
-
-const SLIM_IMAGE_GHCR_REGISTRY = "ghcr.io/supabase/cli/";
 const SLIM_IMAGE_SUPABASE_ECR_MIRROR = "public.ecr.aws/supabase/cli/";
 
 /** Mirrors carrying a catalog slim image under the same tag and digest, in fallback order. */
@@ -192,27 +196,21 @@ const artifactFor = (
   target: NativeTarget,
 ): SlimServicesArtifact => {
   const sourceService = definitions[service].sourceService;
-  const releaseTag = `${sourceService}-${resolved.version}`;
+  const releaseTag = `${sourceService}-${resolved.releaseVersion}`;
   const assetName = `${releaseTag}-${target}`;
   const githubRelease = `${SLIM_NATIVE_GITHUB_RELEASES}/${releaseTag}`;
-  const supabaseS3 = `${SLIM_NATIVE_SUPABASE_S3_MIRROR}/${sourceService}/${resolved.version}`;
+  const supabaseS3 = `${SLIM_NATIVE_SUPABASE_S3_MIRROR}/${sourceService}/${resolved.releaseVersion}`;
+  const pin = resolved.natives[target];
   return {
     provider: "supabase/slim-services",
     service: sourceService,
-    version: resolved.version,
+    version: resolved.releaseVersion,
     releaseTag,
     target,
     archive: "tar.zst",
     assetName,
-    checksums: [
-      { kind: "sha256sums", url: `${githubRelease}/SHA256SUMS` },
-      {
-        kind: "oci",
-        registry: SLIM_NATIVE_GHCR_REGISTRY,
-        repository: `${SLIM_NATIVE_GHCR_REPOSITORY}/${sourceService}`,
-        tag: `${resolved.version}-native-${target}`,
-      },
-    ],
+    sha256: pin.archive,
+    manifestSha256: pin.manifest,
     mirrors: [
       {
         downloadUrl: `${githubRelease}/${assetName}.tar.zst`,
@@ -236,8 +234,8 @@ export const resolveArtifact = Effect.fn("Artifacts.resolveArtifact")(function* 
     return yield* new ArtifactError({ message: `Unknown service kind: ${request.service}` });
   const selected = definitions[request.service];
   const version = request.version ?? selected.defaultVersion;
-  const image = Object.entries(selected.images).find(([candidate]) => candidate === version)?.[1];
-  if (image === undefined)
+  const pin = Object.entries(selected.pins).find(([candidate]) => candidate === version)?.[1];
+  if (pin === undefined)
     return yield* new ArtifactError({
       message: `Unsupported ${request.service} artifact version: ${version}`,
       service: request.service,
@@ -246,7 +244,9 @@ export const resolveArtifact = Effect.fn("Artifacts.resolveArtifact")(function* 
   return {
     service: request.service,
     version,
-    image,
+    releaseVersion: releaseVersion(pin),
+    image: pin.image,
+    natives: pin.natives,
     executablePath: selected.executablePath,
     requiredRuntimePaths: selected.requiredRuntimePaths,
   };
@@ -254,12 +254,22 @@ export const resolveArtifact = Effect.fn("Artifacts.resolveArtifact")(function* 
 
 /** Resolves a PostgreSQL major alias against the pinned database artifacts. */
 export const postgresVersion = (version: string): string =>
-  Object.keys(definitions.database.images).find(
-    (candidate) => candidate.split(".")[0] === version,
-  ) ?? version;
+  Object.keys(definitions.database.pins).find((candidate) => candidate.split(".")[0] === version) ??
+  version;
 
 /** Service kinds in artifact catalog order. */
 export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> => Record.keys(definitions);
+
+/** Every catalog pin in catalog order, including additional upstream lines. */
+export const catalogPins = (): ReadonlyArray<{
+  readonly service: ServiceKind;
+  readonly sourceService: string;
+  readonly pin: ArtifactPin;
+}> =>
+  artifactServiceKinds().flatMap((service) => {
+    const { sourceService, pins } = definitions[service];
+    return Object.values(pins).map((pin) => ({ service, sourceService, pin }));
+  });
 
 const artifactKey = (artifact: SlimServicesArtifact): string =>
   `slim-services/${artifact.service}/${artifact.version}/${artifact.target}`;

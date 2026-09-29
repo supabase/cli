@@ -24,6 +24,7 @@ import { systemError } from "effect/PlatformError";
 import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
+import { prepareNativeArtifact, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -459,6 +460,7 @@ const platform = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 const nativeFixtureArtifact = Effect.fn(function* (
   cacheRoot: string,
   artifact: {
+    readonly service: ServiceKind;
     readonly name: string;
     readonly executablePath: string;
     readonly files: Readonly<Record<string, string>>;
@@ -475,8 +477,9 @@ const nativeFixtureArtifact = Effect.fn(function* (
           : undefined;
   if (target === undefined) return yield* Effect.fail(`Unsupported test platform: ${platformName}`);
 
+  const { releaseVersion } = yield* resolveArtifact({ service: artifact.service });
   const request: ArtifactRequest = {
-    key: `slim-services/${artifact.name}/${target}`,
+    key: `slim-services/${artifact.name}/${releaseVersion}/${target}`,
     requiredRuntimePaths: Object.keys(artifact.files),
     executablePath: artifact.executablePath,
   };
@@ -506,7 +509,8 @@ const nativeFixtureArtifact = Effect.fn(function* (
 
 const nativeRestArtifact = (cacheRoot: string, program = "") =>
   nativeFixtureArtifact(cacheRoot, {
-    name: "postgrest/v16.2",
+    service: "rest",
+    name: "postgrest",
     executablePath: "bin/postgrest",
     files: { "bin/postgrest": `#!${process.execPath}\n${program}` },
   });
@@ -530,7 +534,8 @@ const nativePoolerArtifact = (cacheRoot: string) => {
     `});\n`;
   const oneShot = `#!${process.execPath}\nprocess.exit(0);\n`;
   return nativeFixtureArtifact(cacheRoot, {
-    name: "pooler/v2.9.12",
+    service: "pooler",
+    name: "pooler",
     executablePath: "bin/server",
     files: { "bin/server": server, "bin/prepare": oneShot, "bin/provision-tenant": oneShot },
   });

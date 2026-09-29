@@ -2,6 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Deferred, Effect, Fiber, FileSystem, Layer, Path, Ref } from "effect";
 import { TestClock } from "effect/testing";
+import { resolveArtifact } from "../Artifacts.ts";
 import { initialization } from "../Commands.ts";
 import {
   makeArtifactStore,
@@ -24,8 +25,9 @@ const target =
 const prepareAuthArtifact = Effect.fn(function* (cacheRoot: string, script: string) {
   if (target === undefined) return yield* Effect.fail("Unsupported test platform");
   const fs = yield* FileSystem.FileSystem;
+  const { releaseVersion } = yield* resolveArtifact({ service: "auth" });
   const request: ArtifactRequest = {
-    key: `slim-services/auth/v2.196.0/${target}`,
+    key: `slim-services/auth/${releaseVersion}/${target}`,
     requiredRuntimePaths: ["bin/auth"],
     executablePath: "bin/auth",
   };
