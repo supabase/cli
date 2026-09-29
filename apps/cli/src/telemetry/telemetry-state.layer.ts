@@ -26,7 +26,7 @@ const SCHEMA_VERSION = 1;
 const SESSION_ROTATION_MS = 30 * 60 * 1000;
 
 function telemetryPath(env: Record<string, string | undefined>, pathSvc: Path.Path): string {
-  return pathSvc.join(supabaseHome(homedir(), env), "telemetry.json");
+  return pathSvc.join(supabaseHome(pathSvc, homedir(), env), "telemetry.json");
 }
 
 /**

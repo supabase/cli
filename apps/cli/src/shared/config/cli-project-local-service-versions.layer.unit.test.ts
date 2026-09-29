@@ -1,10 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { mkdtempSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, PlatformError } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Schema,
+} from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { cliSettingsLayer } from "./cli-settings.layer.ts";
 import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
@@ -13,19 +19,24 @@ import { cliProjectLocalServiceVersionsLayer } from "./cli-project-local-service
 import { CliProjectHome } from "./cli-project-home.service.ts";
 import { CliProjectLocalServiceVersions } from "./cli-project-local-service-versions.service.ts";
 
-function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), "supabase-project-local-versions-"));
-}
+const makeTempDir = Effect.flatMap(FileSystem.FileSystem, (fs) =>
+  fs.makeTempDirectoryScoped({ prefix: "supabase-project-local-versions-" }),
+);
 
-function buildLayer(opts: {
-  cwd: string;
-  env?: Record<string, string>;
-  homeDir?: string;
-  fs?: Layer.Layer<FileSystem.FileSystem>;
-}) {
+const PrettyJsonString = Schema.fromJsonString(Schema.Unknown, { space: 2 });
+
+function buildLayer(
+  path: Path.Path,
+  opts: {
+    cwd: string;
+    env?: Record<string, string>;
+    homeDir?: string;
+    fs?: Layer.Layer<FileSystem.FileSystem>;
+  },
+) {
   const runtimeInfoLayer = mockRuntimeInfo({
     cwd: opts.cwd,
-    homeDir: opts.homeDir ?? join(opts.cwd, ".home"),
+    homeDir: opts.homeDir ?? path.join(opts.cwd, ".home"),
   });
   const envLayer = processEnvLayer(opts.env ?? {});
   const discoveredCliProjectContextLayer = cliProjectContextLayer.pipe(
@@ -34,6 +45,7 @@ function buildLayer(opts: {
     Layer.provide(envLayer),
   );
   const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
+    Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
   );
@@ -61,8 +73,6 @@ function buildLayer(opts: {
 
 describe("cliProjectLocalServiceVersionsLayer", () => {
   it.live("surfaces a filesystem read permission failure", () => {
-    const tempDir = makeTempDir();
-    const projectRoot = join(tempDir, "repo");
     const fsLayer = Layer.succeed(
       FileSystem.FileSystem,
       FileSystem.makeNoop({
@@ -80,10 +90,14 @@ describe("cliProjectLocalServiceVersionsLayer", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
-      yield* Effect.tryPromise(() => writeFile(join(projectRoot, "supabase", "config.toml"), ""));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const projectRoot = path.join(tempDir, "repo");
+      yield* fs.makeDirectory(path.join(projectRoot, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(projectRoot, "supabase", "config.toml"), "");
 
-      const layer = buildLayer({ cwd: projectRoot, fs: fsLayer });
+      const layer = buildLayer(path, { cwd: projectRoot, fs: fsLayer });
       const localVersions = yield* CliProjectLocalServiceVersions.pipe(Effect.provide(layer));
 
       const exit = yield* Effect.exit(localVersions.load);
@@ -95,20 +109,19 @@ describe("cliProjectLocalServiceVersionsLayer", () => {
           expect(error.value).toBeInstanceOf(PlatformError.PlatformError);
         }
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 
-  it.live("fails with a tagged error when local service versions are malformed", () => {
-    const tempDir = makeTempDir();
-    const projectRoot = join(tempDir, "repo");
+  it.live("fails with a tagged error when local service versions are malformed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const projectRoot = path.join(tempDir, "repo");
+      yield* fs.makeDirectory(path.join(projectRoot, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(projectRoot, "supabase", "config.toml"), "");
 
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
-      yield* Effect.tryPromise(() => writeFile(join(projectRoot, "supabase", "config.toml"), ""));
-
-      const layer = buildLayer({ cwd: projectRoot });
+      const layer = buildLayer(path, { cwd: projectRoot });
       const { cliProjectHome, localVersions } = yield* Effect.gen(function* () {
         return {
           cliProjectHome: yield* CliProjectHome,
@@ -117,9 +130,7 @@ describe("cliProjectLocalServiceVersionsLayer", () => {
       }).pipe(Effect.provide(layer));
 
       yield* cliProjectHome.ensureCliProjectHomeDir;
-      yield* Effect.tryPromise(() =>
-        writeFile(cliProjectHome.projectLocalVersionsPath, "{not-json"),
-      );
+      yield* fs.writeFileString(cliProjectHome.projectLocalVersionsPath, "{not-json");
 
       const exit = yield* Effect.exit(localVersions.load);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -130,21 +141,20 @@ describe("cliProjectLocalServiceVersionsLayer", () => {
           expect(error.value).toMatchObject({ _tag: "InvalidLocalServiceVersionsStateError" });
         }
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it.live("loads local service version overrides from repo-local state", () => {
-    const tempDir = makeTempDir();
-    const projectRoot = join(tempDir, "repo");
-    const supabaseHome = join(tempDir, "supabase-home");
+  it.live("loads local service version overrides from repo-local state", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const projectRoot = path.join(tempDir, "repo");
+      const supabaseHome = path.join(tempDir, "supabase-home");
+      yield* fs.makeDirectory(path.join(projectRoot, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(projectRoot, "supabase", "config.toml"), "");
 
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
-      yield* Effect.tryPromise(() => writeFile(join(projectRoot, "supabase", "config.toml"), ""));
-
-      const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
+      const layer = buildLayer(path, { cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
       const { cliProjectHome, localVersions } = yield* Effect.gen(function* () {
         return {
           cliProjectHome: yield* CliProjectHome,
@@ -153,21 +163,15 @@ describe("cliProjectLocalServiceVersionsLayer", () => {
       }).pipe(Effect.provide(layer));
 
       yield* cliProjectHome.ensureCliProjectHomeDir;
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          cliProjectHome.projectLocalVersionsPath,
-          JSON.stringify(
-            {
-              updatedAt: "2026-03-21T12:00:00.000Z",
-              versions: {
-                auth: "v2.180.0",
-                storage: "1.40.0",
-              },
-            },
-            null,
-            2,
-          ),
-        ),
+      yield* fs.writeFileString(
+        cliProjectHome.projectLocalVersionsPath,
+        yield* Schema.encodeEffect(PrettyJsonString)({
+          updatedAt: "2026-03-21T12:00:00.000Z",
+          versions: {
+            auth: "v2.180.0",
+            storage: "1.40.0",
+          },
+        }),
       );
 
       const loaded = yield* localVersions.load;
@@ -178,29 +182,24 @@ describe("cliProjectLocalServiceVersionsLayer", () => {
           storage: "1.40.0",
         });
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it.live("returns none when no local override file exists", () => {
-    const tempDir = makeTempDir();
-    const projectRoot = join(tempDir, "repo");
-    const supabaseHome = join(tempDir, "supabase-home");
+  it.live("returns none when no local override file exists", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const projectRoot = path.join(tempDir, "repo");
+      const supabaseHome = path.join(tempDir, "supabase-home");
+      yield* fs.makeDirectory(path.join(projectRoot, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(projectRoot, "supabase", "config.toml"), "");
 
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
-      yield* Effect.tryPromise(() => writeFile(join(projectRoot, "supabase", "config.toml"), ""));
-
-      const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
-      const localVersions = yield* Effect.gen(function* () {
-        return yield* CliProjectLocalServiceVersions;
-      }).pipe(Effect.provide(layer));
+      const layer = buildLayer(path, { cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
+      const localVersions = yield* CliProjectLocalServiceVersions.pipe(Effect.provide(layer));
 
       const loaded = yield* localVersions.load;
       expect(Option.isNone(loaded)).toBe(true);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 });
