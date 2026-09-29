@@ -19,6 +19,9 @@ class IdleProbeError extends Schema.TaggedError<IdleProbeError>()("IdleProbeErro
   cause: Schema.optionalKey(Schema.Unknown),
 }) {}
 
+// At least 5s, so a service can't idle out between back-to-back requests on a slow runner.
+const idleMillis = 5_000;
+
 const signServiceToken = Effect.fn("WholeStack.signServiceToken")((secret: string) =>
   Effect.tryPromise({
     try: () =>
@@ -48,7 +51,7 @@ export const idleWake = (runtime: Runtime) =>
           member.id === database.id
             ? { id: member.id, activation: "eager" as const }
             : timedServices.has(member.id)
-              ? { id: member.id, activation: "lazy" as const, idleMillis: 15_000 }
+              ? { id: member.id, activation: "lazy" as const, idleMillis }
               : { id: member.id, activation: "lazy" as const },
         ),
       });
