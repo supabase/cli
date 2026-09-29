@@ -47,12 +47,16 @@ export const functionsList = Effect.fn("functions.list")(function* (flags: Funct
         }),
       ),
     );
+    yield* Effect.annotateCurrentSpan("project.ref", ref);
 
     const fetching =
       output.format === "text" ? yield* output.task("Fetching functions...") : undefined;
     const response = yield* api.executeRaw(operationDefinitions.v1ListAllFunctions, { ref }).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(mapListError),
+      Effect.withSpan("functions.list.listFunctions", {
+        attributes: { "api.operation": "v1ListAllFunctions" },
+      }),
     );
     if (response.status !== 200) {
       const body = sanitizeErrorBody(yield* response.text.pipe(Effect.orElseSucceed(() => "")));
@@ -88,6 +92,7 @@ export const functionsList = Effect.fn("functions.list")(function* (flags: Funct
     }
     yield* fetching?.clear() ?? Effect.void;
     const { functions, isNil } = decodedFunctions.value;
+    yield* Effect.annotateCurrentSpan("function.count", functions.length);
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 

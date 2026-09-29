@@ -40,6 +40,7 @@ export const branchesList = Effect.fn("branches.list")(function* (flags: Branche
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
     const fetching =
@@ -47,7 +48,11 @@ export const branchesList = Effect.fn("branches.list")(function* (flags: Branche
     const branches: Branches = yield* api.v1.listAllBranches({ ref }).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(mapListError),
+      Effect.withSpan("branches.list.listBranches", {
+        attributes: { "api.operation": "v1ListAllBranches" },
+      }),
     );
+    yield* Effect.annotateCurrentSpan("branch.count", branches.length);
     yield* fetching?.clear() ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);

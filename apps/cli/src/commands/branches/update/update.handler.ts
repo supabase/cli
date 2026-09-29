@@ -44,6 +44,7 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
     const branchInput = yield* promptBranchId(flags.branchId, ref);
@@ -82,6 +83,9 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
               }),
           ),
         ),
+        Effect.withSpan("branches.update.updateBranch", {
+          attributes: { "api.operation": "v1UpdateABranchConfig" },
+        }),
       );
     yield* patching?.clear() ?? Effect.void;
 

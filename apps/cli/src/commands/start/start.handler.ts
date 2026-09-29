@@ -359,7 +359,7 @@ const readKongEmailTemplateContent = Effect.fnUntraced(function* (
  * Skips (never throws for) an entry whose resolver returns `undefined`, defensively, even though
  * that should be unreachable since Kong's set is built from configured entries.
  */
-const resolveKongEmailTemplateMounts = Effect.fnUntraced(function* (
+const resolveKongEmailTemplateMounts = Effect.fn("start.resolveEmailTemplateMounts")(function* (
   email: ResolvedAuthEmail,
   workdir: string,
   fs: FileSystem.FileSystem,
@@ -397,6 +397,7 @@ const resolveKongEmailTemplateMounts = Effect.fnUntraced(function* (
     yield* readKongEmailTemplateContent("notification", id, resolvedPath, fs);
     mounts.push({ id: `${id}_notification`, resolvedPath, notification: true });
   }
+  yield* Effect.annotateCurrentSpan({ "email_template.count": mounts.length });
   return mounts;
 });
 
@@ -438,13 +439,17 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       yield* output.raw(partition.warning, "stderr");
     }
     const excludedKeys = new Set(partition.valid);
+    yield* Effect.annotateCurrentSpan({
+      "start.excluded_count": excludedKeys.size,
+      "start.ignore_health_check": flags.ignoreHealthCheck,
+    });
 
     // 2. Config load + validate — same config-load/env/project-id
     // resolution sequence as `stop`/`status`.
     const context = yield* loadLocalProjectContext(
       cliSettings.workdir,
       (message) => new StartConfigLoadError({ message }),
-    );
+    ).pipe(Effect.withSpan("start.loadConfig"));
     const values = yield* Effect.try({
       try: () =>
         resolveLocalConfigValues(
@@ -587,7 +592,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // `SUPABASE_DB_SEED_ENABLED` or an undecryptable `[db.vault]` secret would go unvalidated
     // whenever `start` reuses an existing volume instead of provisioning a fresh one.
     // `startSetupLocalDatabase` still resolves its own fresh-setup values independently when it runs.
-    const dbTomlValues = yield* checkDbToml(fs, path, cliSettings.workdir);
+    const dbTomlValues = yield* checkDbToml(fs, path, cliSettings.workdir).pipe(
+      Effect.withSpan("start.validateDbConfig"),
+    );
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = cliProjectFilterValue(projectId);
@@ -633,6 +640,13 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       Effect.catch((error) =>
         isContainerNotFoundMessage(error.message) ? Effect.void : Effect.fail(error),
       ),
+      Effect.tap((state) =>
+        Effect.annotateCurrentSpan({
+          "db.exists": state !== undefined,
+          ...(state !== undefined && { "db.status": state.status, "db.running": state.running }),
+        }),
+      ),
+      Effect.withSpan("start.inspectDb"),
     );
     const dbState = yield* inspectDbState;
     const isRecoverableStoppedState = (
@@ -641,8 +655,12 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       // `created` may own a just-provisioned volume that Postgres never initialized.
       state?.running === false && state.status.length > 0 && state.status !== "created";
     const shouldRecoverStoppedStack = isRecoverableStoppedState(dbState) && !inBitbucketPipeline;
+    yield* Effect.annotateCurrentSpan({
+      "start.already_running": dbState !== undefined && !shouldRecoverStoppedStack,
+      "start.recover_stopped_stack": shouldRecoverStoppedStack,
+    });
 
-    const reportAlreadyRunningStatus = Effect.fnUntraced(function* () {
+    const reportAlreadyRunningStatus = Effect.fn("start.reportAlreadyRunning")(function* () {
       // Gated on text mode for consistency with every other supplementary stderr line this
       // handler prints — json/stream-json callers get a clean structured payload with no noise.
       if (output.format === "text") {
@@ -675,6 +693,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       const runningSet = new Set(runningNames);
       const serviceIds = serviceContainerIds(projectId);
       const stopped = serviceIds.filter((id) => !runningSet.has(id));
+      yield* Effect.annotateCurrentSpan({ "service.stopped_count": stopped.length });
       // Unconditional here — stderr text, never corrupts a JSON stdout payload.
       if (stopped.length > 0) {
         yield* output.raw(`Stopped services: [${stopped.join(" ")}]\n`, "stderr");
@@ -752,7 +771,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       path,
       { config, projectEnvValues, workdir: cliSettings.workdir },
       (message) => new StartInvalidConfigError({ message }),
-    );
+    ).pipe(Effect.withSpan("start.resolveBootstrapConfig"));
 
     // 7. Resolve every image that will actually be pulled before any container is created.
     const imagePlan = resolveStartImagePlan(gates, serviceVersionOverrides);
@@ -763,14 +782,13 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       : undefined;
     // Pre-pull only touches non-excluded services; the one-shot setup-job images are resolved
     // lazily, only when the fresh-DB setup job actually runs.
-    const resolvedImages = yield* ensureImagesCached(
-      spawner,
-      [
-        postgresImage,
-        ...imagePlan.map((entry) => entry.image),
-        ...(edgeRuntimeDefaultImage !== undefined ? [edgeRuntimeDefaultImage] : []),
-      ],
-      projectEnvValues,
+    const imagesToCache = [
+      postgresImage,
+      ...imagePlan.map((entry) => entry.image),
+      ...(edgeRuntimeDefaultImage !== undefined ? [edgeRuntimeDefaultImage] : []),
+    ];
+    const resolvedImages = yield* ensureImagesCached(spawner, imagesToCache, projectEnvValues).pipe(
+      Effect.withSpan("start.pullImages", { attributes: { "image.count": imagesToCache.length } }),
     );
     const resolveImage = (image: string) => resolvedImages.get(image) ?? image;
 
@@ -795,7 +813,12 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       // Climbing ancestors again here could let an unrelated ancestor project's
       // `supabase/functions` win when `--workdir` points at a subdirectory with no config of its own.
       search: false,
-    });
+    }).pipe(
+      Effect.tap((functions) =>
+        Effect.annotateCurrentSpan({ "function.count": Object.keys(functions).length }),
+      ),
+      Effect.withSpan("start.inferFunctions"),
+    );
     const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
     // Resolve once during preflight so a missing function source cannot fail only after stopped
     // containers have been removed. Studio consumes the cached binds later during bring-up.
@@ -1470,7 +1493,11 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         onFreshVolumeResolved: (resolved) => {
           isFreshVolume = resolved;
         },
-      }).pipe(Effect.result);
+      }).pipe(
+        Effect.tap(() => Effect.annotateCurrentSpan({ "db.fresh_volume": isFreshVolume })),
+        Effect.withSpan("start.startDatabase"),
+        Effect.result,
+      );
 
       if (Result.isFailure(dbBootstrapResult)) {
         const error = dbBootstrapResult.failure;
@@ -1603,7 +1630,11 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             ),
           ),
         );
-        yield* createContainer(spawner, spec, startOpts);
+        yield* createContainer(spawner, spec, startOpts).pipe(
+          Effect.withSpan("start.startService", {
+            attributes: { "service.name": entry.service, "container.image": spec.image },
+          }),
+        );
         if (excludeFromHealthWatch !== true) {
           started.set(spec.containerName, spec.image);
         }
@@ -1635,7 +1666,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       // including a SIGINT interrupt. `tapError` is built on `Cause.findError`, which only
       // matches `Fail` reasons — a pure fiber interrupt never reaches it.
       Effect.onError(() =>
-        rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
+        rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug).pipe(
+          Effect.withSpan("start.rollback", { attributes: { "db.fresh_volume": isFreshVolume } }),
+        ),
       ),
     );
 
@@ -1668,6 +1701,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         Effect.ensuring(
           Effect.suspend(() => cleanupStartSecrets(removedContainers, cliSettings.workdir)),
         ),
+        Effect.tap(() =>
+          Effect.annotateCurrentSpan({ "container.removed_count": removedContainers.length }),
+        ),
+        Effect.withSpan("start.recoverStoppedStack"),
       );
     }
 
@@ -1748,7 +1785,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             edgeRuntime: edgeRuntimeGateway,
             images: started,
           }),
-        ).pipe(Effect.result);
+        ).pipe(
+          Effect.withSpan("start.waitHealthy", { attributes: { "service.count": started.size } }),
+          Effect.result,
+        );
         if (Result.isFailure(healthResult)) {
           const error = healthResult.failure;
           if (flags.ignoreHealthCheck && isUnhealthyStartError(error)) {
@@ -1765,7 +1805,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                 waitForHealthyServices(spawner, [storageContainerId], {
                   images: started,
                 }),
-              ).pipe(Effect.result);
+              ).pipe(Effect.withSpan("start.waitStorageHealthy"), Effect.result);
               if (Result.isSuccess(storageHealthResult)) {
                 const seedResult = yield* seedBucketsRun({
                   projectRef: "",
@@ -1777,7 +1817,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                     document: context.loaded?.document,
                   },
                   projectEnvValues,
-                }).pipe(Effect.result);
+                }).pipe(Effect.withSpan("start.seedBuckets"), Effect.result);
                 if (Result.isFailure(seedResult)) {
                   // No manual `rollbackStart` here — the outer
                   // `Effect.onError` below rolls back on this failure too.
@@ -1813,7 +1853,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               document: context.loaded?.document,
             },
             projectEnvValues,
-          });
+          }).pipe(Effect.withSpan("start.seedBuckets"));
         }
 
         // 11. Fires `cli_stack_started` exactly once, only on success. Sits after the entire
@@ -1824,7 +1864,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         }
       }).pipe(
         Effect.onError(() =>
-          rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
+          rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug).pipe(
+            Effect.withSpan("start.rollback", { attributes: { "db.fresh_volume": isFreshVolume } }),
+          ),
         ),
       );
     }

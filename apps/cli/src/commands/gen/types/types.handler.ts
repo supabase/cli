@@ -272,6 +272,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           new GenTypesParseConfigError({ message: cause.message }),
       }),
       Effect.flatMap(requireProjectConfigWhenExplicit),
+      Effect.tap((loaded) => Effect.annotateCurrentSpan("config.found", loaded !== null)),
+      Effect.withSpan("gen.types.loadConfig"),
     );
 
   // An explicit --workdir that holds no project must not silently resolve to the embedded
@@ -326,7 +328,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     }
   };
 
-  const runGenerate = (input: {
+  const runGenerate = Effect.fn("gen.types.generate")(function* (input: {
     readonly conn: PgConnInput;
     readonly isLocal: boolean;
     readonly includedSchemas: ReadonlyArray<string>;
@@ -336,47 +338,50 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       readonly eligible: boolean;
       readonly resolve: Effect.Effect<Option.Option<PgConnInput>, DbConfigError>;
     };
-  }) =>
-    Effect.gen(function* () {
-      const attempt = (conn: PgConnInput) =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const target = withQueryTimeout(conn);
-            yield* output.raw(`Connecting to ${target.host} ${target.port}\n`, "stderr");
-            return yield* generator.generate({
-              conn: target,
-              isLocal: input.isLocal,
-              dnsResolver,
-              lang,
-              includedSchemas: input.includedSchemas,
-              options: {
-                ...languageOptions,
-                "detect-one-to-one-relationships": input.detectOneToOneRelationships,
-              },
-            });
-          }),
-        );
+  }) {
+    yield* Effect.annotateCurrentSpan(
+      "pooler_fallback.eligible",
+      input.poolerFallback?.eligible ?? false,
+    );
+    const attempt = (conn: PgConnInput) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const target = withQueryTimeout(conn);
+          yield* output.raw(`Connecting to ${target.host} ${target.port}\n`, "stderr");
+          return yield* generator.generate({
+            conn: target,
+            isLocal: input.isLocal,
+            dnsResolver,
+            lang,
+            includedSchemas: input.includedSchemas,
+            options: {
+              ...languageOptions,
+              "detect-one-to-one-relationships": input.detectOneToOneRelationships,
+            },
+          });
+        }),
+      );
 
-      const types =
-        input.poolerFallback === undefined
-          ? yield* attempt(input.conn)
-          : yield* runWithPoolerFallback({
-              run: attempt(input.conn),
-              retry: attempt,
-              directHost: input.poolerFallback.directHost,
-              eligible: input.poolerFallback.eligible,
-              resolveFallback: input.poolerFallback.resolve,
-              classifyError: classifyGenerateError,
-            });
+    const types =
+      input.poolerFallback === undefined
+        ? yield* attempt(input.conn)
+        : yield* runWithPoolerFallback({
+            run: attempt(input.conn),
+            retry: attempt,
+            directHost: input.poolerFallback.directHost,
+            eligible: input.poolerFallback.eligible,
+            resolveFallback: input.poolerFallback.resolve,
+            classifyError: classifyGenerateError,
+          });
 
-      if (lang === "typescript") {
-        yield* output.raw(
-          "Generated TypeScript is unformatted. Format it with:\n  npx oxfmt <generated-file.ts>\n",
-          "stderr",
-        );
-      }
-      yield* output.raw(types);
-    });
+    if (lang === "typescript") {
+      yield* output.raw(
+        "Generated TypeScript is unformatted. Format it with:\n  npx oxfmt <generated-file.ts>\n",
+        "stderr",
+      );
+    }
+    yield* output.raw(types);
+  });
 
   const runProjectTypes = (
     projectRef: string,
@@ -386,11 +391,15 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     adHocProjectRef: boolean,
   ) =>
     Effect.gen(function* () {
+      yield* Effect.annotateCurrentSpan("project.ref", projectRef);
       const api = yield* platformApi.make;
 
       if (lang !== "typescript") {
         const projectResult = yield* api.v1.getProject({ ref: projectRef }).pipe(
           Effect.catch(mapProjectDatabaseHostError),
+          Effect.withSpan("gen.types.getProject", {
+            attributes: { "api.operation": "v1GetProject" },
+          }),
           Effect.as("project" as const),
           Effect.catch((cause) =>
             isProjectNotFound(cause)
@@ -432,7 +441,12 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           ref: projectRef,
           included_schemas: includedSchemas.join(","),
         })
-        .pipe(Effect.catch(mapProjectTypesError));
+        .pipe(
+          Effect.catch(mapProjectTypesError),
+          Effect.withSpan("gen.types.generateTypescriptTypes", {
+            attributes: { "api.operation": "v1GenerateTypescriptTypes" },
+          }),
+        );
 
       yield* output.raw(response.types);
     }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
@@ -440,9 +454,13 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const runPreviewBranchTypes = (branchRef: string, includedSchemas: ReadonlyArray<string>) =>
     Effect.gen(function* () {
       const api = yield* platformApi.make;
-      const branch = yield* api.v1
-        .getABranchConfig({ branch_id_or_ref: branchRef })
-        .pipe(Effect.catch(mapBranchDatabaseConfigError));
+      yield* Effect.annotateCurrentSpan("typegen.preview_branch", true);
+      const branch = yield* api.v1.getABranchConfig({ branch_id_or_ref: branchRef }).pipe(
+        Effect.catch(mapBranchDatabaseConfigError),
+        Effect.withSpan("gen.types.getBranchConfig", {
+          attributes: { "api.operation": "v1GetABranchConfig" },
+        }),
+      );
 
       if (branch.db_user === undefined || branch.db_pass === undefined) {
         return yield* new GenTypesBranchCredentialsUnavailableError({
@@ -466,6 +484,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             : Option.none<PgConnInput>();
         }),
         Effect.orElseSucceed(() => Option.none<PgConnInput>()),
+        Effect.withSpan("gen.types.getPoolerConfig", {
+          attributes: { "api.operation": "v1GetPoolerConfig" },
+        }),
       );
 
       yield* runGenerate({
@@ -526,7 +547,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           });
         }
       }),
-    );
+    ).pipe(Effect.withSpan("gen.types.checkLocalDb"));
 
   yield* Effect.gen(function* () {
     // Validated before the command's own guard or flag-group validation; the query-timeout
@@ -594,7 +615,13 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       }
     }
 
+    yield* Effect.annotateCurrentSpan("typegen.lang", lang);
+
     if (flags.local) {
+      yield* Effect.annotateCurrentSpan({
+        "typegen.source": "local",
+        "stack.backend": backend.kind,
+      });
       const config = yield* readDbToml(fs, path, cliSettings.workdir);
       const projectEnvValues = Object.fromEntries(
         Object.entries(config.projectEnv).filter(([key]) => key !== "SUPABASE_DB_PASSWORD"),
@@ -647,6 +674,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     }
 
     if (Option.isSome(flags.dbUrl)) {
+      yield* Effect.annotateCurrentSpan("typegen.source", "db_url");
       // Skips the config load entirely when `--schema` is explicit, since the load's only
       // output here is the schema fallback — a `--db-url --schema ...` invocation must not
       // fail just because the workdir has no project config.
@@ -680,6 +708,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     }
 
     if (flags.linked) {
+      yield* Effect.annotateCurrentSpan("typegen.source", "linked");
       const ref = yield* projectRef.resolve(Option.none());
       const loaded = schemas.length > 0 ? null : yield* loadConfig(ref);
       yield* runProjectTypes(
@@ -691,6 +720,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     }
 
     if (Option.isSome(flags.projectId)) {
+      yield* Effect.annotateCurrentSpan("typegen.source", "project_id");
       const ref = yield* projectRef.resolve(flags.projectId);
       const loaded = schemas.length > 0 ? null : yield* loadConfig(ref);
       yield* runProjectTypes(
@@ -701,6 +731,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       return;
     }
 
+    yield* Effect.annotateCurrentSpan("typegen.source", "linked");
     const resolvedRef = yield* projectRef.resolve(Option.none()).pipe(
       Effect.catchTag("ProjectRefNotLinkedError", (cause) =>
         Effect.fail(

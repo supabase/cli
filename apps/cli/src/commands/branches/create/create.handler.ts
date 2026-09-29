@@ -81,6 +81,7 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
   // holds the branch's own ref, and the platform 403s on that ref for every branches-management
   // endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
     const creating =
@@ -119,6 +120,9 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
               }),
           ),
         ),
+        Effect.withSpan("branches.create.createBranch", {
+          attributes: { "api.operation": "v1CreateABranch" },
+        }),
       );
     yield* creating?.clear() ?? Effect.void;
 

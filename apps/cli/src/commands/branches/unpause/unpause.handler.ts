@@ -34,6 +34,7 @@ export const branchesUnpause = Effect.fn("branches.unpause")(function* (
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
     const branchInput = yield* promptBranchId(flags.name, ref);
@@ -44,6 +45,9 @@ export const branchesUnpause = Effect.fn("branches.unpause")(function* (
     yield* api.v1.restoreAProject({ ref: branchRef }).pipe(
       Effect.tapError(() => restoring?.fail() ?? Effect.void),
       Effect.catch(mapUnpauseError),
+      Effect.withSpan("branches.unpause.restoreBranch", {
+        attributes: { "api.operation": "v1RestoreAProject" },
+      }),
     );
     yield* restoring?.clear() ?? Effect.void;
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));

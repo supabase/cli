@@ -31,6 +31,7 @@ export const branchesDisable = Effect.fn("branches.disable")(function* (
   // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
   // 403s on that ref for every branches-management endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
     const disabling =
@@ -38,6 +39,9 @@ export const branchesDisable = Effect.fn("branches.disable")(function* (
     yield* api.v1.disablePreviewBranching({ ref }).pipe(
       Effect.tapError(() => disabling?.fail() ?? Effect.void),
       Effect.catch(mapDisableError),
+      Effect.withSpan("branches.disable.disableBranching", {
+        attributes: { "api.operation": "v1DisablePreviewBranching" },
+      }),
     );
     yield* disabling?.clear() ?? Effect.void;
 

@@ -29,7 +29,7 @@ export interface CostItem {
  * (e.g. the `"api"` GraphQL addon). Mirrors the `sso add` /
  * `postgres-config` raw-HTTP precedent.
  */
-export const getCostMatrix = Effect.fn("config.push.cost-matrix")(function* (ref: string) {
+export const getCostMatrix = Effect.fn("config.push.fetchCostMatrix")(function* (ref: string) {
   const httpClient = yield* HttpClient.HttpClient;
   const cliSettings = yield* CommandSettings;
   const tokenOpt = yield* resolveAccessToken;
@@ -78,6 +78,7 @@ export const getCostMatrix = Effect.fn("config.push.cost-matrix")(function* (ref
       costMatrix.set(addon.type, { name: variant.name, price: variant.price.description });
     }
   }
+  yield* Effect.annotateCurrentSpan("addon.count", costMatrix.size);
   return costMatrix;
 });
 

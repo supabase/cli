@@ -139,7 +139,7 @@ function linkBranchNotFoundMessage(
  * Uses the list endpoint (`GET /v1/projects/{ref}/branches`) rather than a single-branch lookup
  * so the full list can power the available-branches error enrichment below.
  */
-const resolveLinkBranchRef = Effect.fnUntraced(function* (value: string) {
+const resolveLinkBranchRef = Effect.fn("link.resolveBranch")(function* (value: string) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
 
@@ -168,6 +168,11 @@ const resolveLinkBranchRef = Effect.fnUntraced(function* (value: string) {
     Effect.catch(mapBranchListError),
   );
   yield* task?.clear() ?? Effect.void;
+  yield* Effect.annotateCurrentSpan({
+    "api.operation": "v1ListAllBranches",
+    "project.parent_ref": parentRef,
+    "branch.count": branches.length,
+  });
 
   const found: LinkBranch | undefined = branches.find(
     // UUID matching is case-insensitive (canonical ids are lowercase hex, but uppercase input
@@ -241,6 +246,10 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
 
     const ref = yield* resolver.resolveForLink(resolvedRefOrBranch);
     resolvedRef = ref;
+    yield* Effect.annotateCurrentSpan({
+      "project.ref": ref,
+      "link.via_branch": Option.isSome(branchResolution),
+    });
     const paths = tempPaths(path, cliSettings.workdir);
 
     const writeTempFile: WriteTempFile = (filePath, content) =>
@@ -251,7 +260,15 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
     // 1. Check remote project status (404 tolerated for branch projects).
     const project = yield* api.v1
       .getProject({ ref })
-      .pipe(Effect.asSome, Effect.catch(classifyProjectError));
+      .pipe(
+        Effect.asSome,
+        Effect.catch(classifyProjectError),
+        Effect.withSpan("link.fetchProject", { attributes: { "api.operation": "v1GetProject" } }),
+      );
+    yield* Effect.annotateCurrentSpan(
+      "project.status",
+      Option.isSome(project) ? project.value.status : "not_found",
+    );
 
     if (Option.isSome(project)) {
       const status = project.value.status;
@@ -277,9 +294,12 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
     }
 
     // 2. Resolve service keys (auth check).
-    const keys = yield* api.v1
-      .getProjectApiKeys({ ref, reveal: true })
-      .pipe(Effect.catch(mapApiKeysError));
+    const keys = yield* api.v1.getProjectApiKeys({ ref, reveal: true }).pipe(
+      Effect.catch(mapApiKeysError),
+      Effect.withSpan("link.fetchApiKeys", {
+        attributes: { "api.operation": "v1GetProjectApiKeys" },
+      }),
+    );
     const { anon, serviceRole } = extractServiceKeys(keys);
     if (anon.length === 0 && serviceRole.length === 0) {
       return yield* new LinkMissingKeyError({ message: "Anon key not found." });
@@ -291,7 +311,9 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       serviceKey: serviceRole,
       skipPooler: flags.skipPooler,
       workdir: cliSettings.workdir,
-    });
+    }).pipe(
+      Effect.withSpan("link.linkServices", { attributes: { skip_pooler: flags.skipPooler } }),
+    );
 
     // 4. Save project ref (mandatory — a write failure fails the command).
     yield* writeTempFile(paths.projectRef, ref);
@@ -394,6 +416,10 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
           Effect.map((branches) => branches.some((branch) => branch.project_ref === ref)),
           Effect.orElseSucceed(() => false),
           Effect.ensuring(correlating?.clear() ?? Effect.void),
+          Effect.tap((result) => Effect.annotateCurrentSpan("link.parent_verified", result)),
+          Effect.withSpan("link.verifyBranchParent", {
+            attributes: { "api.operation": "v1ListAllBranches" },
+          }),
         );
         if (!verified) {
           yield* fs.remove(paths.linkedProjectCache, { force: true }).pipe(Effect.ignore);

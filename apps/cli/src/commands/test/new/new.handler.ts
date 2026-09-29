@@ -20,6 +20,7 @@ export const testNew = Effect.fn("test.new")(function* (flags: TestNewFlags) {
   const path = yield* Path.Path;
 
   const template = Option.getOrElse(flags.template, () => "pgtap" as const);
+  yield* Effect.annotateCurrentSpan("test.template", template);
 
   yield* Effect.gen(function* () {
     // The printed path is relative to the project root ("supabase/tests"); FS ops are

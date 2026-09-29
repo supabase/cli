@@ -105,6 +105,10 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
 
     const validLinkedRef = Option.filter(linkedProjectRef, (ref) => PROJECT_REF_PATTERN.test(ref));
     const backend = yield* currentStackBackend;
+    yield* Effect.annotateCurrentSpan({
+      "stack.backend": backend.kind,
+      "project.linked": Option.isSome(validLinkedRef),
+    });
     if (Option.isSome(linkedProjectRef) && Option.isNone(validLinkedRef)) {
       // A malformed linked ref still warns, but the remote call is skipped:
       // `fetchLinkedServiceVersions` embeds the ref unescaped into the tenant
@@ -124,7 +128,11 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
               projectRef: validLinkedRef.value,
               accessToken: accessToken.value,
               userAgent: cliSettings.userAgent,
-            })
+            }).pipe(
+              Effect.withSpan("services.fetchRemoteVersions", {
+                attributes: { "project.ref": validLinkedRef.value },
+              }),
+            )
           : {};
       const result = yield* stackServiceVersions(cliSettings.workdir, remote);
       if (result.configError !== undefined) {
@@ -141,6 +149,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
         cliSettings.workdir,
         Option.getOrUndefined(linkedProjectRef),
       ).pipe(
+        Effect.withSpan("services.readConfig"),
         Effect.catch((error) =>
           output.raw(`${formatConfigLoadError(error)}\n`, "stderr").pipe(Effect.as(null)),
         ),
@@ -190,10 +199,16 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
           projectRef: validLinkedRef.value,
           accessToken: accessToken.value,
           userAgent: cliSettings.userAgent,
-        });
+        }).pipe(
+          Effect.withSpan("services.fetchRemoteVersions", {
+            attributes: { "project.ref": validLinkedRef.value },
+          }),
+        );
         rows = mergeRemoteServiceVersions(remote, localImageOptions);
       }
     }
+
+    yield* Effect.annotateCurrentSpan({ "service.count": rows.length });
 
     const warning = renderServicesWarning(
       rows,
