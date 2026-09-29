@@ -90,7 +90,7 @@ const parseRun = (output: string) =>
 
 /** Runs each snapshot program as one POSIX shell script inside a storage helper container. */
 export const makeDockerSnapshotBackend = <E>(options: {
-  readonly lockKey: string;
+  readonly lockFile: string;
   readonly root: string;
   readonly data: string;
   readonly restoreStages: string;
@@ -102,7 +102,7 @@ export const makeDockerSnapshotBackend = <E>(options: {
 }): SnapshotBackend => {
   const onExit = `status=$?; if [ "$status" -ne 0 ]; then echo "${stepMarker}$step" >&2; fi; ${options.epilogue ?? ":"}; exit "$status"`;
   return {
-    lockKey: options.lockKey,
+    lockFile: options.lockFile,
     entries: `${options.root}/entries`,
     stages: `${options.root}/stages`,
     restoreStages: options.restoreStages,

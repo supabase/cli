@@ -151,6 +151,14 @@ const targetForPlatform = (platform: {
   return undefined;
 };
 
+/** Selects native execution where the catalog publishes native artifacts, and Docker elsewhere. */
+export const defaultRuntime = (
+  platform: { readonly os: string; readonly arch: string } = {
+    os: process.platform,
+    arch: process.arch,
+  },
+): "native" | "docker" => (targetForPlatform(platform) === undefined ? "docker" : "native");
+
 const platformText = (platform: { readonly os: string; readonly arch: string }): string =>
   `${platform.os}/${platform.arch}`;
 
