@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { ConfigProvider, Effect, Exit, FileSystem, Layer, Logger, Option, Path } from "effect";
 import {
   VALID_REF,
   VALID_TOKEN,
@@ -10,6 +10,7 @@ import {
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
+import { DbExecError } from "../../command-internal/db-connection.errors.ts";
 import { projectsList } from "../../commands/projects/list/list.handler.ts";
 import {
   TraceExportConfigError,
@@ -17,11 +18,21 @@ import {
   type TraceSettings,
 } from "./trace-export.layer.ts";
 
+interface ExportedAttribute {
+  readonly key: string;
+  readonly value: unknown;
+}
+
 interface ExportedSpan {
   readonly traceId: string;
   readonly spanId: string;
   readonly parentSpanId?: string;
   readonly name: string;
+  readonly attributes: ReadonlyArray<ExportedAttribute>;
+  readonly events: ReadonlyArray<{
+    readonly name: string;
+    readonly attributes: ReadonlyArray<ExportedAttribute>;
+  }>;
   readonly status: { readonly code: number; readonly message?: string };
 }
 
@@ -175,6 +186,65 @@ describe("withTraceExport with a trace file", () => {
       const error = yield* Effect.void.pipe(withTraceExport(fileSink(tracePath), {}), Effect.flip);
 
       expect(error).toBeInstanceOf(TraceExportConfigError);
+    }).pipe(Effect.provide(runtime)),
+  );
+});
+
+describe("withTraceExport for a failed migration", () => {
+  it.live("exports the error type, SQLSTATE, and log levels but no error or log text", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tracePath = yield* traceFilePath;
+      const failure = new DbExecError({
+        message: 'ERROR: null value in column "role" violates not-null constraint (SQLSTATE 23502)',
+        code: "23502",
+        detail: "Failing row contains (1, alice@example.com, s3cret).",
+      });
+
+      yield* Effect.logWarning(
+        "applying CREATE FUNCTION seed() RETURNS text AS $$ SELECT $pw$dollar-quoted-secret$pw$ $$",
+      ).pipe(
+        Effect.andThen(Effect.logError("syntax error at or near E'it\\'s-e-literal-secret'")),
+        Effect.andThen(Effect.logInfo("Object not found: bucket/private/key.pdf")),
+        Effect.andThen(Effect.fail(failure)),
+        Effect.withSpan("Migration.apply"),
+        withTraceExport(fileSink(tracePath), {}),
+        Effect.provide(Logger.layer([Logger.tracerLogger])),
+        Effect.exit,
+      );
+
+      const raw = yield* fs.readFileString(tracePath);
+      const span = spansOf(yield* readBatches(tracePath)).find(
+        (candidate) => candidate.name === "Migration.apply",
+      );
+      const logEvent = (level: string) => ({
+        name: "log",
+        attributes: [{ key: "effect.logLevel", value: { stringValue: level } }],
+      });
+      expect(span?.status).toEqual({ code: 2 });
+      expect(span?.attributes).toContainEqual({
+        key: "db.response.status_code",
+        value: { stringValue: "23502" },
+      });
+      expect(span?.events.map(({ name, attributes }) => ({ name, attributes }))).toEqual([
+        logEvent("WARN"),
+        logEvent("ERROR"),
+        logEvent("INFO"),
+        {
+          name: "exception",
+          attributes: [{ key: "exception.type", value: { stringValue: "DbExecError" } }],
+        },
+      ]);
+      for (const text of [
+        "alice@example.com",
+        "s3cret",
+        "not-null constraint",
+        "dollar-quoted-secret",
+        "e-literal-secret",
+        "bucket/private/key.pdf",
+      ]) {
+        expect(raw).not.toContain(text);
+      }
     }).pipe(Effect.provide(runtime)),
   );
 });

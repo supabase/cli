@@ -1,9 +1,23 @@
-import { Hash } from "effect";
+import { createHmac } from "node:crypto";
+import { Cause, Crypto, Effect, Exit } from "effect";
 import type { KeyValue, AnyValue } from "effect/unstable/observability/OtlpResource";
-import type { TraceData } from "effect/unstable/observability/OtlpTracer";
+import type { ScopeSpan, TraceData } from "effect/unstable/observability/OtlpTracer";
+import { isSqlState } from "../../command-internal/connect-errors.ts";
 
 const MAX_STRING_LENGTH = 2048;
 const REDACTED = "<redacted>";
+const QUERY_HASH_SALT_BYTES = 32;
+const QUERY_HASH_HEX_LENGTH = 16;
+const MAX_CAUSE_DEPTH = 6;
+const EXCEPTION_EVENT = "exception";
+const LOG_EVENT = "log";
+const EVENT_ATTRIBUTE_KEPT = {
+  [EXCEPTION_EVENT]: "exception.type",
+  [LOG_EVENT]: "effect.logLevel",
+};
+
+type SpanEvent = ScopeSpan["spans"][number]["events"][number];
+type QueryHasher = (text: string) => string;
 
 const ALLOWED_HEADERS: ReadonlySet<string> = new Set([
   "content-type",
@@ -86,11 +100,14 @@ function sanitizeUrlAttribute(key: string, value: string): string | undefined {
   return undefined;
 }
 
-function queryAttributes(text: string): ReadonlyArray<readonly [string, string | number]> {
+function queryAttributes(
+  text: string,
+  hashQuery: QueryHasher,
+): ReadonlyArray<readonly [string, string | number]> {
   const keyword = /^\s*([A-Za-z]+)/u.exec(text)?.[1]?.toUpperCase();
   return [
     ...(keyword === undefined ? [] : [["db.operation.name", keyword] as const]),
-    ["db.query.hash", (Hash.string(text) >>> 0).toString(16)],
+    ["db.query.hash", hashQuery(text)],
     ["db.query.length", text.length],
   ];
 }
@@ -126,9 +143,9 @@ function scrubUnknown(value: unknown): unknown {
   return value;
 }
 
-/** Sanitizes span attributes for local display. */
-export function sanitizeAttributeEntries(
+function sanitizeAttributeEntries(
   entries: Iterable<readonly [string, unknown]>,
+  hashQuery: QueryHasher,
 ): Array<readonly [string, unknown]> {
   const result: Array<readonly [string, unknown]> = [];
   for (const [key, value] of entries) {
@@ -137,7 +154,7 @@ export function sanitizeAttributeEntries(
       case "Drop":
         break;
       case "Query":
-        if (typeof value === "string") result.push(...queryAttributes(value));
+        if (typeof value === "string") result.push(...queryAttributes(value, hashQuery));
         break;
       default:
         result.push([
@@ -150,15 +167,21 @@ export function sanitizeAttributeEntries(
   return result;
 }
 
-function scrubAnyValue(value: AnyValue): AnyValue {
+function scrubAnyValue(value: AnyValue, hashQuery: QueryHasher): AnyValue {
   if (typeof value.stringValue === "string") {
     return { ...value, stringValue: scrubString(value.stringValue) };
   }
   if (value.arrayValue !== undefined) {
-    return { ...value, arrayValue: { values: value.arrayValue.values.map(scrubAnyValue) } };
+    return {
+      ...value,
+      arrayValue: { values: value.arrayValue.values.map((item) => scrubAnyValue(item, hashQuery)) },
+    };
   }
   if (value.kvlistValue !== undefined) {
-    return { ...value, kvlistValue: { values: sanitizeKeyValues(value.kvlistValue.values) } };
+    return {
+      ...value,
+      kvlistValue: { values: sanitizeKeyValues(value.kvlistValue.values, hashQuery) },
+    };
   }
   return value;
 }
@@ -167,7 +190,10 @@ function toAnyValue(value: string | number): AnyValue {
   return typeof value === "number" ? { intValue: value } : { stringValue: value };
 }
 
-function sanitizeKeyValues(attributes: ReadonlyArray<KeyValue>): Array<KeyValue> {
+function sanitizeKeyValues(
+  attributes: ReadonlyArray<KeyValue>,
+  hashQuery: QueryHasher,
+): Array<KeyValue> {
   const result: Array<KeyValue> = [];
   for (const attribute of attributes) {
     const decision = decide(attribute.key, isNumericOrBooleanAnyValue(attribute.value));
@@ -177,7 +203,7 @@ function sanitizeKeyValues(attributes: ReadonlyArray<KeyValue>): Array<KeyValue>
       case "Query": {
         const text = attribute.value.stringValue;
         if (typeof text === "string") {
-          for (const [key, value] of queryAttributes(text)) {
+          for (const [key, value] of queryAttributes(text, hashQuery)) {
             result.push({ key, value: toAnyValue(value) });
           }
         }
@@ -189,7 +215,8 @@ function sanitizeKeyValues(attributes: ReadonlyArray<KeyValue>): Array<KeyValue>
           typeof text === "string" ? sanitizeUrlAttribute(attribute.key, text) : undefined;
         result.push({
           key: attribute.key,
-          value: url === undefined ? scrubAnyValue(attribute.value) : { stringValue: url },
+          value:
+            url === undefined ? scrubAnyValue(attribute.value, hashQuery) : { stringValue: url },
         });
       }
     }
@@ -197,35 +224,90 @@ function sanitizeKeyValues(attributes: ReadonlyArray<KeyValue>): Array<KeyValue>
   return result;
 }
 
-/** Sanitizes every attribute, event, link, and status message of an OTLP trace payload. */
-export function sanitizeTraceData(data: TraceData): TraceData {
+/** Log events are named after their free-text message, so every non-exception event becomes `log`. */
+function sanitizeEvent(event: SpanEvent, hashQuery: QueryHasher): SpanEvent {
+  const name = event.name === EXCEPTION_EVENT ? EXCEPTION_EVENT : LOG_EVENT;
+  const kept = EVENT_ATTRIBUTE_KEPT[name];
+  return {
+    ...event,
+    name,
+    attributes: sanitizeKeyValues(
+      event.attributes.filter((attribute) => attribute.key === kept),
+      hashQuery,
+    ),
+  };
+}
+
+function sanitizeTraceData(data: TraceData, hashQuery: QueryHasher): TraceData {
   return {
     resourceSpans: data.resourceSpans.map((resourceSpan) => ({
       ...resourceSpan,
       resource: {
         ...resourceSpan.resource,
-        attributes: sanitizeKeyValues(resourceSpan.resource.attributes),
+        attributes: sanitizeKeyValues(resourceSpan.resource.attributes, hashQuery),
       },
       scopeSpans: resourceSpan.scopeSpans.map((scopeSpan) => ({
         ...scopeSpan,
         spans: scopeSpan.spans.map((span) => ({
           ...span,
-          attributes: sanitizeKeyValues(span.attributes),
-          events: span.events.map((event) => ({
-            ...event,
-            name: scrubString(event.name),
-            attributes: sanitizeKeyValues(event.attributes),
-          })),
+          attributes: sanitizeKeyValues(span.attributes, hashQuery),
+          events: span.events.map((event) => sanitizeEvent(event, hashQuery)),
           links: span.links.map((link) => ({
             ...link,
-            attributes: sanitizeKeyValues(link.attributes),
+            attributes: sanitizeKeyValues(link.attributes, hashQuery),
           })),
-          status:
-            span.status.message === undefined
-              ? span.status
-              : { ...span.status, message: scrubString(span.status.message) },
+          status: { code: span.status.code },
         })),
       })),
     })),
   };
+}
+
+/** Sanitizes span data before it leaves the process or reaches the debug console. */
+export interface TraceSanitizer {
+  /** Sanitizes span attributes for local display. */
+  readonly attributeEntries: (
+    entries: Iterable<readonly [string, unknown]>,
+  ) => Array<readonly [string, unknown]>;
+  /** Keeps only structured data: attributes, event and exception types, and status codes. */
+  readonly traceData: (data: TraceData) => TraceData;
+}
+
+/**
+ * Creates a sanitizer whose `db.query.hash` is keyed by a fresh random salt, so repeated
+ * statements share a hash within one sanitizer but hashes cannot be compared across runs.
+ */
+export const makeTraceSanitizer: Effect.Effect<TraceSanitizer, never, Crypto.Crypto> = Effect.gen(
+  function* () {
+    const crypto = yield* Crypto.Crypto;
+    const salt = yield* Effect.orDie(crypto.randomBytes(QUERY_HASH_SALT_BYTES));
+    const hashQuery: QueryHasher = (text) =>
+      createHmac("sha256", salt).update(text).digest("hex").slice(0, QUERY_HASH_HEX_LENGTH);
+    return {
+      attributeEntries: (entries) => sanitizeAttributeEntries(entries, hashQuery),
+      traceData: (data) => sanitizeTraceData(data, hashQuery),
+    };
+  },
+);
+
+/** The Postgres SQLSTATE carried by a failed exit's error or its `cause` chain, if any. */
+export function sqlStateOf(exit: Exit.Exit<unknown, unknown>): string | undefined {
+  if (Exit.isSuccess(exit)) return undefined;
+  for (const reason of exit.cause.reasons) {
+    let current: unknown = Cause.isFailReason(reason)
+      ? reason.error
+      : Cause.isDieReason(reason)
+        ? reason.defect
+        : undefined;
+    for (
+      let depth = 0;
+      depth < MAX_CAUSE_DEPTH && typeof current === "object" && current !== null;
+      depth++
+    ) {
+      const code = Reflect.get(current, "code");
+      if (typeof code === "string" && isSqlState(code)) return code;
+      current = Reflect.get(current, "cause");
+    }
+  }
+  return undefined;
 }

@@ -72,9 +72,16 @@ Any collector that accepts OTLP/HTTP JSON works; pass credentials with `SUPABASE
 
 ## What is removed before export
 
-Every batch and every console line is sanitized:
+Traces carry no free-form error or log text. Every batch and every console line is sanitized:
 
-- `db.query.text` is replaced by `db.operation.name`, `db.query.hash`, and `db.query.length`.
+- Exception events keep only `exception.type`, the error class or tag name such as `SqlError`.
+  Error messages and stack traces are dropped. A failed span records the Postgres SQLSTATE, when
+  the error carries one, as `db.response.status_code`.
+- Span status messages are dropped; the status code remains.
+- Log events are renamed `log` and keep only `effect.logLevel`.
+- `db.query.text` is replaced by `db.operation.name`, `db.query.hash`, and `db.query.length`. The
+  hash is keyed by a random salt drawn once per run, so repeated statements share a hash within a
+  run but hashes from different runs cannot be compared.
 - `url.full` keeps only scheme, host, and path; `url.query` is dropped.
 - Storage object paths in `url.full` and `url.path` keep the operation, such as `sign`, and replace
   the bucket and object name with `<redacted>`.
@@ -82,10 +89,11 @@ Every batch and every console line is sanitized:
   headers are kept.
 - String values under keys that mention tokens, passwords, secrets, API keys, authorization, or
   cookies are dropped; numeric and boolean values such as counts are kept.
-- Remaining strings, including event names (which carry log messages), exception messages, stack
-  traces, and status messages, lose URL credentials, bearer tokens, JWTs, Supabase keys and access
+- Remaining string attributes lose URL credentials, bearer tokens, JWTs, Supabase keys and access
   tokens, password pairs, single-quoted SQL literals, and constraint key values such as
   `Key (email)=(…)`, and are capped at 2 KB.
+
+The terminal still shows the full error text.
 
 HTTP requests never carry `traceparent` or `b3` headers.
 

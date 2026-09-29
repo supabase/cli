@@ -150,6 +150,7 @@ describe("withDebugConsole", () => {
       expect(output).toContain("failed");
       expect(output).not.toContain("Depth.three (");
       expect(output).not.toContain("token=abc");
+      expect(output).not.toContain("boom");
     }),
   );
 

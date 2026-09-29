@@ -1,10 +1,10 @@
 import { Effect, FileSystem, Layer, Redacted, Semaphore } from "effect";
-import type { Scope, Tracer } from "effect";
+import type { Crypto, Scope, Tracer } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as OtlpExporter from "effect/unstable/observability/OtlpExporter";
 import * as OtlpSerialization from "effect/unstable/observability/OtlpSerialization";
 import * as OtlpTracer from "effect/unstable/observability/OtlpTracer";
-import { sanitizeTraceData } from "./trace-sanitize.ts";
+import { makeTraceSanitizer } from "./trace-sanitize.ts";
 
 const EXPORT_TIMEOUT_MS = 2_000;
 const NEWLINE = new TextEncoder().encode("\n");
@@ -15,18 +15,24 @@ export interface OtlpTraceResource {
   readonly attributes: Readonly<Record<string, unknown>>;
 }
 
-const sanitizingSerialization = Layer.succeed(OtlpSerialization.OtlpSerialization, {
-  traces: (data) => HttpBody.jsonUnsafe(sanitizeTraceData(data)),
-  metrics: (data) => HttpBody.jsonUnsafe(data),
-  logs: (data) => HttpBody.jsonUnsafe(data),
-});
+const sanitizingSerialization = Layer.effect(
+  OtlpSerialization.OtlpSerialization,
+  Effect.gen(function* () {
+    const sanitizer = yield* makeTraceSanitizer;
+    return OtlpSerialization.OtlpSerialization.of({
+      traces: (data) => HttpBody.jsonUnsafe(sanitizer.traceData(data)),
+      metrics: (data) => HttpBody.jsonUnsafe(data),
+      logs: (data) => HttpBody.jsonUnsafe(data),
+    });
+  }),
+);
 
 /** An OTLP tracer whose batches are sanitized before they reach the transport. */
 export const makeOtlpTracer = (options: {
   readonly url: string;
   readonly headers: Redacted.Redacted<Readonly<Record<string, string>>>;
   readonly resource: OtlpTraceResource;
-}): Effect.Effect<Tracer.Tracer, never, HttpClient.HttpClient | Scope.Scope> =>
+}): Effect.Effect<Tracer.Tracer, never, HttpClient.HttpClient | Crypto.Crypto | Scope.Scope> =>
   OtlpTracer.make({
     url: options.url,
     headers: Redacted.value(options.headers),

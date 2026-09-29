@@ -31,12 +31,22 @@ With no sink, the root runs with `References.TracerEnabled = false`. Spans are E
 spans, no exporter module is loaded, and no trace file or network I/O happens; the debug console
 enables tracing only for the command it wraps.
 
-Every exported batch and console line goes through `shared/telemetry/trace-sanitize.ts`:
-`db.query.text` becomes `db.operation.name`, `db.query.hash`, and `db.query.length`; `url.full`
-loses its query; `url.full` and `url.path` hide Storage bucket and object names; `url.query` and
-non-allowlisted headers are dropped; string values under credential-named keys are dropped;
-remaining strings, event names, exception events, and status messages are scrubbed of
-credentials, SQL literals, and constraint key values, and capped at 2 KB.
+Exported traces carry no free-form text, because pattern scrubbing cannot reliably find values
+inside Postgres details, dollar-quoted bodies, or Storage paths in error messages. Every exported
+batch and console line goes through `shared/telemetry/trace-sanitize.ts`:
+
+- Exception events keep only `exception.type`, the error class or tag name. Failed spans record a
+  Postgres SQLSTATE carried by the error as `db.response.status_code`.
+- Status messages are dropped; the status code remains.
+- Log events are renamed `log` and keep only `effect.logLevel`.
+- `db.query.text` becomes `db.operation.name`, `db.query.hash`, and `db.query.length`. The hash is
+  keyed by a random salt drawn once per sink or console, so repeated statements match within one
+  run but hashes cannot be compared across runs.
+- `url.full` loses its query; `url.full` and `url.path` hide Storage bucket and object names;
+  `url.query` and non-allowlisted headers are dropped; string values under credential-named keys
+  are dropped; remaining strings are scrubbed of credentials, SQL literals, and constraint key
+  values, and capped at 2 KB.
+
 HTTP trace-header propagation is disabled for all CLI requests.
 
 ### Instrumentation rules
@@ -75,6 +85,8 @@ rules and review.
   budget test guards the representative command only.
 - `runCli` closes the trace scope with a bounded, uninterruptible 2-second flush before
   `processControl.exit`, which skips finalizers.
+- Error text is visible in the terminal but not in traces; a trace identifies a failure by span,
+  error type, and SQLSTATE.
 
 ## Alternatives Considered
 

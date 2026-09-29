@@ -1,9 +1,19 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "vitest";
+import { Effect, Exit } from "effect";
 import type { TraceData } from "effect/unstable/observability/OtlpTracer";
-import { sanitizeAttributeEntries, sanitizeTraceData, scrubString } from "./trace-sanitize.ts";
+import { SqlError, UniqueViolation } from "effect/unstable/sql/SqlError";
+import { DbExecError } from "../../command-internal/db-connection.errors.ts";
+import { makeTraceSanitizer, scrubString, sqlStateOf } from "./trace-sanitize.ts";
 
 const JWT =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2lnbmF0dXJlLXZhbHVl";
+
+const newSanitizer = () =>
+  Effect.runSync(makeTraceSanitizer.pipe(Effect.provide(BunServices.layer)));
+const sanitizer = newSanitizer();
+const sanitizeAttributeEntries = sanitizer.attributeEntries;
+const sanitizeTraceData = sanitizer.traceData;
 
 function traceWith(span: {
   readonly attributes?: TraceData["resourceSpans"][number]["scopeSpans"][number]["spans"][number]["attributes"];
@@ -105,7 +115,7 @@ describe("scrubString", () => {
   });
 });
 
-describe("sanitizeAttributeEntries", () => {
+describe("attribute entries", () => {
   it("replaces the query text with its shape", () => {
     const text = "SELECT * FROM auth.users WHERE email = 'a@b.c'";
 
@@ -113,9 +123,22 @@ describe("sanitizeAttributeEntries", () => {
 
     expect(attributes).toEqual({
       "db.operation.name": "SELECT",
-      "db.query.hash": expect.stringMatching(/^[0-9a-f]+$/u),
+      "db.query.hash": expect.stringMatching(/^[0-9a-f]{16}$/u),
       "db.query.length": text.length,
     });
+  });
+
+  it("hashes a repeated query the same within one sanitizer and differently across sanitizers", () => {
+    const query = [["db.query.text", "SELECT * FROM storage.objects WHERE id = $1"]] as const;
+    const hashOf = (entries: ReadonlyArray<readonly [string, unknown]>) =>
+      Object.fromEntries(entries)["db.query.hash"];
+
+    const first = hashOf(sanitizeAttributeEntries(query));
+    const repeated = hashOf(sanitizeAttributeEntries(query));
+    const otherRun = hashOf(newSanitizer().attributeEntries(query));
+
+    expect(repeated).toBe(first);
+    expect(otherRun).not.toBe(first);
   });
 
   it("strips the query from url.full and drops url.query", () => {
@@ -197,28 +220,70 @@ describe("sanitizeAttributeEntries", () => {
   });
 });
 
-describe("sanitizeTraceData", () => {
-  it("scrubs a DSN in the exception message, stacktrace, and status message", () => {
-    const dsn = "postgresql://postgres:hunter2@127.0.0.1:54322/postgres";
+const failingMigration = [
+  'ERROR: null value in column "role" violates not-null constraint (SQLSTATE 23502)',
+  "Detail: Failing row contains (1, alice@example.com, s3cret).",
+].join("\n");
+const dollarQuotedBody =
+  "CREATE FUNCTION seed() RETURNS text AS $$ SELECT $pw$dollar-quoted-secret$pw$ $$ LANGUAGE sql";
+const escapeLiteral = "syntax error at or near E'it\\'s-e-literal-secret'";
+const storageError = "Object not found: bucket/private/key.pdf";
+
+describe("trace data", () => {
+  it("exports exception events with only the error type and drops the status message", () => {
     const data = traceWith({
-      statusMessage: `connect failed for ${dsn}`,
+      statusMessage: failingMigration,
       events: [
         {
           name: "exception",
           timeUnixNano: "1",
           droppedAttributesCount: 0,
           attributes: [
-            { key: "exception.message", value: { stringValue: `connect failed for ${dsn}` } },
-            { key: "exception.stacktrace", value: { stringValue: `Error: ${dsn}\n    at x` } },
+            { key: "exception.type", value: { stringValue: "DbExecError" } },
+            { key: "exception.message", value: { stringValue: failingMigration } },
+            {
+              key: "exception.stacktrace",
+              value: { stringValue: `DbExecError: ${storageError}\n    at ${escapeLiteral}` },
+            },
           ],
         },
       ],
     });
 
-    const serialized = JSON.stringify(sanitizeTraceData(data));
+    const span = firstSpan(sanitizeTraceData(data));
 
-    expect(serialized).not.toContain("hunter2");
-    expect(firstSpan(sanitizeTraceData(data)).status.message).toContain("<redacted>@127.0.0.1");
+    expect(span.status).toEqual({ code: 2 });
+    expect(span.events.map(({ name, attributes }) => ({ name, attributes }))).toEqual([
+      {
+        name: "exception",
+        attributes: [{ key: "exception.type", value: { stringValue: "DbExecError" } }],
+      },
+    ]);
+  });
+
+  it("renames log events to log and keeps only their level", () => {
+    const data = traceWith({
+      events: [dollarQuotedBody, escapeLiteral, storageError].map((message) => ({
+        name: message,
+        timeUnixNano: "1",
+        droppedAttributesCount: 0,
+        attributes: [
+          { key: "effect.fiberId", value: { intValue: 7 } },
+          { key: "effect.logLevel", value: { stringValue: "INFO" } },
+          { key: "effect.cause", value: { stringValue: failingMigration } },
+          { key: "migration.file", value: { stringValue: "20240101_seed.sql" } },
+        ],
+      })),
+    });
+
+    const span = firstSpan(sanitizeTraceData(data));
+
+    expect(span.events.map(({ name, attributes }) => ({ name, attributes }))).toEqual(
+      Array.from({ length: 3 }, () => ({
+        name: "log",
+        attributes: [{ key: "effect.logLevel", value: { stringValue: "INFO" } }],
+      })),
+    );
   });
 
   it("replaces db.query.text with the operation, hash, and length", () => {
@@ -253,23 +318,6 @@ describe("sanitizeTraceData", () => {
     ]);
   });
 
-  it("scrubs event names, which carry log messages", () => {
-    const data = traceWith({
-      events: [
-        {
-          name: "connecting to postgresql://postgres:hunter2@db.example.com:5432/postgres",
-          timeUnixNano: "1",
-          droppedAttributesCount: 0,
-          attributes: [],
-        },
-      ],
-    });
-
-    const [event] = firstSpan(sanitizeTraceData(data)).events;
-
-    expect(event?.name).toBe("connecting to postgresql://<redacted>@db.example.com:5432/postgres");
-  });
-
   it("keeps numeric and boolean values under credential-named keys", () => {
     const data = traceWith({
       attributes: [
@@ -295,5 +343,29 @@ describe("sanitizeTraceData", () => {
     expect(firstSpan(sanitizeTraceData(data)).attributes).toEqual([
       { key: "url.path", value: { stringValue: "/storage/v1/object/public/<redacted>" } },
     ]);
+  });
+});
+
+describe("sqlStateOf", () => {
+  it("reads the code of a CLI exec error", () => {
+    const error = new DbExecError({ message: failingMigration, code: "23502" });
+
+    expect(sqlStateOf(Exit.fail(error))).toBe("23502");
+  });
+
+  it("reads the driver code through a SqlError reason", () => {
+    const driverError = { severity: "ERROR", code: "23505", message: "duplicate key" };
+    const error = new SqlError({
+      reason: new UniqueViolation({ cause: driverError, constraint: "users_email_key" }),
+    });
+
+    expect(sqlStateOf(Exit.fail(error))).toBe("23505");
+  });
+
+  it("ignores node errno codes and successful exits", () => {
+    const socketError = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+
+    expect(sqlStateOf(Exit.fail(socketError))).toBeUndefined();
+    expect(sqlStateOf(Exit.void)).toBeUndefined();
   });
 });

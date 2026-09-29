@@ -1,6 +1,6 @@
 import { Cause, DateTime, Effect, Exit, Option, Schema } from "effect";
 import type { PlatformError, Tracer } from "effect";
-import { sanitizeAttributeEntries } from "../trace-sanitize.ts";
+import type { TraceSanitizer } from "../trace-sanitize.ts";
 
 const MAX_PRINTED_DEPTH = 2;
 const JsonAttributesSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
@@ -37,7 +37,10 @@ function spanFailed(span: Tracer.Span): boolean {
   );
 }
 
-export const formatSpanForDebugConsole = Effect.fnUntraced(function* (span: Tracer.Span) {
+export const formatSpanForDebugConsole = Effect.fnUntraced(function* (
+  span: Tracer.Span,
+  sanitizer: TraceSanitizer,
+) {
   const status = span.status;
   if (status._tag !== "Ended") return Option.none<string>();
   const depth = spanDepth(span);
@@ -48,7 +51,7 @@ export const formatSpanForDebugConsole = Effect.fnUntraced(function* (span: Trac
   const time = formatTimestamp(Number(status.startTime / BigInt(1_000_000)));
   if (Option.isNone(time)) return Option.none<string>();
 
-  const attrs = Object.fromEntries(sanitizeAttributeEntries(span.attributes));
+  const attrs = Object.fromEntries(sanitizer.attributeEntries(span.attributes));
   const attrStr =
     Object.keys(attrs).length === 0
       ? ""
@@ -63,11 +66,12 @@ export const formatSpanForDebugConsole = Effect.fnUntraced(function* (span: Trac
 
 export function makeDebugConsoleExporter(
   write: (line: string) => Effect.Effect<void, PlatformError.PlatformError, never>,
+  sanitizer: TraceSanitizer,
 ): (
   span: Tracer.Span,
 ) => Effect.Effect<void, PlatformError.PlatformError | Schema.SchemaError, never> {
   return (span) =>
-    formatSpanForDebugConsole(span).pipe(
+    formatSpanForDebugConsole(span, sanitizer).pipe(
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.void,

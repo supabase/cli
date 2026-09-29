@@ -1,6 +1,7 @@
 import {
   Cause,
   Config,
+  Crypto,
   Data,
   Duration,
   Effect,
@@ -28,6 +29,7 @@ import {
 import { makeDebugConsoleExporter } from "./exporters/debug-console.ts";
 import { detectCi } from "./runtime.layer.ts";
 import { ChildTracePropagation } from "./spans.ts";
+import { makeTraceSanitizer, sqlStateOf } from "./trace-sanitize.ts";
 
 const FLUSH_TIMEOUT = Duration.seconds(2);
 const OTLP_TRACES_PATH = "/v1/traces";
@@ -154,6 +156,7 @@ const externalParent = optionalEnv("TRACEPARENT").pipe(
   ),
 );
 
+/** Records a failure's SQLSTATE on the span, since exported exception events keep only the type. */
 class ObservedSpan implements Tracer.Span {
   readonly _tag = "Span";
   constructor(
@@ -191,6 +194,8 @@ class ObservedSpan implements Tracer.Span {
     return this.span.kind;
   }
   end(endTime: bigint, exit: Exit.Exit<unknown, unknown>): void {
+    const sqlState = sqlStateOf(exit);
+    if (sqlState !== undefined) this.span.attribute("db.response.status_code", sqlState);
     this.span.end(endTime, exit);
     this.onEnd(this);
   }
@@ -205,10 +210,20 @@ class ObservedSpan implements Tracer.Span {
   }
 }
 
+const observedTracer = (
+  base: Tracer.Tracer,
+  onEnd: (span: Tracer.Span) => void = () => {},
+): Tracer.Tracer =>
+  Tracer.make({
+    span: (options) => new ObservedSpan(base.span(options), onEnd),
+    context: base.context,
+  });
+
 const debugConsoleTracer = Effect.fnUntraced(function* (base: Tracer.Tracer) {
   const stdio = yield* Stdio.Stdio;
-  const exportSpan = makeDebugConsoleExporter((line) =>
-    Stream.make(line).pipe(Stream.run(stdio.stderr()), Effect.asVoid),
+  const exportSpan = makeDebugConsoleExporter(
+    (line) => Stream.make(line).pipe(Stream.run(stdio.stderr()), Effect.asVoid),
+    yield* makeTraceSanitizer,
   );
   const queue = yield* Queue.unbounded<Tracer.Span, Cause.Done>();
   const worker = yield* Queue.take(queue).pipe(
@@ -223,12 +238,8 @@ const debugConsoleTracer = Effect.fnUntraced(function* (base: Tracer.Tracer) {
       Effect.ignore,
     ),
   );
-  const onEnd = (span: Tracer.Span) => {
+  return observedTracer(base, (span) => {
     Queue.offerUnsafe(queue, span);
-  };
-  return Tracer.make({
-    span: (options) => new ObservedSpan(base.span(options), onEnd),
-    context: base.context,
   });
 });
 
@@ -241,16 +252,13 @@ const sinkTracer = Effect.fnUntraced(function* (sink: TraceSink) {
   };
   const make = (url: string, headers: Redacted.Redacted<Readonly<Record<string, string>>>) =>
     sinkModule.makeOtlpTracer({ url, headers, resource });
-  switch (sink._tag) {
-    case "File":
-      return yield* make("file:///v1/traces", Redacted.make({})).pipe(
-        Effect.provide(sinkModule.fileTransportLayer(sink.path)),
-      );
-    case "Otlp":
-      return yield* make(sink.url, sink.headers).pipe(
-        Effect.provide(sinkModule.collectorTransportLayer),
-      );
-  }
+  const tracer =
+    sink._tag === "File"
+      ? make("file:///v1/traces", Redacted.make({})).pipe(
+          Effect.provide(sinkModule.fileTransportLayer(sink.path)),
+        )
+      : make(sink.url, sink.headers).pipe(Effect.provide(sinkModule.collectorTransportLayer));
+  return observedTracer(yield* tracer);
 });
 
 /**
@@ -259,7 +267,7 @@ const sinkTracer = Effect.fnUntraced(function* (sink: TraceSink) {
  */
 export const withDebugConsole = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R | CliSettings | Stdio.Stdio> =>
+): Effect.Effect<A, E, R | CliSettings | Crypto.Crypto | Stdio.Stdio> =>
   Effect.gen(function* () {
     const settings = yield* CliSettings;
     const enabled =
@@ -288,7 +296,11 @@ export const withTraceExport =
   (settings: TraceSettings, attributes: Readonly<Record<string, unknown>>) =>
   <A, E, R>(
     effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E | TraceExportConfigError, R | FileSystem.FileSystem | RuntimeInfo> => {
+  ): Effect.Effect<
+    A,
+    E | TraceExportConfigError,
+    R | Crypto.Crypto | FileSystem.FileSystem | RuntimeInfo
+  > => {
     if (Option.isNone(settings.sink)) return effect.pipe(Effect.withTracerEnabled(false));
     const sink = settings.sink.value;
     return Effect.gen(function* () {

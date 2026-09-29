@@ -1,6 +1,10 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Clock, Context, Effect, Exit, Option, Schema, Tracer } from "effect";
+import { makeTraceSanitizer } from "../trace-sanitize.ts";
 import { formatSpanForDebugConsole, makeDebugConsoleExporter } from "./debug-console.ts";
+
+const sanitizer = makeTraceSanitizer.pipe(Effect.provide(BunServices.layer));
 
 const makeEndedSpan = (name: string, attrs: Record<string, unknown> = {}) =>
   Effect.map(Clock.currentTimeMillis, (now): Tracer.Span => {
@@ -36,10 +40,12 @@ describe("debug-console exporter", () => {
     Effect.gen(function* () {
       let stderrOutput = "";
       const span = yield* makeEndedSpan("test-span", { command: "login" });
-      const exportSpanToDebugConsole = makeDebugConsoleExporter((line) =>
-        Effect.sync(() => {
-          stderrOutput += line;
-        }),
+      const exportSpanToDebugConsole = makeDebugConsoleExporter(
+        (line) =>
+          Effect.sync(() => {
+            stderrOutput += line;
+          }),
+        yield* sanitizer,
       );
 
       yield* exportSpanToDebugConsole(span);
@@ -61,7 +67,7 @@ describe("debug-console exporter", () => {
         } as Tracer.SpanStatus,
       };
 
-      expect(yield* formatSpanForDebugConsole(span)).toEqual(Option.none());
+      expect(yield* formatSpanForDebugConsole(span, yield* sanitizer)).toEqual(Option.none());
     }),
   );
 
@@ -70,7 +76,7 @@ describe("debug-console exporter", () => {
       const cyclic: Record<string, unknown> = {};
       cyclic.self = cyclic;
       const result = yield* Effect.exit(
-        formatSpanForDebugConsole(yield* makeEndedSpan("cyclic", cyclic)),
+        formatSpanForDebugConsole(yield* makeEndedSpan("cyclic", cyclic), yield* sanitizer),
       );
 
       expect(Exit.isFailure(result)).toBe(true);
