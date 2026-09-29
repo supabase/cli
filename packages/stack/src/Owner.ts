@@ -67,6 +67,7 @@ import { stackError, type OwnerRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
 import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
+import * as LogStore from "./host/LogStore.ts";
 
 export interface OwnerOptions {
   readonly saved: SavedStack;
@@ -169,6 +170,8 @@ const withoutInstance = (current: SavedStack, id: string): SavedStack =>
 
 const drainingBlocks: ReadonlyArray<ServiceAdmission> = ["start", "arm", "restart", "storage"];
 
+const encoder = new TextEncoder();
+
 const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   const services = yield* Effect.context<
     | FileSystem.FileSystem
@@ -184,6 +187,9 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   const network = yield* Network.Service;
   const orchestrator = yield* Orchestrator.make<Entry>();
   const helpers = yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4);
+  const logStore = yield* LogStore.make({ root: options.state.logsRoot(options.saved.id) }).pipe(
+    Effect.provideContext(services),
+  );
   const definitionGate = yield* Semaphore.make(1);
   const draining = yield* Ref.make(false);
   const { id: stackId, runtime } = options.saved;
@@ -337,6 +343,18 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
                 Effect.mapError(serviceError("state")),
               ),
             ),
+            Effect.andThen(
+              logStore
+                .remove({ service: initial.service, instanceId: id })
+                .pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning(
+                      `${cause.message}; the next owner start or stack destroy retries`,
+                      cause,
+                    ),
+                  ),
+                ),
+            ),
           ),
       },
       {
@@ -416,10 +434,19 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     yield* orchestrator
       .register(entry)
       .pipe(Effect.catch((cause) => namespace.release.pipe(Effect.andThen(Effect.fail(cause)))));
+    yield* logStore.attach({
+      service: initial.service,
+      instanceId: id,
+      logs: recipe.logs,
+      observation: core.observation,
+    });
   });
 
   for (const saved of options.saved.instances)
     yield* register(saved.id, yield* recipeFor(saved.creation, saved.id));
+  yield* logStore.removeOrphans.pipe(
+    Effect.catch((cause) => Effect.logWarning("Orphaned instance logs were not removed", cause)),
+  );
   yield* orchestrator.configure(options.saved.composition);
 
   const removeSaved = (id: string) => updateState((current) => withoutInstance(current, id));
@@ -631,10 +658,21 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
           ),
       ).pipe(Stream.mapError((cause) => stackError("followStatus", cause))),
     logs: ({ id }) =>
-      Stream.unwrap(orchestrator.get(id).pipe(Effect.map((entry) => entry.recipe.logs))).pipe(
-        Stream.map(({ stream, bytes }) => ({ stream, bytes })),
+      Stream.unwrap(logStore.tail(id)).pipe(
+        Stream.map(({ stream, text }) => ({ stream, bytes: encoder.encode(`${text}\n`) })),
         Stream.mapError((cause) => stackError("logs", cause)),
       ),
+    readLogs: ({ id, since, tail, follow }) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          return yield* logStore.read(id, {
+            from: "oldest",
+            follow,
+            ...(since === undefined ? {} : { since: yield* LogStore.sinceMillis(since) }),
+            ...(tail === undefined ? {} : { tail }),
+          });
+        }),
+      ).pipe(Stream.mapError((cause) => stackError("readLogs", cause))),
     credentials: ({ id, from }) =>
       orchestrator.get(id).pipe(
         Effect.flatMap((entry) =>
@@ -695,6 +733,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       destroy: orchestrator.destroyNamespace.pipe(
         Effect.andThen(network.release),
         Effect.andThen(sweep),
+        Effect.andThen(logStore.close),
         Effect.andThen(options.state.remove(stackId)),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.destroyNamespace"),

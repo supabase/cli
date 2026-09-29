@@ -157,7 +157,7 @@ Bindings supply ordinary configuration values; a URL alone never creates a depen
 
 Exit confirmation is bounded. If cleanup is acknowledged but owner exit cannot be confirmed, the operation fails with `operation: "shutdown-exit"` and the owner PID in the message. A failed or cancelled call does not guarantee that teardown has completed. Do not start or restart the same stack concurrently with whole-stack shutdown; separate stacks remain independent.
 
-Each service exposes `status`, `followStatus`, `logs`, and `credentials`. Observations include the currently bound public endpoints, including listeners for sleeping services. Credentials default to host addressing. Use `from: "runtime"` for a URL passed to a service or command container.
+Each service exposes `status`, `followStatus`, `logs`, and `credentials`. The owner persists service output under `<stateRoot>/<id>/logs`, and `readStackLogs({ stateRoot, stackId, instances?, since?, tail? })` reads it without an owner, ordered by timestamp, service, instance and position. Observations include the currently bound public endpoints, including listeners for sleeping services. Credentials default to host addressing. Use `from: "runtime"` for a URL passed to a service or command container.
 
 ## Testing
 

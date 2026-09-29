@@ -192,7 +192,7 @@ describe("service catalog", () => {
               },
             );
             const logs = yield* Ref.make("");
-            yield* recipe.logs.pipe(
+            yield* Stream.fromSubscription(yield* recipe.logs).pipe(
               Stream.runForEach(({ bytes }) =>
                 Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
               ),
@@ -441,7 +441,7 @@ for (const runtime of ["native", "docker"] as const) {
             },
           );
           const logs = yield* Ref.make("");
-          yield* recipe.logs.pipe(
+          yield* Stream.fromSubscription(yield* recipe.logs).pipe(
             Stream.runForEach(({ bytes }) =>
               Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
             ),

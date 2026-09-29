@@ -43,6 +43,7 @@ import {
   processExit as sharedProcessExit,
   publishProcessLogs,
   runtimeSessionFromContainer,
+  launchOutputPublisher,
 } from "../runtime/Session.ts";
 import {
   ServiceError,
@@ -50,6 +51,7 @@ import {
   type RuntimeSession,
   type ServiceDefinition,
   type ServiceInstanceContext,
+  type ServiceLaunchContext,
 } from "../Service.ts";
 import {
   defaultNativeProcessLauncher,
@@ -63,7 +65,7 @@ import {
   resolveNativePostgresUser,
   type PasswdEntry,
 } from "../runtime/postgres-user.ts";
-import { EndpointIntent, serviceCreation } from "./Recipe.ts";
+import { EndpointIntent, serviceCreation, type CatalogLog, type CatalogLogs } from "./Recipe.ts";
 import {
   containerInstancePath,
   ensureOwnedInstanceRoot,
@@ -118,11 +120,6 @@ export type BackendEndpoint =
   | { readonly kind: "unix"; readonly path: string; readonly port: 5432 }
   | { readonly kind: "tcp"; readonly host: "127.0.0.1"; readonly port: number };
 
-interface DatabaseLog {
-  readonly stream: "stdout" | "stderr";
-  readonly bytes: Uint8Array;
-}
-
 export class DatabaseError extends Data.TaggedError("DatabaseError")<{
   readonly operation: string;
   readonly message: string;
@@ -159,7 +156,7 @@ export interface DatabaseComponent {
     scope: SnapshotScope,
   ) => Effect.Effect<boolean, ServiceError>;
   readonly endpoint: Effect.Effect<BackendEndpoint, DatabaseError>;
-  readonly logs: Stream.Stream<DatabaseLog, DatabaseError>;
+  readonly logs: CatalogLogs;
 }
 
 const errorFor = mapToServiceError;
@@ -475,7 +472,7 @@ export const makeDatabase = (
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const client = yield* HttpClient.HttpClient;
-    const logs = yield* PubSub.sliding<DatabaseLog>(256);
+    const logs = yield* PubSub.sliding<CatalogLog>(256);
     const endpoint = yield* Ref.make<BackendEndpoint | undefined>(undefined);
     const prepared = yield* Ref.make<ReadonlyMap<string, PreparedNativeArtifact>>(new Map());
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(String(options.stackId)))
@@ -765,9 +762,10 @@ export const makeDatabase = (
 
     const launch = Effect.fn("Database.launch")(
       (
-        context: ServiceInstanceContext<DatabaseConfig>,
+        context: ServiceLaunchContext<DatabaseConfig>,
       ): Effect.Effect<RuntimeSession, ServiceError | ServiceLaunchError> =>
         Effect.gen(function* () {
+          const publish = yield* (yield* launchOutputPublisher(logs, context.launchId)).part;
           const postgresUser = yield* resolveNativePostgresUser(options.runtime).pipe(
             Effect.provideService(FileSystem.FileSystem, fs),
           );
@@ -858,7 +856,7 @@ export const makeDatabase = (
             };
             yield* Ref.set(endpoint, selectedEndpoint);
             const stderrTail = yield* Ref.make("");
-            const stderrDrained = yield* publishLogs(process, logs, context.scope, stderrTail);
+            const stderrDrained = yield* publishLogs(process, publish, context.scope, stderrTail);
             const setup = health(selectedEndpoint, config, Effect.void, {
               fs,
               instanceRoot,
@@ -888,7 +886,7 @@ export const makeDatabase = (
             return yield* errorFor("launch", "Container did not publish PostgreSQL");
           const selectedEndpoint: BackendEndpoint = { kind: "tcp", host: "127.0.0.1", port };
           yield* Ref.set(endpoint, selectedEndpoint);
-          yield* publishLogs(launched, logs, context.scope);
+          yield* publishLogs(launched, publish, context.scope);
           const session = runtimeFromContainer(launched, config.stopGraceSeconds === 0);
           const setup = health(
             selectedEndpoint,
@@ -989,6 +987,6 @@ export const makeDatabase = (
             : Effect.succeed(value),
         ),
       ),
-      logs: Stream.fromPubSub(logs),
+      logs: PubSub.subscribe(logs),
     } satisfies DatabaseComponent;
   });

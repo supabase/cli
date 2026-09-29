@@ -24,10 +24,14 @@ export type {
   DestroyResult,
   FindOptions,
   FoundStack,
+  LogPosition,
+  LogRecord,
   OpenOptions,
   PgProveOptions,
   PlannedInstance,
+  ReadStackLogsOptions,
   SavedStack,
+  StackLogRecord,
   StackLocations,
   SupabaseCompositionOptions,
 } from "./effect.ts";
@@ -62,3 +66,8 @@ export const discover = (
 /** Reads one saved stack by id or by project identity; resolves `undefined` when none is saved. */
 export const find = (options: StackEffect.FindOptions, callOptions?: CallOptions) =>
   runOnce(StackEffect.find(options).pipe(Effect.map(Option.getOrUndefined)), callOptions);
+/** Reads a stack's persisted log records without its owner. */
+export const readStackLogs = (
+  options: StackEffect.ReadStackLogsOptions,
+  callOptions?: CallOptions,
+) => runOnce(StackEffect.readStackLogs(options), callOptions);

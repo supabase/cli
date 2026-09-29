@@ -45,6 +45,7 @@ import { failureMessage } from "./internal/failure-message.ts";
 import * as State from "./State.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
 import { StackError, type Definition, type Observation } from "./Rpc.ts";
+import { readStackLogs as readPersistedLogs, sinceMillis } from "./host/LogStore.ts";
 import { reclaimStack } from "./Sweep.ts";
 import {
   ServiceCreationInput as ServiceCreationInputSchema,
@@ -77,6 +78,7 @@ export { StackIdSchema as StackId } from "./identity/StackId.ts";
 export type { SavedStack } from "./State.ts";
 export type { StackCredentials, StackKeysInput };
 export type { Observation } from "./Rpc.ts";
+export type { LogPosition, LogRecord, StackLogRecord } from "./host/LogRecord.ts";
 export type {
   Command,
   InitializationCommand,
@@ -1013,4 +1015,30 @@ export const find = Effect.fn("Stack.find")(
     return Option.some({ definition, host: yield* observeHost(state, definition) });
   },
   Effect.mapError((cause) => failure("find", cause)),
+);
+
+/** Selects the persisted logs of a stack; its owner does not need to run. */
+export interface ReadStackLogsOptions extends Pick<StackLocations, "stateRoot"> {
+  readonly stackId: string;
+  /** Instance ids to read; every instance with persisted logs by default. */
+  readonly instances?: ReadonlyArray<string>;
+  /** An ISO-8601 timestamp; older records are skipped. */
+  readonly since?: string;
+  /** Returns only this many of the latest records across the selected instances. */
+  readonly tail?: number;
+}
+
+/** Reads a stack's persisted records ordered by timestamp, service, instance and position. */
+export const readStackLogs = Effect.fn("Stack.readStackLogs")(
+  function* (options: ReadStackLogsOptions) {
+    const path = yield* Path.Path;
+    const root = yield* State.stackLogsRoot(path, options.stateRoot, options.stackId);
+    return yield* readPersistedLogs({
+      root,
+      ...(options.instances === undefined ? {} : { instances: options.instances }),
+      ...(options.since === undefined ? {} : { since: yield* sinceMillis(options.since) }),
+      ...(options.tail === undefined ? {} : { tail: options.tail }),
+    });
+  },
+  Effect.mapError((cause) => failure("readStackLogs", cause)),
 );

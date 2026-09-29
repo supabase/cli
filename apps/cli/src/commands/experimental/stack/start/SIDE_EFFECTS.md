@@ -36,6 +36,9 @@ Secrets needed by enabled services are passed to the runtime. State and service 
 `$SUPABASE_HOME/stacks/<stack-id>/` (`~/.supabase/stacks/<stack-id>/` by default); native artifacts
 use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project directory
 `supabase/.temp/stack-uploads/<stack-id>/`. Functions preparation may build the project's source.
+The owner persists each service's output under `$SUPABASE_HOME/stacks/<stack-id>/logs/`, keeping at
+most about 10 MiB (plus the segment being written) per service instance. Destroying an instance or
+the stack deletes those logs; stopping the stack and resetting database data keep them.
 
 For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
 Podman when `podman info` reaches its engine, then native on Linux x64/arm64 and macOS arm64. Each

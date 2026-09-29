@@ -35,12 +35,19 @@ import {
   spawnNativeProcess,
 } from "../runtime/NativeProcess.ts";
 import {
+  launchOutputPublisher,
   mapToServiceError,
   processExit as sharedProcessExit,
   publishProcessLogs,
   runtimeSessionFromContainer,
+  type PublishOutput,
 } from "../runtime/Session.ts";
-import { ServiceError, ServiceLaunchError, type RuntimeSession } from "../Service.ts";
+import {
+  ServiceError,
+  ServiceLaunchError,
+  type RuntimeSession,
+  type ServiceLaunchContext,
+} from "../Service.ts";
 import {
   containerInstancePath,
   ensureOwnedInstanceRoot,
@@ -263,14 +270,14 @@ const awaitStartup = Effect.fn("ProcessRecipe.awaitStartup")(
       readonly stderr: Stream.Stream<Uint8Array, NativeProcessError | ContainerError>;
       readonly exitCode: Effect.Effect<number, NativeProcessError | ContainerError>;
     },
-    logs: PubSub.PubSub<CatalogLog>,
+    publish: PublishOutput,
   ): Effect.Effect<
     Readonly<{ readonly code: number; readonly output: StartupOutput }>,
     ServiceError
   > =>
     awaitCommandOutput(process, {
       timeout: Duration.seconds(startupTimeoutSeconds),
-      onOutput: (stream, bytes) => PubSub.publish(logs, { stream, bytes }),
+      onOutput: publish,
     }).pipe(
       Effect.mapError((cause) => serviceError("launch", cause)),
       Effect.flatMap((result) =>
@@ -313,7 +320,7 @@ const anotherListenerHolds = (endpoints: ReadonlyMap<string, ServiceEndpoint>) =
 
 const collectNativeOutput = Effect.fn("ProcessRecipe.collectNativeOutput")(function* (
   process: NativeProcess,
-  logs: PubSub.PubSub<CatalogLog>,
+  publish: PublishOutput,
   endpoints: ReadonlyMap<string, ServiceEndpoint>,
   readinessOutput:
     | ((line: string, endpoints: ReadonlyMap<string, ServiceEndpoint>) => boolean)
@@ -348,7 +355,7 @@ const collectNativeOutput = Effect.fn("ProcessRecipe.collectNativeOutput")(funct
         { discard: true },
       );
     yield* stream.pipe(
-      Stream.tap((bytes) => PubSub.publish(logs, { stream: name, bytes })),
+      Stream.tap((bytes) => publish(name, bytes)),
       Stream.decodeText,
       Stream.runForEach((text) =>
         Ref.modify(
@@ -408,7 +415,6 @@ const readiness = Effect.fn("ProcessRecipe.readiness")(
 );
 
 export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>>(
-  creation: C,
   options: CatalogOptions,
   deps: ProcessDependencies,
   spec: ProcessRecipeSpec<C>,
@@ -464,11 +470,8 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       }
     });
 
-    const launch = Effect.fn("ProcessRecipe.launch")(function* (context: {
-      readonly id: string;
-      readonly config: C;
-      readonly scope: Scope.Closeable;
-    }) {
+    const launch = Effect.fn("ProcessRecipe.launch")(function* (context: ServiceLaunchContext<C>) {
+      const output = yield* launchOutputPublisher(logs, context.launchId);
       const portNames = Object.entries(spec.ports).filter(
         ([name]) => spec.enabledPort === undefined || spec.enabledPort(context.config, name),
       );
@@ -543,7 +546,11 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
               Effect.mapError((cause) => serviceError("launch", cause)),
             );
-            const result = yield* awaitStartup(context.config.service, startupProcess, logs).pipe(
+            const result = yield* awaitStartup(
+              context.config.service,
+              startupProcess,
+              yield* output.part,
+            ).pipe(
               Effect.mapError(
                 (failure) =>
                   new ServiceLaunchError({ failure, runtime: runtimeFromNative(startupProcess) }),
@@ -588,15 +595,15 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
             Effect.mapError((cause) => serviceError("launch", cause)),
           );
-          const output = yield* collectNativeOutput(
+          const collected = yield* collectNativeOutput(
             native,
-            logs,
+            yield* output.part,
             selected,
             spec.nativeReadinessOutput,
             scope,
           );
           yield* Ref.set(endpoints, selected);
-          return { native, output, selected, scope };
+          return { native, output: collected, selected, scope };
         });
         type NativeAttempt = Effect.Success<ReturnType<typeof spawnAttempt>>;
 
@@ -777,7 +784,11 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             ),
             Scope.provide(context.scope),
           );
-        const result = yield* awaitStartup(context.config.service, startupProcess, logs).pipe(
+        const result = yield* awaitStartup(
+          context.config.service,
+          startupProcess,
+          yield* output.part,
+        ).pipe(
           Effect.mapError(
             (failure) =>
               new ServiceLaunchError({
@@ -844,7 +855,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         selected.set(name, { kind: "tcp", host: "127.0.0.1", port: published });
       }
       yield* Ref.set(endpoints, selected);
-      yield* publishProcessLogs(launched, logs, context.scope);
+      yield* publishProcessLogs(launched, yield* output.part, context.scope);
       const runtime = runtimeFromContainer(launched);
       const ready = selected.get("http");
       const noReadinessEndpoint = Effect.fail(
@@ -879,8 +890,6 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           ).pipe(Effect.andThen(Ref.set(endpoints, new Map()))),
       },
       endpoints,
-      logs: Stream.fromPubSub(logs).pipe(
-        Stream.mapError((cause) => catalogError("logs", String(cause), creation.service)),
-      ),
+      logs: PubSub.subscribe(logs),
     };
   });

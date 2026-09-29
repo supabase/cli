@@ -230,9 +230,8 @@ const makeSpec = (
 };
 
 export const makeRecipe = Effect.fn("Vector.makeRecipe")(
-  (creation: Creation, options: CatalogOptions, deps: ProcessDependencies) =>
+  (options: CatalogOptions, deps: ProcessDependencies) =>
     makeProcessRecipe(
-      creation,
       options,
       deps,
       makeSpec(

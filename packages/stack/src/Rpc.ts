@@ -6,6 +6,7 @@ import { causeMessage, CompositionConfig, OrchestratorError } from "./Orchestrat
 import { CommandInvocation } from "./Commands.ts";
 import { StackKeysInput } from "./State.ts";
 import { failureMessage } from "./internal/failure-message.ts";
+import { LogRecord } from "./host/LogRecord.ts";
 
 const Outcome = Schema.Struct({
   id: Schema.String,
@@ -121,6 +122,17 @@ export const OwnerRpc = RpcGroup.make(
     stream: true,
   }),
   Rpc.make("logs", { payload: Instance, success: Log, error: StackError, stream: true }),
+  Rpc.make("readLogs", {
+    payload: {
+      ...Instance,
+      since: Schema.optionalKey(Schema.String),
+      tail: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+      follow: Schema.Boolean,
+    },
+    success: LogRecord,
+    error: StackError,
+    stream: true,
+  }),
   Rpc.make("credentials", {
     payload: { ...Instance, from: Schema.Literals(["host", "runtime"]) },
     success: Schema.Record(Schema.String, Schema.String),

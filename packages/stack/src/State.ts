@@ -1,7 +1,6 @@
 import {
   Clock,
   Data,
-  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -20,6 +19,7 @@ import { rmdir } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 import { CompositionConfig } from "./Orchestrator.ts";
+import { errorCode, retrySharingViolation } from "./internal/sharing-violation.ts";
 import { restrictDirectoryToOwner } from "./runtime/postgres-user.ts";
 import { ServiceCreation } from "./services/Catalog.ts";
 
@@ -153,6 +153,8 @@ export interface Interface {
   readonly retractHolder: (id: string) => Effect.Effect<void, StateError>;
   /** The file that receives the stack owner's stdout and stderr. */
   readonly ownerLog: (id: string) => string;
+  /** The directory that holds the stack's persisted service logs. */
+  readonly logsRoot: (id: string) => string;
 }
 
 export class Service extends Context.Service<Service, Interface>()("@supabase/stack/State") {}
@@ -192,6 +194,16 @@ interface Options {
   /** Observes a lease request that found the lease held and is waiting for it. */
   readonly onLeaseContended?: (id: string) => Effect.Effect<void>;
 }
+
+const logsDirectory = "logs";
+
+/** Resolves the persisted service logs directory of a stack without opening the state root. */
+export const stackLogsRoot = (
+  path: Path.Path,
+  stateRoot: string,
+  id: string,
+): Effect.Effect<string, StateError> =>
+  checkId(id).pipe(Effect.as(path.join(path.normalize(stateRoot), id, logsDirectory)));
 
 const stateWritePrefix = ".state-write-";
 /** A state write takes milliseconds, so a temporary directory this old belongs to a dead writer. */
@@ -242,30 +254,16 @@ const makeState = (
     const leasePath = (id: string) => path.join(stackRoot(id), "owner.lock");
     const ownerPath = (id: string) => path.join(stackRoot(id), "owner.json");
     const ownerLog = (id: string) => path.join(stackRoot(id), "owner.log");
-    const publishRetrySchedule = Schedule.exponential("10 millis", 2).pipe(
-      Schedule.modifyDelay(({ duration }) =>
-        Effect.succeed(Duration.min(duration, Duration.millis(100))),
-      ),
-      Schedule.upTo({ times: 12 }),
-    );
-    const errorCode = (error: unknown): string | undefined => {
-      if (!Predicate.hasProperty(error, "cause")) return undefined;
-      return Predicate.hasProperty(error.cause, "code") && typeof error.cause.code === "string"
-        ? error.cause.code
-        : undefined;
-    };
-    /** Windows reports a file that another process is replacing as a transient sharing violation. */
-    const sharingViolation = (error: unknown) =>
-      (options.platform ?? process.platform) === "win32" &&
-      ["EPERM", "EACCES", "EBUSY"].includes(errorCode(error) ?? "");
+    const logsRoot = (id: string) => path.join(stackRoot(id), logsDirectory);
+    const retryShared = retrySharingViolation(options.platform);
     const retryTransientRead = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
-        Effect.retry({ schedule: publishRetrySchedule, while: sharingViolation }),
+        retryShared,
         Effect.mapError((cause) => stateError("read", cause)),
       );
     const publish = Effect.fn("State.publish")(function* (temporary: string, target: string) {
       yield* fs.rename(temporary, target).pipe(
-        Effect.retry({ schedule: publishRetrySchedule, while: sharingViolation }),
+        retryShared,
         Effect.mapError(
           (cause) =>
             new StateError({
@@ -370,6 +368,10 @@ const makeState = (
         yield* fs
           .remove(file, { force: true })
           .pipe(Effect.mapError((cause) => stateError("remove", cause)));
+      yield* fs.remove(logsRoot(id), { recursive: true, force: true }).pipe(
+        retryShared,
+        Effect.mapError((cause) => stateError("remove", cause)),
+      );
       yield* removeEmptyDirectory(path.join(stackRoot(id), "data"));
       yield* removeEmptyDirectory(stackRoot(id));
     });
@@ -590,6 +592,7 @@ const makeState = (
       publishHolder,
       retractHolder,
       ownerLog,
+      logsRoot,
     };
   });
 

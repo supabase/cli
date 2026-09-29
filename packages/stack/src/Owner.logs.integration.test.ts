@@ -1,0 +1,249 @@
+import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { describe, expect, it } from "@effect/vitest";
+import {
+  Context,
+  Crypto,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Queue,
+  Redacted,
+  Scope,
+  Stream,
+} from "effect";
+import { tmpdir } from "node:os";
+import { ownerFor } from "../tests/owner-rpc.ts";
+import type { LogRecord } from "./host/LogRecord.ts";
+import { readStackLogs, StackError } from "./index.ts";
+import * as LogStore from "./host/LogStore.ts";
+import * as State from "./State.ts";
+import type { SavedStack } from "./State.ts";
+
+const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const services = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+
+const stackFor = (id: string, runtime: SavedStack["runtime"]): SavedStack => ({
+  id,
+  identity: { projectRoot: "/tmp/project", branchContext: "owner-logs-test", stackName: id },
+  runtime,
+  instances: [],
+  lifetime: "detached",
+  composition: { members: [], dependencies: [] },
+  ports: [],
+});
+
+/** Opens an owner that destroys its stack on scope exit unless `kept` preserves it for a later read. */
+const openOwner = (
+  prefix: string,
+  runtime: SavedStack["runtime"],
+  kept?: { readonly root: string },
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const crypto = yield* Crypto.Crypto;
+    const root = kept?.root ?? (yield* fs.makeTempDirectoryScoped({ prefix }));
+    const stack = stackFor(
+      `owner-logs-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`,
+      runtime,
+    );
+    const state = Context.get(
+      yield* Layer.build(State.layer({ root: `${root}/state` })),
+      State.Service,
+    );
+    yield* state.save(stack);
+    const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+    if (kept === undefined)
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+    return {
+      ...owner,
+      state,
+      stack,
+      stateRoot: `${root}/state`,
+      logsRoot: state.logsRoot(stack.id),
+    };
+  });
+
+const isOutput = (record: LogRecord) => record.kind === "stdout" || record.kind === "stderr";
+
+const firstOutput = (records: Stream.Stream<LogRecord, StackError>) =>
+  records.pipe(Stream.filter(isOutput), Stream.take(1), Stream.runCollect);
+
+describe("owner persisted logs", () => {
+  it.live("persists native output, serves history and follow, and deletes it on destroy", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const owner = yield* openOwner("owner-logs-native-", "native");
+        const mail = yield* owner.rpc.createService({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        });
+        yield* owner.rpc.startService({ id: mail.id });
+        yield* owner.rpc.readyService({ id: mail.id });
+
+        const [followed] = yield* firstOutput(owner.rpc.readLogs({ id: mail.id, follow: true }));
+        const history = Array.from(
+          yield* owner.rpc.readLogs({ id: mail.id, follow: false }).pipe(Stream.runCollect),
+        );
+
+        expect(history[0]).toMatchObject({ kind: "launch", launchId: 1 });
+        expect(history).toContainEqual(followed);
+        const directory = path.join(owner.logsRoot, "mail", mail.id);
+        expect(yield* fs.readDirectory(directory)).toEqual(["0000000001.log"]);
+        const offline = yield* LogStore.readStackLogs({ root: owner.logsRoot });
+        expect(offline.slice(0, history.length).map(({ position }) => position)).toEqual(
+          history.map(({ position }) => position),
+        );
+
+        yield* owner.rpc.destroyService({ id: mail.id });
+        expect(yield* fs.exists(directory)).toBe(false);
+      }),
+    ).pipe(Effect.provide(services)),
+  );
+
+  it.live("reads history through the public API after the owner stops", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-offline-" });
+        const ownerScope = yield* Scope.make();
+        const owner = yield* openOwner("owner-logs-offline-", "native", { root }).pipe(
+          Scope.provide(ownerScope),
+        );
+        const mail = yield* owner.rpc.createService({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        });
+        yield* owner.rpc.startService({ id: mail.id });
+        yield* owner.rpc.readyService({ id: mail.id });
+        const [followed] = yield* firstOutput(owner.rpc.readLogs({ id: mail.id, follow: true }));
+        yield* owner.rpc.stopService({ id: mail.id });
+        yield* Scope.close(ownerScope, Exit.void);
+
+        const records = yield* Effect.promise(() =>
+          readStackLogs({ stateRoot: owner.stateRoot, stackId: owner.stack.id }),
+        );
+        const invalid = yield* Effect.promise(() =>
+          readStackLogs({
+            stateRoot: owner.stateRoot,
+            stackId: owner.stack.id,
+            since: "soon",
+          }).then(
+            () => undefined,
+            (error: unknown) => error,
+          ),
+        );
+
+        expect(records[0]).toMatchObject({ kind: "launch", service: "mail", instanceId: mail.id });
+        expect(records.map(({ text }) => text)).toContain(followed?.text);
+        expect(invalid).toBeInstanceOf(StackError);
+      }),
+    ).pipe(Effect.provide(services)),
+  );
+
+  it.live("keeps the logs RPC to new output lines of the tailed instance", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const owner = yield* openOwner("owner-logs-tail-", "native");
+        const mail = yield* owner.rpc.createService({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        });
+        yield* owner.rpc.startService({ id: mail.id });
+        yield* owner.rpc.readyService({ id: mail.id });
+        const before = Array.from(
+          yield* owner.rpc.readLogs({ id: mail.id, follow: false }).pipe(Stream.runCollect),
+        ).filter(isOutput).length;
+        const received = yield* Queue.unbounded<{
+          readonly stream: "stdout" | "stderr";
+          readonly bytes: Uint8Array;
+        }>();
+        yield* owner.rpc.logs({ id: mail.id }).pipe(
+          Stream.runForEach((entry) => Queue.offer(received, entry)),
+          Effect.forkScoped,
+        );
+
+        // Each restart writes new output; repeat until the tail has subscribed and seen some.
+        const tailed = yield* Effect.gen(function* () {
+          yield* owner.rpc.restartService({ id: mail.id });
+          yield* owner.rpc.readyService({ id: mail.id });
+          return yield* Queue.poll(received);
+        }).pipe(Effect.repeat({ until: Option.isSome }));
+
+        if (Option.isNone(tailed)) return yield* Effect.die("logs RPC emitted nothing");
+        const text = new TextDecoder().decode(tailed.value.bytes);
+        expect(text.endsWith("\n")).toBe(true);
+        expect(text.slice(0, -1)).not.toContain("\n");
+        const history = Array.from(
+          yield* owner.rpc.readLogs({ id: mail.id, follow: false }).pipe(Stream.runCollect),
+        ).filter(isOutput);
+        expect(history.slice(before).map((record) => `${record.text}\n`)).toContain(text);
+      }),
+    ).pipe(Effect.provide(services)),
+  );
+
+  it.live("keeps database logs across a data reset and removes all logs with the stack", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const owner = yield* openOwner("owner-logs-reset-", "native");
+        const database = yield* owner.rpc.createService({
+          service: "database",
+          config: {
+            version: "17",
+            databasePassword: Redacted.make("owner-logs-reset-password"),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: { port: "auto" } },
+        });
+        yield* owner.rpc.startService({ id: database.id });
+        yield* owner.rpc.readyService({ id: database.id });
+        yield* owner.rpc.stopService({ id: database.id });
+        const before = Array.from(
+          yield* owner.rpc.readLogs({ id: database.id, follow: false }).pipe(Stream.runCollect),
+        );
+
+        yield* owner.rpc.resetData({ id: database.id });
+        const after = Array.from(
+          yield* owner.rpc.readLogs({ id: database.id, follow: false }).pipe(Stream.runCollect),
+        );
+
+        expect(before.some(isOutput)).toBe(true);
+        expect(after.slice(0, before.length)).toEqual(before);
+        yield* owner.namespace.destroy;
+        expect(yield* fs.exists(owner.logsRoot)).toBe(false);
+      }),
+    ).pipe(Effect.provide(services)),
+  );
+
+  it.live.skipIf(process.platform === "win32")("persists container output", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const owner = yield* openOwner("owner-logs-docker-", "docker");
+        const mail = yield* owner.rpc.createService({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        });
+        yield* owner.rpc.startService({ id: mail.id });
+        yield* owner.rpc.readyService({ id: mail.id });
+
+        const [followed] = yield* firstOutput(owner.rpc.readLogs({ id: mail.id, follow: true }));
+
+        expect(followed).toMatchObject({ launchId: 1 });
+        expect(yield* fs.readDirectory(path.join(owner.logsRoot, "mail", mail.id))).toEqual([
+          "0000000001.log",
+        ]);
+      }),
+    ).pipe(Effect.provide(services)),
+  );
+});

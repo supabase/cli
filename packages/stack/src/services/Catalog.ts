@@ -1,4 +1,4 @@
-import { Crypto, Effect, FileSystem, Path, Ref, Schema, Stream } from "effect";
+import { Crypto, Effect, FileSystem, Path, Ref, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import { makeContainerRuntime } from "../runtime/Container.ts";
@@ -289,12 +289,7 @@ const databaseRecipe = (
             service: "database",
           }),
         ),
-  logs: component.logs.pipe(
-    Stream.mapError(
-      (cause) =>
-        new CatalogError({ operation: "logs", message: cause.message, service: "database", cause }),
-    ),
-  ),
+  logs: component.logs,
 });
 
 export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
@@ -356,73 +351,73 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         case "rest":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Rest.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Rest.makeSpec()),
             Schema.is(Rest.Creation),
           );
         case "auth":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Auth.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Auth.makeSpec()),
             Schema.is(Auth.Creation),
           );
         case "realtime":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Realtime.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Realtime.makeSpec()),
             Schema.is(Realtime.Creation),
           );
         case "storage":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Storage.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Storage.makeSpec()),
             Schema.is(Storage.Creation),
           );
         case "imgproxy":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Imgproxy.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Imgproxy.makeSpec()),
             Schema.is(Imgproxy.Creation),
           );
         case "functions":
           return catalogRecipe(
             creation,
-            yield* Functions.makeRecipe(creation, options, deps),
+            yield* Functions.makeRecipe(options, deps),
             Schema.is(Functions.Creation),
           );
         case "studio":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Studio.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Studio.makeSpec()),
             Schema.is(Studio.Creation),
           );
         case "pgmeta":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Pgmeta.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Pgmeta.makeSpec()),
             Schema.is(Pgmeta.Creation),
           );
         case "mail":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Mail.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Mail.makeSpec()),
             Schema.is(Mail.Creation),
           );
         case "analytics":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Analytics.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Analytics.makeSpec()),
             Schema.is(Analytics.Creation),
           );
         case "vector":
           return catalogRecipe(
             creation,
-            yield* Vector.makeRecipe(creation, options, deps),
+            yield* Vector.makeRecipe(options, deps),
             Schema.is(Vector.Creation),
           );
         case "pooler":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Pooler.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Pooler.makeSpec()),
             Schema.is(Pooler.Creation),
           );
       }

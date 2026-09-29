@@ -639,7 +639,25 @@ The state root is the stack registry root. Each stack keeps one state document a
 <stateRoot>/<stack-id>/owner.lock    lease; opened only by SQLite
 <stateRoot>/<stack-id>/owner.json    endpoint of the lease holder
 <stateRoot>/<stack-id>/owner.log     owner stdout and stderr, truncated at each owner start
+<stateRoot>/<stack-id>/logs/<service>/<instance-id>/<generation>.log   persisted service output
 ```
+
+The owner is the only subscriber of each instance's output. It writes one record per line, `<ISO
+time> <stdout|stderr|launch|lost> <launch id>[ truncated] | <text>`, into immutable generation-named
+segments: each owner start opens a new generation on the instance's first output, and a record that
+would take a segment past 5 MiB starts the next one. The oldest closed segments except the newest
+are deleted while an instance holds more than 10 MiB or 64 segments. Records carry the publish time
+of their first byte. Line state is kept per launch, process and stream; chunk sequence numbers span
+a launch's processes, so a process whose output was all dropped still shows as `lost`. A late
+partial line of an ended launch waits for its newline for two seconds of quiet, or until the store
+closes. Lines are cut at 32 KiB; chunks the in-memory output buffer dropped, that failed to write,
+or that were still queued when a bounded drain at close ran out are recorded as `lost`. The legacy
+`logs` tail reads split lines from memory, so it keeps flowing while appends fail. Every reader,
+live or offline, reads segments by position, so history and following share one path; a reader that
+finds its segment deleted reports a `lost` gap marker, which carries `resumeAt` instead of a record
+position. Destroying an instance deletes its segments, and an owner start removes directories of
+instances no longer saved, so a failed deletion is retried; destroying the stack removes `logs/`;
+resetting database data keeps them.
 
 Registry updates use an OS-backed lock through a private `node:sqlite` connection to
 `<stateRoot>/.registry-lock.sqlite`. Each `withLock` call opens its own connection, disables
