@@ -40,6 +40,7 @@ function buildLayer(opts: {
     Layer.provide(runtimeInfoLayer),
     Layer.provide(cliProjectContextLayer),
     Layer.provide(providerLayer),
+    Layer.provide(BunServices.layer),
   );
   const telemetryLayer = telemetryRuntimeLayer.pipe(
     Layer.provide(configLayer),

@@ -25,6 +25,7 @@ function withEnv(env: Record<string, string>) {
     Layer.provide(
       ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true })),
     ),
+    Layer.provide(BunServices.layer),
   );
 }
 

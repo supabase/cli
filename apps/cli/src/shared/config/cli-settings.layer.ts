@@ -1,4 +1,4 @@
-import { Config, ConfigProvider, Effect, Layer, Option, Redacted } from "effect";
+import { Config, ConfigProvider, Effect, Layer, Option, Path, Redacted } from "effect";
 import { resolveSupabaseHomeValue } from "./supabase-home.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import { resolvePosthogConfig } from "../telemetry/posthog-config.ts";
@@ -10,6 +10,7 @@ const SUPABASE_DASHBOARD_URL = "https://supabase.com/dashboard";
 const SUPABASE_PROJECT_HOST = "supabase.co";
 
 const makeCliSettings = Effect.gen(function* () {
+  const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
   const cliProjectContext = yield* CliProjectContext;
   const ambientProvider = yield* ConfigProvider.ConfigProvider;
@@ -41,7 +42,7 @@ const makeCliSettings = Effect.gen(function* () {
       (token) => Redacted.make(token, { label: "SUPABASE_ACCESS_TOKEN" }),
     ),
     noKeyring: yield* read(Config.option(Config.string("SUPABASE_NO_KEYRING"))),
-    supabaseHome: resolveSupabaseHomeValue(supabaseHome, runtimeInfo.homeDir),
+    supabaseHome: resolveSupabaseHomeValue(path, supabaseHome, runtimeInfo.homeDir),
     debug: yield* read(Config.option(Config.string("SUPABASE_DEBUG"))),
     telemetryDebug: yield* read(Config.option(Config.string("SUPABASE_TELEMETRY_DEBUG"))),
     telemetryDisabled: yield* read(Config.option(Config.string("SUPABASE_TELEMETRY_DISABLED"))),

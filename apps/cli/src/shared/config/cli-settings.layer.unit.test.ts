@@ -1,10 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { mkdtempSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { ConfigProvider, Effect, Layer, Option, Redacted } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import {
   mockCliProjectContext,
   mockRuntimeInfo,
@@ -16,19 +12,22 @@ import { cliSettingsLayer } from "./cli-settings.layer.ts";
 import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
 import { CliProjectContext } from "./cli-project-context.service.ts";
 
-function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), "supabase-cli-settings-"));
-}
+const makeTempDir = Effect.flatMap(FileSystem.FileSystem, (fs) =>
+  fs.makeTempDirectoryScoped({ prefix: "supabase-cli-settings-" }),
+);
 
-function buildLayer(opts: {
-  cwd: string;
-  env?: Record<string, string>;
-  providerEnv?: Record<string, string>;
-  homeDir?: string;
-}) {
+function buildLayer(
+  path: Path.Path,
+  opts: {
+    cwd: string;
+    env?: Record<string, string>;
+    providerEnv?: Record<string, string>;
+    homeDir?: string;
+  },
+) {
   const runtimeInfoLayer = mockRuntimeInfo({
     cwd: opts.cwd,
-    homeDir: opts.homeDir ?? join(opts.cwd, ".home"),
+    homeDir: opts.homeDir ?? path.join(opts.cwd, ".home"),
   });
   const envLayer = processEnvLayer(opts.env ?? {});
   const discoveredCliProjectContextLayer = cliProjectContextLayer.pipe(
@@ -37,6 +36,7 @@ function buildLayer(opts: {
     Layer.provide(envLayer),
   );
   const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
+    Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
     Layer.provide(
@@ -59,82 +59,86 @@ function buildLayer(opts: {
 
 describe("cliSettingsLayer", () => {
   for (const optOut of ["SUPABASE_TELEMETRY_DISABLED", "DO_NOT_TRACK"]) {
-    it.live(`honors injected ${optOut} alongside discovered project settings`, () => {
-      const cwd = makeTempDir();
-      return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => mkdir(join(cwd, "supabase")));
-        yield* Effect.tryPromise(() =>
-          writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "demo"\n'),
+    it.live(`honors injected ${optOut} alongside discovered project settings`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* fs.makeDirectory(path.join(cwd, "supabase"));
+        yield* fs.writeFileString(
+          path.join(cwd, "supabase", "config.toml"),
+          'project_id = "demo"\n',
         );
-        yield* Effect.tryPromise(() =>
-          writeFile(join(cwd, "supabase", ".env"), "SUPABASE_DEBUG=\n"),
-        );
+        yield* fs.writeFileString(path.join(cwd, "supabase", ".env"), "SUPABASE_DEBUG=\n");
         yield* Effect.gen(function* () {
           const settings = yield* CliSettings;
           expect(settings.debug).toEqual(Option.some(""));
           expect(yield* getEffectiveConsent(Option.none())).toBe("denied");
         }).pipe(
           Effect.provide(
-            buildLayer({ cwd, providerEnv: { [optOut]: "1", SUPABASE_DEBUG: "true" } }),
+            buildLayer(path, { cwd, providerEnv: { [optOut]: "1", SUPABASE_DEBUG: "true" } }),
           ),
         );
-      }).pipe(Effect.ensuring(Effect.tryPromise(() => rm(cwd, { recursive: true, force: true }))));
-    });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
   }
 
-  it.live("falls back to ambient env when no Supabase project is found", () => {
-    const tempDir = makeTempDir();
-    return Effect.gen(function* () {
-      const cliSettings = yield* CliSettings;
-      const cliProjectContext = yield* CliProjectContext;
+  it.live("falls back to ambient env when no Supabase project is found", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      yield* Effect.gen(function* () {
+        const cliSettings = yield* CliSettings;
+        const cliProjectContext = yield* CliProjectContext;
 
-      expect(cliSettings.apiUrl).toBe("https://ambient.example");
-      expect(Option.isNone(cliProjectContext.paths)).toBe(true);
-    }).pipe(
-      Effect.provide(
-        buildLayer({
-          cwd: tempDir,
-          env: {
-            SUPABASE_API_URL: "https://ambient.example",
-          },
-        }),
-      ),
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+        expect(cliSettings.apiUrl).toBe("https://ambient.example");
+        expect(Option.isNone(cliProjectContext.paths)).toBe(true);
+      }).pipe(
+        Effect.provide(
+          buildLayer(path, {
+            cwd: tempDir,
+            env: {
+              SUPABASE_API_URL: "https://ambient.example",
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
   it.live(
     "uses the nearest discovered project and loads supabase/.env.local over supabase/.env",
-    () => {
-      const tempDir = makeTempDir();
-      const repoRoot = join(tempDir, "repo");
-      const packageRoot = join(repoRoot, "apps", "web");
-      const cwd = join(packageRoot, "src");
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* makeTempDir;
+        const repoRoot = path.join(tempDir, "repo");
+        const packageRoot = path.join(repoRoot, "apps", "web");
+        const cwd = path.join(packageRoot, "src");
 
-      return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => mkdir(join(repoRoot, "supabase"), { recursive: true }));
-        yield* Effect.tryPromise(() => mkdir(join(packageRoot, "supabase"), { recursive: true }));
-        yield* Effect.tryPromise(() => mkdir(cwd, { recursive: true }));
-        yield* Effect.tryPromise(() =>
-          writeFile(join(repoRoot, "supabase", "config.toml"), 'project_id = "repo"\n'),
+        yield* fs.makeDirectory(path.join(repoRoot, "supabase"), { recursive: true });
+        yield* fs.makeDirectory(path.join(packageRoot, "supabase"), { recursive: true });
+        yield* fs.makeDirectory(cwd, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(repoRoot, "supabase", "config.toml"),
+          'project_id = "repo"\n',
         );
-        yield* Effect.tryPromise(() =>
-          writeFile(join(repoRoot, "supabase", ".env"), "SUPABASE_API_URL=https://repo.example\n"),
+        yield* fs.writeFileString(
+          path.join(repoRoot, "supabase", ".env"),
+          "SUPABASE_API_URL=https://repo.example\n",
         );
-        yield* Effect.tryPromise(() =>
-          writeFile(join(packageRoot, "supabase", "config.toml"), 'project_id = "web"\n'),
+        yield* fs.writeFileString(
+          path.join(packageRoot, "supabase", "config.toml"),
+          'project_id = "web"\n',
         );
-        yield* Effect.tryPromise(() =>
-          writeFile(
-            join(packageRoot, "supabase", ".env"),
-            "SUPABASE_API_URL=https://shared.example\nSUPABASE_DASHBOARD_URL=https://dashboard.example\n",
-          ),
+        yield* fs.writeFileString(
+          path.join(packageRoot, "supabase", ".env"),
+          "SUPABASE_API_URL=https://shared.example\nSUPABASE_DASHBOARD_URL=https://dashboard.example\n",
         );
-        yield* Effect.tryPromise(() =>
-          writeFile(
-            join(packageRoot, "supabase", ".env.local"),
-            "SUPABASE_API_URL=https://local.example\n",
-          ),
+        yield* fs.writeFileString(
+          path.join(packageRoot, "supabase", ".env.local"),
+          "SUPABASE_API_URL=https://local.example\n",
         );
 
         const { cliSettings, cliProjectContext } = yield* Effect.gen(function* () {
@@ -142,7 +146,7 @@ describe("cliSettingsLayer", () => {
             cliSettings: yield* CliSettings,
             cliProjectContext: yield* CliProjectContext,
           };
-        }).pipe(Effect.provide(buildLayer({ cwd })));
+        }).pipe(Effect.provide(buildLayer(path, { cwd })));
 
         expect(cliSettings.apiUrl).toBe("https://local.example");
         expect(cliSettings.dashboardUrl).toBe("https://dashboard.example");
@@ -150,36 +154,33 @@ describe("cliSettingsLayer", () => {
         if (Option.isSome(cliProjectContext.paths)) {
           expect(cliProjectContext.paths.value.projectRoot).toBe(packageRoot);
         }
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
-    },
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("lets ambient env override discovered project env", () => {
-    const tempDir = makeTempDir();
-    const projectRoot = join(tempDir, "repo");
+  it.live("lets ambient env override discovered project env", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const projectRoot = path.join(tempDir, "repo");
 
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
-      yield* Effect.tryPromise(() =>
-        writeFile(join(projectRoot, "supabase", "config.toml"), 'project_id = "repo"\n'),
+      yield* fs.makeDirectory(path.join(projectRoot, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(projectRoot, "supabase", "config.toml"),
+        'project_id = "repo"\n',
       );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(projectRoot, "supabase", ".env"),
-          "SUPABASE_API_URL=https://from-dotenv.example\nSUPABASE_ACCESS_TOKEN=sbp_dotenv\n",
-        ),
+      yield* fs.writeFileString(
+        path.join(projectRoot, "supabase", ".env"),
+        "SUPABASE_API_URL=https://from-dotenv.example\nSUPABASE_ACCESS_TOKEN=sbp_dotenv\n",
       );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(projectRoot, "supabase", ".env.local"), "SUPABASE_ACCESS_TOKEN=sbp_local\n"),
+      yield* fs.writeFileString(
+        path.join(projectRoot, "supabase", ".env.local"),
+        "SUPABASE_ACCESS_TOKEN=sbp_local\n",
       );
 
-      const cliSettings = yield* Effect.gen(function* () {
-        return yield* CliSettings;
-      }).pipe(
+      const cliSettings = yield* CliSettings.pipe(
         Effect.provide(
-          buildLayer({
+          buildLayer(path, {
             cwd: projectRoot,
             env: {
               SUPABASE_API_URL: "https://from-ambient.example",
@@ -194,25 +195,24 @@ describe("cliSettingsLayer", () => {
       if (Option.isSome(cliSettings.accessToken)) {
         expect(Redacted.value(cliSettings.accessToken.value)).toBe("sbp_ambient");
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it.live("has no PostHog key when nothing is injected or overridden", () => {
-    const tempDir = makeTempDir();
-    return Effect.gen(function* () {
-      const cliSettings = yield* CliSettings;
+  it.live("has no PostHog key when nothing is injected or overridden", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const cliSettings = yield* CliSettings.pipe(
+        Effect.provide(buildLayer(path, { cwd: tempDir })),
+      );
 
       expect(Option.isNone(cliSettings.telemetryPosthogKey)).toBe(true);
-    }).pipe(
-      Effect.provide(buildLayer({ cwd: tempDir })),
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
   it.effect("preserves empty runtime settings as present options", () => {
     const settingsLayer = cliSettingsLayer.pipe(
+      Layer.provide(BunServices.layer),
       Layer.provide(mockRuntimeInfo({ cwd: "/test/cwd", homeDir: "/test/home" })),
       Layer.provide(mockCliProjectContext()),
       Layer.provide(
@@ -237,74 +237,77 @@ describe("cliSettingsLayer", () => {
     }).pipe(Effect.provide(settingsLayer));
   });
 
-  it.live("prefers SUPABASE_TELEMETRY_POSTHOG_KEY over the shipped default", () => {
-    const tempDir = makeTempDir();
-    return Effect.gen(function* () {
-      const cliSettings = yield* CliSettings;
+  it.live("prefers SUPABASE_TELEMETRY_POSTHOG_KEY over the shipped default", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const cliSettings = yield* CliSettings.pipe(
+        Effect.provide(
+          buildLayer(path, {
+            cwd: tempDir,
+            env: {
+              SUPABASE_TELEMETRY_POSTHOG_KEY: "phc_env_override",
+            },
+          }),
+        ),
+      );
 
       expect(cliSettings.telemetryPosthogKey).toEqual(Option.some("phc_env_override"));
-    }).pipe(
-      Effect.provide(
-        buildLayer({
-          cwd: tempDir,
-          env: {
-            SUPABASE_TELEMETRY_POSTHOG_KEY: "phc_env_override",
-          },
-        }),
-      ),
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it.live("uses SUPABASE_HOME (trimmed) when configured", () => {
-    const tempDir = makeTempDir();
-    const supabaseHome = join(tempDir, "custom-supabase-home");
-    return Effect.gen(function* () {
-      const cliSettings = yield* CliSettings;
+  it.live("uses SUPABASE_HOME (trimmed) when configured", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const supabaseHome = path.join(tempDir, "custom-supabase-home");
+      const cliSettings = yield* CliSettings.pipe(
+        Effect.provide(
+          buildLayer(path, { cwd: tempDir, env: { SUPABASE_HOME: `  ${supabaseHome}  ` } }),
+        ),
+      );
 
       expect(cliSettings.supabaseHome).toBe(supabaseHome);
-    }).pipe(
-      Effect.provide(buildLayer({ cwd: tempDir, env: { SUPABASE_HOME: `  ${supabaseHome}  ` } })),
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
   for (const value of ["", "   "]) {
     it.live(
       `falls back to <homeDir>/.supabase when SUPABASE_HOME is ${JSON.stringify(value)}`,
-      () => {
-        const tempDir = makeTempDir();
-        const homeDir = join(tempDir, "home");
-        return Effect.gen(function* () {
-          const cliSettings = yield* CliSettings;
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const tempDir = yield* makeTempDir;
+          const homeDir = path.join(tempDir, "home");
+          const cliSettings = yield* CliSettings.pipe(
+            Effect.provide(
+              buildLayer(path, { cwd: tempDir, homeDir, env: { SUPABASE_HOME: value } }),
+            ),
+          );
 
-          expect(cliSettings.supabaseHome).toBe(join(homeDir, ".supabase"));
-        }).pipe(
-          Effect.provide(buildLayer({ cwd: tempDir, homeDir, env: { SUPABASE_HOME: value } })),
-          Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-        );
-      },
+          expect(cliSettings.supabaseHome).toBe(path.join(homeDir, ".supabase"));
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     );
   }
 
-  it.live("uses the build-injected PostHog key and host when no runtime override is set", () => {
-    const tempDir = makeTempDir();
-    return Effect.gen(function* () {
-      const cliSettings = yield* CliSettings;
+  it.live("uses the build-injected PostHog key and host when no runtime override is set", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const cliSettings = yield* CliSettings.pipe(
+        Effect.provide(
+          buildLayer(path, {
+            cwd: tempDir,
+            env: {
+              SUPABASE_CLI_POSTHOG_HOST: "https://build-posthog.example",
+              SUPABASE_CLI_POSTHOG_KEY: "phc_build_key",
+            },
+          }),
+        ),
+      );
 
       expect(cliSettings.telemetryPosthogHost).toBe("https://build-posthog.example");
       expect(cliSettings.telemetryPosthogKey).toEqual(Option.some("phc_build_key"));
-    }).pipe(
-      Effect.provide(
-        buildLayer({
-          cwd: tempDir,
-          env: {
-            SUPABASE_CLI_POSTHOG_HOST: "https://build-posthog.example",
-            SUPABASE_CLI_POSTHOG_KEY: "phc_build_key",
-          },
-        }),
-      ),
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 });

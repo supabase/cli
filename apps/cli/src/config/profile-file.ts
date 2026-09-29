@@ -21,10 +21,11 @@ import {
  * directly, so `env` defaults to it.
  */
 export function supabaseHome(
+  path: Path.Path,
   homeDir: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): string {
-  return resolveSupabaseHome(env, homeDir);
+  return resolveSupabaseHome(path, env, homeDir);
 }
 
 /** Raised when persisting the profile name fails — fails `login` outright,
@@ -42,7 +43,7 @@ export function profileFilePath(
   homeDir: string,
   env?: Readonly<Record<string, string | undefined>>,
 ): string {
-  return path.join(supabaseHome(homeDir, env), "profile");
+  return path.join(supabaseHome(path, homeDir, env), "profile");
 }
 
 /** Writes the profile name to the resolved profile path. Fatal on failure. */
