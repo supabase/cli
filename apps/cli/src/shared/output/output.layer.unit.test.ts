@@ -456,6 +456,42 @@ describe("Output", () => {
       }),
     );
 
+    it.effect("delays a due spinner until a raw write already in flight finishes", () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const stdioLayer = Layer.succeed(
+          Stdio.Stdio,
+          Stdio.make({
+            args: Effect.succeed([]),
+            stdin: Stream.empty,
+            stdout: () => Sink.forEach((_item: string | Uint8Array) => Effect.void),
+            stderr: () =>
+              Sink.forEach((_item: string | Uint8Array) =>
+                Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+              ),
+          }),
+        );
+        const sunk = textOutputLayer.pipe(
+          Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: true }), stdioLayer)),
+        );
+        yield* Effect.gen(function* () {
+          const out = yield* Output;
+          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+          yield* out.task("Loading organizations...");
+          const write = yield* Effect.forkChild(out.raw("slow\n", "stderr"));
+          yield* Deferred.await(entered);
+
+          vi.advanceTimersByTime(200);
+          expect(mockClack.spinnerFactory).not.toHaveBeenCalled();
+
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(write);
+          expect(mockClack.spinnerHandle.start).toHaveBeenCalledWith("Loading organizations...");
+        }).pipe(Effect.provide(sunk));
+      }),
+    );
+
     it.effect("settles the task through the spinner resumed after a log", () =>
       Effect.gen(function* () {
         vi.useFakeTimers();

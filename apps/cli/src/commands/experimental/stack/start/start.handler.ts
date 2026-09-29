@@ -1,5 +1,10 @@
 import { defaultRuntime } from "@supabase/stack/internal/artifacts";
-import { renderStackSummary, stackEndpoints, type StackServiceView } from "../stack-summary.ts";
+import {
+  renderStackSummary,
+  stackEndpoints,
+  summaryCredentials,
+  type StackServiceView,
+} from "../stack-summary.ts";
 import { gray } from "../../../../command-internal/colors.ts";
 import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import {
@@ -310,9 +315,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               .map(({ service }) => service),
           });
         if (message.length > 0) yield* output.success(message);
-        const credentials = yield* stack.credentials.get.pipe(
-          Effect.orElseSucceed(() => undefined),
-        );
+        const credentials = yield* summaryCredentials(stack.credentials.get, output.warn);
         yield* output.raw(
           `\n${renderStackSummary(report.views, credentials)}\n${gray(`Runtime: ${selectedRuntime}`, process.stdout)}\nRun supabase status --env${selector} to export these values as environment variables.\n`,
         );

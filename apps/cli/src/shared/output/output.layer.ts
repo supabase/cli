@@ -235,13 +235,27 @@ export const textOutputLayer = Layer.effect(
       resumeSpinner(paused);
     };
 
+    // A spinner due to appear during an unpaused write waits until such writes finish.
+    let unpausedWrites = 0;
+    let showWhenIdle: (() => void) | undefined;
+
     const withSpinnerPaused = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
       Effect.suspend(() => {
         const paused = pauseSpinner();
-        if (paused === undefined) {
-          return effect;
-        }
-        return effect.pipe(Effect.ensuring(Effect.sync(() => resumeSpinner(paused))));
+        if (paused !== undefined)
+          return effect.pipe(Effect.ensuring(Effect.sync(() => resumeSpinner(paused))));
+        unpausedWrites += 1;
+        return effect.pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              unpausedWrites -= 1;
+              if (unpausedWrites > 0 || showWhenIdle === undefined) return;
+              const show = showWhenIdle;
+              showWhenIdle = undefined;
+              show();
+            }),
+          ),
+        );
       });
 
     return Output.of({
@@ -285,7 +299,7 @@ export const textOutputLayer = Layer.effect(
             else settle();
           };
 
-          timeout = setTimeout(() => {
+          const show = () => {
             if (settled) {
               return;
             }
@@ -293,7 +307,12 @@ export const textOutputLayer = Layer.effect(
             shown = true;
             shownSpinner.handle.start(currentMessage);
             activeSpinner = shownSpinner;
+          };
+
+          timeout = setTimeout(() => {
             timeout = undefined;
+            if (unpausedWrites > 0) showWhenIdle = show;
+            else show();
           }, TASK_SPINNER_DELAY_MS);
 
           return {

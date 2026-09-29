@@ -1,4 +1,4 @@
-import { Redacted } from "effect";
+import { Effect, Redacted } from "effect";
 import type { Observation, ServiceCreation, StackCredentials } from "@supabase/stack/effect";
 import { red } from "../../../command-internal/colors.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
@@ -202,3 +202,16 @@ export const renderStackSummary = (
   );
   return errors.length === 0 ? groups : `${groups}${errors.join("\n")}\n\n`;
 };
+
+/** Reads saved keys for display, warning instead of failing when they cannot be read. */
+export const summaryCredentials = (
+  read: Effect.Effect<StackCredentials | undefined, { readonly message: string }>,
+  warn: (message: string) => Effect.Effect<void>,
+) =>
+  read.pipe(
+    Effect.catch((error) =>
+      warn(
+        `The stack keys could not be read: ${error.message}. Run supabase status --env to retry.`,
+      ).pipe(Effect.as(undefined)),
+    ),
+  );

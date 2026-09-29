@@ -425,11 +425,9 @@ describe("stack start (compiled e2e)", () => {
             exitTimeoutMs: CLEANUP_TIMEOUT_MS,
           });
           expect(status.exitCode, `stdout:\n${status.stdout}\nstderr:\n${status.stderr}`).toBe(0);
-          expect(status.stdout).toContain(`(${idText})`);
-          expect(status.stdout).toContain("Owner: reachable");
-          expect(status.stdout).toContain("Lifecycle: running");
-          expect(status.stdout).toContain("Readiness: ready");
-          expect(status.stdout).toMatch(/Config drift: (changed|unchanged)/u);
+          expect(status.stdout).toContain(" · ready · native · ");
+          expect(status.stdout).toMatch(/database +│ running · healthy · eager +│/u);
+          expect(status.stdout).not.toContain(idText);
 
           const topLevelStatus = yield* runSupabaseEffect(["status", "--stack-id", idText], {
             cwd: projectRoot,
@@ -441,9 +439,7 @@ describe("stack start (compiled e2e)", () => {
             topLevelStatus.exitCode,
             `stdout:\n${topLevelStatus.stdout}\nstderr:\n${topLevelStatus.stderr}`,
           ).toBe(0);
-          expect(topLevelStatus.stdout).toContain(`(${idText})`);
-          expect(topLevelStatus.stdout).toContain("Owner: reachable");
-          expect(topLevelStatus.stdout).toContain("Lifecycle: running");
+          expect(topLevelStatus.stdout).toContain(" · ready · native · ");
 
           const env = yield* runSupabaseEffect(
             ["stack", "status", "--env", "--stack-id", idText, "--output-format", "json"],
@@ -508,9 +504,8 @@ describe("stack start (compiled e2e)", () => {
             stoppedStatus.exitCode,
             `stdout:\n${stoppedStatus.stdout}\nstderr:\n${stoppedStatus.stderr}`,
           ).toBe(0);
-          expect(stoppedStatus.stdout).toContain("Owner: unavailable");
-          expect(stoppedStatus.stdout).toContain("Lifecycle: unavailable");
-          expect(stoppedStatus.stdout).toContain("Readiness: unavailable");
+          expect(stoppedStatus.stdout).toContain(" · unavailable · native · ");
+          expect(stoppedStatus.stdout).toContain("The stack owner is not running.");
 
           const stoppedEnv = yield* runSupabaseEffect(
             ["stack", "status", "--env", "--stack-id", idText],

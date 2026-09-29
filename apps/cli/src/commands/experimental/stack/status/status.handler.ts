@@ -15,6 +15,7 @@ import {
   stackConnections,
   type StackServiceState,
   stackEndpoints,
+  summaryCredentials,
 } from "../stack-summary.ts";
 import {
   StackApi,
@@ -446,7 +447,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
           report,
           observed.observed,
           observed.members,
-          yield* stack.credentials.get.pipe(Effect.orElseSucceed(() => undefined)),
+          yield* summaryCredentials(stack.credentials.get, output.warn),
         ),
       );
     else yield* output.success("", report);
