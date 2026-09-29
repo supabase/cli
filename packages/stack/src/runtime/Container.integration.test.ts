@@ -340,6 +340,71 @@ describe("container process adapter", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("releases a log follower that exits while its container keeps running", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const released = yield* Deferred.make<void>();
+        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeLogFollowerSpawner(
+              delegate,
+              released,
+              "console.error('injected log stream failure'); process.exit(1)",
+            ),
+          ),
+        );
+        yield* runtime.prepare(image);
+        const process = yield* runtime.launch({
+          image,
+          stackId: "s".repeat(64),
+          instanceId: "dropped-log-follower",
+          env: {},
+          args: ["-e", "setInterval(() => {}, 1000)"],
+        });
+        yield* Deferred.await(released).pipe(Effect.timeout("10 seconds"));
+        expect(
+          yield* process.stderr.pipe(
+            Stream.decodeText,
+            Stream.mkString,
+            Effect.timeout("10 seconds"),
+          ),
+        ).toContain("injected log stream failure");
+        expect(yield* running(process.id)).toBe(true);
+        yield* process.discard;
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("releases a still running log follower when its launch scope closes", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const released = yield* Deferred.make<void>();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              makeLogFollowerSpawner(delegate, released, "setInterval(() => {}, 1000)"),
+            ),
+          );
+          yield* runtime.prepare(image);
+          const process = yield* runtime.launch({
+            image,
+            stackId: "t".repeat(64),
+            instanceId: "live-log-follower",
+            env: {},
+            args: ["-e", "setInterval(() => {}, 1000)"],
+          });
+          expect(yield* Deferred.isDone(released)).toBe(false);
+          yield* process.discard;
+        }),
+      );
+      expect(yield* Deferred.isDone(released)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("treats an externally removed container as already stopped", () =>
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
@@ -909,6 +974,26 @@ const makeStopFailureSpawner = (
         );
       });
     }
+    return delegate.spawn(command);
+  });
+
+const makeLogFollowerSpawner = (
+  delegate: ChildProcessSpawnerService["Service"],
+  released: Deferred.Deferred<void>,
+  script: string,
+) =>
+  ChildProcessSpawner.make((command) => {
+    if (
+      ChildProcess.isStandardCommand(command) &&
+      command.command === "docker" &&
+      command.args[0] === "logs"
+    )
+      return Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined));
+        return yield* delegate.spawn(
+          ChildProcess.make(process.execPath, ["-e", script], { stdin: "ignore" }),
+        );
+      });
     return delegate.spawn(command);
   });
 

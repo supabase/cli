@@ -349,6 +349,8 @@ function mockFileWatcher(expectedPaths: ReadonlyArray<string> = []) {
 function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
   const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
   let index = 0;
+  let liveHandles = 0;
+  let maxLiveHandles = 0;
 
   return {
     layer: Layer.succeed(
@@ -364,6 +366,16 @@ function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
             args: [...command.args],
           };
           spawned.push(record);
+          yield* Effect.acquireRelease(
+            Effect.sync(() => {
+              liveHandles += 1;
+              maxLiveHandles = Math.max(maxLiveHandles, liveHandles);
+            }),
+            () =>
+              Effect.sync(() => {
+                liveHandles -= 1;
+              }),
+          );
           const behavior = behaviors[Math.min(index, behaviors.length - 1)] ?? {};
           index += 1;
           if (behavior.onSpawn !== undefined) yield* behavior.onSpawn();
@@ -395,6 +407,9 @@ function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
     ),
     get spawned() {
       return spawned;
+    },
+    get maxLiveHandles() {
+      return maxLiveHandles;
     },
   };
 }
@@ -2629,6 +2644,7 @@ describe("functions serve integration", () => {
             expect(error.message).toContain("supabase_edge_runtime_test-project");
             expect(error.message).toContain("5 times");
           }
+          expect(childSpawner.maxLiveHandles).toBe(1);
         });
       },
     );
