@@ -559,6 +559,8 @@ it.live(
               value
                 ? Effect.void
                 : shutdownOwner(access, true).pipe(
+                    // A destroy request is refused once the test started a plain shutdown.
+                    Effect.ignore,
                     Effect.andThen(waitForOwnerExit(endpoint.pid)),
                     Effect.ignore,
                   ),
