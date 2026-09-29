@@ -43,11 +43,7 @@ describe("withAnalyticsContext", () => {
   it.live("is inherited by child fibers", () =>
     Effect.gen(function* () {
       const child = yield* Effect.gen(function* () {
-        const fiber = yield* Effect.forkChild(
-          Effect.gen(function* () {
-            return yield* CurrentAnalyticsContext;
-          }),
-        );
+        const fiber = yield* Effect.forkChild(CurrentAnalyticsContext);
         return yield* Fiber.join(fiber);
       }).pipe(
         withAnalyticsContext({
