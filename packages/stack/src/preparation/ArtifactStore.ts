@@ -447,6 +447,10 @@ const validateFreshRuntimePaths = (
     return Object.fromEntries(entries);
   });
 
+/**
+ * Checks each required path against the published tree. A recorded path must keep its kind; an
+ * unrecorded one is accepted so the caller can record it.
+ */
 const ensureSafePaths = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -476,7 +480,7 @@ const ensureSafePaths = (
         });
       const inspected = yield* inspectFreshPath(fs, path, candidate, realRoot);
       const expectedKind = metadata.requiredRuntimeKinds[relative];
-      if (expectedKind === undefined || inspected.kind !== expectedKind)
+      if (expectedKind !== undefined && inspected.kind !== expectedKind)
         return yield* metadataError("Cached artifact runtime path changed basic kind", {
           path: relative,
           expected: expectedKind,
@@ -511,31 +515,24 @@ const ensureExecutableFile = (
   );
 };
 
-const metadataMatchesRequest = (request: ArtifactRequest, metadata: ArtifactMetadata): boolean => {
-  const samePaths =
-    metadata.requiredRuntimePaths.length === request.requiredRuntimePaths.length &&
-    metadata.requiredRuntimePaths.every(
-      (entry, index) => entry === request.requiredRuntimePaths[index],
-    );
-  const kindEntries = Object.keys(metadata.requiredRuntimeKinds);
-  const sameKinds =
-    kindEntries.length === request.requiredRuntimePaths.length &&
-    request.requiredRuntimePaths.every(
-      (entry) => metadata.requiredRuntimeKinds[entry] !== undefined,
-    );
-  return (
-    metadata.key === request.key &&
-    samePaths &&
-    sameKinds &&
-    metadata.executablePath === request.executablePath
-  );
-};
+/** A request identifies a different artifact than the one published at this key. */
+const identityMismatch = (request: ArtifactRequest, metadata: ArtifactMetadata): boolean =>
+  metadata.key !== request.key || metadata.executablePath !== request.executablePath;
 
-const verifyMetadata = (
+/** Required runtime paths the request needs that the recorded metadata has not seen yet. */
+const unrecordedRequiredPaths = (
   request: ArtifactRequest,
   metadata: ArtifactMetadata,
-): Effect.Effect<string, ArtifactIntegrityError> => {
-  const sha256 = validateSha256(metadata.sha256).pipe(
+): ReadonlyArray<string> =>
+  request.requiredRuntimePaths.filter(
+    (relative) => metadata.requiredRuntimeKinds[relative] === undefined,
+  );
+
+const sha256Of = (
+  request: ArtifactRequest,
+  metadata: ArtifactMetadata,
+): Effect.Effect<string, ArtifactIntegrityError> =>
+  validateSha256(metadata.sha256).pipe(
     Effect.mapError((cause) =>
       metadataError("Cached artifact metadata contains an invalid SHA-256", {
         key: request.key,
@@ -543,12 +540,6 @@ const verifyMetadata = (
       }),
     ),
   );
-  if (!metadataMatchesRequest(request, metadata))
-    return Effect.fail(
-      metadataError("Cached artifact metadata does not match the request", { key: request.key }),
-    );
-  return sha256;
-};
 
 const writeBytesSync = (
   fs: FileSystem.FileSystem,
@@ -599,6 +590,34 @@ const cleanup = (fs: FileSystem.FileSystem, path: string): Effect.Effect<void, P
         artifactError(`Unable to clean artifact temporary path: ${cause.message}`, { path, cause }),
       ),
     );
+
+/** Replaces a published artifact's metadata through a sibling temp file and rename. */
+const updateMetadataAtomic = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  crypto: Crypto.Crypto,
+  metadataPath: string,
+  metadata: ArtifactMetadata,
+): Effect.Effect<void, PreparationError> =>
+  Effect.gen(function* () {
+    const token = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) =>
+        artifactError(`Unable to allocate artifact metadata temporary name: ${cause.message}`, {
+          path: metadataPath,
+          cause,
+        }),
+      ),
+    );
+    const temporary = path.join(path.dirname(metadataPath), `${METADATA_NAME}.${token}.tmp`);
+    yield* Effect.gen(function* () {
+      yield* writeMetadataSync(fs, temporary, metadata);
+      yield* mapFs(
+        metadataPath,
+        "update cached artifact metadata",
+        fs.rename(temporary, metadataPath),
+      );
+    }).pipe(Effect.onExit(() => cleanup(fs, temporary)));
+  });
 
 const orphanMaxAgeMillis = 24 * 60 * 60 * 1000;
 
@@ -669,7 +688,7 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
     const metadataPath = path.join(target, METADATA_NAME);
     const checkCached: Effect.Effect<
       Option.Option<PreparedArtifact>,
-      ArtifactIntegrityError
+      ArtifactStoreError
     > = Effect.gen(function* () {
       const realRoot = yield* ensureSafeRoot(fs, path, target, cacheRoot).pipe(
         Effect.map(Option.some),
@@ -681,9 +700,10 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
       const cachedMetadata = yield* readMetadata(fs, metadataPath);
       if (Option.isNone(cachedMetadata)) return Option.none();
       const metadata = cachedMetadata.value;
-      // Same version/target key with an expanded required-path list is a miss, not corruption.
-      if (!metadataMatchesRequest(request, metadata)) return Option.none();
-      const sha256 = yield* verifyMetadata(request, metadata);
+      // A key identifies immutable content: only a different key or executable is a miss, and
+      // paths a request needs beyond the recorded ones are checked against the published tree.
+      if (identityMismatch(request, metadata)) return Option.none();
+      const sha256 = yield* sha256Of(request, metadata);
       // Published content is not rehashed on cache hits: metadata and cheap structural checks
       // protect the cache boundary; content tampering may execute or fail later when the
       // workload starts.
@@ -695,6 +715,20 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
         metadata,
         request.requiredRuntimePaths,
       );
+      const newPaths = unrecordedRequiredPaths(request, metadata);
+      if (newPaths.length > 0) {
+        const newPathSet = new Set(newPaths);
+        const newKinds = Object.fromEntries(
+          Object.entries(safePaths)
+            .filter(([relative]) => newPathSet.has(relative))
+            .map(([relative, inspected]) => [relative, inspected.kind]),
+        );
+        yield* updateMetadataAtomic(fs, path, crypto, metadataPath, {
+          ...metadata,
+          requiredRuntimePaths: [...metadata.requiredRuntimePaths, ...newPaths],
+          requiredRuntimeKinds: { ...metadata.requiredRuntimeKinds, ...newKinds },
+        });
+      }
       if (request.executablePath !== undefined) {
         const executable = safePaths[request.executablePath];
         if (executable === undefined)
