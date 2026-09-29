@@ -229,7 +229,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       Effect.mapError(
         (error) =>
           new StackCommandStartError({
-            reason: "runtime",
+            reason: error.reason === "native-unsupported" ? "flags" : "runtime",
             message: error.message,
             suggestion: error.suggestion,
             cause: error,

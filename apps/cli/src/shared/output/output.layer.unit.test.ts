@@ -541,16 +541,20 @@ describe("Output", () => {
       Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: false }), mockStdio().layer)),
     );
 
-    it.effect("task never schedules the spinner, even past its usual delay", () =>
+    it.effect("task logs plain progress lines instead of starting the spinner", () =>
       Effect.gen(function* () {
         vi.useFakeTimers();
         const out = yield* Output;
         const task = yield* out.task("Loading organizations...");
         vi.advanceTimersByTime(200);
+        yield* task.message("Loading projects...");
         yield* task.succeed("Loaded organizations.");
 
         expect(mockClack.spinnerFactory).not.toHaveBeenCalled();
-        expect(mockClack.spinnerHandle.start).not.toHaveBeenCalled();
+        expect(mockClack.log.step.mock.calls).toEqual([
+          ["Loading organizations..."],
+          ["Loading projects..."],
+        ]);
         expect(mockClack.log.success).toHaveBeenCalledWith("Loaded organizations.");
       }).pipe(Effect.provide(layer)),
     );

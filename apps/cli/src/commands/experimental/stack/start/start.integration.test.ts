@@ -515,7 +515,7 @@ describe("experimental stack start", () => {
           Effect.provide(Layer.merge(base, api)),
         );
         expect(result).toMatchObject({
-          reason: "runtime",
+          reason: "flags",
           message: expect.stringContaining("Native artifacts are unsupported on win32/x64"),
         });
         expect(created).toBe(false);

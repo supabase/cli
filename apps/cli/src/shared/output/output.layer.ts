@@ -231,19 +231,23 @@ export const textOutputLayer = Layer.effect(
             render();
           };
 
-          // clack's spinner writes cursor/animation escape codes to stdout;
-          // never schedule it when stdout is not a TTY.
-          if (tty.stdoutIsTty) {
-            timeout = setTimeout(() => {
-              if (settled) {
-                return;
-              }
-              task = spinner();
-              shown = true;
-              task.start(currentMessage);
-              timeout = undefined;
-            }, TASK_SPINNER_DELAY_MS);
-          }
+          // clack's spinner writes cursor/animation escape codes, so non-TTY stdout
+          // gets plain progress lines instead.
+          let logged = false;
+          timeout = setTimeout(() => {
+            if (settled) {
+              return;
+            }
+            timeout = undefined;
+            if (!tty.stdoutIsTty) {
+              logged = true;
+              log.step(currentMessage);
+              return;
+            }
+            task = spinner();
+            shown = true;
+            task.start(currentMessage);
+          }, TASK_SPINNER_DELAY_MS);
 
           return {
             message: (nextMessage: string) =>
@@ -254,6 +258,8 @@ export const textOutputLayer = Layer.effect(
                 currentMessage = nextMessage;
                 if (shown) {
                   task?.message(formatTaskMessage(nextMessage));
+                } else if (logged) {
+                  log.step(nextMessage);
                 }
               }),
             succeed: (nextMessage?: string) =>

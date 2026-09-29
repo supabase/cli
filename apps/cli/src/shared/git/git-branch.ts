@@ -7,7 +7,7 @@ import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
  * pull-request workflows), otherwise the nearest `.git` walking up from
  * `startDir` (default: the runtime CWD). Returns `Option.none()` when no git
  * repository is found, its HEAD is detached, or its branch can't otherwise be
- * determined; callers substitute their own default.
+ * determined; callers decide how to handle an unknown branch.
  *
  * Pass `startDir` explicitly for a resolved `--workdir` so the branch
  * reflects the project directory, not the process's CWD.
