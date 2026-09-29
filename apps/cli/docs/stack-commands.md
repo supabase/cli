@@ -27,7 +27,9 @@ when its engine answers, and otherwise native on Linux x64/arm64 and macOS arm64
 platforms without a reachable engine, the command fails and asks you to start Docker or Podman. The
 selected runtime is saved with the stack and reused without probing; when auto selection skips
 Docker, the command prints a notice saying so. To switch, destroy the stack or choose a different
-`--stack` name. Project stacks created by database commands, and shadow stacks
+`--stack` name. When an explicit `--runtime docker` or a saved Docker stack cannot reach Docker,
+the failure asks you to install or start it, and also suggests `--runtime native` for a new stack
+on platforms that support native. Project stacks created by database commands, and shadow stacks
 created without a project stack, use the same selection.
 
 `supabase stack prepare` downloads or pulls artifacts for the selected stack without starting
@@ -211,7 +213,8 @@ Host listener assignment for `supabase stack` is documented in [Port intents](./
 ## Service selection and shutdown
 
 With the current defaults, enabled non-database services with endpoints are lazy and stop after
-60 seconds without traffic; Functions has no automatic idle stop. An active HTTP request keeps a
+60 seconds without traffic, Studio after 5 minutes; Functions has no automatic idle stop. A service
+that a running service depends on stays up until that dependent stops. An active HTTP request keeps a
 capability running; an idle HTTP keep-alive socket does not. Open WebSocket or TCP connections
 keep a capability running during idle periods. Use `supabase stack start --eager` to activate all
 enabled capabilities and disable automatic idle stops. A request arriving while a capability is

@@ -15,6 +15,14 @@ const composeSegment = (value: string): string =>
     .replaceAll(/[^a-z0-9_-]+/gu, "-")
     .slice(0, 40);
 
+/** Groups a stack's containers, helpers included, as one compose project. */
+export const composeProjectFor = (stackId: string, project: string | undefined): string =>
+  [
+    "supabase",
+    project === undefined ? "stack" : composeSegment(project) || "stack",
+    stackId.slice(0, 12).toLowerCase(),
+  ].join("-");
+
 /** Names a container and sets compose grouping labels; one-shots get a `-task` segment. */
 export const identifyContainer = (spec: ContainerIdentityInput, token: string, oneOff: boolean) => {
   const project = spec.project === undefined ? undefined : nameSegment(spec.project);
@@ -28,10 +36,9 @@ export const identifyContainer = (spec: ContainerIdentityInput, token: string, o
   ]
     .filter((segment): segment is string => segment !== undefined && segment.length > 0)
     .join("-");
-  const composeProject = [
-    "supabase",
-    spec.project === undefined ? "stack" : composeSegment(spec.project) || "stack",
-    spec.stackId.slice(0, 12).toLowerCase(),
-  ].join("-");
-  return { name, composeProject, composeService: service ?? "task" };
+  return {
+    name,
+    composeProject: composeProjectFor(spec.stackId, spec.project),
+    composeService: service ?? "task",
+  };
 };

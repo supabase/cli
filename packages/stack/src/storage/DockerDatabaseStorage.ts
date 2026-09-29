@@ -16,6 +16,7 @@ import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/u
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import type { ContainerRuntime } from "../runtime/Container.ts";
+import { composeProjectFor } from "../runtime/ContainerName.ts";
 import type { DatabaseRuntime } from "../services/Database.ts";
 import {
   DatabaseSnapshotError,
@@ -116,6 +117,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
     readonly runtime: DatabaseRuntime;
     readonly stackId: string;
     readonly instanceId: string;
+    readonly project?: string;
     readonly instanceRoot: string;
     readonly root: string;
     readonly cacheRoot: string;
@@ -128,6 +130,12 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
   }): Effect.Effect<DockerDatabaseStorage, DockerDatabaseStorageError, Scope.Scope> =>
     Effect.gen(function* () {
       const markerPath = options.path.join(options.instanceRoot, ".supabase-database-storage.json");
+      const composeHelperLabels = [
+        "--label",
+        `com.docker.compose.project=${composeProjectFor(options.stackId, options.project)}`,
+        "--label",
+        "com.docker.compose.service=database-helper",
+      ];
       const stateRoot = options.path.dirname(options.path.dirname(options.root));
       const dataNamespace = `instance-${options.stackId}-${options.instanceId}`;
       const hash = (value: string) =>
@@ -588,6 +596,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 `com.supabase.instance=${options.instanceId}`,
                 "--label",
                 `com.supabase.stack-root=${options.path.resolve(options.root)}`,
+                ...composeHelperLabels,
                 ...mountArgs(mounts),
                 preparedImage,
                 "/bin/sh",
@@ -677,6 +686,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               `com.supabase.stack=${options.stackId}`,
               "--label",
               `com.supabase.stack-root=${options.path.resolve(options.root)}`,
+              ...composeHelperLabels,
               ...mountArgs(mounts),
               preparedImage,
               "/bin/sh",

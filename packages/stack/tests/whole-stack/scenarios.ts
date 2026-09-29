@@ -56,7 +56,7 @@ const assertDefaultPolicy = (fixture: WholeStack) =>
         expect(member.idleMillis).toBeUndefined();
       } else {
         expect(member.activation).toBe("lazy");
-        expect(member.idleMillis).toBe(60_000);
+        expect(member.idleMillis).toBe(name === "studio" ? 300_000 : 60_000);
       }
     }
   });

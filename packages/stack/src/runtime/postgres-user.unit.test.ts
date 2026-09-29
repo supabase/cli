@@ -18,6 +18,7 @@ const nobody = entry("nobody", 65_534);
 const ubuntu = entry("ubuntu", 1000);
 const dev = entry("dev", 1001);
 const sandbox = { CLAUDECODE: "1", IS_SANDBOX: "yes" };
+const modal = { MODAL_SANDBOX_ID: "sb-01" };
 const override = (name: string) => ({ [NATIVE_POSTGRES_USER_ENV]: name });
 
 const asRoot = (env: Record<string, string>, passwd: ReadonlyArray<PasswdEntry>) =>
@@ -82,7 +83,7 @@ describe("resolvePostgresUser", () => {
     expect(asRoot({ CLAUDECODE: "1" }, [root, ubuntu])).toEqual({
       _tag: "Unavailable",
       message: "PostgreSQL cannot be run as root",
-      suggestion: `Set ${NATIVE_POSTGRES_USER_ENV}=<user> to run PostgreSQL as a non-root user.`,
+      suggestion: expect.stringContaining(`Set ${NATIVE_POSTGRES_USER_ENV}=<user>`),
     });
   });
 
@@ -91,5 +92,21 @@ describe("resolvePostgresUser", () => {
       message:
         "Running as root in Claude Code sandbox; PostgreSQL will run as preferred user 'ubuntu' (uid 1000)",
     });
+  });
+
+  it("detects a Modal Sandbox and scans for its node account, since it has no preferred user", () => {
+    expect(userOf(modal, [root, entry("node", 1000)])).toBe("node");
+  });
+
+  it("suggests creating an account when a Modal Sandbox has none usable", () => {
+    expect(asRoot(modal, [root])).toEqual({
+      _tag: "Unavailable",
+      message: "PostgreSQL cannot be run as root and Modal Sandbox has no non-root user",
+      suggestion: expect.stringContaining("useradd --system --user-group supabase-postgres"),
+    });
+  });
+
+  it("does not detect a sandbox from MODAL_TASK_ID alone", () => {
+    expect(userOf({ MODAL_TASK_ID: "ta-01" }, [root, entry("node", 1000)])).toBe("Unavailable");
   });
 });
