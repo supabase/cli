@@ -490,9 +490,11 @@ describe("database component", { timeout: 180_000 }, () => {
           "--format",
           "{{.Names}}",
         ]);
+        // The shared volume helper carries the same stack-root/instance labels; exclude it by name.
         const containers = listed.output
           .split("\n")
-          .filter((name) => /^supabase-[0-9a-f]{8}-[0-9a-f-]+$/u.test(name));
+          .map((name) => name.trim())
+          .filter((name) => name.length > 0 && !name.startsWith("supabase-db-helper-"));
         expect(containers).toHaveLength(1);
         const container = containers.join("");
         const startedAt = yield* runDocker([

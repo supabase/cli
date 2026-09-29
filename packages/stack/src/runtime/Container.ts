@@ -18,6 +18,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { identifyContainer } from "./ContainerName.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
@@ -30,6 +31,10 @@ interface ContainerSpec {
   readonly image: string;
   readonly stackId: string;
   readonly instanceId: string;
+  /** Labels the container with its service kind so stack log collectors can route it. */
+  readonly service?: string;
+  /** Groups this stack's containers under one name in Docker Desktop/OrbStack. */
+  readonly project?: string;
   readonly env: Readonly<Record<string, string>>;
   readonly args?: ReadonlyArray<string>;
   readonly entrypoint?: string;
@@ -261,6 +266,7 @@ export const makeContainerRuntime = (options: {
     const launch = Effect.fn("Container.launch")(function* (
       spec: ContainerSpec,
       interactive = false,
+      oneOff = false,
     ) {
       const owner = yield* Scope.Scope;
       const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
@@ -292,7 +298,7 @@ export const makeContainerRuntime = (options: {
       const token = yield* crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) => errorFor("identity", cause)),
       );
-      const name = `supabase-${token}`;
+      const { name, composeProject, composeService } = identifyContainer(spec, token, oneOff);
       const args = [
         "create",
         "--pull",
@@ -309,6 +315,12 @@ export const makeContainerRuntime = (options: {
         `com.supabase.instance=${spec.instanceId}`,
         "--label",
         `com.supabase.stack-root=${stackRoot}`,
+        ...(spec.service === undefined ? [] : ["--label", `com.supabase.service=${spec.service}`]),
+        "--label",
+        `com.docker.compose.project=${composeProject}`,
+        "--label",
+        `com.docker.compose.service=${composeService}`,
+        ...(oneOff ? ["--label", "com.docker.compose.oneoff=True"] : []),
         "--env-file",
         envPath,
         ...(spec.mounts ?? []).flatMap((mount) => [
@@ -378,7 +390,8 @@ export const makeContainerRuntime = (options: {
                 "--all",
                 "--no-trunc",
                 "--filter",
-                `name=^/?${name}$`,
+                // Docker matches this as a regex; `.` is the only metacharacter a name can hold.
+                `name=^/?${name.replaceAll(".", "\\.")}$`,
                 "--format",
                 "{{.State}}",
               ],
@@ -549,7 +562,12 @@ export const makeContainerRuntime = (options: {
         }),
       );
     });
-    return { prepare, prepareImage, launch, launchCommand: (spec) => launch(spec, true) };
+    return {
+      prepare,
+      prepareImage,
+      launch,
+      launchCommand: (spec) => launch(spec, true, true),
+    };
   });
 
 export const removeStackContainers = Effect.fn("Container.removeStackContainers")(

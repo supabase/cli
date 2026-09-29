@@ -121,6 +121,8 @@ export class DatabaseError extends Data.TaggedError("DatabaseError")<{
 export interface DatabaseOptions {
   readonly stackId: StackId | string;
   readonly instanceId: string;
+  /** Project folder name; the container runtime sanitizes it into names and grouping labels. */
+  readonly project?: string;
   readonly root: string;
   readonly cacheRoot: string;
   readonly runtime: DatabaseRuntime;
@@ -539,6 +541,8 @@ export const makeDatabase = (
               image: artifact.image,
               stackId: String(options.stackId),
               instanceId: options.instanceId,
+              service: "database",
+              project: options.project,
               entrypoint: "/usr/bin/busybox",
               args,
               env: {},
@@ -720,6 +724,8 @@ export const makeDatabase = (
           image: image.image,
           stackId: String(options.stackId),
           instanceId: options.instanceId,
+          service: "database",
+          project: options.project,
           env: {
             PGDATA: "/var/lib/postgresql/data",
             PGSODIUM_KEY_FILE: "/etc/postgresql-custom/pgsodium_root.key",

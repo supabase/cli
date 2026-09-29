@@ -322,6 +322,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         const component = yield* makeDatabase({
           stackId: options.stackId,
           instanceId: options.instanceId,
+          project: options.project,
           root: options.root,
           cacheRoot: options.cacheRoot,
           runtime: options.runtime,

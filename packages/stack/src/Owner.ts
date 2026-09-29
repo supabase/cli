@@ -61,6 +61,7 @@ import {
 } from "./services/Catalog.ts";
 import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
+import { projectSegmentFor } from "./identity/Identity.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
 import type { SavedStack, StackCredentials, StackIdentityInput } from "./State.ts";
@@ -176,12 +177,14 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   >();
   const ownerScope = Context.get(services, Scope.Scope);
   const crypto = Context.get(services, Crypto.Crypto);
+  const path = Context.get(services, Path.Path);
   const network = yield* Network.Service;
   const orchestrator = yield* Orchestrator.make<Entry>();
   const helpers = yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4);
   const definitionGate = yield* Semaphore.make(1);
   const draining = yield* Ref.make(false);
   const { id: stackId, runtime } = options.saved;
+  const project = projectSegmentFor(options.saved.identity, path);
   const routeKeys = {
     publishableKey: options.saved.credentials?.publishableKey ?? "",
     secretKey: options.saved.credentials?.secretKey ?? "",
@@ -285,6 +288,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     makeServiceRecipe(creation, {
       stackId,
       instanceId: id,
+      project,
       root: options.root,
       cacheRoot: options.cacheRoot,
       runtime,
