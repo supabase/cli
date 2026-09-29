@@ -1,8 +1,6 @@
 /**
- * Pure pieces of the weekly test-suite health report (CLI-2541): test-file tier
- * classification, LOC aggregation and week-over-week diffing, growth/duration ranking, and
- * flaky-test detection. The impure half — git history, `gh` API calls, and artifact downloads —
- * lives in `tools/test-health-report.ts`.
+ * Pure pieces of the weekly test-suite health report: tier classification, LOC diffing, ranking,
+ * and flaky-test detection. `report.ts` holds the git/API/artifact-fetching half.
  */
 
 export type TestTier = "unit" | "integration" | "e2e" | "live" | "other";
@@ -110,9 +108,8 @@ export interface FileGrowth {
   readonly growth: number;
 }
 
-/** The files whose LOC grew the most over the week, largest growth first; ties broken by path.
- * A file absent from `previous` counts as growth from zero. Files that shrank or disappeared are
- * excluded — this ranks growth, not overall churn. */
+/** Files ranked by LOC growth over the week; a file absent from `previous` counts as growth from
+ * zero, and files that shrank or disappeared are excluded. */
 export function fastestGrowingFiles(
   current: readonly TestFileLoc[],
   previous: readonly TestFileLoc[],
@@ -142,9 +139,7 @@ export interface FileDuration {
   readonly durationMs: number;
 }
 
-/** The slowest test files over the week, by the longest duration recorded for each file across
- * every run's results cache (a file's duration only reflects its own run, so the max is the best
- * single estimate of how slow it can be). */
+/** The slowest test files over the week, by the longest duration recorded for each across runs. */
 export function slowestFiles(entries: readonly TimingEntry[], limit = 10): FileDuration[] {
   const slowestByKey = new Map<string, FileDuration>();
   for (const entry of entries) {
@@ -166,9 +161,7 @@ export interface FlakyFile {
   readonly failureCount: number;
 }
 
-/** Files that failed in at least one of the week's develop/merge-queue runs, most-failed first.
- * Only detects a file failing within a run's own results cache — it can't distinguish "flaky" from
- * "broken and later fixed", since both look identical from a single week of run outcomes. */
+/** Files that failed in at least one run this week; can't distinguish flaky from broken-then-fixed. */
 export function flakyFiles(entries: readonly TimingEntry[]): FlakyFile[] {
   const failuresByKey = new Map<string, FlakyFile>();
   for (const entry of entries) {
@@ -208,12 +201,8 @@ export interface RetriedJobFailure {
   readonly jobName: string;
 }
 
-/**
- * Runs that ultimately succeeded but needed a re-run, with the job(s) that failed on attempt 1.
- * This detects retry-flakiness at job granularity only: the Actions API reports per-job, not
- * per-test-file, outcomes for a past attempt, so a job spanning many test files (e.g. "Run unit
- * tests") can't be narrowed down to the one file that failed without parsing job logs.
- */
+/** Jobs that failed on attempt 1 of a run that later succeeded; job granularity only, since the
+ * Actions API has no per-test-file outcome for a past attempt. */
 export function retriedJobFailures(runs: readonly RunAttemptJobs[]): RetriedJobFailure[] {
   const failures: RetriedJobFailure[] = [];
   for (const run of runs) {

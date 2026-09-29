@@ -100,24 +100,13 @@ jobs:
       - name: Run unit tests
         run: pnpm run test:unit
 
-      # Every workspace's Vitest results cache lands under its own
-      # `node_modules/.vite/vitest/`; staging them under one directory first (rather than
-      # uploading the raw glob) keeps each workspace's subtree in the artifact regardless of
-      # how many workspaces ran, so the weekly report (tools/test-health-report.ts) can tell
-      # them apart. See `.github/workflows/test.yml`'s e2e-timings upload for the sibling case.
+      # Stage per workspace so the artifact keeps the workspace in each path.
       - name: Stage unit test timings
         if: always()
-        run: |
-          set -euo pipefail
-          mkdir -p .timings-staging
-          shopt -s nullglob
-          for cache in apps/*/node_modules/.vite/vitest/*/results.json packages/*/node_modules/.vite/vitest/*/results.json; do
-            workspace="${cache%%/node_modules/*}"
-            hash_dir="$(basename "$(dirname "$cache")")"
-            dest=".timings-staging/${workspace}/${hash_dir}"
-            mkdir -p "$dest"
-            cp "$cache" "$dest/results.json"
-          done
+        run: >-
+          bash .github/scripts/stage-vitest-results.sh .timings-staging
+          'apps/*/node_modules/.vite/vitest/*/results.json'
+          'packages/*/node_modules/.vite/vitest/*/results.json'
 
       - name: Upload unit test timings
         if: always()
@@ -151,20 +140,13 @@ jobs:
       - name: Run integration tests
         run: pnpm run test:integration
 
-      # See the matching step in test-unit for why results caches are staged before upload.
+      # Stage per workspace so the artifact keeps the workspace in each path.
       - name: Stage integration test timings
         if: always()
-        run: |
-          set -euo pipefail
-          mkdir -p .timings-staging
-          shopt -s nullglob
-          for cache in apps/*/node_modules/.vite/vitest/*/results.json packages/*/node_modules/.vite/vitest/*/results.json; do
-            workspace="${cache%%/node_modules/*}"
-            hash_dir="$(basename "$(dirname "$cache")")"
-            dest=".timings-staging/${workspace}/${hash_dir}"
-            mkdir -p "$dest"
-            cp "$cache" "$dest/results.json"
-          done
+        run: >-
+          bash .github/scripts/stage-vitest-results.sh .timings-staging
+          'apps/*/node_modules/.vite/vitest/*/results.json'
+          'packages/*/node_modules/.vite/vitest/*/results.json'
 
       - name: Upload integration test timings
         if: always()
@@ -300,24 +282,12 @@ jobs:
         env:
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
 
-      # Vitest writes its results cache under a sha1-named directory, under whichever
-      # workspace's suite ran on this matrix leg. Staging first (see the matching step in
-      # test-unit) keeps that workspace identifiable in the artifact. The refresh script
-      # (apps/cli/scripts/refresh-e2e-timings.ts) and the weekly report
-      # (tools/test-health-report.ts) both merge these back in from the results caches.
+      # Stage per workspace so the artifact keeps the workspace in each path.
       - name: Stage e2e test timings
         if: always()
-        run: |
-          set -euo pipefail
-          mkdir -p .timings-staging
-          shopt -s nullglob
-          for cache in apps/*/node_modules/.vite/vitest/*/results.json; do
-            workspace="${cache%%/node_modules/*}"
-            hash_dir="$(basename "$(dirname "$cache")")"
-            dest=".timings-staging/${workspace}/${hash_dir}"
-            mkdir -p "$dest"
-            cp "$cache" "$dest/results.json"
-          done
+        run: >-
+          bash .github/scripts/stage-vitest-results.sh .timings-staging
+          'apps/*/node_modules/.vite/vitest/*/results.json'
 
       - name: Upload e2e timings
         if: always() && matrix.suite == 'cli'

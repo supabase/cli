@@ -9,7 +9,7 @@ import {
   retriedJobFailures,
   slowestFiles,
   workspaceForPath,
-} from "./test-health-report.ts";
+} from "./logic.ts";
 
 describe("classifyTestTier", () => {
   test.each([
@@ -18,7 +18,7 @@ describe("classifyTestTier", () => {
     ["src/foo.e2e.test.ts", "e2e"],
     ["src/foo.live.test.ts", "live"],
     [".github/scripts/contribution-gate.test.ts", "other"],
-  ])("classifies %s as %s", (path, tier) => {
+  ] as const)("classifies %s as %s", (path, tier) => {
     expect(classifyTestTier(path)).toBe(tier);
   });
 });

@@ -1,7 +1,5 @@
-// Shared parsing for Vitest's results cache (normally at
-// `<workspace>/node_modules/.vite/vitest/<hash>/results.json`, staged by `test.yml` as
-// `<workspace>/<hash>/results.json` before upload — see the "Stage ... test timings" steps),
-// used both by `apps/cli/scripts/refresh-e2e-timings.ts` and the weekly test-health report.
+// Shared parsing for Vitest's results cache, staged before upload as
+// `<workspace>/<hash>/results.json` so the workspace survives artifact upload.
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
@@ -79,10 +77,8 @@ function splitKey(key: string): { readonly project: string; readonly path: strin
     : { project: key.slice(0, separator), path: key.slice(separator + 1) };
 }
 
-/** The `unit-timings`/`integration-timings`/`e2e-timings-*` artifacts stage each workspace's
- * results caches under `<workspace>/<hash>/results.json` before upload (see `test.yml`), so the
- * workspace is the `apps/<name>` or `packages/<name>` segment pair found in the cache's directory
- * path; a path with neither (e.g. an artifact predating that staging step) is `"."`. */
+/** The workspace is the `apps/<name>` or `packages/<name>` segment pair in the cache's directory
+ * path; a path with neither (e.g. an artifact predating staging) is `"."`. */
 function workspaceFromCachePath(relativeDir: string): string {
   const segments = relativeDir.split(/[/\\]+/);
   const index = segments.findIndex((segment) => segment === "apps" || segment === "packages");

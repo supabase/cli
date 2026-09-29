@@ -1,11 +1,9 @@
 /**
- * Builds the weekly test-suite health report (CLI-2541): test LOC by workspace/tier with
- * week-over-week change, the fastest-growing and slowest test files, and flaky-test signals —
- * all from git history plus the `test-*-timings-*` artifacts uploaded by `.github/workflows/test.yml`.
- * Writes to `$GITHUB_STEP_SUMMARY` when set, and always prints to stdout. Advisory only; never
- * exits non-zero for data findings, only for a tool failure.
+ * Builds the weekly test-suite health report from git history plus the `*-timings-*` artifacts
+ * uploaded by `.github/workflows/test.yml`. Advisory only: never exits non-zero for a data
+ * finding, only for a tool failure.
  *
- * Usage: bun tools/test-health-report.ts [--repo owner/name] [--days 7] [--max-runs N]
+ * Usage: bun .github/scripts/test-health-report/report.ts [--repo owner/name] [--days 7] [--max-runs N]
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -24,10 +22,10 @@ import {
   type RunAttemptJobs,
   type TestFileLoc,
   type TimingEntry,
-} from "./lib/test-health-report.ts";
-import { readResultEntries } from "../apps/cli/scripts/vitest-results-cache.ts";
+} from "./logic.ts";
+import { readResultEntries } from "../../../apps/cli/scripts/vitest-results-cache.ts";
 
-const repoRoot = path.resolve(import.meta.dir, "..");
+const repoRoot = path.resolve(import.meta.dir, "../../..");
 
 interface ProcessResult {
   readonly exitCode: number;
@@ -189,11 +187,9 @@ async function writeStepSummary(markdown: string): Promise<void> {
   await Bun.write(summaryPath, `${markdown}\n`, { createPath: true });
 }
 
-const usage = `Usage: bun tools/test-health-report.ts [--repo owner/name] [--days 7] [--max-runs N]
+const usage = `Usage: bun .github/scripts/test-health-report/report.ts [--repo owner/name] [--days 7] [--max-runs N]
 
-  Builds the weekly test-suite health report from git history and the week's
-  develop/merge-queue Test workflow run artifacts. --max-runs caps how many
-  matching runs are downloaded, for local dry runs or rate-limit safety.`;
+  --max-runs caps how many matching runs are downloaded, for local dry runs or rate-limit safety.`;
 
 if (import.meta.main) {
   const { values } = parseArgs({

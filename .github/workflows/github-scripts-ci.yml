@@ -12,6 +12,7 @@ on:
       - "apps/cli/src/shared/services/Dockerfile"
       - "apps/cli/src/shared/services/parse-dockerfile-service-images.ts"
       - "apps/cli/src/shared/services/slim-images.ts"
+      - "apps/cli/scripts/vitest-results-cache.ts"
       - "packages/stack/src/Artifacts.ts"
       - ".github/workflows/ai-review.yml"
       - ".github/workflows/github-scripts-ci.yml"

@@ -1,8 +1,7 @@
 name: Weekly test-suite health report
 
-# CLI-2541: makes suite growth, speed, and flakiness visible so later pruning routines and
-# ratchets have data to act on. Advisory only — tools/test-health-report.ts never fails the job
-# for what it finds, only for a tool failure, and this workflow gates nothing.
+# Advisory only — the report script never fails the job for what it finds, only for a tool
+# failure, and this workflow gates nothing.
 on:
   schedule:
     - cron: "0 6 * * 1"
@@ -41,4 +40,4 @@ jobs:
       - name: Build report
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun tools/test-health-report.ts
+        run: bun .github/scripts/test-health-report/report.ts
