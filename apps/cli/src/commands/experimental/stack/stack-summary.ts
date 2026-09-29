@@ -1,5 +1,10 @@
 import { Effect, Redacted } from "effect";
-import type { Observation, ServiceCreation, StackCredentials } from "@supabase/stack/effect";
+import {
+  apiRoute,
+  type Observation,
+  type ServiceCreation,
+  type StackCredentials,
+} from "@supabase/stack/effect";
 import { red } from "../../../command-internal/colors.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
 import {
@@ -40,14 +45,6 @@ export interface StackConnections {
   readonly mailpit?: string;
   readonly database?: string;
 }
-
-const GATEWAY_SERVICES: ReadonlyArray<ServiceName> = [
-  "rest",
-  "auth",
-  "storage",
-  "functions",
-  "realtime",
-];
 
 export const serviceState = (observation: Observation | undefined): StackServiceState => {
   if (observation === undefined) return "unavailable";
@@ -102,8 +99,17 @@ export const stackConnections = (
       .filter(({ service }) => services.includes(service))
       .map(({ observation }) => endpointReports(observation).http?.url)
       .find((url) => url !== undefined);
-  const api = http(GATEWAY_SERVICES);
-  const has = (service: ServiceName) => http([service]) !== undefined;
+  const api = http(
+    members.map(({ service }) => service).filter((service) => apiRoute(service) !== undefined),
+  );
+  const routed = (service: ServiceName) => {
+    const route = apiRoute(service);
+    return api === undefined || route === undefined || http([service]) === undefined
+      ? undefined
+      : `${api}${route}`;
+  };
+  const rest = routed("rest");
+  const functions = routed("functions");
   const studio = http(["studio"]);
   const mailpit = http(["mail"]);
   const database = stackDatabaseUrl(
@@ -111,8 +117,8 @@ export const stackConnections = (
   );
   return {
     ...(api === undefined ? {} : { api }),
-    ...(api === undefined || !has("rest") ? {} : { rest: `${api}/rest/v1` }),
-    ...(api === undefined || !has("functions") ? {} : { functions: `${api}/functions/v1` }),
+    ...(rest === undefined ? {} : { rest }),
+    ...(functions === undefined ? {} : { functions }),
     ...(studio === undefined ? {} : { studio, mcp: mcpUrl(studio) }),
     ...(mailpit === undefined ? {} : { mailpit }),
     ...(database === undefined ? {} : { database }),
