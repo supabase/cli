@@ -1,9 +1,10 @@
 import { Exit, Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/unstable/rpc";
 import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
+import { snapshotScopes } from "./services/DatabaseSnapshot.ts";
 import { causeMessage, CompositionConfig, OrchestratorError } from "./Orchestrator.ts";
 import { CommandInvocation } from "./Commands.ts";
-import { StackIdentityInput } from "./State.ts";
+import { StackKeysInput } from "./State.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 
 const Outcome = Schema.Struct({
@@ -18,10 +19,13 @@ export class StackError extends Schema.TaggedError<StackError>()("StackError", {
   message: Schema.String,
   outcomes: Schema.optionalKey(Schema.Array(Outcome)),
   /**
-   * Why the client could not use an owner: none serves the stack (`owner-unavailable`), or one of
-   * another release does (`release-mismatch`).
+   * Why the client could not use an owner: none serves the stack (`owner-unavailable`), one of
+   * another release does (`release-mismatch`), or its container engine is unreachable
+   * (`runtime-unavailable`).
    */
-  reason: Schema.optionalKey(Schema.Literals(["owner-unavailable", "release-mismatch"])),
+  reason: Schema.optionalKey(
+    Schema.Literals(["owner-unavailable", "release-mismatch", "runtime-unavailable"]),
+  ),
 }) {}
 
 /** Maps an owner failure to the RPC error, preserving per-member composition outcomes. */
@@ -75,6 +79,7 @@ export const Definition = Schema.Struct({ id: Schema.String, creation: ServiceCr
 export interface Definition extends Schema.Schema.Type<typeof Definition> {}
 
 const Instance = { id: Schema.String };
+const SnapshotScope = Schema.Literals(snapshotScopes);
 const Log = Schema.Struct({
   stream: Schema.Literals(["stdout", "stderr"]),
   bytes: Schema.Uint8ArrayFromBase64,
@@ -122,11 +127,11 @@ export const OwnerRpc = RpcGroup.make(
     error: StackError,
   }),
   Rpc.make("saveSnapshot", {
-    payload: { ...Instance, key: Schema.String },
+    payload: { ...Instance, key: Schema.String, scope: Schema.optionalKey(SnapshotScope) },
     error: StackError,
   }),
   Rpc.make("restoreSnapshot", {
-    payload: { ...Instance, key: Schema.String },
+    payload: { ...Instance, key: Schema.String, scope: Schema.optionalKey(SnapshotScope) },
     success: Schema.Boolean,
     error: StackError,
   }),
@@ -135,7 +140,7 @@ export const OwnerRpc = RpcGroup.make(
     payload: {
       services: Schema.Array(ServiceCreationInput),
       reuseIds: Schema.optionalKey(Schema.Array(Schema.String)),
-      keys: Schema.optionalKey(StackIdentityInput),
+      keys: Schema.optionalKey(StackKeysInput),
       eager: Schema.optionalKey(Schema.Boolean),
     },
     success: Schema.Array(Definition),

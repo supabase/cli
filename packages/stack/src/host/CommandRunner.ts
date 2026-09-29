@@ -71,6 +71,7 @@ const failure = (cause: unknown) =>
 /** Creates an attached byte-stream runner whose invocation scope owns each finite process. */
 const makeCommandRunner = (options: {
   readonly stackId: string;
+  readonly project?: string;
   readonly root: string;
   readonly cacheRoot: string;
   readonly runtime: "native" | "docker" | "podman";
@@ -218,6 +219,8 @@ const makeCommandRunner = (options: {
                 image,
                 stackId: options.stackId,
                 instanceId: jobId,
+                service: initialization?.service ?? "database",
+                project: options.project,
                 env: postgresCommand?.env ?? initialization?.env ?? {},
                 args: postgresCommand?.args ?? initialization?.args ?? [],
                 entrypoint:
@@ -299,6 +302,7 @@ const makeCommandRunner = (options: {
 
 export const layer = (options: {
   readonly stackId: string;
+  readonly project?: string;
   readonly root: string;
   readonly cacheRoot: string;
   readonly runtime: "native" | "docker" | "podman";

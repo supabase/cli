@@ -19,7 +19,7 @@ catalog:
   "@effect/vitest": "4.0.0-rc.112"
   "@supabase/supabase-js": ^2.110.7
   "@tsconfig/bun": "^1.0.11"
-  "@types/bun": "^1.4.0"
+  "@types/bun": "^1.4.2"
   "@types/ws": "8.18.1"
   "typescript": "^7.0.2"
   "@vitest/coverage-v8": "^5.0.0"
@@ -112,8 +112,6 @@ minimumReleaseAgeExclude:
   - "@supabase/pg-topo@1.0.0-alpha.6"
   - "@supabase/postgrest-typegen@0.3.1"
   - "@supabase/typegen@0.2.1"
-  - "@types/bun@1.4.0"
-  - "bun-types@1.4.0"
   - "effect@4.0.0-rc.112"
   - "turbo@2.10.11"
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Redacted, Stdio } from "effect";
+import { Effect, Exit, Layer, Option, Redacted, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -132,11 +132,9 @@ describe("platformApiLayer", () => {
     );
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.gen(function* () {
-        return yield* PlatformApi;
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
+      const exit = yield* PlatformApi.pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
         expect(String(exit.cause)).toContain("PlatformAuthRequiredError");
       }
     });
@@ -241,14 +239,16 @@ describe("platformApiLayer", () => {
       yield* api.v1.listAllBranches({ ref: "abcdefghijklmnopqrst" });
     }).pipe(
       withCommandInstrumentation(),
-      Effect.provide(layer),
-      Effect.provide(runtimeLayer),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["branches", "list"]),
-        }),
+        Layer.mergeAll(
+          layer,
+          runtimeLayer,
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["branches", "list"]),
+          }),
+        ),
       ),
       Effect.tap(() =>
         Effect.sync(() => {

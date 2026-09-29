@@ -1,17 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import {
+  Clock,
   ConfigProvider,
   Context,
   Deferred,
@@ -22,27 +12,58 @@ import {
   Fiber,
   Layer,
   Option,
+  Path,
   PlatformError,
+  Schema,
   Sink,
   Stdio,
   Tracer,
 } from "effect";
 import { TestClock } from "effect/testing";
 import { CliSettings } from "../config/cli-settings.service.ts";
-import type { TelemetryConfig } from "./types.ts";
+import { TelemetryConfigSchema, type TelemetryConfig } from "./types.ts";
+import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { mockCliProjectContext, mockRuntimeInfo, mockTty } from "../../../tests/helpers/mocks.ts";
 import { tracingLayer } from "./tracing.layer.ts";
 
 const fsLayer = BunServices.layer;
 
-function makeTempDir(): string {
-  return mkdtempSync(path.join(tmpdir(), "supabase-tracing-test-"));
-}
+const tempRoot = useTempWorkdir("supabase-tracing-test-");
 
-function writeConfig(dir: string, config: TelemetryConfig): void {
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, "telemetry.json"), JSON.stringify(config));
-}
+const TelemetryConfigJson = Schema.fromJsonString(TelemetryConfigSchema);
+
+const writeConfig = (dir: string, config: TelemetryConfig) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(dir, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(dir, "telemetry.json"),
+      yield* Schema.encodeEffect(TelemetryConfigJson)(config),
+    );
+  });
+
+const readConfig = (configPath: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* Schema.decodeEffect(TelemetryConfigJson)(yield* fs.readFileString(configPath));
+  });
+
+const hasNdjsonTrace = (tracesDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    if (!(yield* fs.exists(tracesDir))) return false;
+    return (yield* fs.readDirectory(tracesDir)).some((file) => file.endsWith(".ndjson"));
+  });
+
+const readTraceFile = (tracesDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const traceFile = (yield* fs.readDirectory(tracesDir)).find((file) => file.endsWith(".ndjson"));
+    expect(traceFile).toBeDefined();
+    return yield* fs.readFileString(path.join(tracesDir, traceFile!));
+  });
 
 function buildLayer(opts: {
   home: string;
@@ -66,23 +87,26 @@ function buildLayer(opts: {
     const value = opts.env?.[key];
     return value === undefined ? Option.none<string>() : Option.some(value);
   };
-  const settingsLayer = Layer.succeed(
+  const settingsLayer = Layer.effect(
     CliSettings,
-    CliSettings.of({
-      apiUrl: "https://api.supabase.com",
-      dashboardUrl: "https://supabase.com/dashboard",
-      projectHost: "supabase.co",
-      telemetryPosthogHost: "https://eu.i.posthog.com",
-      telemetryPosthogKey: Option.none(),
-      accessToken: Option.none(),
-      noKeyring: Option.none(),
-      supabaseHome: path.join(opts.home, ".supabase"),
-      debug: setting("SUPABASE_DEBUG"),
-      telemetryDebug: setting("SUPABASE_TELEMETRY_DEBUG"),
-      telemetryDisabled: setting("SUPABASE_TELEMETRY_DISABLED"),
-      doNotTrack: Option.none(),
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      return CliSettings.of({
+        apiUrl: "https://api.supabase.com",
+        dashboardUrl: "https://supabase.com/dashboard",
+        projectHost: "supabase.co",
+        telemetryPosthogHost: "https://eu.i.posthog.com",
+        telemetryPosthogKey: Option.none(),
+        accessToken: Option.none(),
+        noKeyring: Option.none(),
+        supabaseHome: path.join(opts.home, ".supabase"),
+        debug: setting("SUPABASE_DEBUG"),
+        telemetryDebug: setting("SUPABASE_TELEMETRY_DEBUG"),
+        telemetryDisabled: setting("SUPABASE_TELEMETRY_DISABLED"),
+        doNotTrack: Option.none(),
+      });
     }),
-  );
+  ).pipe(Layer.provide(fsLayer));
   return Layer.mergeAll(
     fsLayer,
     opts.fileSystem ?? Layer.empty,
@@ -152,122 +176,110 @@ function capturingStdio(chunks: Array<string>): Layer.Layer<Stdio.Stdio> {
   });
 }
 
-function makeSpanOptions(
+const makeSpanOptions = (
   overrides: Partial<{
     name: string;
     sampled: boolean;
     parent: Option.Option<Tracer.AnySpan>;
   }> = {},
-) {
-  return {
+) =>
+  Effect.map(Clock.currentTimeMillis, (now) => ({
     name: overrides.name ?? "test-span",
     parent: overrides.parent ?? Option.none(),
     annotations: Context.empty(),
     links: [] as Tracer.SpanLink[],
-    startTime: BigInt(Date.now()) * 1_000_000n,
+    startTime: BigInt(now) * 1_000_000n,
     kind: "internal" as Tracer.SpanKind,
     root: false,
     sampled: overrides.sampled ?? true,
-  };
-}
+  }));
 
 describe("tracingLayer – layer construction & first-run", () => {
   it.live("first-run TTY: creates telemetry.json with consent=granted", () => {
-    const home = makeTempDir();
-    const configDir = path.join(home, ".supabase");
+    const home = tempRoot.current;
     return Effect.gen(function* () {
-      yield* Effect.void;
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home, stdoutIsTty: true })),
-      Effect.ensuring(
-        Effect.sync(() => {
-          const configPath = path.join(configDir, "telemetry.json");
-          expect(existsSync(configPath)).toBe(true);
-          const config: TelemetryConfig = JSON.parse(readFileSync(configPath, "utf8"));
-          expect(config.consent).toBe("granted");
-          expect(typeof config.device_id).toBe("string");
-          expect(config.device_id.length).toBeGreaterThan(0);
-          expect(typeof config.session_id).toBe("string");
-          expect(config.session_id.length).toBeGreaterThan(0);
-          rmSync(home, { recursive: true, force: true });
-        }),
-      ),
-    );
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const configDir = path.join(home, ".supabase");
+      yield* Effect.void.pipe(Effect.provide(buildTracingLayer({ home, stdoutIsTty: true })));
+
+      const configPath = path.join(configDir, "telemetry.json");
+      expect(yield* fs.exists(configPath)).toBe(true);
+      const config = yield* readConfig(configPath);
+      expect(config.consent).toBe("granted");
+      expect(typeof config.device_id).toBe("string");
+      expect(config.device_id.length).toBeGreaterThan(0);
+      expect(typeof config.session_id).toBe("string");
+      expect(config.session_id.length).toBeGreaterThan(0);
+    }).pipe(Effect.provide(fsLayer));
   });
 
   it.live("first-run non-TTY: creates telemetry.json with consent=granted", () => {
-    const home = makeTempDir();
-    const configDir = path.join(home, ".supabase");
+    const home = tempRoot.current;
     return Effect.gen(function* () {
-      yield* Effect.void;
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home, stdoutIsTty: false })),
-      Effect.ensuring(
-        Effect.sync(() => {
-          const configPath = path.join(configDir, "telemetry.json");
-          expect(existsSync(configPath)).toBe(true);
-          const config: TelemetryConfig = JSON.parse(readFileSync(configPath, "utf8"));
-          expect(config.consent).toBe("granted");
-          rmSync(home, { recursive: true, force: true });
-        }),
-      ),
-    );
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const configDir = path.join(home, ".supabase");
+      yield* Effect.void.pipe(Effect.provide(buildTracingLayer({ home, stdoutIsTty: false })));
+
+      const configPath = path.join(configDir, "telemetry.json");
+      expect(yield* fs.exists(configPath)).toBe(true);
+      const config = yield* readConfig(configPath);
+      expect(config.consent).toBe("granted");
+    }).pipe(Effect.provide(fsLayer));
   });
 
   it.live("existing config with consent=granted: layer builds and tracer is usable", () => {
-    const home = makeTempDir();
-    const configDir = path.join(home, ".supabase");
-    writeConfig(configDir, {
-      consent: "granted",
-      device_id: "existing-device",
-      session_id: "existing-session",
-      session_last_active: Date.now(),
-    });
+    const home = tempRoot.current;
     return Effect.gen(function* () {
-      const tracer = yield* Tracer.Tracer;
-      const span = tracer.span(makeSpanOptions());
-      expect(span).toBeDefined();
-      expect(span.name).toBe("test-span");
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home })),
-      Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))),
-    );
+      const path = yield* Path.Path;
+      const configDir = path.join(home, ".supabase");
+      yield* writeConfig(configDir, {
+        consent: "granted",
+        device_id: "existing-device",
+        session_id: "existing-session",
+        session_last_active: yield* Clock.currentTimeMillis,
+      });
+      yield* Effect.gen(function* () {
+        const tracer = yield* Tracer.Tracer;
+        const span = tracer.span(yield* makeSpanOptions());
+        expect(span).toBeDefined();
+        expect(span.name).toBe("test-span");
+      }).pipe(Effect.provide(buildTracingLayer({ home })));
+    }).pipe(Effect.provide(fsLayer));
   });
 
   it.live(
     "SUPABASE_TELEMETRY_DISABLED=1 overrides consent=granted: no NDJSON export on span end",
     () => {
-      const home = makeTempDir();
-      const configDir = path.join(home, ".supabase");
-      const tracesDir = path.join(configDir, "traces");
-      writeConfig(configDir, {
-        consent: "granted",
-        device_id: "existing-device",
-        session_id: "existing-session",
-        session_last_active: Date.now(),
-      });
+      const home = tempRoot.current;
       return Effect.gen(function* () {
-        const tracer = yield* Tracer.Tracer;
-        const span = tracer.span(makeSpanOptions());
-        span.end(BigInt(Date.now() + 100) * 1_000_000n, Exit.void);
-      }).pipe(
-        Effect.provide(buildTracingLayer({ home, env: { SUPABASE_TELEMETRY_DISABLED: "1" } })),
-        Effect.ensuring(
-          Effect.sync(() => {
-            const hasNdjson =
-              existsSync(tracesDir) && readdirSync(tracesDir).some((f) => f.endsWith(".ndjson"));
-            expect(hasNdjson).toBe(false);
-            rmSync(home, { recursive: true, force: true });
-          }),
-        ),
-      );
+        const path = yield* Path.Path;
+        const configDir = path.join(home, ".supabase");
+        const tracesDir = path.join(configDir, "traces");
+        yield* writeConfig(configDir, {
+          consent: "granted",
+          device_id: "existing-device",
+          session_id: "existing-session",
+          session_last_active: yield* Clock.currentTimeMillis,
+        });
+        yield* Effect.gen(function* () {
+          const tracer = yield* Tracer.Tracer;
+          const span = tracer.span(yield* makeSpanOptions());
+          span.end(BigInt((yield* Clock.currentTimeMillis) + 100) * 1_000_000n, Exit.void);
+        }).pipe(
+          Effect.provide(buildTracingLayer({ home, env: { SUPABASE_TELEMETRY_DISABLED: "1" } })),
+        );
+
+        expect(yield* hasNdjsonTrace(tracesDir)).toBe(false);
+      }).pipe(Effect.provide(fsLayer));
     },
   );
 });
 
 describe("tracingLayer – span behaviour", () => {
   it.live("waits for a blocked exporter before closing its scope", () => {
-    const home = makeTempDir();
+    const home = tempRoot.current;
     return Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -275,7 +287,7 @@ describe("tracingLayer – span behaviour", () => {
       const run = Effect.scoped(
         Effect.gen(function* () {
           const tracer = yield* Tracer.Tracer;
-          tracer.span(makeSpanOptions()).end(1_000_000_000n, Exit.void);
+          tracer.span(yield* makeSpanOptions()).end(1_000_000_000n, Exit.void);
         }).pipe(
           Effect.provide(
             buildTracingLayer({
@@ -301,18 +313,18 @@ describe("tracingLayer – span behaviour", () => {
             (entry === "finished" && order[index - 1] === "started"),
         ),
       ).toBe(true);
-    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))));
+    });
   });
 
   it.live("drains a blocked exporter when the scoped program fails", () => {
-    const home = makeTempDir();
+    const home = tempRoot.current;
     return Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const order: Array<string> = [];
       const run = Effect.gen(function* () {
         const tracer = yield* Tracer.Tracer;
-        tracer.span(makeSpanOptions()).end(1_000_000_000n, Exit.void);
+        tracer.span(yield* makeSpanOptions()).end(1_000_000_000n, Exit.void);
         return yield* Effect.fail("injected program failure");
       }).pipe(
         Effect.provide(
@@ -330,11 +342,11 @@ describe("tracingLayer – span behaviour", () => {
       const exit = yield* Fiber.await(fiber);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(order.at(-1)).toBe("finished");
-    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))));
+    });
   });
 
   it.live("drains a blocked exporter when the scoped program is interrupted", () => {
-    const home = makeTempDir();
+    const home = tempRoot.current;
     return Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -344,8 +356,8 @@ describe("tracingLayer – span behaviour", () => {
       const run = Effect.scoped(
         Effect.gen(function* () {
           const tracer = yield* Tracer.Tracer;
-          tracer.span(makeSpanOptions()).end(1_000_000_000n, Exit.void);
-          yield* Effect.never.pipe(
+          tracer.span(yield* makeSpanOptions()).end(1_000_000_000n, Exit.void);
+          return yield* Effect.never.pipe(
             Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
           );
         }).pipe(
@@ -370,11 +382,11 @@ describe("tracingLayer – span behaviour", () => {
       const exit = yield* Fiber.await(fiber);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(order.at(-1)).toBe("finished");
-    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))));
+    });
   });
 
   it.effect("bounds shutdown when an exporter never completes", () => {
-    const home = makeTempDir();
+    const home = tempRoot.current;
     return Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -382,7 +394,7 @@ describe("tracingLayer – span behaviour", () => {
       const run = Effect.scoped(
         Effect.gen(function* () {
           const tracer = yield* Tracer.Tracer;
-          tracer.span(makeSpanOptions()).end(1_000_000_000n, Exit.void);
+          tracer.span(yield* makeSpanOptions()).end(1_000_000_000n, Exit.void);
         }).pipe(
           Effect.provide(
             buildTracingLayer({
@@ -401,45 +413,43 @@ describe("tracingLayer – span behaviour", () => {
 
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(order).toEqual(["started"]);
-    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))));
+    });
   });
 
   it.live("keeps exporting after debug formatting fails", () => {
-    const home = makeTempDir();
-    const tracesDir = path.join(home, ".supabase", "traces");
+    const home = tempRoot.current;
     const stderrChunks: string[] = [];
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
     return Effect.gen(function* () {
-      const tracer = yield* Tracer.Tracer;
-      const badSpan = tracer.span(makeSpanOptions({ name: "bad-debug-span" }));
-      badSpan.attribute("cyclic", cyclic);
-      badSpan.end(1_000_000_000n, Exit.void);
-      tracer.span(makeSpanOptions({ name: "good-debug-span" })).end(1_000_000_000n, Exit.void);
-    }).pipe(
-      Effect.provide(
-        buildTracingLayer({
-          home,
-          env: { SUPABASE_DEBUG: "1" },
-          stdio: capturingStdio(stderrChunks),
-        }),
-      ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          const traceFile = readdirSync(tracesDir).find((file) => file.endsWith(".ndjson"));
-          expect(traceFile).toBeDefined();
-          const traces = readFileSync(path.join(tracesDir, traceFile!), "utf8");
-          expect(traces).toContain("good-debug-span");
-          expect(stderrChunks.join(" ")).toContain("good-debug-span");
-          rmSync(home, { recursive: true, force: true });
-        }),
-      ),
-    );
+      const path = yield* Path.Path;
+      const tracesDir = path.join(home, ".supabase", "traces");
+      yield* Effect.gen(function* () {
+        const tracer = yield* Tracer.Tracer;
+        const badSpan = tracer.span(yield* makeSpanOptions({ name: "bad-debug-span" }));
+        badSpan.attribute("cyclic", cyclic);
+        badSpan.end(1_000_000_000n, Exit.void);
+        tracer
+          .span(yield* makeSpanOptions({ name: "good-debug-span" }))
+          .end(1_000_000_000n, Exit.void);
+      }).pipe(
+        Effect.provide(
+          buildTracingLayer({
+            home,
+            env: { SUPABASE_DEBUG: "1" },
+            stdio: capturingStdio(stderrChunks),
+          }),
+        ),
+      );
+
+      const traces = yield* readTraceFile(tracesDir);
+      expect(traces).toContain("good-debug-span");
+      expect(stderrChunks.join(" ")).toContain("good-debug-span");
+    }).pipe(Effect.provide(fsLayer));
   });
 
   it.live("continues file export when debug output fails", () => {
-    const home = makeTempDir();
-    const tracesDir = path.join(home, ".supabase", "traces");
+    const home = tempRoot.current;
     const failure = PlatformError.systemError({
       _tag: "Unknown",
       module: "stderr",
@@ -448,30 +458,32 @@ describe("tracingLayer – span behaviour", () => {
       pathOrDescriptor: "stderr",
     });
     return Effect.gen(function* () {
-      const tracer = yield* Tracer.Tracer;
-      tracer.span(makeSpanOptions()).end(BigInt(Date.now()) * 1_000_000n, Exit.void);
-    }).pipe(
-      Effect.provide(
-        buildTracingLayer({
-          home,
-          env: { SUPABASE_TELEMETRY_DEBUG: "1" },
-          stdio: Stdio.layerTest({ stderr: () => Sink.fail(failure) }),
-        }),
-      ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          expect(readdirSync(tracesDir).some((file) => file.endsWith(".ndjson"))).toBe(true);
-          rmSync(home, { recursive: true, force: true });
-        }),
-      ),
-    );
+      const path = yield* Path.Path;
+      const tracesDir = path.join(home, ".supabase", "traces");
+      yield* Effect.gen(function* () {
+        const tracer = yield* Tracer.Tracer;
+        tracer
+          .span(yield* makeSpanOptions())
+          .end(BigInt(yield* Clock.currentTimeMillis) * 1_000_000n, Exit.void);
+      }).pipe(
+        Effect.provide(
+          buildTracingLayer({
+            home,
+            env: { SUPABASE_TELEMETRY_DEBUG: "1" },
+            stdio: Stdio.layerTest({ stderr: () => Sink.fail(failure) }),
+          }),
+        ),
+      );
+
+      expect(yield* hasNdjsonTrace(tracesDir)).toBe(true);
+    }).pipe(Effect.provide(fsLayer));
   });
 
   it.live("span creation attaches global attributes", () => {
-    const home = makeTempDir();
+    const home = tempRoot.current;
     return Effect.gen(function* () {
       const tracer = yield* Tracer.Tracer;
-      const span = tracer.span(makeSpanOptions());
+      const span = tracer.span(yield* makeSpanOptions());
       expect(span.attributes.get("schema_version")).toBe(1);
       expect(typeof span.attributes.get("device_id")).toBe("string");
       expect(typeof span.attributes.get("session_id")).toBe("string");
@@ -481,18 +493,15 @@ describe("tracingLayer – span behaviour", () => {
       expect(span.attributes.get("os")).toBe("linux");
       expect(span.attributes.get("arch")).toBe("x64");
       expect(span.attributes.get("cli_version")).toBe("0.0.0-dev");
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home })),
-      Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(buildTracingLayer({ home })));
   });
 
   it.live("span end exports to debug console when SUPABASE_DEBUG=1", () => {
-    const home = makeTempDir();
+    const home = tempRoot.current;
     const stderrChunks: string[] = [];
     return Effect.gen(function* () {
       const tracer = yield* Tracer.Tracer;
-      tracer.span(makeSpanOptions({ name: "debug-span" })).end(1_000_000_000n, Exit.void);
+      tracer.span(yield* makeSpanOptions({ name: "debug-span" })).end(1_000_000_000n, Exit.void);
     }).pipe(
       Effect.provide(
         buildTracingLayer({
@@ -504,18 +513,19 @@ describe("tracingLayer – span behaviour", () => {
       Effect.ensuring(
         Effect.sync(() => {
           expect(stderrChunks.join(" ")).toContain("debug-span");
-          rmSync(home, { recursive: true, force: true });
         }),
       ),
     );
   });
 
   it.live("span end exports to debug console when SUPABASE_TELEMETRY_DEBUG=1", () => {
-    const home = makeTempDir();
+    const home = tempRoot.current;
     const stderrChunks: string[] = [];
     return Effect.gen(function* () {
       const tracer = yield* Tracer.Tracer;
-      tracer.span(makeSpanOptions({ name: "telemetry-debug-span" })).end(1_000_000_000n, Exit.void);
+      tracer
+        .span(yield* makeSpanOptions({ name: "telemetry-debug-span" }))
+        .end(1_000_000_000n, Exit.void);
     }).pipe(
       Effect.provide(
         buildTracingLayer({
@@ -527,154 +537,122 @@ describe("tracingLayer – span behaviour", () => {
       Effect.ensuring(
         Effect.sync(() => {
           expect(stderrChunks.join(" ")).toContain("telemetry-debug-span");
-          rmSync(home, { recursive: true, force: true });
         }),
       ),
     );
   });
 
   it.live("span end exports to NDJSON file when consent=granted", () => {
-    const home = makeTempDir();
-    const configDir = path.join(home, ".supabase");
-    const tracesDir = path.join(configDir, "traces");
+    const home = tempRoot.current;
     return Effect.gen(function* () {
-      const tracer = yield* Tracer.Tracer;
-      const span = tracer.span(makeSpanOptions());
-      span.end(BigInt(Date.now() + 100) * 1_000_000n, Exit.void);
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home })),
-      Effect.ensuring(
-        Effect.sync(() => {
-          const hasNdjson =
-            existsSync(tracesDir) && readdirSync(tracesDir).some((f) => f.endsWith(".ndjson"));
-          expect(hasNdjson).toBe(true);
-          rmSync(home, { recursive: true, force: true });
-        }),
-      ),
-    );
+      const path = yield* Path.Path;
+      const configDir = path.join(home, ".supabase");
+      const tracesDir = path.join(configDir, "traces");
+      yield* Effect.gen(function* () {
+        const tracer = yield* Tracer.Tracer;
+        const span = tracer.span(yield* makeSpanOptions());
+        span.end(BigInt((yield* Clock.currentTimeMillis) + 100) * 1_000_000n, Exit.void);
+      }).pipe(Effect.provide(buildTracingLayer({ home })));
+
+      expect(yield* hasNdjsonTrace(tracesDir)).toBe(true);
+    }).pipe(Effect.provide(fsLayer));
   });
 
   it.live("does not write API keys to trace files", () => {
-    const home = makeTempDir();
-    const tracesDir = path.join(home, ".supabase", "traces");
+    const home = tempRoot.current;
     const secretKey = `sb_secret_${"a".repeat(40)}`;
     return Effect.gen(function* () {
-      const tracer = yield* Tracer.Tracer;
-      const span = tracer.span(makeSpanOptions());
-      span.attribute("http.request.header.apikey", secretKey);
-      span.end(BigInt(Date.now() + 100) * 1_000_000n, Exit.void);
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home })),
-      Effect.ensuring(
-        Effect.sync(() => {
-          try {
-            const traceFile = readdirSync(tracesDir).find((file) => file.endsWith(".ndjson"));
-            expect(traceFile).toBeDefined();
-            const trace = readFileSync(path.join(tracesDir, traceFile!), "utf8");
-            expect(trace).not.toContain(secretKey);
-            expect(trace).not.toContain("http.request.header.apikey");
-          } finally {
-            rmSync(home, { recursive: true, force: true });
-          }
-        }),
-      ),
-    );
+      const path = yield* Path.Path;
+      const tracesDir = path.join(home, ".supabase", "traces");
+      yield* Effect.gen(function* () {
+        const tracer = yield* Tracer.Tracer;
+        const span = tracer.span(yield* makeSpanOptions());
+        span.attribute("http.request.header.apikey", secretKey);
+        span.end(BigInt((yield* Clock.currentTimeMillis) + 100) * 1_000_000n, Exit.void);
+      }).pipe(Effect.provide(buildTracingLayer({ home })));
+
+      const trace = yield* readTraceFile(tracesDir);
+      expect(trace).not.toContain(secretKey);
+      expect(trace).not.toContain("http.request.header.apikey");
+    }).pipe(Effect.provide(fsLayer));
   });
 
   it.live("span end does NOT export to NDJSON when SUPABASE_TELEMETRY_DISABLED=1", () => {
-    const home = makeTempDir();
-    const configDir = path.join(home, ".supabase");
-    const tracesDir = path.join(configDir, "traces");
+    const home = tempRoot.current;
     return Effect.gen(function* () {
-      const tracer = yield* Tracer.Tracer;
-      const span = tracer.span(makeSpanOptions());
-      span.end(BigInt(Date.now() + 100) * 1_000_000n, Exit.void);
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home, env: { SUPABASE_TELEMETRY_DISABLED: "1" } })),
-      Effect.ensuring(
-        Effect.sync(() => {
-          const hasNdjson =
-            existsSync(tracesDir) && readdirSync(tracesDir).some((f) => f.endsWith(".ndjson"));
-          expect(hasNdjson).toBe(false);
-          rmSync(home, { recursive: true, force: true });
-        }),
-      ),
-    );
+      const path = yield* Path.Path;
+      const configDir = path.join(home, ".supabase");
+      const tracesDir = path.join(configDir, "traces");
+      yield* Effect.gen(function* () {
+        const tracer = yield* Tracer.Tracer;
+        const span = tracer.span(yield* makeSpanOptions());
+        span.end(BigInt((yield* Clock.currentTimeMillis) + 100) * 1_000_000n, Exit.void);
+      }).pipe(
+        Effect.provide(buildTracingLayer({ home, env: { SUPABASE_TELEMETRY_DISABLED: "1" } })),
+      );
+
+      expect(yield* hasNdjsonTrace(tracesDir)).toBe(false);
+    }).pipe(Effect.provide(fsLayer));
   });
 
   it.live("span end skips unsampled spans – no NDJSON export", () => {
-    const home = makeTempDir();
-    const configDir = path.join(home, ".supabase");
-    const tracesDir = path.join(configDir, "traces");
+    const home = tempRoot.current;
     return Effect.gen(function* () {
-      const tracer = yield* Tracer.Tracer;
-      const span = tracer.span(makeSpanOptions({ sampled: false }));
-      span.end(BigInt(Date.now() + 100) * 1_000_000n, Exit.void);
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home })),
-      Effect.ensuring(
-        Effect.sync(() => {
-          const hasNdjson =
-            existsSync(tracesDir) && readdirSync(tracesDir).some((f) => f.endsWith(".ndjson"));
-          expect(hasNdjson).toBe(false);
-          rmSync(home, { recursive: true, force: true });
-        }),
-      ),
-    );
+      const path = yield* Path.Path;
+      const configDir = path.join(home, ".supabase");
+      const tracesDir = path.join(configDir, "traces");
+      yield* Effect.gen(function* () {
+        const tracer = yield* Tracer.Tracer;
+        const span = tracer.span(yield* makeSpanOptions({ sampled: false }));
+        span.end(BigInt((yield* Clock.currentTimeMillis) + 100) * 1_000_000n, Exit.void);
+      }).pipe(Effect.provide(buildTracingLayer({ home })));
+
+      expect(yield* hasNdjsonTrace(tracesDir)).toBe(false);
+    }).pipe(Effect.provide(fsLayer));
   });
 
   it.live("CI detection via CI env var sets is_ci=true on span", () => {
-    const home = makeTempDir();
+    const home = tempRoot.current;
     return Effect.gen(function* () {
       const tracer = yield* Tracer.Tracer;
-      const span = tracer.span(makeSpanOptions());
+      const span = tracer.span(yield* makeSpanOptions());
       expect(span.attributes.get("is_ci")).toBe(true);
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home, env: { CI: "true" } })),
-      Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(buildTracingLayer({ home, env: { CI: "true" } })));
   });
 });
 
 describe("ExportableSpan unit tests", () => {
   it.live("child span inherits traceId from parent span", () => {
-    const home = makeTempDir();
+    const home = tempRoot.current;
     return Effect.gen(function* () {
       const tracer = yield* Tracer.Tracer;
-      const parent = tracer.span(makeSpanOptions({ name: "parent" }));
-      const child = tracer.span(makeSpanOptions({ name: "child", parent: Option.some(parent) }));
+      const parent = tracer.span(yield* makeSpanOptions({ name: "parent" }));
+      const child = tracer.span(
+        yield* makeSpanOptions({ name: "child", parent: Option.some(parent) }),
+      );
       expect(child.traceId).toBe(parent.traceId);
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home })),
-      Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(buildTracingLayer({ home })));
   });
 
   it.live("event() and addLinks() are no-ops that do not throw", () => {
-    const home = makeTempDir();
+    const home = tempRoot.current;
     return Effect.gen(function* () {
       const tracer = yield* Tracer.Tracer;
-      const span = tracer.span(makeSpanOptions());
-      span.event("test-event", BigInt(Date.now()) * 1_000_000n, { key: "val" });
+      const span = tracer.span(yield* makeSpanOptions());
+      span.event("test-event", BigInt(yield* Clock.currentTimeMillis) * 1_000_000n, { key: "val" });
       span.addLinks([]);
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home })),
-      Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(buildTracingLayer({ home })));
   });
 
   it.live("span without parent generates 32-char hex traceId and 16-char hex spanId", () => {
-    const home = makeTempDir();
+    const home = tempRoot.current;
     const HEX_32 = /^[0-9a-f]{32}$/;
     const HEX_16 = /^[0-9a-f]{16}$/;
     return Effect.gen(function* () {
       const tracer = yield* Tracer.Tracer;
-      const span = tracer.span(makeSpanOptions());
+      const span = tracer.span(yield* makeSpanOptions());
       expect(span.traceId).toMatch(HEX_32);
       expect(span.spanId).toMatch(HEX_16);
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home })),
-      Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(buildTracingLayer({ home })));
   });
 });

@@ -522,6 +522,7 @@ function cliSettingsLayerFor(runtimeLayer: Layer.Layer<never>) {
   return cliSettingsLayer.pipe(
     Layer.provide(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
+    Layer.provide(BunServices.layer),
   );
 }
 

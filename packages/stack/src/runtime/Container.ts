@@ -18,6 +18,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { identifyContainer } from "./ContainerName.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
@@ -30,6 +31,10 @@ interface ContainerSpec {
   readonly image: string;
   readonly stackId: string;
   readonly instanceId: string;
+  /** Labels the container with its service kind so stack log collectors can route it. */
+  readonly service?: string;
+  /** Groups this stack's containers under one name in Docker Desktop/OrbStack. */
+  readonly project?: string;
   readonly env: Readonly<Record<string, string>>;
   readonly args?: ReadonlyArray<string>;
   readonly entrypoint?: string;
@@ -91,6 +96,16 @@ const rateLimited = (error: ContainerError) =>
   /toomanyrequests|too many requests|rate limit|rate exceeded/iu.test(error.message);
 
 /**
+ * Matches a dropped registry connection, not a permanent rejection or a failing engine socket
+ * (`error during connect`, `%2F…` hosts). `EOF` only counts after a registry request URL.
+ */
+const transientPullFailure = (error: ContainerError) =>
+  !/error during connect/iu.test(error.message) &&
+  /(?:Get|Head|Post|Put) "https?:\/\/(?!%2F)[^"]+": (?:unexpected )?EOF|connection reset by peer|i\/o timeout|TLS handshake timeout|net\/http: request canceled|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout|received unexpected HTTP status: 5\d\d/iu.test(
+    error.message,
+  );
+
+/**
  * Matches an engine CLI that is missing or reports a daemon that is not listening, not one that
  * rejects the caller. Podman's connection wrappers and Windows' `error during connect` also wrap
  * authentication and TLS failures, so only their refused or missing-endpoint causes match.
@@ -102,6 +117,10 @@ const engineUnreachable = (error: ContainerError) =>
   /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)/iu.test(
     error.message,
   );
+
+/** A pull worth retrying: rate-limited or a dropped connection, never an unreachable engine. */
+const retryablePull = (error: ContainerError) =>
+  (rateLimited(error) || transientPullFailure(error)) && !engineUnreachable(error);
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -132,8 +151,9 @@ const mountField = (key: string, value: string) => {
 /**
  * Captures the selected local engine; each launch owns one exact container. An image whose pull
  * fails is pulled from the first of its `imageMirrors` that succeeds, and launches of it then use
- * that mirror reference. When every mirror fails, the primary pull error is reported; a
- * rate-limited primary retries the whole chain with backoff.
+ * that mirror reference. When every mirror fails, the primary pull error is reported; a primary
+ * that is rate-limited or hits a transient registry transport failure retries the whole chain
+ * with backoff.
  */
 export const makeContainerRuntime = (options: {
   readonly engine: "docker" | "podman";
@@ -247,11 +267,13 @@ export const makeContainerRuntime = (options: {
       });
       return yield* attempt.pipe(
         Effect.tapError((error) =>
-          rateLimited(error)
-            ? Effect.logWarning(`Registry rate-limited the pull of ${image}`)
-            : Effect.void,
+          !retryablePull(error)
+            ? Effect.void
+            : rateLimited(error)
+              ? Effect.logWarning(`Registry rate-limited the pull of ${image}`)
+              : Effect.logWarning(`Registry pull of ${image} failed transiently`),
         ),
-        Effect.retry({ schedule: pullBackoff, times: PULL_MAX_RETRIES, while: rateLimited }),
+        Effect.retry({ schedule: pullBackoff, times: PULL_MAX_RETRIES, while: retryablePull }),
       );
     });
     const prepare = Effect.fn("Container.prepare")((image: string) =>
@@ -261,6 +283,7 @@ export const makeContainerRuntime = (options: {
     const launch = Effect.fn("Container.launch")(function* (
       spec: ContainerSpec,
       interactive = false,
+      oneOff = false,
     ) {
       const owner = yield* Scope.Scope;
       const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
@@ -292,7 +315,7 @@ export const makeContainerRuntime = (options: {
       const token = yield* crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) => errorFor("identity", cause)),
       );
-      const name = `supabase-${token}`;
+      const { name, composeProject, composeService } = identifyContainer(spec, token, oneOff);
       const args = [
         "create",
         "--pull",
@@ -309,6 +332,12 @@ export const makeContainerRuntime = (options: {
         `com.supabase.instance=${spec.instanceId}`,
         "--label",
         `com.supabase.stack-root=${stackRoot}`,
+        ...(spec.service === undefined ? [] : ["--label", `com.supabase.service=${spec.service}`]),
+        "--label",
+        `com.docker.compose.project=${composeProject}`,
+        "--label",
+        `com.docker.compose.service=${composeService}`,
+        ...(oneOff ? ["--label", "com.docker.compose.oneoff=True"] : []),
         "--env-file",
         envPath,
         ...(spec.mounts ?? []).flatMap((mount) => [
@@ -378,7 +407,8 @@ export const makeContainerRuntime = (options: {
                 "--all",
                 "--no-trunc",
                 "--filter",
-                `name=^/?${name}$`,
+                // Docker matches this as a regex; `.` is the only metacharacter a name can hold.
+                `name=^/?${name.replaceAll(".", "\\.")}$`,
                 "--format",
                 "{{.State}}",
               ],
@@ -549,7 +579,12 @@ export const makeContainerRuntime = (options: {
         }),
       );
     });
-    return { prepare, prepareImage, launch, launchCommand: (spec) => launch(spec, true) };
+    return {
+      prepare,
+      prepareImage,
+      launch,
+      launchCommand: (spec) => launch(spec, true, true),
+    };
   });
 
 export const removeStackContainers = Effect.fn("Container.removeStackContainers")(

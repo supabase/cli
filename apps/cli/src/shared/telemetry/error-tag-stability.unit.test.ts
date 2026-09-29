@@ -1,7 +1,7 @@
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import path from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { beforeAll, describe, expect, it } from "@effect/vitest";
+import { Config, Effect, FileSystem, Option, Path, PlatformError } from "effect";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { beforeAll, describe, expect, it } from "vitest";
 
 /**
  * Guards the telemetry identity of every CLI error: the string passed to
@@ -21,9 +21,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 const cliSrcDir = fileURLToPath(new URL("../..", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../../../..", import.meta.url));
-const externalConfigSrcDir = path.join(repoRoot, "packages/config/src");
-const fixturesDir = fileURLToPath(new URL("./__fixtures__", import.meta.url));
-const fixturePath = path.join(fixturesDir, "error-tags.txt");
+const externalConfigSrcDir = fileURLToPath(
+  new URL("../../../../../packages/config/src", import.meta.url),
+);
+const fixturePath = fileURLToPath(new URL("./__fixtures__/error-tags.txt", import.meta.url));
 
 // Matches both the inline declaration form and the formatter-wrapped
 // multi-line form, where the string literal lands on its own line before the
@@ -59,15 +60,24 @@ interface TaggedErrorDeclaration {
   readonly file: string;
 }
 
-function walk(dir: string): Array<string> {
-  return readdirSync(dir).flatMap((entry) => {
-    if (entry === "__fixtures__") return [];
-    const fullPath = path.join(dir, entry);
-    const stats = statSync(fullPath);
-    if (stats.isDirectory()) return walk(fullPath);
-    return fullPath.endsWith(".ts") && !fullPath.endsWith(".d.ts") ? [fullPath] : [];
+const walk = (
+  dir: string,
+): Effect.Effect<Array<string>, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const entries = yield* fs.readDirectory(dir);
+    const nested = yield* Effect.forEach(entries, (entry) =>
+      Effect.gen(function* () {
+        if (entry === "__fixtures__") return [];
+        const fullPath = path.join(dir, entry);
+        const stats = yield* fs.stat(fullPath);
+        if (stats.type === "Directory") return yield* walk(fullPath);
+        return fullPath.endsWith(".ts") && !fullPath.endsWith(".d.ts") ? [fullPath] : [];
+      }),
+    );
+    return nested.flat();
   });
-}
 
 function isProductionSourceFile(filePath: string): boolean {
   return !TEST_FILE_SUFFIXES.some((suffix) => filePath.endsWith(suffix));
@@ -78,25 +88,25 @@ function isProductionSourceFile(filePath: string): boolean {
  * given production files, skipping `COMPUTED_TAG_SOURCE_FILES` (those come from
  * {@link collectComputedTagDeclarations} instead) so a file never contributes twice.
  */
-function collectStaticDeclarations(
-  filePaths: ReadonlyArray<string>,
-  rootDir: string,
-): Array<TaggedErrorDeclaration> {
-  const declarations: Array<TaggedErrorDeclaration> = [];
-  for (const filePath of filePaths) {
-    const relativeToRoot = path.relative(rootDir, filePath);
-    if (rootDir === cliSrcDir && computedTagSourceFileSet.has(relativeToRoot)) continue;
-    const source = readFileSync(filePath, "utf8");
-    for (const match of source.matchAll(TAGGED_ERROR_PATTERN)) {
-      declarations.push({
-        className: match[1]!,
-        tag: match[2]!,
-        file: path.relative(repoRoot, filePath),
-      });
+const collectStaticDeclarations = (filePaths: ReadonlyArray<string>, rootDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const declarations: Array<TaggedErrorDeclaration> = [];
+    for (const filePath of filePaths) {
+      const relativeToRoot = path.relative(rootDir, filePath);
+      if (rootDir === cliSrcDir && computedTagSourceFileSet.has(relativeToRoot)) continue;
+      const source = yield* fs.readFileString(filePath);
+      for (const match of source.matchAll(TAGGED_ERROR_PATTERN)) {
+        declarations.push({
+          className: match[1]!,
+          tag: match[2]!,
+          file: path.relative(repoRoot, filePath),
+        });
+      }
     }
-  }
-  return declarations;
-}
+    return declarations;
+  });
 
 /**
  * Runtime half of the computed-tag guard: imports each `COMPUTED_TAG_SOURCE_FILES` module,
@@ -106,26 +116,26 @@ function collectStaticDeclarations(
  * `new Export({})` is safe because every export here is a `Data.TaggedError`-derived class
  * whose generated constructor assigns whatever properties are present without validating them.
  */
-async function collectComputedTagDeclarations(): Promise<Array<TaggedErrorDeclaration>> {
+const collectComputedTagDeclarations = Effect.gen(function* () {
+  const path = yield* Path.Path;
   const declarations: Array<TaggedErrorDeclaration> = [];
   for (const relativeFile of COMPUTED_TAG_SOURCE_FILES) {
     const moduleUrl = pathToFileURL(path.join(cliSrcDir, relativeFile)).href;
-    const module: Record<string, unknown> = await import(moduleUrl);
+    const module: Record<string, unknown> = yield* Effect.tryPromise(() => import(moduleUrl));
     for (const [exportName, exportValue] of Object.entries(module)) {
       if (typeof exportValue !== "function") continue;
-      let tag: unknown;
-      try {
+      const constructed = yield* Effect.try(() => {
         const Ctor = exportValue as new (args: Record<string, unknown>) => { _tag?: unknown };
-        tag = new Ctor({})._tag;
-      } catch {
-        continue; // Not a constructible Data.TaggedError-shaped export.
-      }
+        return new Ctor({})._tag;
+      }).pipe(Effect.option);
+      if (Option.isNone(constructed)) continue; // Not a constructible Data.TaggedError-shaped export.
+      const tag = constructed.value;
       if (typeof tag !== "string") continue;
       declarations.push({ className: exportName, tag, file: `apps/cli/src/${relativeFile}` });
     }
   }
   return declarations;
-}
+});
 
 /** Shared comparator for the fixture and the live scan, so a `localeCompare`-vs-default-sort
  * mismatch can't make the comparison lie. */
@@ -133,23 +143,22 @@ function compareTags(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function readSnapshotTags(): Array<string> {
-  return readFileSync(fixturePath, "utf8")
-    .split(/\r?\n/)
-    .filter((line) => line.length > 0);
-}
+const readSnapshotTags = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  return (yield* fs.readFileString(fixturePath)).split(/\r?\n/).filter((line) => line.length > 0);
+});
 
 /** Every production `Data.TaggedError` declaration, static and computed alike. */
-async function collectProductionDeclarations(): Promise<Array<TaggedErrorDeclaration>> {
-  const cliFiles = walk(cliSrcDir).filter(isProductionSourceFile);
-  const externalFiles = walk(externalConfigSrcDir).filter(isProductionSourceFile);
+const collectProductionDeclarations = Effect.gen(function* () {
+  const cliFiles = (yield* walk(cliSrcDir)).filter(isProductionSourceFile);
+  const externalFiles = (yield* walk(externalConfigSrcDir)).filter(isProductionSourceFile);
   const staticDeclarations = [
-    ...collectStaticDeclarations(cliFiles, cliSrcDir),
-    ...collectStaticDeclarations(externalFiles, externalConfigSrcDir),
+    ...(yield* collectStaticDeclarations(cliFiles, cliSrcDir)),
+    ...(yield* collectStaticDeclarations(externalFiles, externalConfigSrcDir)),
   ];
-  const computedDeclarations = await collectComputedTagDeclarations();
+  const computedDeclarations = yield* collectComputedTagDeclarations;
   return [...staticDeclarations, ...computedDeclarations];
-}
+});
 
 /**
  * Regenerates `__fixtures__/error-tags.txt` from the current, live tag set.
@@ -160,44 +169,53 @@ async function collectProductionDeclarations(): Promise<Array<TaggedErrorDeclara
  * Only ever do this after confirming the `added`/`removed` diff below is an
  * intentional, reviewed identity change -- not an accidental rename.
  */
-function writeFixture(tags: ReadonlySet<string>): void {
-  const sorted = [...tags].sort(compareTags);
-  writeFileSync(fixturePath, sorted.map((tag) => `${tag}\n`).join(""));
-}
+const writeFixture = (tags: ReadonlySet<string>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const sorted = [...tags].sort(compareTags);
+    yield* fs.writeFileString(fixturePath, sorted.map((tag) => `${tag}\n`).join(""));
+  });
 
 describe("error tag stability", () => {
   let productionDeclarations: Array<TaggedErrorDeclaration>;
 
-  beforeAll(async () => {
-    productionDeclarations = await collectProductionDeclarations();
-  });
+  beforeAll(() =>
+    Effect.runPromise(collectProductionDeclarations.pipe(Effect.provide(BunServices.layer))).then(
+      (declarations) => {
+        productionDeclarations = declarations;
+      },
+    ),
+  );
 
-  it("keeps every Data.TaggedError tag literal identical to the committed snapshot", () => {
-    const currentTagSet = new Set(productionDeclarations.map((declaration) => declaration.tag));
+  it.live("keeps every Data.TaggedError tag literal identical to the committed snapshot", () =>
+    Effect.gen(function* () {
+      const currentTagSet = new Set(productionDeclarations.map((declaration) => declaration.tag));
 
-    if (process.env["UPDATE_ERROR_TAGS_FIXTURE"] === "1") {
-      writeFixture(currentTagSet);
-    }
+      const updateFixture = yield* Config.option(Config.string("UPDATE_ERROR_TAGS_FIXTURE"));
+      if (Option.isSome(updateFixture) && updateFixture.value === "1") {
+        yield* writeFixture(currentTagSet);
+      }
 
-    const currentTags = [...currentTagSet].sort(compareTags);
-    const snapshotTags = readSnapshotTags();
+      const currentTags = [...currentTagSet].sort(compareTags);
+      const snapshotTags = yield* readSnapshotTags;
 
-    const added = currentTags.filter((tag) => !snapshotTags.includes(tag));
-    const removed = snapshotTags.filter((tag) => !currentTags.includes(tag));
+      const added = currentTags.filter((tag) => !snapshotTags.includes(tag));
+      const removed = snapshotTags.filter((tag) => !currentTags.includes(tag));
 
-    expect(
-      { added, removed },
-      'A Data.TaggedError("...") tag literal was added, removed, or changed. That string is the ' +
-        "error's telemetry identity in PostHog -- it flows into error_fingerprint as `tag:<TagName>` on " +
-        "the cli_command_executed event. Changing it silently splits one error's history into two " +
-        "fingerprints, with no error and no warning, breaking repeat-rate and trend continuity. " +
-        "Renaming the error CLASS is fine; do NOT change the string literal passed to " +
-        "Data.TaggedError(...) when you do it. If this change is an intentional, reviewed identity " +
-        "change (not an accidental rename), regenerate the snapshot with " +
-        '`UPDATE_ERROR_TAGS_FIXTURE=1 bun --bun vitest run --project unit -t "error tag stability"` ' +
-        "and commit the resulting apps/cli/src/shared/telemetry/__fixtures__/error-tags.txt.",
-    ).toEqual({ added: [], removed: [] });
-  });
+      expect(
+        { added, removed },
+        'A Data.TaggedError("...") tag literal was added, removed, or changed. That string is the ' +
+          "error's telemetry identity in PostHog -- it flows into error_fingerprint as `tag:<TagName>` on " +
+          "the cli_command_executed event. Changing it silently splits one error's history into two " +
+          "fingerprints, with no error and no warning, breaking repeat-rate and trend continuity. " +
+          "Renaming the error CLASS is fine; do NOT change the string literal passed to " +
+          "Data.TaggedError(...) when you do it. If this change is an intentional, reviewed identity " +
+          "change (not an accidental rename), regenerate the snapshot with " +
+          '`UPDATE_ERROR_TAGS_FIXTURE=1 bun --bun vitest run --project unit -t "error tag stability"` ' +
+          "and commit the resulting apps/cli/src/shared/telemetry/__fixtures__/error-tags.txt.",
+      ).toEqual({ added: [], removed: [] });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it("never lets two unexpectedly-different error classes share the same tag literal", () => {
     /**
