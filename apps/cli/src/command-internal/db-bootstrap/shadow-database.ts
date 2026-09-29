@@ -143,11 +143,18 @@ export const connectShadowDatabase = (
 ): Effect.Effect<DbSession, ShadowDbError, DbConnection | Scope.Scope> =>
   Effect.gen(function* () {
     const dbConnection = yield* DbConnection;
-    return yield* dbConnection.connect(cfg, { isLocal: true, dnsResolver: "native" }).pipe(
+    let attempts = 0;
+    return yield* Effect.suspend(() => {
+      attempts += 1;
+      return dbConnection.connect(cfg, { isLocal: true, dnsResolver: "native" });
+    }).pipe(
       Effect.mapError((cause) => new ShadowDbError({ message: cause.message, reason: "connect" })),
       Effect.retry({ schedule: SHADOW_CONNECT_SCHEDULE }),
+      Effect.ensuring(
+        Effect.suspend(() => Effect.annotateCurrentSpan("retry.attempt_count", attempts)),
+      ),
     );
-  });
+  }).pipe(Effect.withSpan("ShadowDatabase.connect"));
 
 /**
  * Input to {@link createShadowDatabase} — the subset of the real `db` container's own bootstrap
@@ -237,7 +244,11 @@ export const createShadowDatabase = (
       ),
     );
     return { containerId };
-  });
+  }).pipe(
+    Effect.withSpan("ShadowDatabase.create", {
+      attributes: { "shadow.restore_archive": input.restoreArchive !== undefined },
+    }),
+  );
 
 /**
  * `docker rm -f -v <id>`. Best-effort for the overall operation — a removal failure must never
@@ -603,6 +614,10 @@ export const setupShadowDatabase = <E>(
       }
       yield* createShadowTemplateDatabase(session);
     }),
+  ).pipe(
+    Effect.withSpan("ShadowDatabase.setup", {
+      attributes: { "shadow.baseline_state": shadowBaselineStateName(baseline) },
+    }),
   );
 
 /**
@@ -643,6 +658,9 @@ const SHADOW_BASELINE_COLD: ShadowBaselineState = {
   snapshotBaseline: Effect.void,
 };
 
+const shadowBaselineStateName = (baseline: ShadowBaselineState): string =>
+  baseline.baselinePresent ? "warm" : baseline.snapshotRequired ? "cold_snapshot" : "cold";
+
 /**
  * Lists local migrations first, so a bad migrations directory fails before any DB connection,
  * then connects, resolves the setup prelude, and runs {@link setupShadowConn} (platform baseline
@@ -671,6 +689,7 @@ const migrateShadowDatabaseWith = <E>(
           (cause) => new ShadowDbError({ message: cause.message, reason: "filesystem" }),
         ),
       );
+      yield* Effect.annotateCurrentSpan("migration.count", pending.length);
 
       if (!baseline.baselinePresent && baseline.snapshotRequired) {
         // Own scope: the baseline session must be closed before `snapshotBaseline` — see this
@@ -724,6 +743,10 @@ const migrateShadowDatabaseWith = <E>(
           Effect.fail(new ShadowDbError({ message: cause.message, reason: "connect" })),
         ),
       );
+    }),
+  ).pipe(
+    Effect.withSpan("ShadowDatabase.migrate", {
+      attributes: { "shadow.baseline_state": shadowBaselineStateName(baseline) },
     }),
   );
 

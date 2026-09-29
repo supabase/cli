@@ -170,9 +170,11 @@ export function resolveConfigTarget<TError, EResolve extends ConfigTargetResolve
     if (Option.isSome(requested) && !BRANCH_PROJECT_REF_PATTERN.test(requested.value)) {
       const target = requested.value;
       branch = target;
+      const byId = BRANCH_UUID_PATTERN.test(target);
+      yield* Effect.annotateCurrentSpan("project_target.kind", byId ? "branch_id" : "branch_name");
 
       let parentRef: ReturnType<typeof resolveParentScopedProjectRef>;
-      if (BRANCH_UUID_PATTERN.test(target)) {
+      if (byId) {
         parentRef = resolveParentScopedProjectRef(Option.none());
       } else {
         const parent = yield* resolveLinkedParentRef();
@@ -204,9 +206,11 @@ export function resolveConfigTarget<TError, EResolve extends ConfigTargetResolve
         return yield* Effect.fail(errors.branchNotReady(target));
       }
     } else {
+      yield* Effect.annotateCurrentSpan("project_target.kind", "project");
       ref = yield* resolver.resolve(requested);
     }
 
+    yield* Effect.annotateCurrentSpan("project.ref", ref);
     return { ref, branch };
-  });
+  }).pipe(Effect.withSpan("ProjectTarget.resolve"));
 }

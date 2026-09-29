@@ -30,13 +30,14 @@ export const LOGGED_IN_MSG = "You are now logged in. Happy coding!\n";
  * `stitchLogin` only aliases — it does not call `identify`. Do not add `analytics.identify` here;
  * it would emit an event the established telemetry never sends.
  */
-export const postLoginTelemetry = Effect.fnUntraced(function* (token: string) {
+export const postLoginTelemetry = Effect.fn("Login.postTelemetry")(function* (token: string) {
   const loginApi = yield* LoginApi;
   const telemetryState = yield* TelemetryState;
   const analytics = yield* Analytics;
   const cliSettings = yield* CommandSettings;
 
   const gotrueId = yield* loginApi.fetchGotrueId(cliSettings.apiUrl, token);
+  yield* Effect.annotateCurrentSpan("login.identity_resolved", Option.isSome(gotrueId));
   if (Option.isSome(gotrueId)) {
     yield* telemetryState.stitchLogin(gotrueId.value);
     yield* analytics
@@ -62,7 +63,7 @@ export interface BrowserLoginOptions {
  * post-login telemetry and prints the success banners. Owns the single `cli_login_completed`
  * capture for this path.
  */
-export const browserLogin = Effect.fnUntraced(function* (opts: BrowserLoginOptions) {
+export const browserLogin = Effect.fn("Login.browser")(function* (opts: BrowserLoginOptions) {
   const output = yield* Output;
   const crypto = yield* LoginCrypto;
   const loginApi = yield* LoginApi;
@@ -121,12 +122,17 @@ export const browserLogin = Effect.fnUntraced(function* (opts: BrowserLoginOptio
       const code = yield* output.promptText("Enter your verification code: ", {
         validate: (v) => (v.trim().length > 0 ? undefined : "Verification code is required"),
       });
-      return yield* loginApi.fetchLoginSession(apiHost, sessionId, code.trim());
+      return yield* loginApi
+        .fetchLoginSession(apiHost, sessionId, code.trim())
+        .pipe(
+          Effect.tap(() => Effect.annotateCurrentSpan("login.verify_attempts", failuresSoFar + 1)),
+        );
     }).pipe(
       Effect.catchTag("LoginVerificationError", (err: LoginVerificationError) =>
         Effect.gen(function* () {
           const failures = failuresSoFar + 1;
           if (failures > MAX_LOGIN_RETRIES) {
+            yield* Effect.annotateCurrentSpan("login.verify_attempts", failures);
             return yield* Effect.fail(
               new LoginFailedError({
                 message: err.message,
@@ -168,8 +174,9 @@ export const browserLogin = Effect.fnUntraced(function* (opts: BrowserLoginOptio
  * (env/keyring/file), otherwise runs the browser login flow and fires `cli_login_completed`
  * once.
  */
-export const ensureLogin = Effect.fnUntraced(function* (opts: { openBrowser: boolean }) {
+export const ensureLogin = Effect.fn("Login.ensure")(function* (opts: { openBrowser: boolean }) {
   const existing = yield* resolveAccessToken;
+  yield* Effect.annotateCurrentSpan("login.required", Option.isNone(existing));
   if (Option.isSome(existing)) {
     return;
   }

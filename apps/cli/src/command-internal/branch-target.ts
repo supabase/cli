@@ -109,7 +109,7 @@ export const BRANCH_LOOKUP_TIMEOUT = Duration.seconds(5);
  * timeout degrades like any other failure. Spinner cleanup runs via `Effect.ensuring` so it
  * still fires when the timeout interrupts the in-flight listing call.
  */
-export const findBranchName = Effect.fnUntraced(function* (
+export const findBranchName = Effect.fn("BranchTarget.findName")(function* (
   parentRef: string,
   linkedRef: string,
   options: { readonly spinnerLabel?: string } = {},
@@ -135,7 +135,12 @@ export const findBranchName = Effect.fnUntraced(function* (
     Effect.catch(() => Effect.succeed(Option.none<BranchLookupBranches>())),
   );
 
-  return Option.isSome(branchesOption)
+  const name = Option.isSome(branchesOption)
     ? branchesOption.value.find((branch) => branch.project_ref === linkedRef)?.name
     : undefined;
+  yield* Effect.annotateCurrentSpan(
+    "branch_lookup.outcome",
+    Option.isNone(branchesOption) ? "unavailable" : name === undefined ? "not_found" : "found",
+  );
+  return name;
 });

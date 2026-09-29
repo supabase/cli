@@ -725,5 +725,12 @@ export function createContainer(
     );
     yield* dockerStartContainer(spawner, containerId, finalSpec);
     return containerId;
-  });
+  }).pipe(
+    Effect.withSpan("ContainerLifecycle.createContainer", {
+      attributes: {
+        "image.name": spec.image,
+        "container.pre_start_archive_count": spec.preStartArchives?.length ?? 0,
+      },
+    }),
+  );
 }

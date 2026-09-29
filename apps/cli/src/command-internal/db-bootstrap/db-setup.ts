@@ -385,7 +385,7 @@ const startInitSchemaPre15 = Effect.fnUntraced(function* (
  * long-running containers' own ambient-only resolver never sees `opts.projectEnvValues`, and
  * neither caller pre-pulls these three images as a batch.
  */
-const runStartMigrateJob = Effect.fnUntraced(function* (
+const runStartMigrateJob = Effect.fn("DbSetup.runMigrateJob")(function* (
   spawner: Spawner,
   opts: {
     readonly image: string;
@@ -398,6 +398,7 @@ const runStartMigrateJob = Effect.fnUntraced(function* (
     readonly debug: boolean;
   },
 ) {
+  yield* Effect.annotateCurrentSpan("image.name", opts.image);
   const docker = yield* DockerRun;
   const runtimeInfo = yield* RuntimeInfo;
   const resolvedImages = yield* ensureImagesCached(spawner, [opts.image], opts.projectEnvValues);
@@ -589,11 +590,12 @@ const startInitSchema15 = Effect.fnUntraced(function* (
  * Branches on `majorVersion`. The setup banner prints from {@link resolveDbSetupPrelude}, the
  * caller-side step that runs immediately before this one, not from here.
  */
-const startInitSchema = Effect.fnUntraced(function* (
+const startInitSchema = Effect.fn("DbSetup.initSchema")(function* (
   spawner: Spawner,
   input: SetupDatabaseInput,
   tmpDir: string,
 ) {
+  yield* Effect.annotateCurrentSpan("db.major_version", input.majorVersion);
   if (input.majorVersion <= 14) {
     yield* startInitSchemaPre15(input.session, input.fs, input.path, tmpDir, input.majorVersion);
     return;
@@ -777,7 +779,11 @@ export const applyDatabaseOverlay = (
         (message) => new DbSetupError({ message, reason: "database" }),
       );
     }
-  });
+  }).pipe(
+    Effect.withSpan("DbSetup.applyOverlay", {
+      attributes: { "vault.secret_count": overlay.vault.length },
+    }),
+  );
 
 /**
  * Runs schema init through the custom-roles seed; see {@link SetupDatabaseInput} for exactly
@@ -828,7 +834,7 @@ export const setupDatabase = (
       vault: input.vault,
       webhooks: options.webhooks,
     });
-  });
+  }).pipe(Effect.withSpan("DbSetup.setupDatabase"));
 
 /**
  * Runs the full setup sequence described in this module's header. Call once, right after the
@@ -911,8 +917,10 @@ const connectLocalPostgres = (input: {
 }) =>
   Effect.gen(function* () {
     const dbConnection = yield* DbConnection;
-    return yield* dbConnection
-      .connect(
+    let attempts = 0;
+    return yield* Effect.suspend(() => {
+      attempts += 1;
+      return dbConnection.connect(
         {
           host: input.hostname,
           port: input.dbPort,
@@ -921,14 +929,17 @@ const connectLocalPostgres = (input: {
           database: "postgres",
         },
         { isLocal: true, dnsResolver: "native" },
-      )
-      .pipe(
-        Effect.retry({
-          schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
-          while: (error) => error.retryable === true,
-        }),
       );
-  });
+    }).pipe(
+      Effect.retry({
+        schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
+        while: (error) => error.retryable === true,
+      }),
+      Effect.ensuring(
+        Effect.suspend(() => Effect.annotateCurrentSpan("retry.attempt_count", attempts)),
+      ),
+    );
+  }).pipe(Effect.withSpan("DbSetup.connectLocalPostgres"));
 
 /** Converges pg_net while preserving extensions installed by user migrations. */
 export const runDatabaseWebhooksSetup = (input: {
@@ -977,6 +988,10 @@ export const runDatabaseWebhooksSetup = (input: {
         return;
       }
       yield* applyDatabaseWebhooks(session, input.fs, input.path, tmpDir, input.enabled);
+    }),
+  ).pipe(
+    Effect.withSpan("DbSetup.runDatabaseWebhooksSetup", {
+      attributes: { "webhooks.enabled": input.enabled },
     }),
   );
 
@@ -1046,5 +1061,9 @@ export const runFreshDbSetup = <E>(
         version: input.version,
         seedFlags: input.seedFlags,
       });
+    }),
+  ).pipe(
+    Effect.withSpan("DbSetup.runFreshDbSetup", {
+      attributes: { "db.major_version": input.setup.majorVersion },
     }),
   );

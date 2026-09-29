@@ -571,7 +571,7 @@ export interface ConfigPullSource {
  * read, silently becoming the accepted baseline while the plan below is computed against the
  * now-stale parsed values.
  */
-export const openConfigPullSource = Effect.fnUntraced(function* () {
+export const openConfigPullSource = Effect.fn("ConfigPull.openSource")(function* () {
   const cliSettings = yield* CommandSettings;
   const { loadConfig, toRelativeConfigPath } = makeConfigLoader(cliSettings);
 
@@ -597,7 +597,9 @@ export const openConfigPullSource = Effect.fnUntraced(function* () {
  * writes, or calls `output.success`; the caller decides what to do with the returned
  * {@link ConfigPullRunPlan}.
  */
-export const planConfigPullRun = Effect.fnUntraced(function* (request: ConfigPullPlanRequest) {
+export const planConfigPullRun = Effect.fn("ConfigPull.plan")(function* (
+  request: ConfigPullPlanRequest,
+) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
@@ -625,6 +627,10 @@ export const planConfigPullRun = Effect.fnUntraced(function* (request: ConfigPul
     });
   }
   const destination = scopeResult.destination;
+  yield* Effect.annotateCurrentSpan({
+    "supabase.project_ref": ref,
+    "config.destination.kind": destination.kind,
+  });
   yield* output.raw(configPullDestinationLine({ projectRef: ref, branch }, destination), "stderr");
 
   // A brand-new block has nothing to overlay yet.
@@ -648,6 +654,7 @@ export const planConfigPullRun = Effect.fnUntraced(function* (request: ConfigPul
   const fetching =
     output.format === "text" ? yield* output.task("Fetching remote config...") : undefined;
   const response = yield* api.executeRaw(operationDefinitions.v2GetProjectConfig, { ref }).pipe(
+    Effect.withSpan("ConfigPull.fetch", { attributes: { "api.operation": "v2GetProjectConfig" } }),
     Effect.tapError(() => fetching?.fail() ?? Effect.void),
     Effect.mapError(
       (cause) =>
@@ -723,6 +730,11 @@ export const planConfigPullRun = Effect.fnUntraced(function* (request: ConfigPul
   // reach the git guard/confirmation like any other write.
   const hasBlockToCreate = finalPlan.createdTable !== undefined;
   const hasWork = finalPlan.writes.length > 0 || hasBlockToCreate;
+  yield* Effect.annotateCurrentSpan({
+    "diff.change_count": changeSet.changes.length,
+    "config.write_count": finalPlan.writes.length,
+    "config.skip_count": finalPlan.skipped.length,
+  });
 
   return {
     changeSet,
@@ -739,12 +751,13 @@ export const planConfigPullRun = Effect.fnUntraced(function* (request: ConfigPul
  * while the confirmation prompt was on screen), `applyConfigEdits`, and the atomic write. No
  * emission — the caller renders the final summary/payload once this succeeds.
  */
-export const applyConfigPullRun = Effect.fnUntraced(function* (input: {
+export const applyConfigPullRun = Effect.fn("ConfigPull.apply")(function* (input: {
   readonly runPlan: ConfigPullRunPlan;
   readonly source: ConfigPullSource;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const { plan, context, configFilePath } = input.runPlan;
+  yield* Effect.annotateCurrentSpan("config.write_count", plan.writes.length);
 
   const currentText = yield* fs.readFileString(configFilePath).pipe(
     Effect.catchTag(

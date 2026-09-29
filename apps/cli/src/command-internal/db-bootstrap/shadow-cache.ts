@@ -332,7 +332,7 @@ const resolveShadowCacheKeyInputs = <E>(
         },
       },
     } satisfies ShadowCacheKeyInputs);
-  });
+  }).pipe(Effect.withSpan("ShadowCache.resolveKeyInputs"));
 
 /** Filename prefix shared by every key's snapshot — the handle the retention sweep enumerates by. */
 const SHADOW_BASELINE_TAR_PREFIX = "shadow-baseline-";
@@ -479,12 +479,17 @@ const sweepShadowBaselineRetention = <E>(
       if (mtime === undefined) continue;
       entries.push({ fileName, mtimeMs: mtime.getTime() });
     }
+    const evicted = shadowBaselineTarsToEvict(entries, now, { retainFileName });
+    yield* Effect.annotateCurrentSpan({
+      "cache.entry_count": entries.length,
+      "cache.evicted_count": evicted.length,
+    });
     yield* Effect.forEach(
-      shadowBaselineTarsToEvict(entries, now, { retainFileName }),
+      evicted,
       (fileName) => forgetShadowBaselineTar(input.fs, input.path.join(cacheDir, fileName)),
       { discard: true },
     );
-  });
+  }).pipe(Effect.withSpan("ShadowCache.sweepRetention"));
 
 /** Refresh mtime on a warm hit so frequently used keys survive LRU/TTL. Best-effort. */
 const touchShadowBaselineTar = (fs: FileSystem.FileSystem, tarPath: string): Effect.Effect<void> =>
@@ -635,6 +640,7 @@ const exportShadowBaseline = <E>(
           }),
       ),
     );
+    yield* Effect.annotateCurrentSpan("cache.published", Result.isSuccess(exported));
     if (Result.isFailure(exported)) {
       const output = yield* Output;
       yield* output.raw(
@@ -642,7 +648,7 @@ const exportShadowBaseline = <E>(
         "stderr",
       );
     }
-  });
+  }).pipe(Effect.withSpan("ShadowCache.export"));
 
 export interface ShadowCacheOpts {
   /** `sync --no-cache`: neither restore nor publish, regardless of the env gate. */
@@ -692,12 +698,13 @@ export const peekShadowBaseline = <E>(
       shadowBaselineTarFileName(key),
     );
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
+    yield* Effect.annotateCurrentSpan("cache.hit", cached);
     return {
       state: cached ? ("warm" as const) : ("cold" as const),
       key,
       keyInputs: keyInputs.value,
     };
-  });
+  }).pipe(Effect.withSpan("ShadowCache.peek"));
 
 /**
  * What `acquireUseRelease`'s `acquire` hands the `use` phase: the container, whether its cluster
@@ -838,7 +845,10 @@ const warmShadow = <E>(
       snapshotRequired: false,
       snapshotBaseline: Effect.void,
     } satisfies ShadowAcquiredHandle;
-  });
+  }).pipe(Effect.withSpan("ShadowCache.restore"));
+
+const annotateCacheState = (state: "disabled" | "ineligible" | "unwritable" | "cold" | "warm") =>
+  Effect.annotateCurrentSpan("cache.state", state);
 
 /**
  * `Effect.acquireUseRelease`'s `acquire` for every shadow that runs the platform baseline (`db
@@ -860,6 +870,7 @@ export const acquireShadowDatabase = <E>(
         whenUnset: true,
       })
     ) {
+      yield* annotateCacheState("disabled");
       return yield* uncachedShadow(spawner, input);
     }
 
@@ -869,7 +880,10 @@ export const acquireShadowDatabase = <E>(
         ? Effect.succeed(Option.some(opts.precomputedKeyInputs))
         : resolveShadowCacheKeyInputs(input, opts),
     );
-    if (Option.isNone(keyInputs)) return yield* uncachedShadow(spawner, input);
+    if (Option.isNone(keyInputs)) {
+      yield* annotateCacheState("ineligible");
+      return yield* uncachedShadow(spawner, input);
+    }
 
     // The cache root must be usable before committing to the cached lifecycle: the cold path
     // drops `--rm` and pays a stop/export/restart cycle that's already doomed if this directory
@@ -888,6 +902,7 @@ export const acquireShadowDatabase = <E>(
         `Warning: shadow baseline cache unavailable (cannot write ${cacheDir}: ${cacheRoot.failure.message}); continuing uncached.\n`,
         "stderr",
       );
+      yield* annotateCacheState("unwritable");
       return yield* uncachedShadow(spawner, input);
     }
 
@@ -895,8 +910,11 @@ export const acquireShadowDatabase = <E>(
     const tarPath = input.path.join(cacheDir, shadowBaselineTarFileName(key));
 
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
-    if (!cached)
+    if (!cached) {
+      yield* annotateCacheState("cold");
       return yield* coldCachedShadow(spawner, input, key, tarPath, keyInputs.value.rolesSql, true);
+    }
+    yield* annotateCacheState("warm");
 
     // Warm hits refresh mtime and sweep leftovers the cold path would otherwise never see again.
     yield* touchShadowBaselineTar(input.fs, tarPath);
@@ -914,6 +932,10 @@ export const acquireShadowDatabase = <E>(
           // Delete only when the failure implicates the tar's contents — see
           // {@link ShadowCacheUnavailable.tarSuspect}; an infra failure leaves it in place, since
           // the cold fallback's own export republishes over a genuinely bad tar anyway.
+          yield* Effect.annotateCurrentSpan({
+            "cache.state": "warm_fallback",
+            "cache.tar_suspect": cause.tarSuspect === true,
+          });
           if (cause.tarSuspect === true) {
             yield* forgetShadowBaselineTar(input.fs, tarPath);
           }
@@ -928,7 +950,7 @@ export const acquireShadowDatabase = <E>(
         }),
       ),
     );
-  });
+  }).pipe(Effect.withSpan("ShadowCache.acquire"));
 
 /**
  * Acquire/use/release for a platform-baseline shadow. `acquireUseRelease` registers removal in

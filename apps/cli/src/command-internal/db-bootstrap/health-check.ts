@@ -288,11 +288,13 @@ export function waitForHealthyServices(
   return Effect.gen(function* () {
     const timeoutSeconds = opts.timeoutSeconds ?? (yield* HealthCheckTimeoutSeconds);
     let stillWatching = containerIds;
+    let attempts = 0;
 
     // Each round narrows `stillWatching` to just the containers that failed, so a container
     // that becomes healthy mid-run stops being probed on later rounds.
     const probe: Effect.Effect<void, HealthCheckProbeError, HttpClient.HttpClient> = Effect.gen(
       function* () {
+        attempts += 1;
         const outcomes = yield* Effect.forEach(
           stillWatching,
           (containerId) =>
@@ -350,8 +352,20 @@ export function waitForHealthyServices(
           );
         }),
       ),
+      Effect.ensuring(
+        Effect.suspend(() =>
+          Effect.annotateCurrentSpan({
+            "retry.attempt_count": attempts,
+            "health.unhealthy_count": stillWatching.length,
+          }),
+        ),
+      ),
     );
-  });
+  }).pipe(
+    Effect.withSpan("HealthCheck.waitHealthyServices", {
+      attributes: { "health.container_count": containerIds.length },
+    }),
+  );
 }
 
 /** Caps a hung dial so one probe cannot swallow the whole poll budget. */
@@ -422,8 +436,10 @@ export function waitForShadowReady(
     // Per-evaluation state: the retry rounds within one evaluation share the latest failure for
     // the timeout diagnostic, while re-evaluating the returned Effect starts from a fresh slot.
     let lastFailure: ShadowReadyFailure | undefined;
+    let attempts = 0;
 
     const probe: Effect.Effect<void, ShadowReadyFailure, DbConnection> = Effect.gen(function* () {
+      attempts += 1;
       const state = yield* inspectContainerState(spawner, containerId).pipe(
         Effect.mapError((cause) => shadowNotReady(cause.message)),
       );
@@ -472,6 +488,9 @@ export function waitForShadowReady(
           );
         }),
       ),
+      Effect.ensuring(
+        Effect.suspend(() => Effect.annotateCurrentSpan("retry.attempt_count", attempts)),
+      ),
     );
-  });
+  }).pipe(Effect.withSpan("HealthCheck.waitShadowReady"));
 }

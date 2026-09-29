@@ -95,5 +95,9 @@ export const loadLocalProjectContext = <E>(
       ),
     );
 
+    yield* Effect.annotateCurrentSpan({
+      "config.found": loaded !== null,
+      "config.remote_applied": loaded?.appliedRemote !== undefined,
+    });
     return { config, projectEnvValues, loaded, hostname, projectId };
-  });
+  }).pipe(Effect.withSpan("LocalProjectContext.load"));
