@@ -390,7 +390,8 @@ export const makeContainerRuntime = (options: {
                 "--all",
                 "--no-trunc",
                 "--filter",
-                `name=^/?${name}$`,
+                // Docker matches this as a regex; `.` is the only metacharacter a name can hold.
+                `name=^/?${name.replaceAll(".", "\\.")}$`,
                 "--format",
                 "{{.State}}",
               ],
