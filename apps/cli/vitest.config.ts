@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { defaultClientConditions, defaultServerConditions } from "vite";
 import { defineConfig } from "vitest/config";
+import { E2eSequencer } from "./tests/e2e-sequencer.ts";
 
 function dockerfileTextPlugin() {
   return {
@@ -28,6 +29,9 @@ export default defineConfig({
   plugins: [dockerfileTextPlugin()],
   test: {
     passWithNoTests: true,
+    // Vitest reads `sequence.sequencer` from the root config only; the sequencer
+    // itself applies duration-aware sharding to the e2e project alone.
+    sequence: { sequencer: E2eSequencer },
     coverage: {
       enabled: false,
       provider: "v8",
