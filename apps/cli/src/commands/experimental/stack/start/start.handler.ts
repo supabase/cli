@@ -1,5 +1,6 @@
 import { defaultRuntime } from "@supabase/stack/internal/artifacts";
-import { endpointReports } from "../stack-endpoints.format.ts";
+import { renderStackSummary, stackEndpoints, type StackServiceView } from "../stack-summary.ts";
+import { gray } from "../../../../command-internal/colors.ts";
 import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import {
   automaticRuntimeNotice,
@@ -11,7 +12,9 @@ import {
   resolveNativePostgresUser,
   type Observation,
   type PlannedInstance,
+  type ServiceCreation,
   type ServiceCreationInput,
+  type Stack,
   type StackError,
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -182,22 +185,28 @@ const selectedCreations = (
 const isServing = (status: Pick<Observation, "lifecycle" | "health">) =>
   status.lifecycle === "running" && status.health === "healthy";
 
-const reportEndpoints = (
-  members: ReadonlyArray<{
-    readonly service: string;
+const startReport = (
+  stack: Pick<Stack, "composition">,
+  instances: ReadonlyArray<{
+    readonly id: string;
+    readonly service: ServiceCreation["service"];
     readonly status: Effect.Effect<Observation, StackError>;
   }>,
 ) =>
-  Effect.forEach(members, (member) =>
-    member.status.pipe(
-      Effect.mapError(stackError),
-      Effect.map((observation) =>
-        Object.entries(endpointReports(observation)).map(
-          ([name, endpoint]) => [`${member.service}.${name}`, endpoint] as const,
-        ),
+  Effect.gen(function* () {
+    const { members } = yield* stack.composition.describe;
+    const activation = new Map(members.map((member) => [member.id, member.activation]));
+    const views = yield* Effect.forEach(instances, (instance) =>
+      instance.status.pipe(
+        Effect.map((observation): StackServiceView => ({
+          service: instance.service,
+          observation,
+          activation: activation.get(instance.id),
+        })),
       ),
-    ),
-  ).pipe(Effect.map((entries) => Object.fromEntries(entries.flat())));
+    );
+    return { views, endpoints: stackEndpoints(views) };
+  }).pipe(Effect.mapError(stackError));
 
 /** Starts the selected managed stack and applies the local database overlays. */
 export const stackStart = Effect.fn("experimental.stack.start")(function* (flags: StackStartFlags) {
@@ -284,6 +293,30 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         stackAcquireError(cause, { selectedRuntime, runtime, creating: target.id === undefined }),
       ),
     );
+    const selector = Option.isSome(flags.stack)
+      ? ` --stack ${flags.stack.value}`
+      : Option.isSome(flags.stackId)
+        ? ` --stack-id ${flags.stackId.value}`
+        : "";
+    const reportReady = (report: Effect.Success<ReturnType<typeof startReport>>, message: string) =>
+      Effect.gen(function* () {
+        if (output.format !== "text")
+          return yield* output.success(message, {
+            id: stack.id,
+            runtime: selectedRuntime,
+            endpoints: report.endpoints,
+            lazy_services: report.views
+              .filter(({ activation }) => activation === "lazy")
+              .map(({ service }) => service),
+          });
+        if (message.length > 0) yield* output.success(message);
+        const credentials = yield* stack.credentials.get.pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
+        yield* output.raw(
+          `\n${renderStackSummary(report.views, credentials)}\n${gray(`Runtime: ${selectedRuntime}`, process.stdout)}\nRun supabase status --env${selector} to export these values as environment variables.\n`,
+        );
+      });
     const runtimeNotice =
       target.id === undefined ? automaticRuntimeNotice(target.runtime, selectedRuntime) : undefined;
     if (runtimeNotice !== undefined) yield* output.info(runtimeNotice);
@@ -307,9 +340,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       );
     if (fullyStarted) {
       yield* Ref.set(startupComplete, true);
-      yield* output.success(
+      yield* reportReady(
+        yield* startReport(stack, currentInstances),
         "Stack is already running with its current services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
-        { id: stack.id, endpoints: yield* reportEndpoints(currentInstances) },
       );
       return stack.id;
     }
@@ -348,11 +381,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         Effect.mapError(stackError),
       );
       yield* Ref.set(startupComplete, true);
-      const endpoints = yield* reportEndpoints(currentInstances).pipe(
+      const report = yield* startReport(stack, currentInstances).pipe(
         Effect.tapError((error) => starting.fail(error.message)),
       );
       yield* starting.succeed("Stack is ready.");
-      yield* output.success("", { id: stack.id, endpoints });
+      yield* reportReady(report, "");
       return stack.id;
     }
     const fullyStopped = currentStatuses.every(
@@ -631,11 +664,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     );
     yield* Effect.forEach(preparation, (fiber) => Fiber.join(fiber));
     yield* Ref.set(startupComplete, true);
-    const endpoints = yield* reportEndpoints(members).pipe(
+    const report = yield* startReport(stack, members).pipe(
       Effect.tapError((error) => starting.fail(error.message)),
     );
     yield* starting.succeed("Stack is ready.");
-    yield* output.success("", { id: stack.id, endpoints });
+    yield* reportReady(report, "");
     return stack.id;
   });
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));

@@ -66,8 +66,11 @@ describe("applySeedFiles seed glob", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           expect(queries.some((q) => q.sql.includes("seed_files"))).toBe(false);
-          expect(out.rawChunks.map((c) => c.text).join("")).toContain(
-            "no files matched pattern: missing\\.sql",
+          expect(out.messages).toContainEqual(
+            expect.objectContaining({
+              type: "warn",
+              message: "no files matched pattern: missing\\.sql",
+            }),
           );
           rmSync(dir, { recursive: true, force: true });
         }),
