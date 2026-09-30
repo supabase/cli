@@ -299,8 +299,16 @@ export const textOutputLayer = Layer.effect(
             else settle();
           };
 
+          // clack's spinner writes cursor/animation escape codes, so non-TTY stdout
+          // gets plain progress lines instead.
+          let lastLogged: string | undefined;
           const show = () => {
             if (settled) {
+              return;
+            }
+            if (!tty.stdoutIsTty) {
+              lastLogged = currentMessage;
+              log.step(currentMessage);
               return;
             }
             shownSpinner = { handle: spinner(), message: currentMessage, pauses: 0 };
@@ -326,6 +334,10 @@ export const textOutputLayer = Layer.effect(
                   shownSpinner.message = nextMessage;
                   if (shownSpinner.pauses === 0)
                     shownSpinner.handle.message(formatTaskMessage(nextMessage));
+                } else if (lastLogged !== undefined && lastLogged !== nextMessage) {
+                  // Polling tasks repeat the same message; log only changes.
+                  lastLogged = nextMessage;
+                  log.step(nextMessage);
                 }
               }),
             succeed: (nextMessage?: string) =>

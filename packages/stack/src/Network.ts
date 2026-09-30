@@ -1,4 +1,5 @@
 import { Context, Data, Effect, Exit, Layer, Ref, Scope, Semaphore } from "effect";
+import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
 import * as State from "./State.ts";
 import { makePorts, PortError } from "./Ports.ts";
 import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
@@ -94,7 +95,7 @@ const makeNetwork = (options: {
       options.runtime === "native"
         ? "127.0.0.1"
         : options.runtime === "docker"
-          ? "host.docker.internal"
+          ? DOCKER_HOST_ALIAS
           : "host.containers.internal";
 
     const routeKey = (route: Pick<HttpRoute, "id" | "prefix">) => `${route.id}:${route.prefix}`;

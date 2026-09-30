@@ -1,10 +1,25 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, FileSystem, Layer, Ref, Schema, Stream } from "effect";
+import {
+  Cause,
+  Crypto,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Path,
+  Ref,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
+import * as Functions from "./Functions.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-functions",
@@ -485,3 +500,85 @@ for (const runtime of ["native", "docker"] as const) {
     { timeout: 120_000 },
   );
 }
+
+it.effect("passes POSIX project paths to a docker Functions container from a Windows host", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const launched = yield* Ref.make<Parameters<ContainerRuntime["launch"]>[0] | undefined>(
+        undefined,
+      );
+      const container: ContainerRuntime = {
+        prepare: () => Effect.void,
+        prepareImage: (image) => Effect.succeed(image),
+        launchCommand: () => Effect.die("Functions has no startup commands"),
+        launch: (spec) =>
+          Ref.set(launched, spec).pipe(
+            Effect.andThen(
+              Effect.fail(new ContainerError({ operation: "start", message: "captured" })),
+            ),
+          ),
+      };
+      const filesRoot = "C:\\Users\\dev\\project";
+      const creation: Functions.Creation = {
+        service: "functions",
+        config: {
+          functionsRoot: `${filesRoot}\\supabase\\functions`,
+          filesRoot,
+          functions: {
+            hello: {
+              entrypoint: `${filesRoot}\\source\\main.ts`,
+              import_map: `${filesRoot}\\supabase\\import_map.json`,
+              static_files: [`${filesRoot}\\source\\*.txt`],
+            },
+          },
+        },
+      };
+      const recipe = yield* Functions.makeRecipe(
+        creation,
+        {
+          stackId: "e".repeat(64),
+          instanceId: "windows",
+          root: "C:\\Users\\dev\\stack",
+          cacheRoot: "C:\\Users\\dev\\cache",
+          runtime: "docker",
+        },
+        {
+          fs: yield* FileSystem.FileSystem,
+          path: yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32)),
+          crypto: yield* Crypto.Crypto,
+          client: yield* HttpClient.HttpClient,
+          spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          container,
+        },
+      );
+      const scope = yield* Scope.make();
+      yield* recipe.definition
+        .launch({ id: "windows", config: creation, scope })
+        .pipe(Effect.flip, Effect.ensuring(Scope.close(scope, Exit.void)));
+
+      const spec = yield* Ref.get(launched);
+      expect(spec?.env.SUPABASE_INTERNAL_FUNCTIONS_ROOT).toBe(
+        "/__supabase_project/supabase/functions",
+      );
+      expect(spec?.env.SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT).toBe("/__supabase_project");
+      expect(spec?.args).toContain("--main-service=/__supabase_functions");
+      const config = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(
+          Schema.Record(
+            Schema.String,
+            Schema.Struct({
+              entrypoint: Schema.optionalKey(Schema.String),
+              import_map: Schema.optionalKey(Schema.String),
+              static_files: Schema.optionalKey(Schema.Array(Schema.String)),
+            }),
+          ),
+        ),
+      )(spec?.env.SUPABASE_INTERNAL_FUNCTIONS_CONFIG);
+      expect(config.hello).toEqual({
+        entrypoint: "/__supabase_project/source/main.ts",
+        import_map: "/__supabase_project/supabase/import_map.json",
+        static_files: ["/__supabase_project/source/*.txt"],
+      });
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);

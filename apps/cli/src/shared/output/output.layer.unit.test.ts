@@ -736,6 +736,31 @@ describe("Output", () => {
     });
   });
 
+  describe("text layer on a non-TTY stdout", () => {
+    const layer = textOutputLayer.pipe(
+      Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: false }), mockStdio().layer)),
+    );
+
+    it.effect("task logs each distinct progress message as a plain line instead of a spinner", () =>
+      Effect.gen(function* () {
+        vi.useFakeTimers();
+        const out = yield* Output;
+        const task = yield* out.task("Loading organizations...");
+        vi.advanceTimersByTime(200);
+        yield* task.message("Loading projects...");
+        yield* task.message("Loading projects...");
+        yield* task.succeed("Loaded organizations.");
+
+        expect(mockClack.spinnerFactory).not.toHaveBeenCalled();
+        expect(mockClack.log.step.mock.calls).toEqual([
+          ["Loading organizations..."],
+          ["Loading projects..."],
+        ]);
+        expect(mockClack.log.success).toHaveBeenCalledWith("Loaded organizations.");
+      }).pipe(Effect.provide(layer)),
+    );
+  });
+
   describe("json layer", () => {
     it.effect("interactive is false", () => {
       const mock = mockStdio();

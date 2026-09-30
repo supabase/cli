@@ -41,6 +41,7 @@ import {
 import { projectSegmentFor } from "./identity/Identity.ts";
 import * as Owner from "./Owner.ts";
 import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
+import { makeHostGateway } from "./runtime/Container.ts";
 import * as State from "./State.ts";
 import { sweepOrphans } from "./Sweep.ts";
 import { makeCommandAttachments } from "./host/CommandAttachments.ts";
@@ -436,12 +437,14 @@ export const runStackHost = Effect.fn("StackHost.run")(
               ),
             ),
           );
+          const hostGateway = yield* makeHostGateway;
           const services = yield* Layer.build(
             Layer.merge(
               Owner.layer({
                 saved,
                 root: dataRoot,
                 cacheRoot: options.cacheRoot,
+                hostGateway,
               }),
               CommandRunner.layer({
                 stackId: saved.id,
@@ -449,6 +452,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
                 root: dataRoot,
                 cacheRoot: options.cacheRoot,
                 runtime: saved.runtime,
+                hostGateway,
               }),
             ).pipe(Layer.provide(Layer.succeed(State.Service, state))),
           );

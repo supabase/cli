@@ -103,4 +103,50 @@ describe("detectGitBranch", () => {
       expect(got).toEqual(Option.some("project-branch"));
     }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  it.live("resolves a worktree's `.git` gitlink file to its own HEAD", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // Mirrors `git worktree add`: the worktree's `.git` is a file pointing at the
+      // real gitdir under the main checkout's `.git/worktrees/<name>`.
+      const main = yield* makeTempDir("git-branch-main-");
+      yield* writeHead(main, "ref: refs/heads/develop\n");
+      const worktreeGitDir = path.join(main, ".git", "worktrees", "feature");
+      yield* fs.makeDirectory(worktreeGitDir, { recursive: true });
+      yield* fs.writeFileString(path.join(worktreeGitDir, "HEAD"), "ref: refs/heads/feature-x\n");
+      const worktree = yield* makeTempDir("git-branch-worktree-");
+      yield* fs.writeFileString(path.join(worktree, ".git"), `gitdir: ${worktreeGitDir}\n`);
+      const got = yield* detectGitBranch().pipe(Effect.provide(withCwd(worktree)));
+      expect(got).toEqual(Option.some("feature-x"));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("resolves a relative gitdir in a `.git` gitlink against its directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* makeTempDir("git-branch-relative-");
+      const gitDir = path.join(root, "actual-gitdir");
+      yield* fs.makeDirectory(gitDir, { recursive: true });
+      yield* fs.writeFileString(path.join(gitDir, "HEAD"), "ref: refs/heads/relative-branch\n");
+      yield* fs.writeFileString(path.join(root, ".git"), "gitdir: ./actual-gitdir\n");
+      const got = yield* detectGitBranch().pipe(Effect.provide(withCwd(root)));
+      expect(got).toEqual(Option.some("relative-branch"));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("stops at the nearest .git instead of a detached HEAD's parent checkout", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* makeTempDir("git-branch-detached-nested-");
+      yield* writeHead(root, "ref: refs/heads/main\n");
+      const nested = path.join(root, "nested");
+      yield* fs.makeDirectory(nested);
+      yield* writeHead(nested, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n");
+      const got = yield* detectGitBranch().pipe(Effect.provide(withCwd(nested)));
+      expect(Option.isNone(got)).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

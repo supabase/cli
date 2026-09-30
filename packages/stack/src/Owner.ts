@@ -73,6 +73,8 @@ export interface OwnerOptions {
   readonly state: State.Interface;
   readonly root: string;
   readonly cacheRoot: string;
+  /** Shares one host-gateway probe with the host's other container runtimes. */
+  readonly hostGateway?: Container.HostGateway;
 }
 
 type OwnerRpcs = RpcGroup.Rpcs<typeof OwnerRpc>;
@@ -294,6 +296,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       cacheRoot: options.cacheRoot,
       runtime,
       helpers,
+      ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
     }).pipe(Effect.provideContext(services));
 
   const persistCreation = (entry: Pick<Entry, "id" | "creation">, creation: ServiceCreation) =>
