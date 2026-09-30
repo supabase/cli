@@ -97,10 +97,9 @@ export const prepareShadowSource = <E>(
       image: input.image,
     });
 
-    // `handle` doubles as the baseline state: on a warm shadow-cache hit it already holds the
-    // platform baseline (so only the template database + user migrations run); on a
-    // cache-enabled cold provision it carries the snapshot step that runs between the two — see
-    // `shadow-cache.ts`/`ShadowBaselineState`. An uncached acquire is always-cold.
+    // `handle` is the baseline state. A warm hit already has the platform baseline. A
+    // cache-enabled cold provision snapshots after that baseline. The legacy engine then
+    // creates `contrib_regression`; pg-delta does not. An uncached acquire is always-cold.
     const migrateShadow =
       input.migrationMode === "pgdelta-next" ? migrateNextShadowDatabase : migrateShadowDatabase;
     yield* migrateShadow(
