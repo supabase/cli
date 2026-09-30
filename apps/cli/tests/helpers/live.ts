@@ -14,7 +14,7 @@ import {
   runSupabase,
   runSupabaseEffect,
 } from "./cli.ts";
-import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
+import { LIVE_EXIT_TIMEOUT_MS, LIVE_SHADOW_PORT } from "./live-env.ts";
 import type { LiveCliProjectEnvironment } from "./live-project.ts";
 
 export type LiveProject = LiveCliProjectEnvironment["project"];
@@ -88,6 +88,7 @@ const base = vitestTest.extend<LiveFixtures>({
         exitTimeoutMs: options?.exitTimeoutMs ?? LIVE_EXIT_TIMEOUT_MS,
         env: {
           SUPABASE_PROFILE: inject("liveProfilePath"),
+          SUPABASE_DB_SHADOW_PORT: LIVE_SHADOW_PORT,
           ...options?.env,
         },
       }),
@@ -103,6 +104,7 @@ const base = vitestTest.extend<LiveFixtures>({
         exitTimeoutMs: options?.exitTimeoutMs ?? LIVE_EXIT_TIMEOUT_MS,
         env: {
           SUPABASE_PROFILE: inject("liveProfilePath"),
+          SUPABASE_DB_SHADOW_PORT: LIVE_SHADOW_PORT,
           ...options?.env,
         },
       }),

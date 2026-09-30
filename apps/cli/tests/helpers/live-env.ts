@@ -2,6 +2,12 @@
 
 export const LIVE_EXIT_TIMEOUT_MS = 240_000;
 
+/**
+ * The default shadow port (54320) is inside Linux's default ephemeral range, so an outbound socket
+ * can hold it. Live files run serially, so one fixed port below that range is safe.
+ */
+export const LIVE_SHADOW_PORT = "24320";
+
 export function liveApiUrl(): string {
   const value = process.env["SUPABASE_LIVE_API_URL"]?.trim();
   if (value === undefined || value.length === 0) {
