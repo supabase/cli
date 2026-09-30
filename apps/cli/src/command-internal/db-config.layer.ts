@@ -510,19 +510,22 @@ export const dbConfigResolverLayer = Layer.effect(
               }),
             );
           }
-          const legacyLocal = isLocalDatabase(
-            conn.host,
-            localHost,
-            conn.port,
-            tomlValues.port,
-            tomlValues.shadowPort,
-          );
+          // A multi-host URL stays remote: local disables TLS for every fallback host as well.
+          const singleHost = conn.fallbacks === undefined;
+          const legacyLocal =
+            singleHost &&
+            isLocalDatabase(
+              conn.host,
+              localHost,
+              conn.port,
+              tomlValues.port,
+              tomlValues.shadowPort,
+            );
           // The stack backend publishes its database on a runtime-assigned port rather than
-          // `[db].port`, so a URL naming the running stack's SQL endpoint is local too. A
-          // multi-host URL stays remote: local disables TLS for every fallback host as well.
+          // `[db].port`, so a URL naming the running stack's SQL endpoint is local too.
           const stackConn =
+            singleHost &&
             (yield* currentStackBackend).kind === "stack" &&
-            conn.fallbacks === undefined &&
             mayBeStackDatabaseHost(conn.host, localHost)
               ? Option.getOrUndefined(yield* Effect.option(stackDatabaseConn))
               : undefined;

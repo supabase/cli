@@ -312,6 +312,22 @@ describe("dbConfigResolver (local + db-url)", () => {
     );
   });
 
+  it.effect("db-url mode: a multi-host url stays remote even when its primary is local", () => {
+    const dir = withWorkdir();
+    return resolve(
+      dir,
+      dbUrlFlags("postgres://postgres:pw@127.0.0.1:54322,db.example.com:5432/postgres"),
+    ).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          expect(r.conn.fallbacks).toEqual([{ host: "db.example.com", port: 5432 }]);
+          expect(r.isLocal).toBe(false);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("db-url mode: a passwordless local url fills the password from config", () => {
     const dir = withWorkdir(["[db]", "port = 54322", 'password = "hunter2"', ""].join("\n"));
     return resolve(dir, dbUrlFlags("postgres://postgres@127.0.0.1:54322/postgres")).pipe(
