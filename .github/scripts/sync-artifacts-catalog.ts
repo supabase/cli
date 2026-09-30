@@ -3,24 +3,25 @@
  * revisions (`<upstream>-r<N>`). Every entry is pinned by content: the GHCR
  * image digest, plus an archive and manifest sha256 per native target.
  *
- * Dependabot mode (used by CI): rewrites every catalog entry whose slim
- * service moved between `dockerfile` and `base-dockerfile`, to the highest
- * committed revision of its new upstream version.
+ * The catalog is the single version table (supabase/cli#6883): the Dockerfile's
+ * slim-capable lines are a generated view of it
+ * (`apps/cli/scripts/render-service-dockerfile.ts`), never the other way
+ * around. Updates land through two modes:
  *
- *   bun .github/scripts/sync-artifacts-catalog.ts <dockerfile> <catalog> [base-dockerfile]
+ * Manual mode: refreshes one catalog entry, either to a specific committed
+ * release (`--release`) or to the highest committed revision of a given
+ * upstream version, or of its currently pinned upstream version when neither
+ * is given. `--upstream` and `--release` are mutually exclusive.
  *
- * Manual mode: refreshes one catalog entry to the highest committed revision
- * of a given upstream version (or of its currently pinned upstream version,
- * when `--upstream` is omitted).
+ *   bun .github/scripts/sync-artifacts-catalog.ts --service <service> [--upstream <U> | --release <U>-r<N>]
  *
- *   bun .github/scripts/sync-artifacts-catalog.ts --service <service> [--upstream <U>]
+ * Plan-updates mode (used by the `slim-release-published` dispatch workflow):
+ * lists a service's committed slim-services releases and computes, per
+ * release line, the hotfix and/or upgrade a workflow should apply. Pure
+ * planning: `planSlimUpdates` takes the release tag list as an argument and
+ * makes no network calls.
  *
- * Hotfix-matches mode (used by the `slim-release-published` dispatch
- * workflow): prints, as JSON, which of a service's catalog pins a hotfix
- * revision should refresh.
- *
- *   bun .github/scripts/sync-artifacts-catalog.ts hotfix-matches --service <service> \
- *     --upstream <U> --revision <N>
+ *   bun .github/scripts/sync-artifacts-catalog.ts plan-updates --service <service> [--format lines]
  *
  * Validate-payload mode (used by the same workflow, before anything else):
  * checks an untrusted `slim-release-published` dispatch payload against
@@ -31,13 +32,10 @@
  *     --upstream <U> --revision <N> --release <R>
  */
 
-import { parseDockerfileServiceImages } from "../../apps/cli/src/shared/services/parse-dockerfile-service-images.ts";
-import { isOrioleImage, slimCatalogPin } from "../../apps/cli/src/shared/services/slim-images.ts";
 import {
   DIGEST_PATTERN,
   InvalidPayloadError,
   SOURCE_REGISTRY,
-  VERSION_PATTERN,
   checksumFor,
   escapeRegExp,
   nativeFileNames,
@@ -45,7 +43,6 @@ import {
 } from "./slim-mirror-payload.ts";
 
 export const CATALOG_PATH = "packages/stack/src/Artifacts.ts";
-const DOCKERFILE_PATH = "apps/cli/src/shared/services/Dockerfile";
 
 const SLIM_IMAGE_PREFIX = `${SOURCE_REGISTRY}/`;
 
@@ -64,25 +61,44 @@ function releaseLine(version: string): string {
 }
 
 /**
- * True when every numeric prefix of `next` is older than `current`. Equal prefixes are not
- * older. Compares upstream versions only; revisions never enter this comparison.
+ * Matches a `<service>-<upstream>-r<N>` release tag. With `upstream` given, matches only that
+ * exact upstream (what `resolveRevisionPin` needs); with it omitted, captures any upstream as
+ * group 1 and the revision as group 2 (what the planner needs to enumerate every committed
+ * revision of every upstream a service carries). A tag with no `-r<N>` suffix — legacy — never
+ * matches either shape.
  */
-function isOlderRelease(next: string, current: string): boolean {
-  const nextParts = next.replace(/^[vV]/, "").split(".");
-  const currentParts = current.replace(/^[vV]/, "").split(".");
-  const count = Math.max(nextParts.length, currentParts.length);
-  for (let index = 0; index < count; index++) {
-    const nextValue = leadingInteger(nextParts[index] ?? "0");
-    const currentValue = leadingInteger(currentParts[index] ?? "0");
-    if (nextValue === undefined || currentValue === undefined) return false;
-    if (nextValue !== currentValue) return nextValue < currentValue;
-  }
-  return false;
+function releaseTagPattern(service: string, upstream?: string): RegExp {
+  const upstreamPart = upstream === undefined ? "(.+)" : escapeRegExp(upstream);
+  return new RegExp(`^${escapeRegExp(service)}-${upstreamPart}-r(0|[1-9][0-9]*)$`);
 }
 
-function leadingInteger(part: string): number | undefined {
-  const match = /^(\d+)/.exec(part);
-  return match === null ? undefined : Number(match[1]);
+/**
+ * Strips a leading `v`/`V` and one trailing `-sha-<hex>`, then parses the remainder as dot-
+ * separated integers. Returns undefined when the remainder isn't `^\d+(\.\d+)*$` — a version that
+ * isn't comparable this way, such as an OrioleDB-style suffix.
+ */
+function comparableVersion(version: string): ReadonlyArray<number> | undefined {
+  const stripped = version.replace(/^[vV]/, "").replace(/-sha-[0-9a-f]+$/i, "");
+  if (!/^\d+(\.\d+)*$/.test(stripped)) return undefined;
+  return stripped.split(".").map(Number);
+}
+
+/**
+ * Numeric ordering of two upstream versions: `-1` when `a` is older, `0` when neither is newer
+ * (including two versions that only differ in a stripped `-sha-<hex>` suffix, e.g. two Studio
+ * builds on the same date), `1` when `a` is newer. Undefined when either isn't comparable.
+ */
+function compareVersions(a: string, b: string): number | undefined {
+  const av = comparableVersion(a);
+  const bv = comparableVersion(b);
+  if (av === undefined || bv === undefined) return undefined;
+  const length = Math.max(av.length, bv.length);
+  for (let index = 0; index < length; index++) {
+    const left = av[index] ?? 0;
+    const right = bv[index] ?? 0;
+    if (left !== right) return left < right ? -1 : 1;
+  }
+  return 0;
 }
 
 export interface CatalogPinUpdate {
@@ -93,28 +109,14 @@ export interface CatalogPinUpdate {
   readonly target: "default" | "additional";
 }
 
-export interface SkippedCatalogPin {
-  readonly alias: string;
-  readonly reason: string;
-  /** OrioleDB and an older Dependabot bump are the non-blocking skips. */
-  readonly blocking: boolean;
-}
-
-export interface CatalogPlan {
-  readonly source: string;
-  readonly updates: ReadonlyArray<CatalogPinUpdate>;
-  readonly skipped: ReadonlyArray<SkippedCatalogPin>;
-}
-
 /** Content pin for one resolved `<upstream>-r<N>` revision, ready to serialize into the catalog. */
 interface ResolvedPin {
   readonly upstreamVersion: string;
   readonly revision: number;
   readonly image: string;
   /**
-   * The pin's `ArtifactPin.upstreamImage`. Left undefined on the Dependabot (`planArtifactCatalogUpdate`)
-   * path, which has no use for it and whose `io` doesn't carry `fetchManifest`/`fetchProvenance`;
-   * populated by manual mode (`refreshCatalogPin`) via `resolveUpstreamImage` below.
+   * The pin's `ArtifactPin.upstreamImage`. Populated by manual mode (`refreshCatalogPin`) via
+   * `resolveUpstreamImage` below, when `io` carries `fetchManifest`/`fetchProvenance`.
    */
   readonly upstreamImage?: string;
   readonly natives: Readonly<
@@ -135,6 +137,7 @@ export type RevisionResolution =
  * directly, the same way the previous `publication` callback was stubbed.
  */
 export interface RevisionIo {
+  /** Tags of every published, non-draft release — a draft is not yet a committed revision. */
   readonly listReleaseTags: () => Promise<ReadonlyArray<string>>;
   readonly fetchChecksums: (service: string, releaseVersion: string) => Promise<string | undefined>;
   readonly imageDigest: (service: string, releaseVersion: string) => Promise<string | undefined>;
@@ -170,33 +173,51 @@ function desiredImage(service: string, releaseVersion: string, digest: string): 
 }
 
 /**
- * Resolves `service`'s highest committed `<upstream>-r<N>` revision, pinned by content: the
- * GHCR manifest digest, and every native target's archive and manifest sha256, cross-checked
- * against the S3 mirror copy. See module docs for the five-step protocol.
+ * Resolves `service`'s committed `<upstream>-r<N>` revision, pinned by content: the GHCR
+ * manifest digest, and every native target's archive and manifest sha256, cross-checked against
+ * the S3 mirror copy. See module docs for the five-step protocol.
+ *
+ * With `requiredRevision` given, that exact revision must already be committed — this is what
+ * pins exactly a planned release (`--release`), never "highest at apply time". Without it, the
+ * highest committed revision of `upstream` is used (`--upstream`, and the hotfix/upgrade default).
  */
 export async function resolveRevisionPin(
   service: string,
   upstream: string,
   io: RevisionIo,
+  requiredRevision?: number,
 ): Promise<RevisionResolution> {
-  const tagPattern = new RegExp(
-    `^${escapeRegExp(service)}-${escapeRegExp(upstream)}-r(0|[1-9][0-9]*)$`,
-  );
+  const tagPattern = releaseTagPattern(service, upstream);
+  const seenRevisions = new Set<number>();
   let highest: number | undefined;
   for (const tag of await io.listReleaseTags()) {
     const match = tagPattern.exec(tag);
     if (match === null) continue;
     const revision = Number(match[1]);
+    seenRevisions.add(revision);
     if (highest === undefined || revision > highest) highest = revision;
   }
-  if (highest === undefined) {
-    return {
-      status: "missing",
-      message: `${service}:${upstream} has no published slim-services revision.`,
-    };
+
+  let target: number;
+  if (requiredRevision !== undefined) {
+    if (!seenRevisions.has(requiredRevision)) {
+      return {
+        status: "missing",
+        message: `${service}:${upstream}-r${requiredRevision} is not a committed slim-services release.`,
+      };
+    }
+    target = requiredRevision;
+  } else {
+    if (highest === undefined) {
+      return {
+        status: "missing",
+        message: `${service}:${upstream} has no published slim-services revision.`,
+      };
+    }
+    target = highest;
   }
 
-  const releaseVersion = `${upstream}-r${highest}`;
+  const releaseVersion = `${upstream}-r${target}`;
   const checksums = await io.fetchChecksums(service, releaseVersion);
   if (checksums === undefined) {
     return {
@@ -247,7 +268,7 @@ export async function resolveRevisionPin(
     status: "resolved",
     pin: {
       upstreamVersion: upstream,
-      revision: highest,
+      revision: target,
       image: desiredImage(service, releaseVersion, digest),
       natives: natives as Record<NativeTargetName, { archive: string; manifest: string }>,
     },
@@ -459,7 +480,7 @@ interface ServicePins {
 /**
  * Finds every pin expression `service` carries in `source`: the `definition("<service>", <pin>,
  * ...)` default pin, plus any additional (release-line-keyed) pins in its trailing object
- * argument. Both `selectEntry` and `findHotfixMatches` build on this single traversal.
+ * argument. Both `selectEntry` and `planSlimUpdates` build on this single traversal.
  */
 function collectServicePins(source: string, service: string): ServicePins | undefined {
   const prefix = new RegExp(`definition\\(\\s*"${escapeRegExp(service)}"\\s*,\\s*`);
@@ -538,49 +559,6 @@ export interface SlimReleasePublishedPayload {
   readonly release_version: string;
 }
 
-export interface HotfixMatch {
-  /** Which of `service`'s catalog pins (default, or one of the additional release lines) matched. */
-  readonly target: "default" | "additional";
-  /** The revision currently pinned; `-1` when the entry is still an unresolved `placeholderPin`. */
-  readonly currentRevision: number;
-}
-
-/**
- * Every pin `payload.service` carries in `catalog` (default or additional) whose
- * `upstreamVersion` equals `payload.upstream_version` and whose currently pinned revision is
- * lower than `payload.revision` — i.e. the entries a `slim-release-published` hotfix dispatch
- * should refresh. Pure: callers own running the actual refresh and PR flow.
- */
-export function findHotfixMatches(
-  catalog: string,
-  payload: SlimReleasePublishedPayload,
-): ReadonlyArray<HotfixMatch> {
-  const pins = collectServicePins(catalog, payload.service);
-  if (pins === undefined) return [];
-
-  const candidates: Array<{ target: "default" | "additional"; span: PinSpan }> = [
-    { target: "default", span: pins.defaultPin },
-    ...pins.additional.map((span) => ({ target: "additional" as const, span })),
-  ];
-
-  // A service's default pin and every additional pin live on distinct release lines
-  // (`selectEntry`'s `releaseLine` split), so at most one candidate's `upstreamVersion` can equal
-  // `payload.upstream_version`: this can return more than one entry only if the catalog itself
-  // duplicates an upstream version across pins, which `selectEntry` would already treat as
-  // ambiguous.
-  const matches: HotfixMatch[] = [];
-  for (const candidate of candidates) {
-    if (candidate.span.version !== payload.upstream_version) continue;
-    const text = catalog.slice(candidate.span.start, candidate.span.end);
-    const revisionMatch = PIN_REVISION.exec(text);
-    const currentRevision = revisionMatch === null ? -1 : Number(revisionMatch[1]);
-    if (currentRevision < payload.revision) {
-      matches.push({ target: candidate.target, currentRevision });
-    }
-  }
-  return matches;
-}
-
 /** Every upstream tag format the catalog carries, including Studio's `2026.09.04-sha-5a67366`. */
 const UPSTREAM_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SERVICE_NAME_PATTERN = /^[a-z0-9-]+$/;
@@ -626,25 +604,6 @@ export function validateSlimReleasePublishedPayload(input: {
   };
 }
 
-function skipReason(alias: string, version: string, entry: SelectedEntry): string | undefined {
-  if (entry.kind === "unmodelled-service") {
-    return `${CATALOG_PATH} has no slim entry for ${alias}.`;
-  }
-  if (entry.kind === "unmodelled-release-line") {
-    return `${alias} ${version} is not on a release line ${CATALOG_PATH} carries (${entry.known.join(", ")}).`;
-  }
-  return undefined;
-}
-
-function slimVersions(dockerfile: string): ReadonlyMap<string, string> {
-  const versions = new Map<string, string>();
-  for (const from of parseDockerfileServiceImages(dockerfile)) {
-    const pin = slimCatalogPin(from.alias, from.image);
-    if (pin !== undefined) versions.set(from.alias, pin.version);
-  }
-  return versions;
-}
-
 const normalizeText = (text: string): string => text.replace(/\s+/g, " ").trim();
 
 /**
@@ -675,76 +634,168 @@ function writePin(
 }
 
 /**
- * Rewrites `catalog` from Dockerfile tags that differ from `baseDockerfile`, pinning each to its
- * upstream's highest committed slim-services revision. With no base, every slim tag is in scope.
- * A pin that cannot be applied is reported in `skipped`. OrioleDB and a Dependabot bump older
- * than the current catalog pin are the non-blocking skips; the catalog is allowed to lead the
- * Dockerfile until Dependabot catches up.
+ * One hotfix or upgrade a `slim-release-published` run should apply, on one of `service`'s
+ * release lines. `line` is the leading numeric component (`releaseLine`), present only when the
+ * service carries more than one line (only postgres does today) — it's already folded into
+ * `branch`, so a caller never needs to consume it separately.
  */
-export async function planArtifactCatalogUpdate(input: {
-  readonly dockerfile: string;
-  readonly baseDockerfile?: string;
-  readonly catalog: string;
-  readonly io: RevisionIo;
-}): Promise<CatalogPlan> {
-  let source = input.catalog;
-  const updates: CatalogPinUpdate[] = [];
-  const skipped: SkippedCatalogPin[] = [];
-  const baseVersions =
-    input.baseDockerfile === undefined ? undefined : slimVersions(input.baseDockerfile);
-  const changed = (alias: string, version: string | undefined): boolean =>
-    baseVersions === undefined || baseVersions.get(alias) !== version;
+export interface SlimUpdate {
+  readonly kind: "hotfix" | "upgrade";
+  readonly line?: string;
+  readonly branch: string;
+  readonly title: string;
+  /** The release version pinned before this update, e.g. `v2.195.0-r0`. */
+  readonly fromRelease: string;
+  readonly toUpstream: string;
+  /** The release version this update pins, e.g. `v2.195.0-r1`. */
+  readonly toRelease: string;
+}
 
-  for (const from of parseDockerfileServiceImages(input.dockerfile)) {
-    if (isOrioleImage(from.image)) {
-      if (!changed(from.alias, undefined)) continue;
-      skipped.push({
-        alias: from.alias,
-        reason: `${from.alias} ${from.image} has no slim image.`,
-        blocking: false,
-      });
-      continue;
-    }
-    const pin = slimCatalogPin(from.alias, from.image);
-    if (pin === undefined || !changed(from.alias, pin.version)) continue;
-    if (!VERSION_PATTERN.test(pin.version)) {
-      throw new InvalidPayloadError(`invalid version for ${from.alias}: '${pin.version}'`);
-    }
+/**
+ * Builds one `SlimUpdate`, validating every value it emits — `service`, `toUpstream` and
+ * `toRelease` — against the same anchored patterns `validateSlimReleasePublishedPayload` uses,
+ * before any of them reaches a branch name or PR title. Release tag names (the ultimate source of
+ * `toUpstream`) come from an external API, so this check applies even to values derived from the
+ * catalog itself (`fromRelease`'s upstream), not only to values freshly parsed from a tag.
+ */
+function buildUpdate(
+  kind: "hotfix" | "upgrade",
+  service: string,
+  line: string,
+  hasLines: boolean,
+  pinned: { readonly upstream: string; readonly revision: number },
+  toUpstream: string,
+  toRevision: number,
+): SlimUpdate {
+  if (!SERVICE_NAME_PATTERN.test(service)) {
+    throw new InvalidPayloadError(`invalid service: '${service}'`);
+  }
+  if (!UPSTREAM_VERSION_PATTERN.test(toUpstream)) {
+    throw new InvalidPayloadError(`invalid upstream version: '${toUpstream}'`);
+  }
+  const toRelease = `${toUpstream}-r${toRevision}`;
+  if (!RELEASE_VERSION_PATTERN.test(toRelease)) {
+    throw new InvalidPayloadError(`invalid release version: '${toRelease}'`);
+  }
+  const fromRelease =
+    pinned.revision < 0 ? pinned.upstream : `${pinned.upstream}-r${pinned.revision}`;
+  const suffix = hasLines ? `-${line}` : "";
+  const branch =
+    kind === "hotfix" ? `slim-hotfix/${service}${suffix}` : `slim-bump/${service}${suffix}`;
+  const title =
+    kind === "hotfix"
+      ? `chore(stack): pin ${service} ${toRelease}`
+      : `chore(stack): bump ${service} to ${toRelease}`;
 
-    const entry = selectEntry(source, pin.service, pin.version);
-    const reason = skipReason(from.alias, pin.version, entry);
-    if (reason !== undefined) {
-      skipped.push({ alias: from.alias, reason, blocking: true });
-      continue;
-    }
-    if (entry.kind !== "default" && entry.kind !== "additional") continue;
-    if (isOlderRelease(pin.version, entry.version)) {
-      skipped.push({
-        alias: from.alias,
-        reason: `${pin.service} ${pin.version} is older than the catalog pin ${entry.version}.`,
-        blocking: false,
-      });
-      continue;
-    }
+  return {
+    kind,
+    line: hasLines ? line : undefined,
+    branch,
+    title,
+    fromRelease,
+    toUpstream,
+    toRelease,
+  };
+}
 
-    const resolution = await resolveRevisionPin(pin.service, pin.version, input.io);
-    if (resolution.status !== "resolved") {
-      skipped.push({ alias: from.alias, reason: resolution.message, blocking: true });
-      continue;
-    }
-    const written = writePin(source, entry, resolution.pin);
-    if (!written.changed) continue;
-    source = written.source;
-    updates.push({
-      service: pin.service,
-      version: pin.version,
-      revision: resolution.pin.revision,
-      previousVersion: entry.version,
-      target: entry.kind,
-    });
+/**
+ * The hotfix and/or upgrade a `slim-release-published` run should apply for `service`, computed
+ * against `catalog`'s current pins and `releaseTags` (every committed — published, non-draft —
+ * slim-services release tag; the caller filters drafts before calling this). Pure: no network, no
+ * file I/O.
+ *
+ * Per release line (ruling: the default pin's line, plus one per additional pin — only postgres
+ * has more than one): a **hotfix** fires when the pinned upstream has a committed revision higher
+ * than the pinned one; an **upgrade** fires when the newest committed upstream on the line is
+ * newer than the pinned one (ties, e.g. two Studio builds dated the same day, are not newer).
+ * Both can fire in the same run. A release tag whose upstream sits on no line the catalog carries
+ * for `service`, or whose version isn't comparable, is logged and ignored — it never causes a
+ * plan-updates run to fail.
+ */
+export function planSlimUpdates(
+  catalog: string,
+  service: string,
+  releaseTags: ReadonlyArray<string>,
+): ReadonlyArray<SlimUpdate> {
+  const pins = collectServicePins(catalog, service);
+  if (pins === undefined) {
+    console.log(`::warning ::${CATALOG_PATH} has no slim entry for ${service}; nothing to plan.`);
+    return [];
   }
 
-  return { source, updates, skipped };
+  const allPins = [pins.defaultPin, ...pins.additional];
+  const hasLines = pins.additional.length > 0;
+
+  const pinnedByLine = new Map<string, { readonly upstream: string; readonly revision: number }>();
+  for (const span of allPins) {
+    const line = releaseLine(span.version);
+    const text = catalog.slice(span.start, span.end);
+    const revisionMatch = PIN_REVISION.exec(text);
+    const revision = revisionMatch === null ? -1 : Number(revisionMatch[1]);
+    pinnedByLine.set(line, { upstream: span.version, revision });
+  }
+
+  const tagPattern = releaseTagPattern(service);
+  const candidatesByLine = new Map<string, Array<{ upstream: string; revision: number }>>();
+  for (const tag of releaseTags) {
+    const match = tagPattern.exec(tag);
+    if (match === null) continue; // not this service, or a legacy tag with no `-rN`: ignored.
+    const upstream = match[1] as string;
+    const revision = Number(match[2]);
+    const line = releaseLine(upstream);
+    if (!pinnedByLine.has(line)) {
+      console.log(
+        `::warning ::${service} ${upstream} is not on a release line ${CATALOG_PATH} carries for it; ignoring ${tag}.`,
+      );
+      continue;
+    }
+    const list = candidatesByLine.get(line) ?? [];
+    list.push({ upstream, revision });
+    candidatesByLine.set(line, list);
+  }
+
+  const updates: SlimUpdate[] = [];
+  for (const [line, pinned] of pinnedByLine) {
+    const candidates = candidatesByLine.get(line) ?? [];
+
+    const sameUpstreamRevisions = candidates
+      .filter((candidate) => candidate.upstream === pinned.upstream)
+      .map((candidate) => candidate.revision);
+    if (sameUpstreamRevisions.length > 0) {
+      const highest = Math.max(...sameUpstreamRevisions);
+      if (highest > pinned.revision) {
+        updates.push(
+          buildUpdate("hotfix", service, line, hasLines, pinned, pinned.upstream, highest),
+        );
+      }
+    }
+
+    const highestRevisionByUpstream = new Map<string, number>();
+    for (const candidate of candidates) {
+      const current = highestRevisionByUpstream.get(candidate.upstream);
+      if (current === undefined || candidate.revision > current) {
+        highestRevisionByUpstream.set(candidate.upstream, candidate.revision);
+      }
+    }
+
+    let bestUpstream: string | undefined;
+    for (const upstream of highestRevisionByUpstream.keys()) {
+      const comparedToPinned = compareVersions(upstream, pinned.upstream);
+      if (comparedToPinned === undefined) {
+        console.log(`::warning ::${service} ${upstream} is not a comparable version; ignoring.`);
+        continue;
+      }
+      if (bestUpstream === undefined || (compareVersions(upstream, bestUpstream) ?? 0) > 0) {
+        bestUpstream = upstream;
+      }
+    }
+    if (bestUpstream !== undefined && compareVersions(bestUpstream, pinned.upstream) === 1) {
+      const revision = highestRevisionByUpstream.get(bestUpstream) as number;
+      updates.push(buildUpdate("upgrade", service, line, hasLines, pinned, bestUpstream, revision));
+    }
+  }
+
+  return updates;
 }
 
 export interface CatalogRefreshResult {
@@ -753,34 +804,55 @@ export interface CatalogRefreshResult {
 }
 
 /**
- * Refreshes one catalog entry to the highest committed revision of `upstream` (or, when omitted,
- * of its currently pinned upstream version). Pure aside from `io`: callers own reading and
- * writing `Artifacts.ts`. This is what the manual CLI mode calls, and what a later hotfix pickup
- * workflow can call directly with `{service, upstream_version}` from its dispatch payload.
+ * Refreshes one catalog entry: to exactly the committed release named by `release` (`<U>-r<N>`,
+ * required to already be committed — never "highest at apply time"), or to the highest committed
+ * revision of `upstream` (or, when both are omitted, of the entry's currently pinned upstream
+ * version). `upstream` and `release` are mutually exclusive. Pure aside from `io`: callers own
+ * reading and writing `Artifacts.ts`.
  */
 export async function refreshCatalogPin(input: {
   readonly catalog: string;
   readonly service: string;
   readonly upstream?: string;
+  readonly release?: string;
   readonly io: RevisionIo;
 }): Promise<CatalogRefreshResult> {
-  const entry = selectEntry(input.catalog, input.service, input.upstream);
+  if (input.upstream !== undefined && input.release !== undefined) {
+    throw new InvalidPayloadError("--upstream and --release are mutually exclusive.");
+  }
+
+  let upstream = input.upstream;
+  let requiredRevision: number | undefined;
+  if (input.release !== undefined) {
+    if (!RELEASE_VERSION_PATTERN.test(input.release)) {
+      throw new InvalidPayloadError(`invalid --release '${input.release}'`);
+    }
+    const match = /^(.+)-r(0|[1-9][0-9]*)$/.exec(input.release) as RegExpExecArray;
+    upstream = match[1];
+    requiredRevision = Number(match[2]);
+  }
+
+  const entry = selectEntry(input.catalog, input.service, upstream);
   if (entry.kind === "unmodelled-service") {
     throw new InvalidPayloadError(`${CATALOG_PATH} has no slim entry for ${input.service}.`);
   }
   if (entry.kind === "unmodelled-release-line") {
     throw new InvalidPayloadError(
-      `${input.service} ${input.upstream ?? ""} is not on a release line ${CATALOG_PATH} carries (${entry.known.join(", ")}).`,
+      `${input.service} ${upstream ?? ""} is not on a release line ${CATALOG_PATH} carries (${entry.known.join(", ")}).`,
     );
   }
-  const upstream = input.upstream ?? entry.version;
-  const resolution = await resolveRevisionPin(input.service, upstream, input.io);
+  const resolvedUpstream = upstream ?? entry.version;
+  const resolution = await resolveRevisionPin(
+    input.service,
+    resolvedUpstream,
+    input.io,
+    requiredRevision,
+  );
   if (resolution.status !== "resolved") {
     throw new InvalidPayloadError(resolution.message);
   }
-  // Manual mode also backfills `upstreamImage`, so a plain `io` (most tests, and the
-  // Dependabot-driven `planArtifactCatalogUpdate` path) can still exercise revision resolution
-  // without stubbing the extra fetchers.
+  // Manual mode also backfills `upstreamImage`, so a plain `io` (most tests) can still exercise
+  // revision resolution without stubbing the extra fetchers.
   const pin =
     input.io.fetchManifest === undefined && input.io.fetchProvenance === undefined
       ? resolution.pin
@@ -789,7 +861,7 @@ export async function refreshCatalogPin(input: {
           upstreamImage: await resolveUpstreamImage(
             input.service,
             `${resolution.pin.upstreamVersion}-r${resolution.pin.revision}`,
-            upstream,
+            resolvedUpstream,
             input.io,
           ),
         };
@@ -799,7 +871,7 @@ export async function refreshCatalogPin(input: {
     source: written.source,
     update: {
       service: input.service,
-      version: upstream,
+      version: resolvedUpstream,
       revision: resolution.pin.revision,
       previousVersion: entry.version,
       target: entry.kind,
@@ -817,6 +889,7 @@ function githubHeaders(): Record<string, string> {
   return headers;
 }
 
+/** Tags of every published, non-draft `supabase/slim-services` release. A draft is never a committed revision. */
 async function listReleaseTags(): Promise<ReadonlyArray<string>> {
   const tags: string[] = [];
   for (let page = 1; ; page++) {
@@ -833,7 +906,9 @@ async function listReleaseTags(): Promise<ReadonlyArray<string>> {
       throw new InvalidPayloadError("Malformed slim-services releases response.");
     }
     for (const item of batch) {
-      const tagName = (item as { tag_name?: unknown } | null)?.tag_name;
+      const record = item as { tag_name?: unknown; draft?: unknown } | null;
+      if (record?.draft === true) continue;
+      const tagName = record?.tag_name;
       if (typeof tagName === "string") tags.push(tagName);
     }
     if (batch.length < 100) break;
@@ -940,7 +1015,7 @@ async function runManual(argv: ReadonlyArray<string>): Promise<void> {
   const service = flags.get("service");
   if (service === undefined) {
     throw new InvalidPayloadError(
-      "Usage: sync-artifacts-catalog.ts --service <service> [--upstream <U>]",
+      "Usage: sync-artifacts-catalog.ts --service <service> [--upstream <U> | --release <U>-r<N>]",
     );
   }
   const catalogPath = CATALOG_PATH;
@@ -949,6 +1024,7 @@ async function runManual(argv: ReadonlyArray<string>): Promise<void> {
     catalog,
     service,
     upstream: flags.get("upstream"),
+    release: flags.get("release"),
     io: defaultRevisionIo(),
   });
   if (result.update === undefined) {
@@ -961,28 +1037,39 @@ async function runManual(argv: ReadonlyArray<string>): Promise<void> {
   );
 }
 
-async function runHotfixMatches(argv: ReadonlyArray<string>): Promise<void> {
+/**
+ * Line-oriented encoding of one `SlimUpdate`, for a bash loop: `kind`, `branch`, `title` and
+ * `release` (the loop's four required fields, driving the checkout/pin/commit/PR steps) plus
+ * `from` (the release replaced, for the PR body's "from -> to"). Every field is guaranteed
+ * non-empty by construction. `\x1f` (unit separator) is the delimiter, not a tab: a title can
+ * carry ordinary whitespace, and `IFS=$'\t' read` would collapse it.
+ */
+function updateLine(update: SlimUpdate): string {
+  return [update.kind, update.branch, update.title, update.toRelease, update.fromRelease].join(
+    "\x1f",
+  );
+}
+
+async function runPlanUpdates(argv: ReadonlyArray<string>): Promise<void> {
   const flags = parseFlags(argv);
   const service = flags.get("service");
-  const upstream = flags.get("upstream");
-  const revisionFlag = flags.get("revision");
-  if (service === undefined || upstream === undefined || revisionFlag === undefined) {
+  if (service === undefined) {
     throw new InvalidPayloadError(
-      "Usage: sync-artifacts-catalog.ts hotfix-matches --service <service> --upstream <U> --revision <N>",
+      "Usage: sync-artifacts-catalog.ts plan-updates --service <service> [--format lines]",
     );
   }
-  if (!/^(0|[1-9][0-9]*)$/.test(revisionFlag)) {
-    throw new InvalidPayloadError(`invalid --revision '${revisionFlag}'`);
+  const format = flags.get("format") ?? "json";
+  if (format !== "json" && format !== "lines") {
+    throw new InvalidPayloadError(`invalid --format '${format}' (expected 'json' or 'lines')`);
   }
-  const revision = Number(revisionFlag);
   const catalog = await Bun.file(CATALOG_PATH).text();
-  const matches = findHotfixMatches(catalog, {
-    service,
-    upstream_version: upstream,
-    revision,
-    release_version: `${upstream}-r${revision}`,
-  });
-  console.log(JSON.stringify(matches));
+  const releaseTags = await listReleaseTags();
+  const updates = planSlimUpdates(catalog, service, releaseTags);
+  if (format === "lines") {
+    for (const update of updates) console.log(updateLine(update));
+    return;
+  }
+  console.log(JSON.stringify(updates));
 }
 
 async function runValidatePayload(argv: ReadonlyArray<string>): Promise<void> {
@@ -1018,8 +1105,8 @@ async function main(argv: ReadonlyArray<string>): Promise<void> {
     await runValidatePayload(argv.slice(1));
     return;
   }
-  if (argv[0] === "hotfix-matches") {
-    await runHotfixMatches(argv.slice(1));
+  if (argv[0] === "plan-updates") {
+    await runPlanUpdates(argv.slice(1));
     return;
   }
   if (argv[0]?.startsWith("--") === true) {
@@ -1027,34 +1114,10 @@ async function main(argv: ReadonlyArray<string>): Promise<void> {
     return;
   }
 
-  const [dockerfilePath = DOCKERFILE_PATH, catalogPath = CATALOG_PATH, baseDockerfilePath] = argv;
-  const dockerfile = await Bun.file(dockerfilePath).text();
-  const catalog = await Bun.file(catalogPath).text();
-  const baseDockerfile =
-    baseDockerfilePath === undefined ? undefined : await Bun.file(baseDockerfilePath).text();
-  const plan = await planArtifactCatalogUpdate({
-    dockerfile,
-    baseDockerfile,
-    catalog,
-    io: defaultRevisionIo(),
-  });
-  for (const skip of plan.skipped) {
-    console.log(`::warning ::Left ${skip.alias} unchanged: ${skip.reason}`);
-  }
-  if (plan.skipped.some((skip) => skip.blocking)) {
-    console.log("::error ::Refusing to commit a partial catalog update.");
-    process.exit(1);
-  }
-  await Bun.write(catalogPath, plan.source);
-  if (plan.updates.length === 0) {
-    console.log("Workload catalog already matches the Dockerfile.");
-    return;
-  }
-  for (const update of plan.updates) {
-    console.log(
-      `Pinned ${update.service} ${update.target} ${update.previousVersion} -> ${update.version} r${update.revision}.`,
-    );
-  }
+  throw new InvalidPayloadError(
+    "Usage: sync-artifacts-catalog.ts --service <service> [--upstream <U> | --release <U>-r<N>], " +
+      "or validate-payload / plan-updates --service <service>",
+  );
 }
 
 if (import.meta.main) {

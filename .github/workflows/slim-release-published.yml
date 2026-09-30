@@ -1,15 +1,23 @@
 name: Slim Release Published
 
 # supabase/slim-services sends this dispatch after it mints an immutable release
-# `<service>-<upstream_version>-r<revision>`. When that revision is a hotfix of an upstream
-# version the workload catalog (packages/stack/src/Artifacts.ts) already pins, this refreshes the
-# pin and opens a pull request.
+# `<service>-<upstream_version>-r<revision>`. The stack catalog
+# (packages/stack/src/Artifacts.ts) is the single version table for the service; this workflow
+# treats the dispatch as a trigger and reconciles the catalog against every committed
+# (published, non-draft) `<service>-...-r<N>` release, opening or updating one pull request per
+# hotfix and/or upgrade it finds (`.github/scripts/sync-artifacts-catalog.ts`'s `planSlimUpdates`).
+#
+# Plan and apply run from the same checkout of the default branch, in a single job: a re-run
+# always recomputes from the latest develop, so a stale plan can never be applied, and a
+# superseded PR's branch is rewritten in place (force-pushed) instead of racing a fresh one. A
+# backlog republish of an older upstream version naturally plans nothing.
 #
 # The payload arrives with whatever authority holds the dispatch token, so it is treated as
-# untrusted: fields are pattern- and shape-checked before use, and never interpolated directly
-# into a `run:` script (only passed through `env:`). The matching logic itself lives in
-# `.github/scripts/sync-artifacts-catalog.ts`'s `findHotfixMatches`, which is unit-tested; this
-# workflow only wires it to a PR.
+# untrusted: fields are pattern- and shape-checked before use
+# (`validateSlimReleasePublishedPayload`), and never interpolated directly into a `run:` script
+# (only passed through `env:`). Release tag names come from an external API too, so every value
+# `planSlimUpdates` emits is re-validated against the same anchored patterns before it can reach a
+# branch name or PR title.
 
 on:
   repository_dispatch:
@@ -20,24 +28,39 @@ permissions:
   contents: read
 
 concurrency:
-  group: slim-release-published-${{ github.event.client_payload.service }}-${{ github.event.client_payload.upstream_version }}
+  group: slim-release-published-${{ github.event.client_payload.service }}
   cancel-in-progress: false
 
 jobs:
   pickup:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      # Installs the locked workspace dependencies the scripts need: `Artifacts.ts` imports
+      # `effect`, and `render-service-dockerfile.ts` imports `@supabase/stack/internal/artifacts`.
+      # Replaces the bare mise step the pre-single-table version of this workflow used.
+      - name: Setup
+        uses: ./.github/actions/setup
         with:
-          bun-version-file: .bun-version
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
+      - name: Record the base commit
+        id: base
+        run: echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+      # Delegates to `validateSlimReleasePublishedPayload` (sync-artifacts-catalog.ts) so every
+      # field — including `upstream_version` and `release_version`, not just `service` and
+      # `revision` — is checked against an anchored charset before it is ever written to
+      # `$GITHUB_OUTPUT`, a branch name, or a PR title. A value that fails validation makes the
+      # script exit non-zero without printing anything.
       - name: Validate payload
         id: validate
         env:
@@ -45,11 +68,6 @@ jobs:
           UPSTREAM_VERSION: ${{ github.event.client_payload.upstream_version }}
           REVISION: ${{ github.event.client_payload.revision }}
           RELEASE_VERSION: ${{ github.event.client_payload.release_version }}
-        # Delegates to `validateSlimReleasePublishedPayload` (sync-artifacts-catalog.ts) so every
-        # field — including `upstream_version` and `release_version`, not just `service` and
-        # `revision` — is checked against an anchored charset before it is ever written to
-        # `$GITHUB_OUTPUT`, a branch name, or a PR title. A value that fails validation makes the
-        # script exit non-zero without printing anything.
         run: |
           set -euo pipefail
           if ! output="$(bun .github/scripts/sync-artifacts-catalog.ts validate-payload \
@@ -59,34 +77,31 @@ jobs:
           fi
           echo "$output" >>"$GITHUB_OUTPUT"
 
-      - name: Find hotfix matches
-        id: matches
+      # Reconciles the service against every committed slim-services release (`planSlimUpdates`),
+      # not just the release that triggered this dispatch — this run is idempotent and safe to
+      # receive out of order. Written to a file, not a $GITHUB_OUTPUT multi-line value: each line
+      # is field-separated with `\x1f` (see `updateLine`), which a later step reads directly.
+      - name: Plan updates
+        id: plan
         env:
           SERVICE: ${{ steps.validate.outputs.service }}
-          UPSTREAM_VERSION: ${{ steps.validate.outputs.upstream_version }}
-          REVISION: ${{ steps.validate.outputs.revision }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          result="$(bun .github/scripts/sync-artifacts-catalog.ts hotfix-matches \
-            --service "$SERVICE" --upstream "$UPSTREAM_VERSION" --revision "$REVISION")"
-          count="$(bun -e 'console.log(JSON.parse(await Bun.stdin.text()).length)' <<<"$result")"
+          bun .github/scripts/sync-artifacts-catalog.ts plan-updates --service "$SERVICE" --format lines \
+            > "${RUNNER_TEMP}/slim-updates.tsv"
+          count="$(wc -l < "${RUNNER_TEMP}/slim-updates.tsv" | tr -d ' ')"
           echo "count=${count}" >>"$GITHUB_OUTPUT"
 
-      - name: No matching catalog pin
-        if: steps.matches.outputs.count == '0'
+      - name: Nothing to do
+        if: steps.plan.outputs.count == '0'
         env:
           SERVICE: ${{ steps.validate.outputs.service }}
           RELEASE_VERSION: ${{ steps.validate.outputs.release_version }}
-        run: echo "No catalog pin for ${SERVICE} needs ${RELEASE_VERSION}; nothing to do."
-
-      - name: Install toolchains
-        if: steps.matches.outputs.count != '0'
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
-        with:
-          version: 2026.9.0
+        run: echo "No catalog updates for ${SERVICE} from ${RELEASE_VERSION}; nothing to do."
 
       - name: Install regctl
-        if: steps.matches.outputs.count != '0'
+        if: steps.plan.outputs.count != '0'
         run: |
           set -euo pipefail
           install -d "${RUNNER_TEMP}/regctl-bin"
@@ -98,7 +113,7 @@ jobs:
           "${RUNNER_TEMP}/regctl-bin/regctl" version
 
       - name: Generate token
-        if: steps.matches.outputs.count != '0'
+        if: steps.plan.outputs.count != '0'
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -107,58 +122,86 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - name: Pin the catalog to the hotfix revision
-        if: steps.matches.outputs.count != '0'
-        env:
-          SERVICE: ${{ steps.validate.outputs.service }}
-          UPSTREAM_VERSION: ${{ steps.validate.outputs.upstream_version }}
-        run: bun .github/scripts/sync-artifacts-catalog.ts --service "$SERVICE" --upstream "$UPSTREAM_VERSION"
-
-      - name: Format catalog
-        if: steps.matches.outputs.count != '0'
-        run: bun x oxfmt@0.65.0 --config .oxfmtrc.json packages/stack/src/Artifacts.ts
-
-      - name: Open pull request
-        if: steps.matches.outputs.count != '0'
+      # Kept as its own step, before the loop, so the loop body below can be exercised against a
+      # local bare remote in a dry run (point `origin` there instead of running this step).
+      - name: Point origin at the authenticated remote
+        if: steps.plan.outputs.count != '0'
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+      # One branch per planned item, built fresh from the base commit recorded above (the default
+      # branch's head at the start of this run) — never from wherever a previous loop iteration
+      # left HEAD. Pins exactly the planned release (`--release`, never "highest at apply time"),
+      # so plan and pin agree by construction: a revision minted a second later arrives with its
+      # own dispatch, not by racing this one.
+      - name: Apply planned updates
+        if: steps.plan.outputs.count != '0'
+        env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SERVICE: ${{ steps.validate.outputs.service }}
-          UPSTREAM_VERSION: ${{ steps.validate.outputs.upstream_version }}
-          REVISION: ${{ steps.validate.outputs.revision }}
           RELEASE_VERSION: ${{ steps.validate.outputs.release_version }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-          if git diff --quiet -- packages/stack/src/Artifacts.ts; then
-            echo "Workload catalog already pins ${SERVICE} ${RELEASE_VERSION}."
-            exit 0
-          fi
+          manual_prefix="bun .github/scripts/sync-artifacts-catalog.ts --service ${SERVICE} --release"
 
-          manual_command="bun .github/scripts/sync-artifacts-catalog.ts --service ${SERVICE} --upstream ${UPSTREAM_VERSION}"
-          branch="slim-hotfix/${SERVICE}-${RELEASE_VERSION}"
+          while IFS=$'\x1f' read -r kind branch title release from; do
+            if [ -z "$kind" ] || [ -z "$branch" ] || [ -z "$title" ] || [ -z "$release" ] || [ -z "$from" ]; then
+              echo "::error ::Malformed plan-updates line: kind='${kind}' branch='${branch}' title='${title}' release='${release}' from='${from}'."
+              exit 1
+            fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$branch"
-          git add -- packages/stack/src/Artifacts.ts
-          git commit -m "chore(stack): pin ${SERVICE} ${RELEASE_VERSION}"
-          git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            git checkout -B "$branch" "$BASE_SHA"
 
-          if ! git push origin "HEAD:refs/heads/${branch}"; then
-            echo "::error ::Failed to push ${branch}. Run manually: ${manual_command}, then open a pull request by hand."
-            exit 1
-          fi
+            bun .github/scripts/sync-artifacts-catalog.ts --service "$SERVICE" --release "$release"
+            bun x oxfmt@0.65.0 --config .oxfmtrc.json packages/stack/src/Artifacts.ts
+            bun apps/cli/scripts/render-service-dockerfile.ts
 
-          body="$(printf 'supabase/slim-services published a hotfix revision `%s` for `%s`. This pins the workload catalog to it.\n\nhttps://github.com/supabase/slim-services/releases/tag/%s-%s\n' \
-            "$RELEASE_VERSION" "$SERVICE" "$SERVICE" "$RELEASE_VERSION")"
+            generated_files=(
+              packages/stack/src/Artifacts.ts
+              apps/cli/src/shared/services/Dockerfile
+              apps/cli-go/pkg/config/templates/Dockerfile
+            )
+            if git diff --quiet -- "${generated_files[@]}"; then
+              echo "${branch}: catalog and Dockerfiles already match ${release}; skipping."
+              continue
+            fi
 
-          if ! gh pr create \
-            --title "chore(stack): pin ${SERVICE} ${RELEASE_VERSION}" \
-            --body "$body" \
-            --assignee jgoux \
-            --head "$branch" \
-            --base "$DEFAULT_BRANCH"; then
-            echo "::error ::Pushed ${branch} but failed to open the pull request. Run manually: ${manual_command}, then open a pull request from ${branch} against ${DEFAULT_BRANCH} by hand."
-            exit 1
-          fi
+            git add -- "${generated_files[@]}"
+            git commit -m "$title"
+
+            if ! git push --force origin "HEAD:refs/heads/${branch}"; then
+              echo "::error ::Failed to push ${branch}. Run manually: ${manual_prefix} ${release}, regenerate the Dockerfiles with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
+              exit 1
+            fi
+
+            if [ "$kind" = "upgrade" ]; then
+              action="bumps"
+            else
+              action="pins"
+            fi
+            body="$(printf 'supabase/slim-services published %s. This %s %s from %s to %s.\n\nhttps://github.com/supabase/slim-services/releases/tag/%s-%s\n\nThis branch is rewritten from %s whenever a newer relevant release arrives.\n' \
+              "$RELEASE_VERSION" "$action" "$SERVICE" "$from" "$release" "$SERVICE" "$release" "$DEFAULT_BRANCH")"
+
+            existing="$(gh pr list --head "$branch" --base "$DEFAULT_BRANCH" --state open --json number --jq '.[0].number // empty')"
+            if [ -n "$existing" ]; then
+              if ! gh pr edit "$existing" --title "$title" --body "$body"; then
+                echo "::error ::Pushed ${branch} but failed to edit pull request #${existing}. Run manually: ${manual_prefix} ${release}, then edit the pull request from ${branch} by hand."
+                exit 1
+              fi
+            elif ! gh pr create \
+              --title "$title" \
+              --body "$body" \
+              --assignee jgoux \
+              --head "$branch" \
+              --base "$DEFAULT_BRANCH"; then
+              echo "::error ::Pushed ${branch} but failed to open a pull request. Run manually: ${manual_prefix} ${release}, then open a pull request from ${branch} against ${DEFAULT_BRANCH} by hand."
+              exit 1
+            fi
+          done < "${RUNNER_TEMP}/slim-updates.tsv"

@@ -3,13 +3,10 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseDockerfileServiceImages } from "../../apps/cli/src/shared/services/parse-dockerfile-service-images.ts";
-import { isOrioleImage, slimCatalogPin } from "../../apps/cli/src/shared/services/slim-images.ts";
 import { InvalidPayloadError, nativeFileNames, nativeObjectUrl } from "./slim-mirror-payload.ts";
 import {
   CATALOG_PATH,
-  findHotfixMatches,
-  planArtifactCatalogUpdate,
+  planSlimUpdates,
   refreshCatalogPin,
   validateSlimReleasePublishedPayload,
   type RevisionIo,
@@ -52,7 +49,7 @@ function matchingS3(
 }
 
 /**
- * Runs the repo's pinned `oxfmt` binary over `source`, the way `sync-artifacts-catalog.yml`
+ * Runs the repo's pinned `oxfmt` binary over `source`, the way `slim-release-published.yml`
  * formats the catalog after every write, so parsing tests exercise real formatter output
  * (line-wrapping, trailing commas) instead of a hand-written single-line literal.
  */
@@ -91,85 +88,64 @@ const fixture = `const workloadCatalog = {
 };
 `;
 
-/** A catalog whose Postgres 15 additional pin is already resolved (not a `placeholderPin`), at `r3`. */
-const resolvedFixture = fixture.replace(
-  '{ "15.14.1.168": placeholderPin("postgres", "15.14.1.168") },',
-  '{ "15.14.1.168": { upstreamVersion: "15.14.1.168", revision: 3, image: "ghcr.io/supabase/cli/postgres:15.14.1.168-r3@sha256:0000000000000000000000000000000000000000000000000000000000000", natives: {} } },',
-);
+const vectorFixture = `const workloadCatalog = {
+  vector: definition("vector", placeholderPin("vector", "0.53.0"), "bin/vector"),
+};
+`;
 
-describe("findHotfixMatches", () => {
-  test("selects the Postgres 15 entry for a higher revision of the same upstream", () => {
-    const matches = findHotfixMatches(resolvedFixture, {
-      service: "postgres",
-      upstream_version: "15.14.1.168",
-      revision: 4,
-      release_version: "15.14.1.168-r4",
-    });
-
-    expect(matches).toEqual([{ target: "additional", currentRevision: 3 }]);
-  });
-
-  test("ignores an equal or lower revision of the same upstream", () => {
-    for (const revision of [3, 2]) {
-      const matches = findHotfixMatches(resolvedFixture, {
-        service: "postgres",
-        upstream_version: "15.14.1.168",
-        revision,
-        release_version: `15.14.1.168-r${revision}`,
-      });
-      expect(matches).toEqual([]);
-    }
-  });
-
-  test("ignores a higher revision of a different upstream version", () => {
-    const matches = findHotfixMatches(resolvedFixture, {
-      service: "postgres",
-      upstream_version: "15.14.1.999",
-      revision: 4,
-      release_version: "15.14.1.999-r4",
-    });
-
-    expect(matches).toEqual([]);
-  });
-
-  test("matches the default pin too, once it is resolved", () => {
-    const withResolvedDefault = resolvedFixture.replace(
-      'placeholderPin("postgres", "17.6.1.168")',
-      '{ upstreamVersion: "17.6.1.168", revision: 1, image: "ghcr.io/supabase/cli/postgres:17.6.1.168-r1@sha256:1111111111111111111111111111111111111111111111111111111111111", natives: {} }',
-    );
-    const matches = findHotfixMatches(withResolvedDefault, {
-      service: "postgres",
-      upstream_version: "17.6.1.168",
-      revision: 2,
-      release_version: "17.6.1.168-r2",
-    });
-
-    expect(matches).toEqual([{ target: "default", currentRevision: 1 }]);
-  });
-
-  test("treats an unresolved placeholderPin as always eligible for a hotfix", () => {
-    const matches = findHotfixMatches(fixture, {
-      service: "postgrest",
-      upstream_version: "v16.2",
+/**
+ * Fully resolved (not `placeholderPin`) fixtures for `planSlimUpdates`: a committed catalog
+ * always carries resolved pins (see the design doc's one-time alignment), so these give every
+ * pin a real revision instead of the `-1` an unresolved placeholder would carry.
+ */
+const plannerFixture = `const workloadCatalog = {
+  rest: definition(
+    "postgrest",
+    {
+      upstreamVersion: "v16.2",
       revision: 0,
-      release_version: "v16.2-r0",
-    });
+      image: "ghcr.io/supabase/cli/postgrest:v16.2-r0@sha256:1111111111111111111111111111111111111111111111111111111111111",
+      natives: {},
+    },
+    "bin/postgrest",
+  ),
+  storage: definition(
+    "storage",
+    {
+      upstreamVersion: "v1.73.0",
+      revision: 0,
+      image: "ghcr.io/supabase/cli/storage:v1.73.0-r0@sha256:2222222222222222222222222222222222222222222222222222222222222",
+      natives: {},
+    },
+    "bin/storage",
+    ["bin/storage"],
+  ),
+};
+`;
 
-    expect(matches).toEqual([{ target: "default", currentRevision: -1 }]);
-  });
-
-  test("survives real oxfmt formatting", async () => {
-    const formatted = await formatWithOxfmt(resolvedFixture);
-    const matches = findHotfixMatches(formatted, {
-      service: "postgres",
-      upstream_version: "15.14.1.168",
-      revision: 4,
-      release_version: "15.14.1.168-r4",
-    });
-
-    expect(matches).toEqual([{ target: "additional", currentRevision: 3 }]);
-  });
-});
+/** Postgres carries two lines (17 default, 15 additional), both resolved. */
+const postgresPlannerFixture = `const workloadCatalog = {
+  database: definition(
+    "postgres",
+    {
+      upstreamVersion: "17.6.1.168",
+      revision: 1,
+      image: "ghcr.io/supabase/cli/postgres:17.6.1.168-r1@sha256:3333333333333333333333333333333333333333333333333333333333333",
+      natives: {},
+    },
+    "bin/supabase-postgres-start",
+    ["bin/supabase-postgres-start"],
+    {
+      "15.14.1.168": {
+        upstreamVersion: "15.14.1.168",
+        revision: 3,
+        image: "ghcr.io/supabase/cli/postgres:15.14.1.168-r3@sha256:4444444444444444444444444444444444444444444444444444444444444",
+        natives: {},
+      },
+    },
+  ),
+};
+`;
 
 describe("validateSlimReleasePublishedPayload", () => {
   test("rejects a newline injected into upstream_version", () => {
@@ -227,183 +203,212 @@ describe("validateSlimReleasePublishedPayload", () => {
   });
 });
 
-describe("planArtifactCatalogUpdate", () => {
-  test("pins to the highest committed revision, writing every native target's digests", async () => {
-    const digests = nativeDigests("c");
-    const io: RevisionIo = {
-      listReleaseTags: async () => [
-        "postgrest-v16.3-r0",
-        "postgrest-v16.3-r1",
-        "postgrest-v16.3-r2",
-        "unrelated-tag",
-      ],
-      fetchChecksums: async (service, releaseVersion) =>
-        service === "postgrest" && releaseVersion === "v16.3-r2"
-          ? checksumsFor("postgrest", "v16.3-r2", digests)
-          : undefined,
-      imageDigest: async () => digest("d"),
-      s3Sha256: matchingS3("postgrest", "v16.3-r2", digests),
-    };
+describe("planSlimUpdates", () => {
+  test("hotfix only: a higher committed revision of the pinned upstream", () => {
+    const updates = planSlimUpdates(plannerFixture, "postgrest", ["postgrest-v16.2-r1"]);
 
-    const plan = await planArtifactCatalogUpdate({
-      baseDockerfile: "FROM postgrest/postgrest:v16.2 AS postgrest\n",
-      dockerfile: "FROM postgrest/postgrest:v16.3 AS postgrest\n",
-      catalog: fixture,
-      io,
-    });
-
-    expect(plan.skipped).toEqual([]);
-    expect(plan.updates).toEqual([
+    expect(updates).toEqual([
       {
-        service: "postgrest",
-        version: "v16.3",
-        revision: 2,
-        previousVersion: "v16.2",
-        target: "default",
-      },
-    ]);
-    expect(plan.source).toContain('upstreamVersion: "v16.3"');
-    expect(plan.source).toContain("revision: 2");
-    expect(plan.source).toContain(
-      `image: "ghcr.io/supabase/cli/postgrest:v16.3-r2@${digest("d")}"`,
-    );
-    for (const target of NATIVE_TARGETS) {
-      expect(plan.source).toContain(`"${target}": { archive: "${digests[target].archive}"`);
-      expect(plan.source).toContain(`manifest: "${digests[target].manifest}" }`);
-    }
-    // The other postgres line is untouched.
-    expect(plan.source).toContain('placeholderPin("postgres", "15.14.1.168")');
-  });
-
-  test("a legacy release with no -rN tag is a blocking missing pin", async () => {
-    const io: RevisionIo = {
-      listReleaseTags: async () => ["postgrest-v16.3"],
-      fetchChecksums: async () => undefined,
-      imageDigest: async () => undefined,
-      s3Sha256: async () => undefined,
-    };
-
-    const plan = await planArtifactCatalogUpdate({
-      baseDockerfile: "FROM postgrest/postgrest:v16.2 AS postgrest\n",
-      dockerfile: "FROM postgrest/postgrest:v16.3 AS postgrest\n",
-      catalog: fixture,
-      io,
-    });
-
-    expect(plan.updates).toEqual([]);
-    expect(plan.source).toBe(fixture);
-    expect(plan.skipped).toEqual([
-      {
-        alias: "postgrest",
-        reason: "postgrest:v16.3 has no published slim-services revision.",
-        blocking: true,
+        kind: "hotfix",
+        line: undefined,
+        branch: "slim-hotfix/postgrest",
+        title: "chore(stack): pin postgrest v16.2-r1",
+        fromRelease: "v16.2-r0",
+        toUpstream: "v16.2",
+        toRelease: "v16.2-r1",
       },
     ]);
   });
 
-  test("a longer upstream version's release tag does not satisfy a prefix collision", async () => {
-    const io: RevisionIo = {
-      // A decoy tag for a different (longer) upstream version must not count as v1.79.2's.
-      listReleaseTags: async () => ["storage-v1.79.23-r0"],
-      fetchChecksums: async () => undefined,
-      imageDigest: async () => undefined,
-      s3Sha256: async () => undefined,
-    };
+  test("upgrade only: a newer committed upstream on the same line", () => {
+    const updates = planSlimUpdates(plannerFixture, "postgrest", ["postgrest-v16.4-r0"]);
 
-    const plan = await planArtifactCatalogUpdate({
-      baseDockerfile: "FROM supabase/storage-api:v1.73.0 AS storage\n",
-      dockerfile: "FROM supabase/storage-api:v1.79.2 AS storage\n",
-      catalog: fixture,
-      io,
-    });
-
-    expect(plan.updates).toEqual([]);
-    expect(plan.skipped).toEqual([
+    expect(updates).toEqual([
       {
-        alias: "storage",
-        reason: "storage:v1.79.2 has no published slim-services revision.",
-        blocking: true,
+        kind: "upgrade",
+        line: undefined,
+        branch: "slim-bump/postgrest",
+        title: "chore(stack): bump postgrest to v16.4-r0",
+        fromRelease: "v16.2-r0",
+        toUpstream: "v16.4",
+        toRelease: "v16.4-r0",
       },
     ]);
   });
 
-  test("a stale S3 copy is a blocking error", async () => {
-    const digests = nativeDigests("e");
-    const io: RevisionIo = {
-      listReleaseTags: async () => ["postgrest-v16.3-r0"],
-      fetchChecksums: async () => checksumsFor("postgrest", "v16.3-r0", digests),
-      imageDigest: async () => digest("f"),
-      s3Sha256: async (url) => {
-        const files = nativeFileNames("postgrest", "v16.3-r0", "darwin-arm64");
-        if (url === nativeObjectUrl("postgrest", "v16.3-r0", files.archive)) return hex("stale");
-        return matchingS3("postgrest", "v16.3-r0", digests)(url);
-      },
-    };
+  test("both a hotfix and an upgrade can be planned in the same run", () => {
+    const updates = planSlimUpdates(plannerFixture, "postgrest", [
+      "postgrest-v16.2-r1",
+      "postgrest-v16.4-r0",
+    ]);
 
-    const plan = await planArtifactCatalogUpdate({
-      baseDockerfile: "FROM postgrest/postgrest:v16.2 AS postgrest\n",
-      dockerfile: "FROM postgrest/postgrest:v16.3 AS postgrest\n",
-      catalog: fixture,
-      io,
-    });
-
-    expect(plan.updates).toEqual([]);
-    expect(plan.source).toBe(fixture);
-    expect(plan.skipped).toEqual([
+    expect(updates).toEqual([
       {
-        alias: "postgrest",
-        reason: "S3 copy of v16.3-r0 darwin-arm64 is stale; run the slim-services mirror backfill",
-        blocking: true,
+        kind: "hotfix",
+        line: undefined,
+        branch: "slim-hotfix/postgrest",
+        title: "chore(stack): pin postgrest v16.2-r1",
+        fromRelease: "v16.2-r0",
+        toUpstream: "v16.2",
+        toRelease: "v16.2-r1",
+      },
+      {
+        kind: "upgrade",
+        line: undefined,
+        branch: "slim-bump/postgrest",
+        title: "chore(stack): bump postgrest to v16.4-r0",
+        fromRelease: "v16.2-r0",
+        toUpstream: "v16.4",
+        toRelease: "v16.4-r0",
       },
     ]);
   });
 
-  test("a Dependabot bump older than the catalog pin is a non-blocking, unchanged skip", async () => {
-    const ahead = fixture.replace(
-      'placeholderPin("postgrest", "v16.2")',
-      'placeholderPin("postgrest", "v16.5")',
-    );
-    const io: RevisionIo = {
-      listReleaseTags: async () => {
-        throw new Error("should not be reached for an older bump");
-      },
-      fetchChecksums: async () => undefined,
-      imageDigest: async () => undefined,
-      s3Sha256: async () => undefined,
-    };
+  test("an older committed upstream is a backlog republish: it plans nothing", () => {
+    const updates = planSlimUpdates(plannerFixture, "postgrest", ["postgrest-v16.1-r0"]);
 
-    const plan = await planArtifactCatalogUpdate({
-      baseDockerfile: "FROM postgrest/postgrest:v16.2 AS postgrest\n",
-      dockerfile: "FROM postgrest/postgrest:v16.3 AS postgrest\n",
-      catalog: ahead,
-      io,
-    });
-
-    expect(plan.updates).toEqual([]);
-    expect(plan.source).toBe(ahead);
-    expect(plan.skipped).toEqual([
-      {
-        alias: "postgrest",
-        reason: "postgrest v16.3 is older than the catalog pin v16.5.",
-        blocking: false,
-      },
-    ]);
-    expect(plan.skipped.some((skip) => skip.blocking)).toBe(false);
+    expect(updates).toEqual([]);
   });
 
-  test("refuses a tag that would escape the catalog string", async () => {
-    await expect(
-      planArtifactCatalogUpdate({
-        dockerfile: 'FROM supabase/gotrue:v1" AS gotrue\n',
-        catalog: fixture,
-        io: {
-          listReleaseTags: async () => [],
-          fetchChecksums: async () => undefined,
-          imageDigest: async () => undefined,
-          s3Sha256: async () => undefined,
-        },
-      }),
-    ).rejects.toThrow(InvalidPayloadError);
+  test("postgres: upgrade on the 17 line, hotfix on the 15 line, a major-18 release ignored", () => {
+    const updates = planSlimUpdates(postgresPlannerFixture, "postgres", [
+      "postgres-17.11.0.002-r0",
+      "postgres-15.14.1.168-r4",
+      "postgres-18.0.0.001-r0",
+    ]);
+
+    expect(updates).toEqual([
+      {
+        kind: "upgrade",
+        line: "17",
+        branch: "slim-bump/postgres-17",
+        title: "chore(stack): bump postgres to 17.11.0.002-r0",
+        fromRelease: "17.6.1.168-r1",
+        toUpstream: "17.11.0.002",
+        toRelease: "17.11.0.002-r0",
+      },
+      {
+        kind: "hotfix",
+        line: "15",
+        branch: "slim-hotfix/postgres-15",
+        title: "chore(stack): pin postgres 15.14.1.168-r4",
+        fromRelease: "15.14.1.168-r3",
+        toUpstream: "15.14.1.168",
+        toRelease: "15.14.1.168-r4",
+      },
+    ]);
+  });
+
+  test("Studio: a newer date upgrades; the same date with a different sha does not", () => {
+    const studioFixture = `const workloadCatalog = {
+  studio: definition(
+    "studio",
+    {
+      upstreamVersion: "2026.09.14-sha-aaaaaaa",
+      revision: 0,
+      image: "ghcr.io/supabase/cli/studio:2026.09.14-sha-aaaaaaa-r0@sha256:1111111111111111111111111111111111111111111111111111111111111",
+      natives: {},
+    },
+    "bin/studio",
+  ),
+};
+`;
+
+    const sameDate = planSlimUpdates(studioFixture, "studio", ["studio-2026.09.14-sha-bbbbbbb-r0"]);
+    expect(sameDate).toEqual([]);
+
+    const newerDate = planSlimUpdates(studioFixture, "studio", [
+      "studio-2026.09.28-sha-ccccccc-r0",
+    ]);
+    expect(newerDate).toEqual([
+      {
+        kind: "upgrade",
+        line: undefined,
+        branch: "slim-bump/studio",
+        title: "chore(stack): bump studio to 2026.09.28-sha-ccccccc-r0",
+        fromRelease: "2026.09.14-sha-aaaaaaa-r0",
+        toUpstream: "2026.09.28-sha-ccccccc",
+        toRelease: "2026.09.28-sha-ccccccc-r0",
+      },
+    ]);
+  });
+
+  test("a non-comparable version (OrioleDB-style suffix) is ignored", () => {
+    const updates = planSlimUpdates(plannerFixture, "postgrest", ["postgrest-v16.2-orioledb-r0"]);
+
+    expect(updates).toEqual([]);
+  });
+
+  test("a legacy tag with no -rN is ignored", () => {
+    const updates = planSlimUpdates(plannerFixture, "postgrest", ["postgrest-v16.4"]);
+
+    expect(updates).toEqual([]);
+  });
+
+  test("postgrest tags never match postgres, even as a prefix", () => {
+    const updates = planSlimUpdates(postgresPlannerFixture, "postgres", [
+      "postgrest-v16.4-r0",
+      "postgres-17.11.0.002-r0",
+    ]);
+
+    expect(updates).toEqual([
+      {
+        kind: "upgrade",
+        line: "17",
+        branch: "slim-bump/postgres-17",
+        title: "chore(stack): bump postgres to 17.11.0.002-r0",
+        fromRelease: "17.6.1.168-r1",
+        toUpstream: "17.11.0.002",
+        toRelease: "17.11.0.002-r0",
+      },
+    ]);
+  });
+
+  test("branch and title carry no -<line> suffix for a service with a single line", () => {
+    const updates = planSlimUpdates(plannerFixture, "storage", ["storage-v1.74.0-r0"]);
+
+    expect(updates).toEqual([
+      {
+        kind: "upgrade",
+        line: undefined,
+        branch: "slim-bump/storage",
+        title: "chore(stack): bump storage to v1.74.0-r0",
+        fromRelease: "v1.73.0-r0",
+        toUpstream: "v1.74.0",
+        toRelease: "v1.74.0-r0",
+      },
+    ]);
+  });
+
+  test("rejects an emitted value that fails the anchored patterns, even from a trusted-looking catalog", () => {
+    // The catalog's own pinned upstream carries a space here — never written by `refreshCatalogPin`
+    // (which validates every field it resolves), but this simulates a corrupted catalog, or a
+    // release tag whose upstream portion isn't newline-only-unsafe (`.` already excludes
+    // newlines) yet still fails `UPSTREAM_VERSION_PATTERN`. Ruling 6 requires every value the
+    // planner emits to be checked, regardless of source.
+    const adversarial = `const workloadCatalog = {
+  rest: definition(
+    "postgrest",
+    {
+      upstreamVersion: "v16.2 injected",
+      revision: 0,
+      image: "ghcr.io/supabase/cli/postgrest:v16.2-r0@sha256:2222222222222222222222222222222222222222222222222222222222222",
+      natives: {},
+    },
+    "bin/postgrest",
+  ),
+};
+`;
+
+    expect(() =>
+      planSlimUpdates(adversarial, "postgrest", ["postgrest-v16.2 injected-r1"]),
+    ).toThrow(InvalidPayloadError);
+  });
+
+  test("plans nothing for a service the catalog does not model", () => {
+    const updates = planSlimUpdates(plannerFixture, "no-such-service", ["no-such-service-v1.0-r0"]);
+
+    expect(updates).toEqual([]);
   });
 });
 
@@ -583,15 +588,64 @@ describe("refreshCatalogPin", () => {
   });
 });
 
-const vectorFixture = `const workloadCatalog = {
-  vector: definition("vector", placeholderPin("vector", "0.53.0"), "bin/vector"),
-};
-`;
+describe("refreshCatalogPin --release", () => {
+  test("pins exactly the requested committed release, not the highest one", async () => {
+    const digests = nativeDigests("release-0");
+    const io: RevisionIo = {
+      listReleaseTags: async () => ["postgrest-v16.2-r0", "postgrest-v16.2-r1"],
+      fetchChecksums: async () => checksumsFor("postgrest", "v16.2-r0", digests),
+      imageDigest: async () => digest("release-digest-0"),
+      s3Sha256: matchingS3("postgrest", "v16.2-r0", digests),
+    };
 
-/** Manifest fixture for a derived (nix-built) service, agreeing across every native target. */
-function manifestFixture(upstreamImage: string): RevisionIo["fetchManifest"] {
-  return async () => JSON.stringify({ upstream_image: upstreamImage });
-}
+    const result = await refreshCatalogPin({
+      catalog: fixture,
+      service: "postgrest",
+      release: "v16.2-r0",
+      io,
+    });
+
+    expect(result.update).toEqual({
+      service: "postgrest",
+      version: "v16.2",
+      revision: 0,
+      previousVersion: "v16.2",
+      target: "default",
+    });
+  });
+
+  test("fails when the requested release is not committed", async () => {
+    const io: RevisionIo = {
+      listReleaseTags: async () => ["postgrest-v16.2-r0"],
+      fetchChecksums: async () => undefined,
+      imageDigest: async () => undefined,
+      s3Sha256: async () => undefined,
+    };
+
+    await expect(
+      refreshCatalogPin({ catalog: fixture, service: "postgrest", release: "v16.2-r1", io }),
+    ).rejects.toThrow(InvalidPayloadError);
+  });
+
+  test("rejects --upstream and --release given together", async () => {
+    const io: RevisionIo = {
+      listReleaseTags: async () => [],
+      fetchChecksums: async () => undefined,
+      imageDigest: async () => undefined,
+      s3Sha256: async () => undefined,
+    };
+
+    await expect(
+      refreshCatalogPin({
+        catalog: fixture,
+        service: "postgrest",
+        upstream: "v16.2",
+        release: "v16.2-r0",
+        io,
+      }),
+    ).rejects.toThrow(InvalidPayloadError);
+  });
+});
 
 describe("refreshCatalogPin backfills upstreamImage", () => {
   test("resolves a derived service's upstreamImage from its per-target manifests", async () => {
@@ -601,7 +655,7 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
       fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r1", digests),
       imageDigest: async () => digest("z"),
       s3Sha256: matchingS3("analytics", "v1.50.9-r1", digests),
-      fetchManifest: manifestFixture("supabase/logflare:1.50.9"),
+      fetchManifest: async () => JSON.stringify({ upstream_image: "supabase/logflare:1.50.9" }),
     };
 
     const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
@@ -631,7 +685,8 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
       fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r0", digests),
       imageDigest: async () => digest("ad"),
       s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
-      fetchManifest: manifestFixture("docker.io/supabase/logflare:1.50.9@sha256:deadbeef"),
+      fetchManifest: async () =>
+        JSON.stringify({ upstream_image: "docker.io/supabase/logflare:1.50.9@sha256:deadbeef" }),
     };
 
     const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
@@ -695,7 +750,8 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
       fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r0", digests),
       imageDigest: async () => digest("al"),
       s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
-      fetchManifest: manifestFixture('supabase/logflare:1.50.9"] }; import("evil"); //'),
+      fetchManifest: async () =>
+        JSON.stringify({ upstream_image: 'supabase/logflare:1.50.9"] }; import("evil"); //' }),
     };
 
     await expect(refreshCatalogPin({ catalog: fixture, service: "analytics", io })).rejects.toThrow(
@@ -705,55 +761,6 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
 });
 
 describe("against the real catalog", () => {
-  test("every slim Dockerfile alias is a catalog entry", async () => {
-    const dockerfile = await Bun.file("apps/cli/src/shared/services/Dockerfile").text();
-    const catalog = await Bun.file(CATALOG_PATH).text();
-
-    const pins = parseDockerfileServiceImages(dockerfile)
-      .filter((from) => !isOrioleImage(from.image))
-      .map((from) => slimCatalogPin(from.alias, from.image))
-      .filter((pin): pin is NonNullable<typeof pin> => pin !== undefined);
-
-    const resolved = pins.map((pin) => {
-      const releaseVersion = `${pin.version}-r0`;
-      const digests = nativeDigests(pin.service);
-      return {
-        service: pin.service,
-        releaseVersion,
-        checksums: checksumsFor(pin.service, releaseVersion, digests),
-        digests,
-      };
-    });
-
-    const io: RevisionIo = {
-      listReleaseTags: async () =>
-        resolved.map((entry) => `${entry.service}-${entry.releaseVersion}`),
-      fetchChecksums: async (service, releaseVersion) =>
-        resolved.find(
-          (entry) => entry.service === service && entry.releaseVersion === releaseVersion,
-        )?.checksums,
-      imageDigest: async () => digest("real"),
-      s3Sha256: async (url) => {
-        for (const entry of resolved) {
-          for (const target of NATIVE_TARGETS) {
-            const files = nativeFileNames(entry.service, entry.releaseVersion, target);
-            if (url === nativeObjectUrl(entry.service, entry.releaseVersion, files.archive)) {
-              return entry.digests[target].archive;
-            }
-            if (url === nativeObjectUrl(entry.service, entry.releaseVersion, files.manifest)) {
-              return entry.digests[target].manifest;
-            }
-          }
-        }
-        return undefined;
-      },
-    };
-
-    const plan = await planArtifactCatalogUpdate({ dockerfile, catalog, io });
-
-    expect(plan.skipped.filter((skip) => skip.blocking)).toEqual([]);
-  });
-
   test("a real catalog entry survives real formatting and can be refreshed again", async () => {
     const catalog = await Bun.file(CATALOG_PATH).text();
     const pinnedVersion = /definition\(\s*"auth",\s*\{\s*upstreamVersion:\s*"([^"]+)"/.exec(
