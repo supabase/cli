@@ -339,13 +339,10 @@ describe("supabase start (e2e)", () => {
     START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 
-  // Regression coverage for the legacy (non-slim) `timberio/vector:0.58.0-alpine` image, which
-  // ships no `/etc/vector` — `buildVectorEntrypointScript` used to write its config straight into
-  // that nonexistent directory and crash-loop the container (start.go's own health wait then
-  // fails `start` itself). Only Postgres, Logflare, and Vector run; both are excludable in every
-  // other scenario here, so this is the only place that exercises them together.
+  // Only Postgres, Logflare, and Vector run. Every other scenario here excludes Logflare and Vector,
+  // so this is the one that exercises the Vector image's entrypoint end to end.
   it.live(
-    "starts Vector against a real Logflare and reaches healthy (CLI-2512: Vector 0.58 ships no /etc/vector)",
+    "starts Vector against a real Logflare and reaches healthy",
     () =>
       Effect.gen(function* () {
         const projectDir = yield* makeProject("sb-start-e2e-vector-");
