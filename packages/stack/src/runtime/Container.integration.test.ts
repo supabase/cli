@@ -21,7 +21,12 @@ import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { HttpClient } from "effect/unstable/http";
-import { ContainerLaunchError, makeContainerRuntime, type ContainerProcess } from "./Container.ts";
+import {
+  ContainerLaunchError,
+  makeContainerRuntime,
+  removeStackVolumes,
+  type ContainerProcess,
+} from "./Container.ts";
 
 const image = await Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -193,6 +198,54 @@ describe("container process adapter", () => {
         expect(labels["com.docker.compose.oneoff"]).toBe("True");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+  it.live("shares a stack-volume per source and removes it with the stack's volumes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-volume-" });
+      const stackId = (yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4)).replaceAll(
+        "-",
+        "",
+      );
+      const stack = { engine: "docker", stackId, root } as const;
+      yield* Effect.addFinalizer(() => removeStackVolumes(stack).pipe(Effect.ignore));
+      const volumes = listVolumes(stackId, root);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const runtime = yield* makeContainerRuntime({ engine: "docker", root });
+          yield* runtime.prepare(image);
+          const script = (source: string, code: string) =>
+            runtime
+              .launchCommand({
+                image,
+                stackId,
+                instanceId: "stack-volume",
+                env: {},
+                args: ["-e", code],
+                mounts: [{ type: "stack-volume", source, target: "/data", readOnly: false }],
+              })
+              .pipe(
+                Effect.flatMap((process) =>
+                  Effect.all(
+                    [process.stdout.pipe(Stream.decodeText, Stream.mkString), process.exitCode],
+                    { concurrency: "unbounded" },
+                  ),
+                ),
+              );
+          const read = "console.log(await Bun.file('/data/object').exists())";
+          expect(yield* script("uploads", "await Bun.write('/data/object', 'x')")).toEqual(["", 0]);
+          expect(yield* script("uploads", read)).toEqual(["true\n", 0]);
+          expect(yield* script("other-uploads", read)).toEqual(["false\n", 0]);
+        }),
+      );
+      expect(yield* volumes).toHaveLength(2);
+
+      yield* removeStackVolumes(stack);
+
+      expect(yield* volumes).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live(
@@ -1310,6 +1363,28 @@ const exists = (id: string) =>
       }),
     );
     return Number(yield* child.exitCode) === 0;
+  });
+
+const listVolumes = (stackId: string, root: string) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make(
+        "docker",
+        [
+          "volume",
+          "ls",
+          "--quiet",
+          "--filter",
+          `label=com.supabase.stack=${stackId}`,
+          "--filter",
+          `label=com.supabase.stack-root=${root}`,
+        ],
+        { stdin: "ignore" },
+      ),
+    );
+    const output = yield* child.stdout.pipe(Stream.decodeText, Stream.mkString);
+    return output.split("\n").filter((name) => name.length > 0);
   });
 
 const inspectLabels = (id: string) =>

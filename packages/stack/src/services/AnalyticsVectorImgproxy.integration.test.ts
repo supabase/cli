@@ -5,7 +5,7 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
-import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { cleanupStackVolumes, makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-analytics",
@@ -29,6 +29,7 @@ describe("service catalog", () => {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
           const root = yield* makeDockerDatabaseRoot("catalog-optional-data-");
+          yield* cleanupStackVolumes(options(root).stackId, root);
           const secret = "catalog-optional-data-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {

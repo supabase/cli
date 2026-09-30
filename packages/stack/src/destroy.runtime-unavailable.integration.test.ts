@@ -62,6 +62,7 @@ it.live(
         engine: "docker",
         cleanupCommands: [
           `sh -c 'ids=$(docker ps --all --quiet --no-trunc --filter '\\''label=com.supabase.stack=${stack.id}'\\'' --filter '\\''label=com.supabase.stack-root=${resolvedDataRoot}'\\'') && { [ -z "$ids" ] || docker rm --force $ids; }'`,
+          `sh -c 'names=$(docker volume ls --quiet --filter '\\''label=com.supabase.stack=${stack.id}'\\'' --filter '\\''label=com.supabase.stack-root=${resolvedDataRoot}'\\'') && { [ -z "$names" ] || docker volume rm $names; }'`,
           expect.stringMatching(
             new RegExp(
               `^docker run --rm --mount 'type=volume,src=supabase-db-0123456789abcdef,dst=/store' '[^']+' /bin/sh -c 'rm -rf /store/instance-${stack.id}-db-instance'$`,
@@ -189,6 +190,46 @@ it.live(
       yield* fs.writeFileString(
         `${root}/bin/docker`,
         '#!/bin/sh\nif [ "$1" = "ps" ]; then printf "aaa111\\nbbb222\\n"; exit 0; fi\nif [ "$1" = "rm" ] && [ "$2" = "--force" ] && [ "$#" -eq 4 ] && [ "$3" = "aaa111" ] && [ "$4" = "bbb222" ]; then exit 0; fi\necho "unexpected arguments: $*" >&2\nexit 1\n',
+      );
+      expect(Number(yield* run)).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "prints a volume cleanup command that succeeds without volumes and removes every listed volume",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-volumes-" });
+      yield* shimDocker(
+        root,
+        "#!/bin/sh\necho 'Cannot connect to the Docker daemon at tcp://127.0.0.1:1. Is the docker daemon running?' >&2\nexit 1\n",
+      );
+      const stack = yield* create({
+        projectRoot: root,
+        stateRoot: `${root}/state`,
+        cacheRoot: `${root}/cache`,
+        runtime: "docker",
+      });
+      const result = yield* stack.destroy;
+      if (result.runtimeCleanup !== "skipped") return yield* Effect.die("cleanup was not skipped");
+      const volumeCommand = result.cleanupCommands.find((command) => command.includes("volume ls"));
+      if (volumeCommand === undefined) return yield* Effect.die("volume command missing");
+      const run = Effect.scoped(
+        spawner
+          .spawn(ChildProcess.make("/bin/sh", ["-c", volumeCommand]))
+          .pipe(Effect.flatMap((child) => child.exitCode)),
+      );
+
+      yield* fs.writeFileString(
+        `${root}/bin/docker`,
+        '#!/bin/sh\nif [ "$2" = "ls" ]; then exit 0; fi\necho "unexpected arguments: $*" >&2\nexit 1\n',
+      );
+      expect(Number(yield* run)).toBe(0);
+      yield* fs.writeFileString(
+        `${root}/bin/docker`,
+        '#!/bin/sh\nif [ "$2" = "ls" ]; then printf "vol-a\\nvol-b\\n"; exit 0; fi\nif [ "$2" = "rm" ] && [ "$#" -eq 4 ] && [ "$3" = "vol-a" ] && [ "$4" = "vol-b" ]; then exit 0; fi\necho "unexpected arguments: $*" >&2\nexit 1\n',
       );
       expect(Number(yield* run)).toBe(0);
     }).pipe(Effect.scoped, Effect.provide(layer)),

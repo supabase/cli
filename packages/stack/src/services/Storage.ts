@@ -1,10 +1,15 @@
-import { Effect, Schema } from "effect";
+import { Cause, Effect, Ref, Schema, Stream } from "effect";
+import { resolveArtifact } from "../Artifacts.ts";
+import type { ContainerMount, ContainerRuntime } from "../runtime/Container.ts";
+import { mapToServiceError } from "../runtime/Session.ts";
+import { ServiceError } from "../Service.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { databaseConnection, requiredInput, localJwtSecret, serviceJwt } from "./ServiceConfig.ts";
 import { type ProcessRecipeSpec, type StartupCommand } from "./ProcessRecipe.ts";
 
 export const Config = Schema.Struct({
   databaseUrl: Schema.optionalKey(Schema.String),
+  /** Host directory for uploaded objects; see {@link makeUploadsMount} for container runtimes. */
   filePath: Schema.String,
   jwtSecret: Schema.optionalKey(Schema.String),
   jwks: Schema.optionalKey(Schema.String),
@@ -30,9 +35,129 @@ export interface Creation extends Schema.Schema.Type<typeof Creation> {}
 export const initializationCommand = {
   args: [],
   containerEntrypoint: "/slim-runtime/bin/prepare",
+  withoutMounts: true,
 } satisfies StartupCommand & { readonly containerEntrypoint: string };
 
-export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
+// TODO(storage-xattr): bind-mount uploads once Storage works without extended attributes.
+/** How a container sees a Storage `filePath` at `/mnt`; Imgproxy reads the same objects. */
+export type UploadsMount = (mount: {
+  readonly filePath: string;
+  readonly readOnly: boolean;
+  /** The Storage artifact version whose image runs the probe; the default when omitted. */
+  readonly version?: string;
+}) => Effect.Effect<ContainerMount, ServiceError>;
+
+const xattrProbe = `import("/slim-runtime/app/node_modules/fs-xattr/index.js").then(({ setAttributeSync }) => {
+  const fs = require("node:fs");
+  const file = "/probe/.supabase-xattr-probe-" + require("node:crypto").randomUUID();
+  fs.writeFileSync(file, "");
+  try {
+    setAttributeSync(file, "user.supabase.probe", "1");
+    console.log("supported");
+  } catch (error) {
+    if (error.code !== "ENOTSUP" && error.code !== "EOPNOTSUPP") throw error;
+    console.log("unsupported");
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+})`;
+
+/**
+ * Mounts a stack-volume keyed by `filePath` once one exists or when the engine's file sharing
+ * drops the extended attributes Storage writes as object metadata, as Docker Desktop's does, and
+ * otherwise bind-mounts `filePath`. Each `filePath` is decided once per resolver.
+ */
+export const makeUploadsMount = Effect.fn("Storage.makeUploadsMount")(function* (options: {
+  readonly container: ContainerRuntime | undefined;
+  readonly stackId: string;
+  readonly instanceId: string;
+  readonly project?: string;
+}) {
+  const answers = yield* Ref.make<ReadonlyMap<string, boolean>>(new Map());
+  const keepsAttributes = Effect.fn("Storage.probeUploadsDirectory")(function* (
+    container: ContainerRuntime,
+    filePath: string,
+    version: string | undefined,
+  ) {
+    const { image } = yield* resolveArtifact({
+      service: "storage",
+      ...(version === undefined ? {} : { version }),
+    });
+    yield* container.prepare(image);
+    const [stdout, stderr, code] = yield* Effect.scoped(
+      container
+        .launchCommand({
+          image,
+          stackId: options.stackId,
+          instanceId: options.instanceId,
+          service: "storage",
+          ...(options.project === undefined ? {} : { project: options.project }),
+          env: {},
+          entrypoint: "/slim-runtime/node/bin/node",
+          args: ["-e", xattrProbe],
+          mounts: [{ source: filePath, target: "/probe", readOnly: false }],
+        })
+        .pipe(
+          Effect.flatMap((process) =>
+            Effect.all(
+              [
+                process.stdout.pipe(Stream.decodeText, Stream.mkString),
+                process.stderr.pipe(Stream.decodeText, Stream.mkString),
+                process.exitCode,
+              ],
+              { concurrency: "unbounded" },
+            ),
+          ),
+        ),
+    ).pipe(
+      Effect.timeout("1 minute"),
+      Effect.mapError((cause) =>
+        Cause.isTimeoutError(cause)
+          ? new ServiceError({
+              operation: "launch",
+              message: `Timed out checking whether the Storage uploads directory ${filePath} keeps extended attributes`,
+            })
+          : cause,
+      ),
+    );
+    const answer = stdout.trim();
+    if (code === 0 && (answer === "supported" || answer === "unsupported"))
+      return answer === "supported";
+    return yield* new ServiceError({
+      operation: "launch",
+      message: `Unable to check whether the Storage uploads directory ${filePath} keeps extended attributes: ${stderr.trim() || `probe exited with ${code}`}`,
+    });
+  });
+  const uploads: UploadsMount = ({ filePath, readOnly, version }) =>
+    Effect.gen(function* () {
+      const container = options.container;
+      if (container === undefined)
+        return yield* new ServiceError({
+          operation: "launch",
+          message: "Storage uploads mount requires a container runtime",
+        });
+      const known = (yield* Ref.get(answers)).get(filePath);
+      const bind =
+        known ??
+        (!(yield* container.stackVolumeExists({ stackId: options.stackId, source: filePath })) &&
+          (yield* keepsAttributes(container, filePath, version)));
+      if (known === undefined)
+        yield* Ref.update(answers, (current) => new Map(current).set(filePath, bind));
+      const mount: ContainerMount = bind
+        ? { source: filePath, target: "/mnt", readOnly }
+        : { type: "stack-volume", source: filePath, target: "/mnt", readOnly };
+      return mount;
+    }).pipe(Effect.mapError((cause) => mapToServiceError("launch", cause)));
+  return uploads;
+});
+
+/** Fails launches that need `/mnt` when no container resolver was supplied. */
+export const missingUploadsMount: UploadsMount = () =>
+  Effect.fail(
+    new ServiceError({ operation: "launch", message: "Storage uploads mount is not configured" }),
+  );
+
+export const makeSpec = (uploads = missingUploadsMount): ProcessRecipeSpec<Creation> => ({
   service: "storage",
   executable: "bin/storage",
   ports: { http: 5000 },
@@ -100,7 +225,12 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       };
     }),
   args: () => Effect.succeed([]),
-  mounts: (creation, _context) =>
-    Effect.succeed([{ source: creation.config.filePath, target: "/mnt", readOnly: false }]),
+  // TODO(storage-xattr): bind-mount uploads once Storage works without extended attributes.
+  mounts: (creation) =>
+    uploads({
+      filePath: creation.config.filePath,
+      readOnly: false,
+      ...(creation.version === undefined ? {} : { version: creation.version }),
+    }).pipe(Effect.map((mount) => [mount])),
   startupCommands: [initializationCommand],
 });

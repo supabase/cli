@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import type { ContainerMount } from "./runtime/Container.ts";
 
 const PgProveMount = Schema.Struct({
   source: Schema.String,
@@ -75,11 +76,7 @@ export interface ResolvedCommand {
   readonly env: Readonly<Record<string, string>>;
   readonly cwd?: string;
   readonly workingDir?: string;
-  readonly mounts: ReadonlyArray<{
-    readonly source: string;
-    readonly target: string;
-    readonly readOnly: boolean;
-  }>;
+  readonly mounts: ReadonlyArray<ContainerMount>;
 }
 
 /** Describes PostgreSQL clients without managing a database service. */

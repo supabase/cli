@@ -178,6 +178,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           container: {
             prepare: () => Effect.void,
             prepareImage: (image) => Effect.succeed(image),
+            stackVolumeExists: () => Effect.succeed(false),
             launch: () => Effect.die("unused"),
             launchCommand: () => Effect.die("unused"),
           },

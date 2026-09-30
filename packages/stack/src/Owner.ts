@@ -92,12 +92,23 @@ export const sweepContainers = Effect.fn("Owner.sweepContainers")(function* (
     yield* Container.removeStackContainers({ engine: saved.runtime, stackId: saved.id, root });
 });
 
+// TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+/** Removes the stack's containers and then the volumes they mounted; native stacks own neither. */
+const sweepContainersAndVolumes = Effect.fn("Owner.sweepContainersAndVolumes")(function* (
+  saved: Pick<SavedStack, "id" | "runtime">,
+  root: string,
+) {
+  if (saved.runtime === "native") return;
+  yield* Container.removeStackContainers({ engine: saved.runtime, stackId: saved.id, root });
+  yield* Container.removeStackVolumes({ engine: saved.runtime, stackId: saved.id, root });
+});
+
 type NamespaceError =
   | Orchestrator.OrchestratorError
   | Orchestrator.LifecycleError
   | Network.NetworkError
   | State.StateError
-  | Effect.Error<ReturnType<typeof sweepContainers>>;
+  | Effect.Error<ReturnType<typeof sweepContainersAndVolumes>>;
 
 export interface Interface {
   readonly handlers: Handlers;
@@ -107,7 +118,7 @@ export interface Interface {
     readonly stop: Effect.Effect<void, NamespaceError>;
     /**
      * Destroys every instance once in-flight definition changes settle, then releases owned
-     * containers, claims and saved state.
+     * containers, volumes, claims and saved state.
      */
     readonly destroy: Effect.Effect<void, NamespaceError>;
   };
@@ -663,6 +674,9 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   };
 
   const sweep = sweepContainers(options.saved, options.root).pipe(Effect.provideContext(services));
+  const sweepWithVolumes = sweepContainersAndVolumes(options.saved, options.root).pipe(
+    Effect.provideContext(services),
+  );
   const getStackCredentials = readSaved.pipe(
     Effect.flatMap(({ credentials }) =>
       credentials === undefined
@@ -685,7 +699,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       ),
       destroy: orchestrator.destroyNamespace.pipe(
         Effect.andThen(network.release),
-        Effect.andThen(sweep),
+        Effect.andThen(sweepWithVolumes),
         Effect.andThen(options.state.remove(stackId)),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.destroyNamespace"),

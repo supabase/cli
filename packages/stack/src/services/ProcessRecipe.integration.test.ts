@@ -134,6 +134,7 @@ describe("ProcessRecipe launch cleanup", () => {
           const container: ContainerRuntime = {
             prepare: () => Effect.void,
             prepareImage: (image) => Effect.succeed(image),
+            stackVolumeExists: () => Effect.succeed(false),
             launchCommand: () =>
               Effect.gen(function* () {
                 const launch = yield* Ref.updateAndGet(startupLaunches, (value) => value + 1);
@@ -411,6 +412,7 @@ const startupContainer = (tool: {
 }): ContainerRuntime => ({
   prepare: () => Effect.void,
   prepareImage: (image) => Effect.succeed(image),
+  stackVolumeExists: () => Effect.succeed(false),
   launch: () => Effect.die("the main process must not launch after a failed startup"),
   launchCommand: () =>
     Effect.succeed({

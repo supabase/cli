@@ -66,6 +66,8 @@ const fixture = Effect.fn("StackDestroyRuntimeUnavailableTest.fixture")(function
 
 const containerCleanup = (id: string) =>
   `sh -c 'ids=\\$\\(docker ps --all --quiet --no-trunc --filter '\\\\''label=com\\.supabase\\.stack=${id}'\\\\'' --filter '\\\\''label=com\\.supabase\\.stack-root=[^']+/${id}/data'\\\\''\\) && \\{ \\[ -z "\\$ids" \\] \\|\\| docker rm --force \\$ids; \\}'`;
+const volumeCleanup = (id: string) =>
+  `sh -c 'names=\\$\\(docker volume ls --quiet --filter '\\\\''label=com\\.supabase\\.stack=${id}'\\\\'' --filter '\\\\''label=com\\.supabase\\.stack-root=[^']+/${id}/data'\\\\''\\) && \\{ \\[ -z "\\$names" \\] \\|\\| docker volume rm \\$names; \\}'`;
 
 it.live(
   "removes a stack locally and lists its cleanup commands when its engine is unreachable",
@@ -80,7 +82,7 @@ it.live(
         type: "warn",
         message: expect.stringMatching(
           new RegExp(
-            `^Docker was unavailable, so Docker resources for stack ${f.stack.id} were not removed\\. Once it is running, remove them with:\\n  ${containerCleanup(f.stack.id)}$`,
+            `^Docker was unavailable, so Docker resources for stack ${f.stack.id} were not removed\\. Once it is running, remove them with:\\n  ${containerCleanup(f.stack.id)}\\n  ${volumeCleanup(f.stack.id)}$`,
             "u",
           ),
         ),
@@ -102,6 +104,7 @@ it.live("reports skipped engine cleanup and its commands in the JSON result", ()
           engine: "docker",
           cleanupCommands: [
             expect.stringMatching(new RegExp(`^${containerCleanup(f.stack.id)}$`, "u")),
+            expect.stringMatching(new RegExp(`^${volumeCleanup(f.stack.id)}$`, "u")),
           ],
         },
       }),

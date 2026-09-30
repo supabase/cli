@@ -33,7 +33,13 @@ require template serving and shared external JWKS verification respectively.
 Secrets needed by enabled services are passed to the runtime. State and service data live under
 `$SUPABASE_HOME/stacks/<stack-id>/` (`~/.supabase/stacks/<stack-id>/` by default); native artifacts
 use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project directory
-`supabase/.temp/stack-uploads/<stack-id>/`. Functions preparation may build the project's source.
+`supabase/.temp/stack-uploads/<stack-id>/`. Storage records object metadata as extended attributes,
+so before their first Docker or Podman launch in an owner, Storage and Imgproxy each run a short
+Storage-image container that sets one on a temporary file in that directory. When the engine's file
+sharing drops extended attributes, as Docker Desktop's does, both use a stack-labelled engine volume
+instead; once that volume exists it keeps being used, and `stack destroy` removes it. The volume
+belongs to the engine that created it, so switching the Docker context between engines hides
+uploads made through the other one. Functions preparation may build the project's source.
 
 For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
 Podman when `podman info` reaches its engine, then native on Linux x64/arm64 and macOS arm64. Each

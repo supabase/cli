@@ -6,7 +6,7 @@ import { SignJWT } from "jose";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
-import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { cleanupStackVolumes, makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-auth-storage",
@@ -30,6 +30,7 @@ describe("service catalog", () => {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
           const root = yield* makeDockerDatabaseRoot("catalog-auth-storage-");
+          yield* cleanupStackVolumes(options(root).stackId, root);
           const secret = "catalog-auth-storage-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {

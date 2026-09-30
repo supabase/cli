@@ -18,7 +18,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { identifyContainer } from "./ContainerName.ts";
+import { composeProjectFor, identifyContainer } from "./ContainerName.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
@@ -26,6 +26,26 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly cause?: unknown;
   readonly reason?: "engine-unavailable";
 }> {}
+
+// TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+/**
+ * A host bind, an engine volume, or a `stack-volume`: an engine volume named from the stack and
+ * `source`, created on first use and removed only by {@link removeStackVolumes}.
+ */
+export type ContainerMount =
+  | {
+      readonly type?: "bind" | "volume";
+      readonly source: string;
+      readonly target: string;
+      readonly readOnly: boolean;
+      readonly volumeSubpath?: string;
+    }
+  | {
+      readonly type: "stack-volume";
+      readonly source: string;
+      readonly target: string;
+      readonly readOnly: boolean;
+    };
 
 interface ContainerSpec {
   readonly image: string;
@@ -38,13 +58,7 @@ interface ContainerSpec {
   readonly env: Readonly<Record<string, string>>;
   readonly args?: ReadonlyArray<string>;
   readonly entrypoint?: string;
-  readonly mounts?: ReadonlyArray<{
-    readonly source: string;
-    readonly target: string;
-    readonly readOnly: boolean;
-    readonly type?: "bind" | "volume";
-    readonly volumeSubpath?: string;
-  }>;
+  readonly mounts?: ReadonlyArray<ContainerMount>;
   readonly workingDir?: string;
   readonly ports?: ReadonlyArray<number>;
   /** Seconds `docker stop` waits before SIGKILL. Omitted means 10. */
@@ -83,6 +97,12 @@ export interface ContainerRuntime {
   readonly launchCommand: (
     spec: Omit<ContainerSpec, "ports">,
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
+  // TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+  /** Whether a `stack-volume` mount of `source` has already created its volume. */
+  readonly stackVolumeExists: (options: {
+    readonly stackId: string;
+    readonly source: string;
+  }) => Effect.Effect<boolean, ContainerError>;
 }
 
 const errorFor = (operation: string, cause: unknown) =>
@@ -280,6 +300,53 @@ export const makeContainerRuntime = (options: {
       prepareImage(image).pipe(Effect.asVoid),
     );
 
+    const stackVolumeName = (stackId: string, source: string) =>
+      crypto
+        .digest("SHA-256", new TextEncoder().encode(`${stackId}\0${stackRoot}\0${source}`))
+        .pipe(
+          Effect.map(
+            (digest) =>
+              `supabase-stack-${Array.from(digest.subarray(0, 16), (byte) =>
+                byte.toString(16).padStart(2, "0"),
+              ).join("")}`,
+          ),
+          Effect.mapError((cause) => errorFor("volume", cause)),
+        );
+    const stackVolumeExists = Effect.fn("Container.stackVolumeExists")(function* (options: {
+      readonly stackId: string;
+      readonly source: string;
+    }) {
+      const name = yield* stackVolumeName(options.stackId, options.source);
+      return yield* run(["volume", "inspect", name]).pipe(
+        Effect.as(true),
+        Effect.catchTag("ContainerError", (error) =>
+          /no such volume|not found/iu.test(error.message)
+            ? Effect.succeed(false)
+            : Effect.fail(error),
+        ),
+      );
+    });
+    const ensureStackVolume = Effect.fn("Container.ensureStackVolume")(function* (
+      spec: ContainerSpec,
+      source: string,
+    ) {
+      const name = yield* stackVolumeName(spec.stackId, source);
+      // Docker's create is idempotent for an existing name; Podman needs `--ignore`.
+      yield* run([
+        "volume",
+        "create",
+        ...(options.engine === "podman" ? ["--ignore"] : []),
+        "--label",
+        `com.supabase.stack=${spec.stackId}`,
+        "--label",
+        `com.supabase.stack-root=${stackRoot}`,
+        "--label",
+        `com.docker.compose.project=${composeProjectFor(spec.stackId, spec.project)}`,
+        name,
+      ]);
+      return name;
+    });
+
     const launch = Effect.fn("Container.launch")(function* (
       spec: ContainerSpec,
       interactive = false,
@@ -299,6 +366,18 @@ export const makeContainerRuntime = (options: {
         if (!Number.isInteger(port) || port < 1 || port > 65535)
           return yield* errorFor("ports", "Invalid container port");
       }
+      const mounts = yield* Effect.forEach(spec.mounts ?? [], (mount) =>
+        mount.type === "stack-volume"
+          ? ensureStackVolume(spec, mount.source).pipe(
+              Effect.map((source) => ({
+                type: "volume" as const,
+                source,
+                target: mount.target,
+                readOnly: mount.readOnly,
+              })),
+            )
+          : Effect.succeed(mount),
+      );
       const directory = yield* fs
         .makeTempDirectoryScoped({ prefix: "supabase-container-" })
         .pipe(Effect.mapError((cause) => errorFor("environment", cause)));
@@ -340,7 +419,7 @@ export const makeContainerRuntime = (options: {
         ...(oneOff ? ["--label", "com.docker.compose.oneoff=True"] : []),
         "--env-file",
         envPath,
-        ...(spec.mounts ?? []).flatMap((mount) => [
+        ...mounts.flatMap((mount) => [
           "--mount",
           [
             `type=${mount.type ?? "bind"}`,
@@ -598,8 +677,51 @@ export const makeContainerRuntime = (options: {
       prepareImage,
       launch,
       launchCommand: (spec) => launch(spec, true, true),
+      stackVolumeExists,
     };
   });
+
+const runCleanupCommand = Effect.fn("Container.runCleanupCommand")(function* (
+  engine: "docker" | "podman",
+  args: ReadonlyArray<string>,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawner.spawn(
+        ChildProcess.make(engine, args, {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
+      const [stdout, stderr, code] = yield* Effect.all(
+        [
+          child.stdout.pipe(Stream.decodeText, Stream.mkString),
+          child.stderr.pipe(Stream.decodeText, Stream.mkString),
+          child.exitCode,
+        ],
+        { concurrency: "unbounded" },
+      );
+      if (Number(code) !== 0)
+        return yield* errorFor(args[0] ?? "cleanup", stderr.trim() || `Engine exited with ${code}`);
+      return stdout.trim();
+    }),
+  ).pipe(
+    Effect.timeout("30 seconds"),
+    Effect.mapError((cause) =>
+      cause instanceof ContainerError ? cause : errorFor(args[0] ?? "cleanup", cause),
+    ),
+  );
+});
+
+/** Labels that select one stack's containers and volumes on its engine. */
+const stackFilters = (options: { readonly stackId: string; readonly root: string }) => [
+  "--filter",
+  `label=com.supabase.stack=${options.stackId}`,
+  "--filter",
+  `label=com.supabase.stack-root=${options.root}`,
+];
 
 export const removeStackContainers = Effect.fn("Container.removeStackContainers")(
   (options: {
@@ -608,47 +730,8 @@ export const removeStackContainers = Effect.fn("Container.removeStackContainers"
     readonly root: string;
   }) =>
     Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const stackRoot = options.root;
-      const run = Effect.fn("Container.runCleanupCommand")(function* (args: ReadonlyArray<string>) {
-        return yield* Effect.scoped(
-          Effect.gen(function* () {
-            const child = yield* spawner.spawn(
-              ChildProcess.make(options.engine, args, {
-                stdin: "ignore",
-                stdout: "pipe",
-                stderr: "pipe",
-              }),
-            );
-            const [stdout, stderr, code] = yield* Effect.all(
-              [
-                child.stdout.pipe(Stream.decodeText, Stream.mkString),
-                child.stderr.pipe(Stream.decodeText, Stream.mkString),
-                child.exitCode,
-              ],
-              { concurrency: "unbounded" },
-            );
-            if (Number(code) !== 0)
-              return yield* errorFor(
-                args[0] ?? "cleanup",
-                stderr.trim() || `Engine exited with ${code}`,
-              );
-            return stdout.trim();
-          }),
-        ).pipe(
-          Effect.timeout("30 seconds"),
-          Effect.mapError((cause) =>
-            cause instanceof ContainerError ? cause : errorFor(args[0] ?? "cleanup", cause),
-          ),
-        );
-      });
-      const filters = [
-        "--filter",
-        `label=com.supabase.stack=${options.stackId}`,
-        "--filter",
-        `label=com.supabase.stack-root=${stackRoot}`,
-      ];
-      const list = () => run(["ps", "--all", "--quiet", "--no-trunc", ...filters]);
+      const run = (args: ReadonlyArray<string>) => runCleanupCommand(options.engine, args);
+      const list = () => run(["ps", "--all", "--quiet", "--no-trunc", ...stackFilters(options)]);
       // Only the initial listing can show the engine itself is unreachable; a later `rm` or
       // leftover check failing is a per-container cleanup problem instead.
       const ids = (yield* list().pipe(
@@ -699,4 +782,49 @@ export const removeStackContainersCommand = (options: {
     .join(" ");
   // `sh -c` keeps POSIX word splitting of `$ids` when pasted into shells like zsh that skip it.
   return `sh -c ${shellQuote(`ids=$(${options.engine} ps --all --quiet --no-trunc ${filters}) && { [ -z "$ids" ] || ${options.engine} rm --force $ids; }`)}`;
+};
+
+// TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+/** Removes the stack-volumes of this stack and data root; its containers must be removed first. */
+export const removeStackVolumes = Effect.fn("Container.removeStackVolumes")(
+  (options: {
+    readonly engine: "docker" | "podman";
+    readonly stackId: string;
+    readonly root: string;
+  }) =>
+    Effect.gen(function* () {
+      const list = runCleanupCommand(options.engine, [
+        "volume",
+        "ls",
+        "--quiet",
+        ...stackFilters(options),
+      ]).pipe(Effect.map((names) => names.split("\n").filter((name) => name.length > 0)));
+      const names = yield* list;
+      if (names.length === 0) return;
+      yield* runCleanupCommand(options.engine, ["volume", "rm", ...names]).pipe(
+        Effect.catchTag("ContainerError", (failure) =>
+          list.pipe(
+            Effect.flatMap((remaining) =>
+              remaining.some((name) => names.includes(name)) ? Effect.fail(failure) : Effect.void,
+            ),
+          ),
+        ),
+      );
+    }),
+);
+
+// TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+/** Shell command that removes the same volumes as `removeStackVolumes`, succeeding when none remain. */
+export const removeStackVolumesCommand = (options: {
+  readonly engine: "docker" | "podman";
+  readonly stackId: string;
+  readonly root: string;
+}): string => {
+  const filters = [
+    `label=com.supabase.stack=${options.stackId}`,
+    `label=com.supabase.stack-root=${options.root}`,
+  ]
+    .map((filter) => `--filter ${shellQuote(filter)}`)
+    .join(" ");
+  return `sh -c ${shellQuote(`names=$(${options.engine} volume ls --quiet ${filters}) && { [ -z "$names" ] || ${options.engine} volume rm $names; }`)}`;
 };

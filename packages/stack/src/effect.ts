@@ -38,7 +38,7 @@ import {
   type PlannedInstance,
   type SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
-import { removeStackContainersCommand } from "./runtime/Container.ts";
+import { removeStackContainersCommand, removeStackVolumesCommand } from "./runtime/Container.ts";
 import { volumeDataCleanupCommands } from "./storage/DockerDatabaseStorage.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureMessage } from "./internal/failure-message.ts";
@@ -188,9 +188,9 @@ export type ServiceInstances = {
 type AnyInstance = ServiceInstances[Kind];
 /**
  * The outcome of {@link Stack.destroy}. `skipped` means the stack's registration and host data
- * were removed without its container engine, because the engine was unreachable; its containers
- * and any database data in engine volumes remain, and `cleanupCommands` remove them once the
- * engine is running.
+ * were removed without its container engine, because the engine was unreachable; its containers,
+ * Storage volumes, and any database data in engine volumes remain, and `cleanupCommands` remove
+ * them once the engine is running.
  */
 export type DestroyResult =
   | { readonly runtimeCleanup: "complete" }
@@ -368,6 +368,8 @@ const destroyWithoutEngine = Effect.fn("Stack.destroyWithoutEngine")(function* (
       const root = yield* fs.realPath(dataRoot).pipe(Effect.orElseSucceed(() => dataRoot));
       const cleanupCommands = [
         removeStackContainersCommand({ engine, stackId: id, root }),
+        // TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+        removeStackVolumesCommand({ engine, stackId: id, root }),
         ...(yield* volumeDataCleanupCommands({ engine, root, fs, path })),
       ];
       if (current !== undefined) {

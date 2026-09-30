@@ -2,7 +2,8 @@
 
 Permanently removes the selected managed namespace, its service registrations,
 owned database data, port claims, and attached jobs. Caller-owned Storage upload
-files remain. The experimental feature flag controls command registration.
+files remain; Storage volumes used where the engine's file sharing lacks extended
+attributes are removed. The experimental feature flag controls command registration.
 
 ## Selection and confirmation
 
@@ -10,8 +11,9 @@ Select the current project/branch/name, `--stack <name>`, or `--stack-id <id>`.
 The selectors are mutually exclusive; a missing target fails. Explicit legacy
 `-o/--output` is rejected in favor of `--output-format`.
 
-Interactive text mode asks for confirmation and states that Storage uploads are
-preserved. Non-interactive and machine-output runs require `--yes`. Rejection or
+Interactive text mode asks for confirmation and states that Storage upload files
+are preserved, and for a Docker or Podman stack that uploads kept in any Storage
+volume are deleted. Non-interactive and machine-output runs require `--yes`. Rejection or
 cancellation does not open or destroy a stack. Discovery may create/chmod the
 registry directory to 0700 but does not launch an owner.
 
@@ -25,8 +27,8 @@ When no owner is running and the engine reports that its daemon cannot be
 reached, destruction removes the local namespace and host data anyway, warns on
 stderr that the stack's engine resources were not removed, and exits 0. The
 warning lists the commands that remove them once the engine is running: one for
-the stack's containers, and one per database whose data is kept in an engine
-volume. Any other engine failure, an owner starting during destruction, or
+the stack's containers, one for its Storage volumes, and one per database whose
+data is kept in an engine volume. Any other engine failure, an owner starting during destruction, or
 host data the current user cannot delete (such as database files a container
 wrote as its own user), fails the command before anything is removed and keeps
 the stack registered; the last case asks to start the engine and retry.
@@ -35,8 +37,9 @@ the stack registered; the last case asks to start the engine and retry.
 
 Reads identity/state under `<SUPABASE_HOME or ~/.supabase>/stacks/<id>/` and, for
 implicit selection, the project's canonical Git context. Removes only the
-selected namespace's owned state/data; other stack namespaces and caller-owned
-uploads are preserved. The independent artifact cache is retained. Communicates
+selected namespace's owned state/data, including its Storage volumes; other
+stack namespaces and caller-owned uploads under `supabase/.temp/stack-uploads/`
+are preserved. The independent artifact cache is retained. Communicates
 with the local owner and selected runtime, with no hosted API calls. Shared
 routing/settings can read project configuration and profiles.
 

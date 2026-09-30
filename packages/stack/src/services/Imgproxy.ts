@@ -1,8 +1,12 @@
 import { Effect, Schema } from "effect";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
+import { missingUploadsMount } from "./Storage.ts";
 
-export const Config = Schema.Struct({ filePath: Schema.optionalKey(Schema.String) });
+export const Config = Schema.Struct({
+  /** The Storage `filePath` whose objects this instance reads. */
+  filePath: Schema.optionalKey(Schema.String),
+});
 
 export interface Config extends Schema.Schema.Type<typeof Config> {}
 export const Endpoints = Schema.Struct({ http: Schema.optionalKey(EndpointIntent) });
@@ -12,7 +16,7 @@ export const Creation = serviceCreation("imgproxy", Config, Endpoints);
 
 export interface Creation extends Schema.Schema.Type<typeof Creation> {}
 
-export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
+export const makeSpec = (uploads = missingUploadsMount): ProcessRecipeSpec<Creation> => ({
   service: "imgproxy",
   executable: "bin/imgproxy",
   ports: { http: 5001 },
@@ -28,11 +32,12 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
     });
   },
   args: () => Effect.succeed([]),
+  // TODO(storage-xattr): bind-mount uploads once Storage works without extended attributes.
   mounts: (creation) =>
-    Effect.succeed(
-      creation.config.filePath === undefined
-        ? []
-        : [{ source: creation.config.filePath, target: "/mnt", readOnly: true }],
-    ),
+    creation.config.filePath === undefined
+      ? Effect.succeed([])
+      : uploads({ filePath: creation.config.filePath, readOnly: true }).pipe(
+          Effect.map((mount) => [mount]),
+        ),
   startupCommands: [],
 });

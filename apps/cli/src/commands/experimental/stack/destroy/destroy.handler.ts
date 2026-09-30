@@ -76,7 +76,11 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     const confirmed = yield* promptYesNo(
       output,
       yes,
-      `Permanently destroy stack ${target.id} at ${target.projectRoot} and its owned data? Storage upload files will be preserved.`,
+      `Permanently destroy stack ${target.id} at ${target.projectRoot} and its owned data? ${
+        target.definition?.runtime === "native"
+          ? "Storage upload files will be preserved."
+          : "Storage upload files will be preserved; uploads kept in any Storage volume will be deleted."
+      }`,
       false,
     );
     if (!confirmed)

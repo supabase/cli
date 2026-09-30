@@ -25,6 +25,7 @@ import { accepts } from "../Ports.ts";
 import {
   type ContainerError,
   type ContainerProcess,
+  type ContainerMount,
   type ContainerRuntime,
 } from "../runtime/Container.ts";
 import { awaitCommandOutput } from "../runtime/CommandOutput.ts";
@@ -50,17 +51,13 @@ import {
   type ServiceEndpoint,
 } from "./Recipe.ts";
 
-interface RecipeMount {
-  readonly source: string;
-  readonly target: string;
-  readonly readOnly: boolean;
-}
-
 export interface StartupCommand {
   readonly args: ReadonlyArray<string>;
   readonly nativeExecutable?: string;
   readonly containerEntrypoint?: string;
   readonly skipInContainer?: boolean;
+  /** Runs without the service's mounts, for setup that never reads or writes service files. */
+  readonly withoutMounts?: boolean;
 }
 
 export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown>> {
@@ -89,7 +86,7 @@ export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown
   readonly mounts: (
     creation: C,
     context: { readonly container: boolean },
-  ) => Effect.Effect<ReadonlyArray<RecipeMount>, ServiceError>;
+  ) => Effect.Effect<ReadonlyArray<ContainerMount>, ServiceError>;
   readonly startupCommands: ReadonlyArray<StartupCommand>;
   readonly enabledPort?: (creation: C, name: string) => boolean;
   readonly containerPort?: (creation: C, name: string, port: number) => number;
@@ -103,7 +100,7 @@ export interface ResolvedStartupCommand {
   readonly executable: string;
   readonly entrypoint?: string;
   readonly env: Readonly<Record<string, string>>;
-  readonly mounts: ReadonlyArray<RecipeMount>;
+  readonly mounts: ReadonlyArray<ContainerMount>;
 }
 
 export const startupEndpointsFor = <C extends RecipeCreation<ServiceKind, unknown>>(
@@ -141,7 +138,10 @@ export const resolveStartupCommand = <C extends RecipeCreation<ServiceKind, unkn
       env: yield* context.container
         ? spec.env(creation, endpoints, true)
         : (spec.nativeStartupEnv ?? spec.env)(creation, endpoints, false),
-      mounts: yield* spec.mounts(creation, { container: context.container }),
+      mounts:
+        command.withoutMounts === true
+          ? []
+          : yield* spec.mounts(creation, { container: context.container }),
     };
   });
 

@@ -1,5 +1,6 @@
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Crypto, Effect, FileSystem, Path, Stream } from "effect";
+import { removeStackVolumes } from "../src/runtime/Container.ts";
 import { volumeNameFor } from "../src/storage/DockerDatabaseStorage.ts";
 import { cleanupDockerRoot } from "./docker-cleanup.ts";
 
@@ -81,3 +82,10 @@ export const makeDockerDatabaseRoot = Effect.fn("DockerTest.makeDatabaseRoot")(
       return root;
     }),
 );
+
+// TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+/** Removes the stack-volumes that services launched with this stack and root create, on scope close. */
+export const cleanupStackVolumes = (stackId: string, root: string) =>
+  Effect.addFinalizer(() =>
+    removeStackVolumes({ engine: "docker", stackId, root }).pipe(Effect.catchCause(Effect.die)),
+  );
