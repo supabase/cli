@@ -79,8 +79,10 @@ jobs:
 
       # Reconciles the service against every committed slim-services release (`planSlimUpdates`),
       # not just the release that triggered this dispatch — this run is idempotent and safe to
-      # receive out of order. Written to a file, not a $GITHUB_OUTPUT multi-line value: each line
-      # is field-separated with `\x1f` (see `updateLine`), which a later step reads directly.
+      # receive out of order. Records go only to `--output` (never stdout): each line is
+      # field-separated with `\x1f` (see `updateLine`), which a later step reads directly. Any
+      # `::warning ::…` the planner emits (an ignored tag, say) prints to this step's own stdout
+      # instead, so it can never be mistaken for a malformed record.
       - name: Plan updates
         id: plan
         env:
@@ -89,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           bun .github/scripts/sync-artifacts-catalog.ts plan-updates --service "$SERVICE" --format lines \
-            > "${RUNNER_TEMP}/slim-updates.tsv"
+            --output "${RUNNER_TEMP}/slim-updates.tsv"
           count="$(wc -l < "${RUNNER_TEMP}/slim-updates.tsv" | tr -d ' ')"
           echo "count=${count}" >>"$GITHUB_OUTPUT"
 
@@ -143,6 +145,7 @@ jobs:
         if: steps.plan.outputs.count != '0'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           SERVICE: ${{ steps.validate.outputs.service }}
           RELEASE_VERSION: ${{ steps.validate.outputs.release_version }}
           BASE_SHA: ${{ steps.base.outputs.sha }}
@@ -151,7 +154,10 @@ jobs:
           set -euo pipefail
           manual_prefix="bun .github/scripts/sync-artifacts-catalog.ts --service ${SERVICE} --release"
 
-          while IFS=$'\x1f' read -r kind branch title release from; do
+          # Read the records on fd 3, not stdin: every command the loop body runs (`bun`, `gh`,
+          # `git`) otherwise shares stdin with the `read`, and any of them consuming a byte of it
+          # would swallow the rest of the file's records.
+          while IFS=$'\x1f' read -r -u 3 kind branch title release from; do
             if [ -z "$kind" ] || [ -z "$branch" ] || [ -z "$title" ] || [ -z "$release" ] || [ -z "$from" ]; then
               echo "::error ::Malformed plan-updates line: kind='${kind}' branch='${branch}' title='${title}' release='${release}' from='${from}'."
               exit 1
@@ -186,8 +192,12 @@ jobs:
             else
               action="pins"
             fi
-            body="$(printf 'supabase/slim-services published %s. This %s %s from %s to %s.\n\nhttps://github.com/supabase/slim-services/releases/tag/%s-%s\n\nThis branch is rewritten from %s whenever a newer relevant release arrives.\n' \
-              "$RELEASE_VERSION" "$action" "$SERVICE" "$from" "$release" "$SERVICE" "$release" "$DEFAULT_BRANCH")"
+            # Names the release this PR actually pins as the subject; the dispatch's triggering
+            # release (RELEASE_VERSION) can differ from it (a hotfix dispatch commonly also
+            # yields an unrelated upgrade on the same line), so it's only mentioned, not implied
+            # to be what changed.
+            body="$(printf 'This %s %s from %s to %s.\n\nhttps://github.com/supabase/slim-services/releases/tag/%s-%s\n\nPlanned after supabase/slim-services published %s. This branch is rewritten from %s whenever a newer relevant release arrives.\n' \
+              "$action" "$SERVICE" "$from" "$release" "$SERVICE" "$release" "$RELEASE_VERSION" "$DEFAULT_BRANCH")"
 
             existing="$(gh pr list --head "$branch" --base "$DEFAULT_BRANCH" --state open --json number --jq '.[0].number // empty')"
             if [ -n "$existing" ]; then
@@ -204,4 +214,4 @@ jobs:
               echo "::error ::Pushed ${branch} but failed to open a pull request. Run manually: ${manual_prefix} ${release}, then open a pull request from ${branch} against ${DEFAULT_BRANCH} by hand."
               exit 1
             fi
-          done < "${RUNNER_TEMP}/slim-updates.tsv"
+          done 3< "${RUNNER_TEMP}/slim-updates.tsv"
