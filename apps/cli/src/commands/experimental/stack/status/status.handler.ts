@@ -10,6 +10,7 @@ import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { bold, gray, green, red, yellow } from "../../../../command-internal/colors.ts";
 import {
+  connectionEnv,
   renderStackSummary,
   serviceState,
   stackConnections,
@@ -77,6 +78,8 @@ type StackReport = {
     readonly message: string;
     readonly paths?: ReadonlyArray<string>;
   };
+  /** The `status --env` connection map, degrading to what's available when credentials or the owner are unreachable. */
+  readonly env: Readonly<Record<string, string>>;
 };
 
 const mapTargetError = (error: StackTargetError) =>
@@ -159,6 +162,7 @@ const reportFor = (
   observed: ReadonlyArray<ObservedService>,
   members: ReadonlyArray<{ readonly id: string; readonly activation: string }>,
   configDrift: StackReport["config_drift"],
+  env: StackReport["env"],
 ): StackReport => {
   const services = observed.map(serviceReport);
   const endpoints = stackEndpoints(
@@ -191,6 +195,7 @@ const reportFor = (
     services,
     endpoints,
     config_drift: configDrift,
+    env,
   };
 };
 
@@ -418,11 +423,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
           memberIds.has(instance.id) ? [{ service: instance.service, observation }] : [],
         ),
       );
-      const values = stackEnvValues(
-        { urls: connections, credentials: identity },
-        connections.database === undefined ? {} : { databaseUrl: connections.database },
-        envNames,
-      );
+      const values = stackEnvValues(connections, identity, envNames);
       if (output.format === "text") yield* output.raw(yield* encodeStackEnv(values));
       else yield* output.result(values);
       return;
@@ -434,22 +435,22 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
         ({ instance }) => memberIds.has(instance.id) && instance.service === "functions",
       ),
     );
+    const credentials = yield* summaryCredentials(stack.credentials.get, output.warn);
+    const connections = stackConnections(
+      observed.observed.flatMap(({ instance, observation }) =>
+        memberIds.has(instance.id) ? [{ service: instance.service, observation }] : [],
+      ),
+    );
     const report = reportFor(
       target.definition,
       target.owner,
       observed.observed,
       observed.members,
       config,
+      connectionEnv(connections, credentials),
     );
     if (output.format === "text")
-      yield* output.raw(
-        render(
-          report,
-          observed.observed,
-          observed.members,
-          yield* summaryCredentials(stack.credentials.get, output.warn),
-        ),
-      );
+      yield* output.raw(render(report, observed.observed, observed.members, credentials));
     else yield* output.success("", report);
   });
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));

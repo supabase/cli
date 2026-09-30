@@ -450,16 +450,14 @@ describe("stack start (compiled e2e)", () => {
             env.stdout,
           );
           expect(Object.keys(variables)).toEqual([
+            "API_URL",
             "DB_URL",
-            "ANON_KEY",
-            "SERVICE_ROLE_KEY",
             "PUBLISHABLE_KEY",
             "SECRET_KEY",
-            "API_URL",
+            "ANON_KEY",
+            "SERVICE_ROLE_KEY",
           ]);
-          expect(variables.DB_URL).toMatch(
-            /^postgresql:\/\/supabase_admin:.+@.+:\d+\/postgres(?:\?.*)?$/u,
-          );
+          expect(variables.DB_URL).toMatch(/^postgresql:\/\/postgres:.+@.+:\d+\/postgres$/u);
           expect(variables.PUBLISHABLE_KEY).toMatch(/^sb_publishable_.+$/u);
           expect(variables.SECRET_KEY).toMatch(/^sb_secret_.+$/u);
 

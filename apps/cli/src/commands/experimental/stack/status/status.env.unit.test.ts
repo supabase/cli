@@ -46,16 +46,13 @@ describe("stack environment overrides", () => {
     Effect.gen(function* () {
       const names = yield* stackEnvOverrides([]);
       const values = stackEnvValues(
-        {
-          urls: {},
-          credentials: {
-            publishableKey: "sb_publishable_saved",
-            secretKey: "sb_secret_saved",
-            anonKey: "asymmetric-anon-token",
-            serviceRoleKey: "asymmetric-service-token",
-          },
-        },
         {},
+        {
+          publishableKey: "sb_publishable_saved",
+          secretKey: "sb_secret_saved",
+          anonKey: "asymmetric-anon-token",
+          serviceRoleKey: "asymmetric-service-token",
+        },
         names,
       );
       expect(values).toEqual({
@@ -71,7 +68,7 @@ describe("stack environment overrides", () => {
     Effect.gen(function* () {
       const names = yield* stackEnvOverrides(["API_URL=NEXT_PUBLIC_API_URL"]);
       expect(names.get("API_URL")).toBe("NEXT_PUBLIC_API_URL");
-      expect(stackEnvValues({ urls: { api: "http://127.0.0.1:54321" } }, {}, names)).toEqual({
+      expect(stackEnvValues({ api: "http://127.0.0.1:54321" }, undefined, names)).toEqual({
         NEXT_PUBLIC_API_URL: "http://127.0.0.1:54321",
       });
 
@@ -83,6 +80,36 @@ describe("stack environment overrides", () => {
         ["API_URL=DB_URL"],
       ]) {
         const error = yield* stackEnvOverrides(entries).pipe(Effect.flip);
+        expect(error.reason).toBe("flags");
+      }
+    }),
+  );
+
+  it.effect("accepts every current variable name and rejects removed S3_PROTOCOL names", () =>
+    Effect.gen(function* () {
+      for (const name of [
+        "API_URL",
+        "DB_URL",
+        "STUDIO_URL",
+        "MCP_URL",
+        "MAILPIT_URL",
+        "PUBLISHABLE_KEY",
+        "SECRET_KEY",
+        "ANON_KEY",
+        "SERVICE_ROLE_KEY",
+      ]) {
+        const names = yield* stackEnvOverrides([`${name}=RENAMED_${name}`]);
+        expect(names.get(name)).toBe(`RENAMED_${name}`);
+      }
+      for (const removed of [
+        "S3_PROTOCOL_ACCESS_KEY_ID",
+        "S3_PROTOCOL_ACCESS_KEY_SECRET",
+        "S3_PROTOCOL_REGION",
+        "S3_PROTOCOL_URL",
+        "INBUCKET_URL",
+        "JWT_SECRET",
+      ]) {
+        const error = yield* stackEnvOverrides([`${removed}=RENAMED`]).pipe(Effect.flip);
         expect(error.reason).toBe("flags");
       }
     }),

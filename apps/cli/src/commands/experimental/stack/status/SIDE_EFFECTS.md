@@ -42,23 +42,28 @@ state, health, and activation; sleeping lazy services are marked as starting on
 first request. Service errors follow the tables, and config drift ends the
 output as one muted line unless the configuration drifted. Stack and service IDs appear only
 in JSON. JSON nests only identity fields under `identity`; runtime, lifecycle,
-readiness, composition, services, endpoints, and config drift remain top-level
-fields. `endpoints` also carries `studio.mcp`, Studio's MCP URL, when Studio is
-present. Stack identity, endpoints, and credentials are never telemetry
-properties.
+readiness, composition, services, endpoints, config drift, and `env` remain
+top-level fields. `endpoints` reports only the raw per-member observations
+(`service.endpoint`); it carries no synthetic entries. `env` is the same
+connection map `--env` exports (see below), degrading to whatever is available
+when credentials or the owner are unreachable; it never fails the command.
+Stack identity, endpoints, and credentials are never telemetry properties.
 
 ## Exporting environment variables (`--env`)
 
 `--env` is the explicit environment-export operation. It requires a reachable
-owner and a running primary database, then derives the database URL from the
-observed SQL endpoint and saved database credentials, using the `supabase_admin` role.
-`API_URL` is the shared API listener of any member routed through it, and
-`MCP_URL` is Studio's MCP endpoint. It does not request live
-credentials or launch an owner, and it does not load or compare project
-configuration. Text output emits dotenv assignments;
+owner and a running primary database, then derives `DB_URL` from the observed
+SQL endpoint and the saved database password, using the `postgres` role and no
+query string. `API_URL` is the shared API listener of any member routed
+through it, and `MCP_URL` is `<API_URL>/mcp`, present only when the shared API
+listener is present and Studio is a composition member with an HTTP endpoint.
+It does not request live credentials or launch an owner, and it does not load
+or compare project configuration. Text output emits dotenv assignments;
 JSON and stream-JSON output emit a plain variable map under a successful result.
-Unavailable optional credentials and endpoints are omitted. The derived
-`ANON_KEY` and `SERVICE_ROLE_KEY` values are emitted from the required saved database JWT secret.
+Unavailable optional credentials and endpoints are omitted. The exported
+variable set is `API_URL`, `DB_URL`, `STUDIO_URL`, `MCP_URL`, `MAILPIT_URL`,
+`PUBLISHABLE_KEY`, `SECRET_KEY`, `ANON_KEY`, and `SERVICE_ROLE_KEY`; `ANON_KEY`
+and `SERVICE_ROLE_KEY` are emitted from the required saved database JWT secret.
 
 `--override-name` renames an exported variable, accepting repeated flags or a
 comma-separated list of `EXPORTED_VARIABLE=VALID_ENV_NAME` entries. It requires

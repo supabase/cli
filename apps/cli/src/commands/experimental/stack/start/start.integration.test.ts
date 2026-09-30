@@ -576,6 +576,13 @@ describe("experimental stack start", () => {
               },
             },
             lazy_services: [],
+            env: {
+              DB_URL: "postgresql://postgres:postgres@127.0.0.1:23456/postgres",
+              PUBLISHABLE_KEY: "sb_publishable_test",
+              SECRET_KEY: "sb_secret_test",
+              ANON_KEY: "anon-token",
+              SERVICE_ROLE_KEY: "service-token",
+            },
           },
         }),
       );
@@ -626,14 +633,27 @@ describe("experimental stack start", () => {
       const fixture = fakeStack();
       const json = mockOutput({ format: "json" });
       yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, json)));
-      expect(json.messages.find(({ data }) => data !== undefined)?.data).toMatchObject({
+      const data = json.messages.find(({ data }) => data !== undefined)?.data as {
+        endpoints: Readonly<Record<string, unknown>>;
+      };
+      expect(data).toMatchObject({
         runtime: "native",
         endpoints: {
           "rest.http": { url: "http://127.0.0.1:23457" },
-          "studio.mcp": { port: 23458, url: "http://127.0.0.1:23458/api/mcp" },
         },
         lazy_services: ["pgmeta", "rest", "studio"],
+        env: {
+          API_URL: "http://127.0.0.1:23457",
+          DB_URL: "postgresql://postgres:postgres@127.0.0.1:23456/postgres",
+          STUDIO_URL: "http://127.0.0.1:23458",
+          MCP_URL: "http://127.0.0.1:23457/mcp",
+          PUBLISHABLE_KEY: "sb_publishable_test",
+          SECRET_KEY: "sb_secret_test",
+          ANON_KEY: "anon-token",
+          SERVICE_ROLE_KEY: "service-token",
+        },
       });
+      expect(data.endpoints).not.toHaveProperty("studio.mcp");
 
       yield* fixture.stack.composition.stop;
       const text = mockOutput();
@@ -641,7 +661,7 @@ describe("experimental stack start", () => {
         Effect.provide(layers(root, fixture, text, true, true)),
       );
       expect(text.stdoutText).toMatch(/Project URL +│ http:\/\/127\.0\.0\.1:23457 +│/u);
-      expect(text.stdoutText).toMatch(/MCP +│ http:\/\/127\.0\.0\.1:23458\/api\/mcp +│/u);
+      expect(text.stdoutText).toMatch(/MCP +│ http:\/\/127\.0\.0\.1:23457\/mcp +│/u);
       expect(text.stdoutText).not.toContain("GraphQL");
       expect(text.stdoutText).toMatch(/Secret +│ \S+ +│/u);
       expect(text.stdoutText).toMatch(/rest +│ running · healthy · lazy +│/u);
@@ -650,6 +670,61 @@ describe("experimental stack start", () => {
       expect(text.stdoutText).toContain(
         `Runtime: native\nRun supabase status --env --workdir ${workdir} --stack 'feature demo' to export these values as environment variables.\n`,
       );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("returns the connection env for an already-running stack in JSON", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-already-running-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "already-running"\n[edge_runtime]\nenabled = false\n',
+      );
+      const excluded = ["auth", "realtime", "storage", "functions", "mail", "analytics", "pooler"];
+      const fixture = fakeStack();
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
+      const json = mockOutput({ format: "json" });
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, json)));
+      expect(fixture.composed).toBe(1);
+      const data = json.messages.find(({ data }) => data !== undefined)?.data as {
+        env: Readonly<Record<string, string>>;
+      };
+      expect(data.env).toMatchObject({
+        API_URL: "http://127.0.0.1:23457",
+        MCP_URL: "http://127.0.0.1:23457/mcp",
+        DB_URL: "postgresql://postgres:postgres@127.0.0.1:23456/postgres",
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("returns the connection env for a resumed stack in JSON", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-resumed-env-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "resumed-env"\n[edge_runtime]\nenabled = false\n',
+      );
+      const excluded = ["auth", "realtime", "storage", "functions", "mail", "analytics", "pooler"];
+      const fixture = fakeStack();
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
+      const rest = fixture.members.find(({ service }) => service === "rest");
+      if (rest === undefined) return yield* Effect.die("Expected a REST member");
+      // The database stays running; another member starting keeps the composition short of
+      // fully started, so the next start takes the resumed branch, not the already-running one.
+      fixture.setMemberStatus(rest.id, { lifecycle: "starting", health: "starting" });
+      const json = mockOutput({ format: "json" });
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, json)));
+      expect(fixture.compositionStarts).toBe(2);
+      expect(fixture.composed).toBe(1);
+      const data = json.messages.find(({ data }) => data !== undefined)?.data as {
+        env: Readonly<Record<string, string>>;
+      };
+      expect(data.env.DB_URL).toBe("postgresql://postgres:postgres@127.0.0.1:23456/postgres");
+      expect(data.env.API_URL).toBe("http://127.0.0.1:23457");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
