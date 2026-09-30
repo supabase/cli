@@ -1,7 +1,12 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
-import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
+import {
+  DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
+  DEFAULT_LOCAL_S3_REGION,
+  DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
+  DEFAULT_SIGNING_KEY,
+} from "@supabase/stack/defaults";
 import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
 import { Crypto, Effect, Data, FileSystem, Path, Redacted, Schema, SchemaIssue } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -1234,6 +1239,9 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       filePath: `${storagePath}/${stackId}`,
                       fileSizeLimit: storageFileSizeLimit,
                       s3ProtocolEnabled: validatedConfig.storage.s3_protocol.enabled,
+                      s3AccessKeyId: DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
+                      s3SecretAccessKey: DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
+                      s3Region: DEFAULT_LOCAL_S3_REGION,
                       vectorEnabled: validatedConfig.storage.vector.enabled,
                       vectorMaxBuckets: validatedConfig.storage.vector.max_buckets,
                       vectorMaxIndexes: validatedConfig.storage.vector.max_indexes,

@@ -16,15 +16,14 @@ const variableNames = [
   "SECRET_KEY",
   "ANON_KEY",
   "SERVICE_ROLE_KEY",
-] as const;
-
-/** Names the stack backend used to export, since removed; still worth naming in errors. */
-const removedVariableNames = new Set([
+  "STORAGE_S3_URL",
   "S3_PROTOCOL_ACCESS_KEY_ID",
   "S3_PROTOCOL_ACCESS_KEY_SECRET",
   "S3_PROTOCOL_REGION",
-  "S3_PROTOCOL_URL",
-]);
+] as const;
+
+/** Names the stack backend used to export, since removed; still worth naming in errors. */
+const removedVariableNames = new Set(["S3_PROTOCOL_URL"]);
 
 export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
   Effect.gen(function* () {

@@ -1,5 +1,6 @@
 import { allowedEndpointNames, type ServiceCreation } from "../services/Catalog.ts";
 import type { ServiceEndpoint } from "../services/Recipe.ts";
+import { apiPath as storageApiPath } from "../services/Storage.ts";
 import type { NetworkEndpoint } from "../Network.ts";
 import { ProxyError, type BackendAddress } from "../Proxy.ts";
 import { Data, Effect, Redacted } from "effect";
@@ -37,7 +38,7 @@ export const apiRoute = (service: ServiceCreation["service"]): string | undefine
     case "auth":
       return "/auth/v1";
     case "storage":
-      return "/storage/v1";
+      return storageApiPath;
     case "functions":
       return "/functions/v1";
     case "realtime":
