@@ -1,9 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Effect, Exit, FileSystem, Layer, Path } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- sends a raw SMTP payload for the persistence test.
-import * as Net from "node:net";
+import { Effect, Exit, FileSystem, Layer, Path } from "effect";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 
@@ -35,97 +33,25 @@ const fetchMessages = (endpoint: { readonly host?: string; readonly port: number
     return (yield* response.json) as unknown as MailpitMessages;
   });
 
-interface SmtpStep {
-  readonly command: string;
-  readonly expectedCode: number;
-}
-
-const smtpGreetingCode = 220;
-
-class SmtpScriptError extends Data.TaggedError("SmtpScriptError")<{ readonly message: string }> {}
-
-/** Scripts one SMTP round trip, sending each command only after its expected reply code. */
+/** Sends a test email through Mailpit's HTTP send API rather than a raw SMTP session. */
 const sendTestEmail = (
   endpoint: { readonly host?: string; readonly port: number },
   subject: string,
 ) =>
-  Effect.callback<void, SmtpScriptError>((resume) => {
-    const socket = Net.createConnection({
-      host: endpoint.host ?? "127.0.0.1",
-      port: endpoint.port,
-    });
-    const steps: ReadonlyArray<SmtpStep> = [
-      { command: "EHLO localhost\r\n", expectedCode: 250 },
-      { command: "MAIL FROM:<sender@example.com>\r\n", expectedCode: 250 },
-      { command: "RCPT TO:<recipient@example.com>\r\n", expectedCode: 250 },
-      { command: "DATA\r\n", expectedCode: 354 },
-      {
-        command: `Subject: ${subject}\r\nFrom: sender@example.com\r\nTo: recipient@example.com\r\n\r\nbody\r\n.\r\n`,
-        expectedCode: 250,
-      },
-      { command: "QUIT\r\n", expectedCode: 221 },
-    ];
-    let step = -1;
-    let quitAcknowledged = false;
-    let buffer = "";
-    let settled = false;
-
-    const fail = (message: string) => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      resume(Effect.fail(new SmtpScriptError({ message })));
-    };
-
-    // A completed reply (its final line matches `^\d{3} `) advances the script; anything else fails.
-    const handleReply = (code: number) => {
-      const expected = step < 0 ? smtpGreetingCode : steps[step]?.expectedCode;
-      if (expected === undefined || code !== expected) {
-        fail(`Unexpected SMTP reply ${code} at step ${step}`);
-        return;
-      }
-      step += 1;
-      const next = steps[step];
-      if (next === undefined) {
-        quitAcknowledged = true;
-        socket.end();
-        return;
-      }
-      socket.write(next.command);
-    };
-
-    socket.on("data", (chunk: Buffer) => {
-      buffer += chunk.toString("utf8");
-      for (;;) {
-        const lineEnd = buffer.indexOf("\r\n");
-        if (lineEnd === -1) return;
-        const line = buffer.slice(0, lineEnd);
-        buffer = buffer.slice(lineEnd + 2);
-        const match = /^(\d{3})([ -])/.exec(line);
-        if (match === null) {
-          fail(`Unparseable SMTP line: ${line}`);
-          return;
-        }
-        if (match[2] === "-") continue;
-        handleReply(Number(match[1]));
-        if (settled) return;
-      }
-    });
-    socket.on("error", (error) => fail(error.message));
-    socket.on("close", () => {
-      if (settled) return;
-      settled = true;
-      if (quitAcknowledged) resume(Effect.void);
-      else
-        resume(
-          Effect.fail(
-            new SmtpScriptError({
-              message: "SMTP connection closed before QUIT was acknowledged",
-            }),
-          ),
-        );
-    });
-    return Effect.sync(() => socket.destroy());
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const host = endpoint.host ?? "127.0.0.1";
+    const response = yield* client.execute(
+      HttpClientRequest.post(`http://${host}:${endpoint.port}/api/v1/send`).pipe(
+        HttpClientRequest.bodyJsonUnsafe({
+          From: { Email: "sender@example.com" },
+          To: [{ Email: "recipient@example.com" }],
+          Subject: subject,
+          Text: "body",
+        }),
+      ),
+    );
+    yield* HttpClientResponse.filterStatusOk(response);
   });
 
 describe("service catalog", () => {
@@ -202,7 +128,7 @@ describe("service catalog", () => {
         });
         yield* instance.start;
         yield* instance.ready;
-        yield* sendTestEmail(yield* recipe.endpoint("smtp"), "persistence-test");
+        yield* sendTestEmail(yield* recipe.endpoint("http"), "persistence-test");
         const beforeRestart = yield* fetchMessages(yield* recipe.endpoint("http"));
         expect(beforeRestart.messages.map((message) => message.Subject)).toContain(
           "persistence-test",
@@ -213,6 +139,40 @@ describe("service catalog", () => {
         const afterRestart = yield* fetchMessages(yield* recipe.endpoint("http"));
         expect(afterRestart.messages.map((message) => message.Subject)).toContain(
           "persistence-test",
+        );
+        yield* instance.stop;
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live("keeps a captured email after a Docker mail stop and start", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "catalog-mail-persistence-docker-",
+        });
+        const recipe = yield* makeServiceRecipe(
+          { service: "mail", config: {} },
+          dockerOptions(root),
+        );
+        const instance = yield* makeService(recipe.definition, {
+          id: "mail",
+          config: recipe.creation,
+        });
+        yield* instance.start;
+        yield* instance.ready;
+        yield* sendTestEmail(yield* recipe.endpoint("http"), "persistence-test-docker");
+        const beforeRestart = yield* fetchMessages(yield* recipe.endpoint("http"));
+        expect(beforeRestart.messages.map((message) => message.Subject)).toContain(
+          "persistence-test-docker",
+        );
+        yield* instance.stop;
+        yield* instance.start;
+        yield* instance.ready;
+        const afterRestart = yield* fetchMessages(yield* recipe.endpoint("http"));
+        expect(afterRestart.messages.map((message) => message.Subject)).toContain(
+          "persistence-test-docker",
         );
         yield* instance.stop;
       }),

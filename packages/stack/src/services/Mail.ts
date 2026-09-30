@@ -21,8 +21,8 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   executable: "bin/mailpit",
   ports: { http: 8025, smtp: 1025, pop3: 1110 },
   healthPath: "/readyz",
-  // Mailpit otherwise defaults to a /tmp file named from the current time, shared by name across
-  // parallel instances and deleted on every stop, which loses captured mail on idle sleep.
+  // Mailpit's default /tmp temp-file name collides across parallel native instances, and it
+  // deletes that file on every stop regardless of runtime, losing captured mail.
   instanceDirectory: true,
   env: (_creation, endpoints, container, instanceDir) => {
     const http = endpoints.get("http");

@@ -67,7 +67,6 @@ import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import {
   containerInstancePath,
   ensureOwnedInstanceRoot,
-  isSafeInstanceId,
   removeOwnedInstanceRoot,
 } from "./InstanceRoot.ts";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
@@ -363,7 +362,7 @@ const databaseOwnerFileName = ".supabase-database-owner.json";
 const ensureOwnedRoot = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
-  root: string,
+  parentRoot: string,
   stackId: string,
   instanceId: string,
 ): Effect.Effect<void, DatabaseError> =>
@@ -371,7 +370,7 @@ const ensureOwnedRoot = (
     {
       fs,
       path,
-      root,
+      parentRoot,
       stackId,
       instanceId,
       ownerFileName: databaseOwnerFileName,
@@ -383,7 +382,7 @@ const ensureOwnedRoot = (
 const removeOwnedRoot = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
-  root: string,
+  parentRoot: string,
   stackId: string,
   instanceId: string,
   removeData: Effect.Effect<void, ServiceError>,
@@ -394,7 +393,7 @@ const removeOwnedRoot = (
     {
       fs,
       path,
-      root,
+      parentRoot,
       stackId,
       instanceId,
       ownerFileName: databaseOwnerFileName,
@@ -481,10 +480,8 @@ export const makeDatabase = (
     const prepared = yield* Ref.make<ReadonlyMap<string, PreparedNativeArtifact>>(new Map());
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(String(options.stackId)))
       return yield* databaseError("identity", "Invalid stack id");
-    if (!isSafeInstanceId(options.instanceId))
-      return yield* databaseError("identity", "Invalid instance id");
+    yield* ensureOwnedRoot(fs, path, options.root, String(options.stackId), options.instanceId);
     const instanceRoot = path.join(options.root, options.instanceId);
-    yield* ensureOwnedRoot(fs, path, instanceRoot, String(options.stackId), options.instanceId);
     const container: ContainerRuntime | undefined =
       options.runtime === "native"
         ? undefined
@@ -931,7 +928,7 @@ export const makeDatabase = (
         removeOwnedRoot(
           fs,
           path,
-          instanceRoot,
+          options.root,
           String(options.stackId),
           options.instanceId,
           Effect.gen(function* () {
@@ -952,7 +949,7 @@ export const makeDatabase = (
           ? removeOwnedRoot(
               fs,
               path,
-              instanceRoot,
+              options.root,
               String(options.stackId),
               options.instanceId,
               Effect.void,
@@ -961,7 +958,7 @@ export const makeDatabase = (
           : storage.removeData(postgresVersion(context.config.version));
       return clear.pipe(
         Effect.andThen(
-          ensureOwnedRoot(fs, path, instanceRoot, String(options.stackId), options.instanceId),
+          ensureOwnedRoot(fs, path, options.root, String(options.stackId), options.instanceId),
         ),
         Effect.mapError((cause) => errorFor("reset", cause)),
       );
