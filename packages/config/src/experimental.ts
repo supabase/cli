@@ -47,7 +47,8 @@ export const experimental = Schema.Struct({
   ),
   orioledb_version: Schema.optionalKey(
     Schema.String.annotate({
-      description: "Postgres storage engine version for OrioleDB.",
+      description:
+        "Deprecated: use `db.orioledb_version` instead. Postgres storage engine version for OrioleDB.",
       tags,
     }),
   ),

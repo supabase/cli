@@ -302,7 +302,6 @@ HealthCheckTimeoutError
 HostPostgresClientError
 ImagePrepullError
 InitConfigExistsError
-InitExperimentalRequiredError
 InitParseSettingsError
 InspectCsvqError
 InspectMutuallyExclusiveFlagsError
