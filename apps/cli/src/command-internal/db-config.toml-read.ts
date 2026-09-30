@@ -61,8 +61,10 @@ export interface DbTomlValues {
   /** `[db] major_version`, default 17. */
   readonly majorVersion: number;
   /**
-   * `[experimental] orioledb_version` (env-expanded). Set on a 15/17 project to
-   * rewrite the Postgres image to the OrioleDB tag; `None` for a vanilla project.
+   * `[db] orioledb_version` (env-expanded), falling back to the deprecated
+   * `[experimental] orioledb_version` when the former is absent/empty. Set on a
+   * 15/17 project to rewrite the Postgres image to the OrioleDB tag; `None` for
+   * a vanilla project.
    */
   readonly orioledbVersion: Option.Option<string>;
   /**
@@ -286,7 +288,7 @@ const ENV_OVERRIDABLE_KEYS = [
   "analytics.gcp_project_id",
   "analytics.gcp_project_number",
   "analytics.gcp_jwt_path",
-  "experimental.orioledb_version",
+  "db.orioledb_version",
   "experimental.s3_host",
   "experimental.s3_region",
   "experimental.s3_access_key",
@@ -1274,7 +1276,15 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // checks the four S3 fields below; the image rewrite itself happens in `resolveDbImage`.
   const expandString = (value: unknown): Option.Option<string> =>
     typeof value === "string" ? nonEmptyString(expandEnv(value, lookup)) : Option.none();
-  const orioledbVersion = expandString(experimentalRaw?.["orioledb_version"]);
+  const orioledbVersionRaw =
+    (remoteWins("db.orioledb_version") ? undefined : envOverride("SUPABASE_DB_ORIOLEDB_VERSION")) ??
+    db?.["orioledb_version"];
+  // `db.orioledb_version` wins when present; a non-empty legacy `experimental.orioledb_version`
+  // is still honored (no separate deprecation warning here — `@supabase/config`'s loader already
+  // emits it) so an unmigrated config keeps selecting the OrioleDB image.
+  const orioledbVersion = Option.orElse(expandString(orioledbVersionRaw), () =>
+    expandString(experimentalRaw?.["orioledb_version"]),
+  );
   if (Option.isSome(orioledbVersion) && (majorVersion === 15 || majorVersion === 17)) {
     // Warns (does not fail) when an S3 field still holds an unexpanded `env(VAR)`;
     // matches the established stderr line, with the env var name from the capture.

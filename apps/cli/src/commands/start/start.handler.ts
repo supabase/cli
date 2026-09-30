@@ -1395,14 +1395,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             ...config.db,
             port: values.dbPort,
             major_version: majorVersion,
+            // Matches the already env-overridden value used to select `postgresImage` above;
+            // `postgresExtraEnv` reads this and its sibling S3 fields for its
+            // `POSTGRES_INITDB_ARGS` branch.
+            orioledb_version: orioledbVersion,
             settings: resolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
           },
-          // Matches the already env-overridden value used to select `postgresImage` above;
-          // `postgresExtraEnv` reads this and its sibling S3 fields for its
-          // `POSTGRES_INITDB_ARGS` branch.
           experimental: {
             ...config.experimental,
-            orioledb_version: orioledbVersion,
             s3_host: s3Host,
             s3_region: s3Region,
             s3_access_key: s3AccessKey,

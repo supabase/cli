@@ -257,7 +257,7 @@ const resolveShadowCacheKeyInputs = <E>(
 ): Effect.Effect<Option.Option<ShadowCacheKeyInputs>, E> =>
   Effect.gen(function* () {
     // OrioleDB keeps cluster state in S3, so a PGDATA tar is not a coherent snapshot.
-    const orioledbVersion = input.experimental.orioledb_version;
+    const orioledbVersion = input.db.orioledb_version;
     if (orioledbVersion !== undefined && orioledbVersion.length > 0) return Option.none();
 
     // PG<=14 applies `ALTER ROLE … SET` on the setup session; a snapshot reconnect would

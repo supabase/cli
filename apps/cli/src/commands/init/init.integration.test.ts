@@ -160,7 +160,7 @@ describe("init", () => {
 
       const content = yield* readTextFile(tempDir, "supabase", "config.toml");
       expect(SmolToml.parse(content)).toMatchObject({
-        experimental: { orioledb_version: "15.1.0.150" },
+        db: { orioledb_version: "15.1.0.150" },
       });
       expect(out.stdoutText).toBe("Finished supabase init.\n");
     });

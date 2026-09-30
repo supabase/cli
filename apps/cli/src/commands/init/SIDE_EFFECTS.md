@@ -84,7 +84,7 @@ Try rerunning the command with --debug to troubleshoot the error.
 
 - Uses the invocation cwd directly and does not recurse upward looking for an existing project.
 - The `--force` flag overwrites an existing `supabase/config.toml`.
-- The `--use-orioledb` flag writes the OrioleDB version to `experimental.orioledb_version`; it does not require `--experimental`.
+- The `--use-orioledb` flag writes the OrioleDB version to `db.orioledb_version`; it does not require `--experimental`.
 - `SUPABASE_EXPERIMENTAL_STACK=1` opts the new project into the experimental stack backend: the
   written config includes `[experimental] stack = true` and omits the Docker-era default ports
   (API, database, shadow, pooler, Studio, mail UI, Functions inspector, and Analytics).

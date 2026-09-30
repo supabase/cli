@@ -224,7 +224,7 @@ func InitConfig(params InitParams, fsys afero.Fs) error {
 	c := config.NewConfig()
 	c.ProjectId = params.ProjectId
 	if params.UseOrioleDB {
-		c.Experimental.OrioleDBVersion = "15.1.0.150"
+		c.Db.OrioleDBVersion = "15.1.0.150"
 	}
 	// The supabase init command opts new projects into pg-delta. Existing configs are
 	// unaffected because mergeDefaultValues ejects with this flag false (default stays

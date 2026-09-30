@@ -38,7 +38,7 @@ function renderExpectedGoEject(): string {
   return (
     resolveGoTemplateEscapes(readVendoredTemplate("config.toml"))
       .replace("{{ .ProjectId }}", "demo-project")
-      .replace("{{ .Experimental.OrioleDBVersion }}", "15.1.0.150")
+      .replace("{{ .Db.OrioleDBVersion }}", "15.1.0.150")
       // supabase init always opts new projects into pg-delta; the Go template
       // renders this from a flag only set on the init path.
       .replace("{{ .Experimental.PgDeltaInitEnabled }}", "true")

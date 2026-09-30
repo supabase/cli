@@ -1926,14 +1926,14 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect("parses experimental.orioledb_version (env-expanded) on a 15/17 project", () => {
+  it.effect("parses db.orioledb_version (env-expanded) on a 15/17 project", () => {
     process.env["ORIOLE_VER"] = "16.0.0.1";
     const dir = withConfig(
       [
         "[db]",
         "major_version = 17",
-        "[experimental]",
         'orioledb_version = "env(ORIOLE_VER)"',
+        "[experimental]",
         's3_host = "s3.example.com"',
         's3_region = "us-east-1"',
         's3_access_key = "key"',
@@ -1952,6 +1952,50 @@ describe("readDbToml", () => {
     );
   });
 
+  it.effect(
+    "falls back to a non-empty legacy experimental.orioledb_version when db.orioledb_version is absent",
+    () => {
+      const dir = withConfig(
+        [
+          "[db]",
+          "major_version = 17",
+          "[experimental]",
+          'orioledb_version = "15.1.0.150"',
+          "",
+        ].join("\n"),
+      );
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(Option.getOrNull(v.orioledbVersion)).toBe("15.1.0.150");
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("prefers an explicit db.orioledb_version over a non-empty legacy value", () => {
+    const dir = withConfig(
+      [
+        "[db]",
+        "major_version = 17",
+        'orioledb_version = "17.0.0.1"',
+        "[experimental]",
+        'orioledb_version = "15.1.0.150"',
+        "",
+      ].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.orioledbVersion)).toBe("17.0.0.1");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("warns (does not fail) for an unset S3 env on an OrioleDB project", () => {
     delete process.env["S3_KEY"];
     const writes: Array<string> = [];
@@ -1964,8 +2008,8 @@ describe("readDbToml", () => {
       [
         "[db]",
         "major_version = 15",
-        "[experimental]",
         'orioledb_version = "15.1.0.55"',
+        "[experimental]",
         's3_access_key = "env(S3_KEY)"',
         "",
       ].join("\n"),
@@ -1999,8 +2043,8 @@ describe("readDbToml", () => {
         [
           "[db]",
           "major_version = 15",
-          "[experimental]",
           'orioledb_version = "15.1.0.55"',
+          "[experimental]",
           's3_access_key = "env(S3_KEY_QUIET)"',
           "",
         ].join("\n"),

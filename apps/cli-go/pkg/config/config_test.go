@@ -4,6 +4,7 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"strings"
@@ -1156,5 +1157,107 @@ port = 12345
 		require.NoError(t, config.Load("", fsys))
 		assert.Equal(t, "http://env-override.example/", config.Auth.SiteUrl)
 		assert.Equal(t, uint16(12345), config.Inbucket.Port)
+	})
+}
+
+func TestDeprecatedOrioleDBVersionConfig(t *testing.T) {
+	captureStderr := func(t *testing.T, run func()) string {
+		t.Helper()
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		orig := os.Stderr
+		os.Stderr = w
+		defer func() { os.Stderr = orig }()
+		run()
+		require.NoError(t, w.Close())
+		var out bytes.Buffer
+		_, err = io.Copy(&out, r)
+		require.NoError(t, err)
+		return out.String()
+	}
+
+	t.Run("promotes deprecated [experimental] orioledb_version to [db]", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental]
+orioledb_version = "15.1.0.150"
+`)},
+		}
+		stderr := captureStderr(t, func() {
+			require.NoError(t, config.Load("", fsys))
+		})
+		assert.Equal(t, "15.1.0.150", config.Db.OrioleDBVersion)
+		assert.Contains(t, stderr, "WARN: experimental.orioledb_version is deprecated. Please use db.orioledb_version instead.")
+	})
+
+	t.Run("does not warn when [experimental] orioledb_version is empty", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental]
+orioledb_version = ""
+`)},
+		}
+		stderr := captureStderr(t, func() {
+			require.NoError(t, config.Load("", fsys))
+		})
+		assert.Equal(t, "", config.Db.OrioleDBVersion)
+		assert.NotContains(t, stderr, "orioledb_version is deprecated")
+	})
+
+	t.Run("promotes deprecated [experimental] orioledb_version when [db] is explicitly empty", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental]
+orioledb_version = "x"
+
+[db]
+orioledb_version = ""
+`)},
+		}
+		stderr := captureStderr(t, func() {
+			require.NoError(t, config.Load("", fsys))
+		})
+		assert.Equal(t, "x", config.Db.OrioleDBVersion)
+		assert.Contains(t, stderr, "WARN: experimental.orioledb_version is deprecated. Please use db.orioledb_version instead.")
+	})
+
+	t.Run("prefers explicit [db] orioledb_version over deprecated [experimental]", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental]
+orioledb_version = "15.1.0.150"
+
+[db]
+orioledb_version = "15.1.1.13"
+`)},
+		}
+		stderr := captureStderr(t, func() {
+			require.NoError(t, config.Load("", fsys))
+		})
+		assert.Equal(t, "15.1.1.13", config.Db.OrioleDBVersion)
+		assert.Contains(t, stderr, "WARN: experimental.orioledb_version is deprecated. Please use db.orioledb_version instead.")
+	})
+
+	t.Run("normalizes deprecated [remotes.*.experimental] orioledb_version", func(t *testing.T) {
+		config := NewConfig()
+		config.ProjectId = "abcdefghijklmnopqrst"
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[remotes.staging]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.staging.experimental]
+orioledb_version = "15.1.0.150"
+`)},
+		}
+		stderr := captureStderr(t, func() {
+			require.NoError(t, config.Load("", fsys))
+		})
+		assert.Equal(t, "15.1.0.150", config.Db.OrioleDBVersion)
+		assert.Contains(t, stderr, "WARN: remotes.staging.experimental.orioledb_version is deprecated. Please use remotes.staging.db.orioledb_version instead.")
 	})
 }

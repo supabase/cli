@@ -39,6 +39,8 @@ health_timeout = "2m"
 # The database major version to use. This has to be the same as your remote database's. Run \`SHOW
 # server_version;\` on the remote database to check.
 major_version = 17
+# OrioleDB version to use as the Postgres storage engine. Leave empty to use the default engine.
+orioledb_version = "__ORIOLEDB_VERSION__"
 
 [db.pooler]
 enabled = false
@@ -392,8 +394,6 @@ backend = "postgres"
 
 # Experimental features may be deprecated any time
 [experimental]
-# Configures Postgres storage engine to use OrioleDB (S3)
-orioledb_version = "__ORIOLEDB_VERSION__"
 # Configures S3 bucket URL, eg. <bucket_name>.s3-<region>.amazonaws.com
 s3_host = "env(S3_HOST)"
 # Configures S3 bucket region, eg. us-east-1

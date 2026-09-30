@@ -254,6 +254,91 @@ function normalizeDeprecatedSMTPSections(document: unknown): NormalizedSMTPDocum
   return { document: normalized, deprecatedSections };
 }
 
+interface NormalizedOrioleDBVersionDocument {
+  readonly document: unknown;
+  /**
+   * Dotted paths whose legacy `experimental.orioledb_version` was non-empty, e.g.
+   * `experimental.orioledb_version` or `remotes.staging.experimental.orioledb_version`. Emitted
+   * whether or not the value was actually promoted (an explicit `db.orioledb_version` still
+   * wins, but the legacy key is deprecated either way).
+   */
+  readonly deprecatedPaths: ReadonlyArray<string>;
+}
+
+/**
+ * Promotes a section's legacy `experimental.orioledb_version` to `db.orioledb_version` when the
+ * legacy value is non-empty and `db.orioledb_version` is absent or empty (the init template
+ * always writes `db.orioledb_version = ""`, which must not block the legacy fallback); a
+ * non-empty explicit `db.orioledb_version` always wins over a non-empty legacy value. The legacy
+ * leaf is deleted unconditionally (even when empty) so the decoded `CliConfig` only ever has one
+ * location for the setting. Returns `section` unchanged when there's no legacy key to normalize.
+ */
+function promoteOrioleDBVersion(section: Record<string, unknown>): {
+  readonly section: Record<string, unknown>;
+  readonly warned: boolean;
+} {
+  const experimental = section.experimental;
+  if (!isObject(experimental) || !("orioledb_version" in experimental)) {
+    return { section, warned: false };
+  }
+  const legacyValue = experimental.orioledb_version;
+  const legacyNonEmpty = typeof legacyValue === "string" && legacyValue.length > 0;
+  const db = isObject(section.db) ? section.db : undefined;
+  const dbValue = db?.orioledb_version;
+  const dbHasValue = typeof dbValue === "string" && dbValue.length > 0;
+
+  const normalizedExperimental = { ...experimental };
+  delete normalizedExperimental.orioledb_version;
+
+  const normalizedSection: Record<string, unknown> = {
+    ...section,
+    experimental: normalizedExperimental,
+  };
+  if (legacyNonEmpty && !dbHasValue) {
+    normalizedSection.db = { ...db, orioledb_version: legacyValue };
+  }
+
+  return { section: normalizedSection, warned: legacyNonEmpty };
+}
+
+/**
+ * Rewrites the deprecated `experimental.orioledb_version` (top-level and per `[remotes.*]`) to
+ * `db.orioledb_version`, following the same shape as {@link normalizeDeprecatedSMTPSections}.
+ */
+function normalizeDeprecatedOrioleDBVersion(document: unknown): NormalizedOrioleDBVersionDocument {
+  if (!isObject(document)) {
+    return { document, deprecatedPaths: [] };
+  }
+  const deprecatedPaths: Array<string> = [];
+  let normalized: Record<string, unknown> = { ...document };
+
+  const top = promoteOrioleDBVersion(normalized);
+  normalized = top.section;
+  if (top.warned) {
+    deprecatedPaths.push("experimental.orioledb_version");
+  }
+
+  if (isObject(normalized.remotes)) {
+    normalized = {
+      ...normalized,
+      remotes: Object.fromEntries(
+        Object.entries(normalized.remotes).map(([name, remote]) => {
+          if (!isObject(remote)) {
+            return [name, remote];
+          }
+          const result = promoteOrioleDBVersion(remote);
+          if (result.warned) {
+            deprecatedPaths.push(`remotes.${name}.experimental.orioledb_version`);
+          }
+          return [name, result.section];
+        }),
+      ),
+    };
+  }
+
+  return { document: normalized, deprecatedPaths };
+}
+
 interface NormalizedExternalProvidersDocument {
   readonly document: unknown;
   /** Provider ids (`"linkedin"` | `"slack"`) whose deprecated top-level block was `enabled`. */
@@ -477,7 +562,10 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
     try: () => parseCliConfigDocument(content, format),
     catch: (cause) => new CliConfigParseError({ path: filePath, format, cause }),
   });
-  const { document: normalized, deprecatedSections } = normalizeDeprecatedSMTPSections(document);
+  const { document: smtpNormalized, deprecatedSections } =
+    normalizeDeprecatedSMTPSections(document);
+  const { document: normalized, deprecatedPaths: deprecatedOrioleDBPaths } =
+    normalizeDeprecatedOrioleDBVersion(smtpNormalized);
   // Warn on stderr, writing directly to the real console (bypassing whatever `Console.Console`
   // is ambient) so a caller wrapping this in a deferred/buffered console can't delay or
   // swallow it.
@@ -486,6 +574,12 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
     yield* Console.error(
       `WARN: config section [${section}] is deprecated. Please use [${replacement}] instead.`,
     ).pipe(Effect.provideService(Console.Console, globalThis.console));
+  }
+  for (const path of deprecatedOrioleDBPaths) {
+    const replacement = path.replace(/experimental\.orioledb_version$/, "db.orioledb_version");
+    yield* Console.error(`WARN: ${path} is deprecated. Please use ${replacement} instead.`).pipe(
+      Effect.provideService(Console.Console, globalThis.console),
+    );
   }
 
   // Substitute `env(VAR)` references against `.env`/`.env.local`/ambient env before schema

@@ -2413,6 +2413,142 @@ port = 54324
   });
 });
 
+describe("config io deprecated experimental.orioledb_version back-compat", () => {
+  let warnings: Array<string> = [];
+  let errorSpy: MockInstance<typeof console.error> | undefined;
+
+  function captureWarnings() {
+    warnings = [];
+    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    });
+  }
+
+  afterEach(() => {
+    errorSpy?.mockRestore();
+    errorSpy = undefined;
+  });
+
+  async function loadToml(contents: string) {
+    const cwd = makeTempProject();
+    const path = await runConfigEffect(configTomlPath(cwd));
+    await mkdir(join(cwd, "supabase"), { recursive: true });
+    await writeFile(path, contents);
+    try {
+      return await runConfigEffect(loadCliConfigFile(path));
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
+
+  test("promotes a non-empty legacy experimental.orioledb_version to db.orioledb_version", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[experimental]
+orioledb_version = "15.1.0.150"
+`,
+    );
+
+    expect(loaded.config.db.orioledb_version).toBe("15.1.0.150");
+    expect(loaded.config.experimental.orioledb_version).toBeUndefined();
+    expect(loaded.document).not.toHaveProperty("experimental.orioledb_version");
+    expect(
+      warnings.some((m) =>
+        m.includes(
+          "WARN: experimental.orioledb_version is deprecated. Please use db.orioledb_version instead.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("does not warn and stays absent when the legacy value is an empty string", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[experimental]
+orioledb_version = ""
+`,
+    );
+
+    expect(loaded.config.db.orioledb_version).toBeUndefined();
+    expect(loaded.config.experimental.orioledb_version).toBeUndefined();
+    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+  });
+
+  test("promotes a non-empty legacy value when db.orioledb_version is present but empty", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[db]
+orioledb_version = ""
+
+[experimental]
+orioledb_version = "15.1.0.150"
+`,
+    );
+
+    expect(loaded.config.db.orioledb_version).toBe("15.1.0.150");
+    expect(
+      warnings.some((m) =>
+        m.includes(
+          "WARN: experimental.orioledb_version is deprecated. Please use db.orioledb_version instead.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("an explicit db.orioledb_version wins over a non-empty legacy value, but still warns", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[db]
+orioledb_version = "17.0.0.1"
+
+[experimental]
+orioledb_version = "15.1.0.150"
+`,
+    );
+
+    expect(loaded.config.db.orioledb_version).toBe("17.0.0.1");
+    expect(
+      warnings.some((m) =>
+        m.includes(
+          "WARN: experimental.orioledb_version is deprecated. Please use db.orioledb_version instead.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("normalizes a deprecated remotes.*.experimental.orioledb_version", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[remotes.staging]
+project_id = "stagingrefaaaaaaaaaa"
+
+[remotes.staging.experimental]
+orioledb_version = "15.1.0.150"
+`,
+    );
+
+    const staging = loaded.config.remotes.staging;
+    expect(staging?.db?.orioledb_version).toBe("15.1.0.150");
+    expect(
+      warnings.some((m) =>
+        m.includes(
+          "WARN: remotes.staging.experimental.orioledb_version is deprecated. Please use remotes.staging.db.orioledb_version instead.",
+        ),
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", () => {
   let warnings: Array<string> = [];
   let errorSpy: MockInstance<typeof console.error> | undefined;

@@ -8,4 +8,4 @@ A `supabase/config.toml` file is created in your current working directory. This
 
 In addition to `config.toml`, the `supabase` directory may also contain other Supabase objects, such as `migrations`, `functions`, `tests`, etc.
 
-To use OrioleDB as the Postgres storage engine, run `supabase init --use-orioledb`. The command writes the OrioleDB version to `experimental.orioledb_version` in `supabase/config.toml`; `--experimental` is not required.
+To use OrioleDB as the Postgres storage engine, run `supabase init --use-orioledb`. The command writes the OrioleDB version to `db.orioledb_version` in `supabase/config.toml`; `--experimental` is not required.

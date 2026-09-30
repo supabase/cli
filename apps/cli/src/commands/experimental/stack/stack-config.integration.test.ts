@@ -348,7 +348,18 @@ orioledb_version = "15.1.1.14"
       const orioledbExit = yield* load(orioledb).pipe(Effect.exit);
       expect(Exit.isFailure(orioledbExit)).toBe(true);
       if (Exit.isFailure(orioledbExit))
-        expect(String(orioledbExit.cause)).toContain("experimental.orioledb_version");
+        expect(String(orioledbExit.cause)).toContain("db.orioledb_version");
+
+      // The same rejection applies to the canonical `[db]` location, not just the deprecated
+      // `[experimental]` alias.
+      const orioledbCanonical = yield* project(`project_id = "stack-config-orioledb-db"
+[db]
+orioledb_version = "15.1.1.14"
+`);
+      const orioledbCanonicalExit = yield* load(orioledbCanonical).pipe(Effect.exit);
+      expect(Exit.isFailure(orioledbCanonicalExit)).toBe(true);
+      if (Exit.isFailure(orioledbCanonicalExit))
+        expect(String(orioledbCanonicalExit.cause)).toContain("db.orioledb_version");
 
       const s3 = yield* project(`project_id = "stack-config-experimental-s3"
 [experimental]
