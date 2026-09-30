@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "@effect/vitest";
 import { catalogPins, type ServiceKind } from "@supabase/stack/internal/artifacts";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
-import { isSlimImageRef, toSlimImage } from "../../shared/services/slim-images.ts";
+import { isSlimImageRef, slimCatalogPin, toSlimImage } from "../../shared/services/slim-images.ts";
 import { buildHealthCmdArg } from "../../command-internal/db-bootstrap/docker-create-args.ts";
 import {
   slimWgetHealthcheck,
@@ -102,18 +102,40 @@ const containerImage = Effect.fnUntraced(function* (name: string) {
   return stdout.trim();
 });
 
+/** `kong` has no slim build at all, so this stays fallback-tolerant for the pull-ahead list. */
 function expectedSlimImage(alias: string): string {
   const raw = dockerfileServiceImageRaw(alias);
   return toSlimImage(alias, raw) ?? raw;
 }
 
 /**
+ * The catalog's own pinned image for `alias`'s current Dockerfile tag — read straight from
+ * `catalogPins()`, independent of `toSlimImage`. Design B guarantees every slim-capable alias's
+ * default Dockerfile tag matches a catalog pin (the Dockerfile is generated from the catalog), so
+ * — unlike `expectedSlimImage` above, which still needs to fall back for `kong` — this never
+ * falls back, and a regression to docker.io fails the assertion instead of passing quietly.
+ */
+function expectedPinnedImage(alias: string): string {
+  const raw = dockerfileServiceImageRaw(alias);
+  const pin = slimCatalogPin(alias, raw);
+  if (pin === undefined) {
+    throw new Error(`no slim catalog pin for ${alias} ${raw}`);
+  }
+  const entry = catalogPins().find(
+    (candidate) =>
+      candidate.sourceService === pin.service && candidate.pin.upstreamVersion === pin.version,
+  );
+  if (entry === undefined) {
+    throw new Error(`no catalog pin for ${pin.service} ${pin.version}`);
+  }
+  return entry.pin.image;
+}
+
+/**
  * The Dockerfile aliases whose spec builder switches its healthcheck on `usesSlimImageRuntime`
- * (`*.service.ts`). Whether each one is actually running its slim image today depends on whether
- * the Dockerfile's tag currently matches that service's catalog pin (`expectedSlimImage`) —
- * Dependabot moves that independently for every service, so the assertions below always derive
- * the expected healthcheck from the image actually resolved, never from an assumption that it's
- * one family or the other.
+ * (`*.service.ts`). Every one of them is slim today (`expectedPinnedImage`), but the assertions
+ * below still derive the expected healthcheck from the image actually resolved, not from that
+ * assumption directly.
  */
 type HealthcheckedAlias = "gotrue" | "storage" | "realtime";
 
@@ -321,17 +343,21 @@ describe("supabase start slim images (e2e)", () => {
         });
         expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
 
-        // Each service's expected image follows the Dockerfile: slim when its tag matches the
-        // catalog pin, upstream otherwise (`expectedSlimImage`). Today only auth, pgmeta,
-        // edge-runtime and pooler match — Dependabot moves the Dockerfile independently of the
-        // catalog, so which of these is slim today is not assumed anywhere below.
-        const authImage = expectedSlimImage("gotrue");
-        const realtimeImage = expectedSlimImage("realtime");
-        const storageImage = expectedSlimImage("storage");
+        // Every alias here is slim-capable, and design B guarantees its default Dockerfile tag
+        // matches a catalog pin — so each expected image is read straight from the catalog
+        // (`expectedPinnedImage`), independent of `toSlimImage`.
+        const authImage = expectedPinnedImage("gotrue");
+        const realtimeImage = expectedPinnedImage("realtime");
+        const storageImage = expectedPinnedImage("storage");
+        for (const image of [authImage, realtimeImage, storageImage]) {
+          expect(image).toMatch(/^ghcr\.io\/supabase\/cli\/.+@sha256:[0-9a-f]{64}$/);
+        }
 
-        expect(yield* containerImage(dbContainer)).toBe(expectedSlimImage("pg"));
+        expect(yield* containerImage(dbContainer)).toBe(expectedPinnedImage("pg"));
         expect(yield* containerImage(storageContainer)).toBe(storageImage);
-        expect(yield* containerImage(edgeRuntimeContainer)).toBe(expectedSlimImage("edgeruntime"));
+        expect(yield* containerImage(edgeRuntimeContainer)).toBe(
+          expectedPinnedImage("edgeruntime"),
+        );
         expect(yield* containerImage(authContainer)).toBe(authImage);
         expect(yield* containerImage(realtimeContainer)).toBe(realtimeImage);
 

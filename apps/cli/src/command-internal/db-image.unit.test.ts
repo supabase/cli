@@ -5,12 +5,13 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { afterEach, beforeEach, vi } from "vitest";
+import { catalogPins } from "@supabase/stack/internal/artifacts";
 
 import {
   dockerfileServiceImage,
   dockerfileServiceImageRaw,
 } from "../shared/services/dockerfile-images.ts";
-import { imageTag, toSlimImage } from "../shared/services/slim-images.ts";
+import { imageTag } from "../shared/services/slim-images.ts";
 import { resolveDbImage } from "./db-image.ts";
 
 const currentPostgres = dockerfileServiceImageRaw("pg");
@@ -20,6 +21,25 @@ const currentPostgresTag = imageTag(currentPostgres) ?? "";
 const pg15Image = dockerfileServiceImageRaw("pg15");
 const pg15Tag = imageTag(pg15Image) ?? "";
 const pg14Image = dockerfileServiceImageRaw("pg14");
+
+/**
+ * The catalog's own pinned image for postgres at `tag` — read straight from `catalogPins()`,
+ * independent of `toSlimImage`, so a test asserting against this actually exercises the catalog
+ * lookup instead of passing whether or not it resolves (design B: a default Dockerfile tag always
+ * matches a catalog pin).
+ */
+function expectedPinnedPostgresImage(tag: string): string {
+  const entry = catalogPins().find(
+    (candidate) => candidate.sourceService === "postgres" && candidate.pin.upstreamVersion === tag,
+  );
+  if (entry === undefined) {
+    throw new Error(`no catalog pin for postgres ${tag}`);
+  }
+  return entry.pin.image;
+}
+
+/** A regression to the docker.io fallback must fail an assertion built from this. */
+const GHCR_SLIM_IMAGE_PATTERN = /^ghcr\.io\/supabase\/cli\/.+@sha256:[0-9a-f]{64}$/;
 
 const withTemp = () => mkdtempSync(join(tmpdir(), "db-image-"));
 
@@ -112,16 +132,18 @@ describe("resolveDbImage", () => {
       });
     });
 
-    it.effect("rewrites the current PG15 fallback to the slim registry", () => {
+    it.effect("rewrites the current PG15 default tag to its catalog-pinned slim image", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = withTemp();
+      const pinned = expectedPinnedPostgresImage(pg15Tag);
+      expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 15)).toEqual({
-          image: toSlimImage("pg", pg15Image) ?? pg15Image,
+          image: pinned,
           configImage: pg15Image,
         });
         expect(yield* resolve(dir, 13)).toEqual({
-          image: toSlimImage("pg", pg15Image) ?? pg15Image,
+          image: pinned,
           configImage: pg15Image,
         });
         rmSync(dir, { recursive: true, force: true });
@@ -141,13 +163,15 @@ describe("resolveDbImage", () => {
       });
     });
 
-    it.effect("rewrites a current PG15 pin to the slim registry", () => {
+    it.effect("rewrites a current PG15 pin to its catalog-pinned slim image", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = withTemp();
       writePin(dir, pg15Tag);
+      const pinned = expectedPinnedPostgresImage(pg15Tag);
+      expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 15)).toEqual({
-          image: toSlimImage("pg", pg15Image) ?? pg15Image,
+          image: pinned,
           configImage: pg15Image,
         });
         rmSync(dir, { recursive: true, force: true });
@@ -167,13 +191,15 @@ describe("resolveDbImage", () => {
       });
     });
 
-    it.effect("rewrites the current Dockerfile pin to the slim registry", () => {
+    it.effect("rewrites the current Dockerfile pin to its catalog-pinned slim image", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = withTemp();
       writePin(dir, currentPostgresTag);
+      const pinned = expectedPinnedPostgresImage(currentPostgresTag);
+      expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 17)).toEqual({
-          image: toSlimImage("pg", currentPostgres) ?? currentPostgres,
+          image: pinned,
           configImage: currentPostgres,
         });
         rmSync(dir, { recursive: true, force: true });

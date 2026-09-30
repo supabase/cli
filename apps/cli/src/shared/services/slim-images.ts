@@ -145,6 +145,13 @@ export function imageTag(image: string): string | undefined {
   return tagSeparator === -1 ? undefined : withoutDigest.slice(tagSeparator + 1);
 }
 
+/** The repository portion of `image` (before the tag), the other half of `imageTag`'s split. */
+export function imageRepository(image: string): string | undefined {
+  const withoutDigest = image.split("@")[0] ?? image;
+  const tagSeparator = withoutDigest.lastIndexOf(":");
+  return tagSeparator === -1 ? undefined : withoutDigest.slice(0, tagSeparator);
+}
+
 /** The `@sha256:…` digest suffix of `image`, if it carries one. */
 export function imageDigest(image: string): string | undefined {
   const at = image.indexOf("@");

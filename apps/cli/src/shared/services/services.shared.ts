@@ -16,6 +16,8 @@ import {
   type DockerfileImageSpec,
 } from "./dockerfile-images.ts";
 import {
+  imageRepository,
+  imageTag,
   replaceImageTag,
   slimImageForAlias,
   slimImageForCurrentPin,
@@ -224,15 +226,14 @@ function toServiceVersionRow(
   service: ServiceImageSpec,
   remote: Partial<Record<RemoteServiceName, string>> = {},
 ): ServiceVersionRow {
-  // `@`-aware: a slim catalog pin's image carries a `@sha256:…` digest after the tag.
-  const withoutDigest = service.image.split("@")[0] ?? service.image;
-  const tagSeparator = withoutDigest.lastIndexOf(":");
-  if (tagSeparator === -1) {
+  // `@`-aware (via `imageTag`/`imageRepository`): a slim catalog pin's image carries a
+  // `@sha256:…` digest after the tag.
+  const name = imageRepository(service.image);
+  const tag = imageTag(service.image);
+  if (name === undefined || tag === undefined) {
     throw new Error(`Invalid service image entry: ${service.image}`);
   }
-
-  const name = withoutDigest.slice(0, tagSeparator);
-  const local = upstreamVersionFromTag(withoutDigest.slice(tagSeparator + 1));
+  const local = upstreamVersionFromTag(tag);
 
   return {
     name,
