@@ -24,7 +24,7 @@ import { systemError } from "effect/PlatformError";
 import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
-import { prepareNativeArtifact, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
+import { resolveArtifact, type ServiceKind } from "../Artifacts.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
