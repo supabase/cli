@@ -34,7 +34,9 @@ concurrency:
 jobs:
   pickup:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Setup (~10 min) + release visibility (<1 min) + the S3-mirror wait (up to ~10 min, normally only
+    # for the first planned item) + pin, render and push per item.
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
