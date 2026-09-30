@@ -76,15 +76,19 @@ const DEFAULT_EXPECT_RELEASE_INTERVAL_MS = 10_000;
  * no decimal) or this throws a clear configuration error instead of silently coercing it to NaN,
  * 0, or a meaningless delay.
  */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
 function expectReleaseIntervalMs(): number {
   const raw = process.env.SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS;
   if (raw === undefined) return DEFAULT_EXPECT_RELEASE_INTERVAL_MS;
-  if (!/^(0|[1-9][0-9]*)$/.test(raw)) {
+  const value = Number(raw);
+  // `setTimeout` clamps anything above 2^31 - 1 ms, so a larger value can't be honored either.
+  if (!/^(0|[1-9][0-9]*)$/.test(raw) || value > MAX_TIMER_DELAY_MS) {
     throw new InvalidPayloadError(
-      `invalid SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS ${JSON.stringify(raw)}: expected a non-negative integer`,
+      `invalid SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS ${JSON.stringify(raw)}: expected a non-negative integer of at most ${MAX_TIMER_DELAY_MS}`,
     );
   }
-  return Number(raw);
+  return value;
 }
 
 /**

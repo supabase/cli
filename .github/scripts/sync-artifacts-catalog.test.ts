@@ -824,31 +824,34 @@ describe("runPlanUpdates (the actual plan-updates CLI mode, not just the pure pl
     }
   });
 
-  test("an invalid SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS exits non-zero with a configuration error", async () => {
-    const proc = Bun.spawn(
-      [
-        "bun",
-        ".github/scripts/sync-artifacts-catalog.ts",
-        "plan-updates",
-        "--service",
-        "postgrest",
-        "--expect-release",
-        "v999.0-r0",
-        "--output",
-        join(await mkdtemp(join(tmpdir(), "plan-updates-bad-wait-")), "slim-updates.tsv"),
-      ],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-        env: { ...globalThis.process.env, SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS: "5ms" },
-      },
-    );
-    const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  test.each(["5ms", "9".repeat(309)])(
+    "an invalid SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS (%s) exits non-zero with a configuration error",
+    async (waitMs) => {
+      const proc = Bun.spawn(
+        [
+          "bun",
+          ".github/scripts/sync-artifacts-catalog.ts",
+          "plan-updates",
+          "--service",
+          "postgrest",
+          "--expect-release",
+          "v999.0-r0",
+          "--output",
+          join(await mkdtemp(join(tmpdir(), "plan-updates-bad-wait-")), "slim-updates.tsv"),
+        ],
+        {
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { ...globalThis.process.env, SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS: waitMs },
+        },
+      );
+      const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
 
-    expect(exitCode).toBe(1);
-    expect(stdout).toContain("SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS");
-    expect(stdout).toContain("non-negative integer");
-  });
+      expect(exitCode).toBe(1);
+      expect(stdout).toContain("SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS");
+      expect(stdout).toContain("non-negative integer");
+    },
+  );
 });
 
 describe("refreshCatalogPin", () => {
