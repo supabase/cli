@@ -214,7 +214,7 @@ export interface ServiceVersionRow {
 const RELEASE_REVISION_SUFFIX = /^(?<upstream>.+)-r(?:0|[1-9][0-9]*)$/;
 
 /** Strips a slim release tag's `-r<N>` suffix, if any, back to its upstream version. */
-function upstreamVersionFromTag(tag: string): string {
+export function upstreamVersionFromTag(tag: string): string {
   return RELEASE_REVISION_SUFFIX.exec(tag)?.groups?.upstream ?? tag;
 }
 

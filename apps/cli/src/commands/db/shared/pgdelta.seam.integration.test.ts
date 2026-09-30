@@ -237,6 +237,48 @@ describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
     },
   );
 
+  it.effect("flags a stale slim container when only its revision has drifted from a hotfix", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    const dir = tmp.current;
+    // Same upstream version and family as the fixture catalog's pin (17.6.1.171), but at a
+    // different revision (r1, a different digest) — the hotfix-drift case this model exists
+    // to catch, and the one a bare upstream-version comparison would mask.
+    const { layer } = setup(dir, {
+      dbInspectImage:
+        "ghcr.io/supabase/cli/postgres:17.6.1.171-r1@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
+    return Effect.gen(function* () {
+      const seam = yield* DeclarativeSeam;
+      const exit = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const error = failError(exit);
+      expect(error).toBeInstanceOf(DeclarativeShadowDbError);
+      expect((error as DeclarativeShadowDbError).message).toContain(
+        "local Postgres container image is stale",
+      );
+      // Same family (slim vs slim): the generic remediation, not the family-mismatch wording.
+      expect((error as DeclarativeShadowDbError).message).not.toContain(
+        "same SUPABASE_USE_SLIM_IMAGES setting",
+      );
+      expect((error as DeclarativeShadowDbError).message).toContain("--no-backup");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("passes when a slim container matches the expected image's release and digest", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    const dir = tmp.current;
+    // The exact image (release version and digest) the fixture catalog pins at r0.
+    const { layer } = setup(dir, {
+      dbInspectImage:
+        "ghcr.io/supabase/cli/postgres:17.6.1.171-r0@sha256:d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c",
+    });
+    return Effect.gen(function* () {
+      const seam = yield* DeclarativeSeam;
+      const exit = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("bails out when inspect succeeds but the image name is unparseable", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     const dir = tmp.current;

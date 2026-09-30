@@ -9,7 +9,8 @@ import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
 import { isDockerDaemonUnreachable } from "../../../command-internal/docker-suggest.ts";
-import { isSlimImageRef } from "../../../shared/services/slim-images.ts";
+import { imageDigest, imageTag, isSlimImageRef } from "../../../shared/services/slim-images.ts";
+import { upstreamVersionFromTag } from "../../../shared/services/services.shared.ts";
 import { isLocalDbRunning } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start-local-database.ts";
 import { resolveLocalProjectId, localDbContainerId } from "../../../command-internal/docker-ids.ts";
@@ -250,20 +251,34 @@ export const declarativeSeamLayer = Layer.effect(
               ),
               Effect.map((value) => value.trim()),
             );
-            const actualTag = dockerImageTag(actual);
-            const expectedTag = dockerImageTag(expected);
-            if (actual.length === 0 || actualTag.length === 0 || expectedTag.length === 0) {
+            const actualTag = imageTag(actual);
+            const expectedTag = imageTag(expected);
+            if (actual.length === 0 || actualTag === undefined || expectedTag === undefined) {
               return;
             }
             // Slim refs never go through a registry mirror, so a family mismatch
             // (e.g. a docker.io container satisfying a ghcr.io/supabase/cli
-            // expectation) is stale even when the tags happen to match.
+            // expectation) is stale even when the upstream versions happen to match.
             const familyMismatch = isSlimImageRef(expected) !== isSlimImageRef(actual);
-            if (!familyMismatch && actualTag === expectedTag) {
-              return;
+            if (!familyMismatch) {
+              // Same family: within slim, a `-r<N>` hotfix bump must still be caught, so compare
+              // the digest when both refs carry one (most precise), or the full tag otherwise —
+              // never the bare upstream version, which would mask a same-upstream revision drift.
+              const actualDigest = imageDigest(actual);
+              const expectedDigest = imageDigest(expected);
+              const current =
+                actualDigest !== undefined && expectedDigest !== undefined
+                  ? actualDigest === expectedDigest
+                  : actualTag === expectedTag;
+              if (current) return;
             }
+            // Across families, only the upstream version is comparable (a slim tag's `-r<N>`
+            // has no docker.io equivalent) — used to pick the remediation wording, not staleness:
+            // a family mismatch is always stale.
+            const upstreamMatches =
+              upstreamVersionFromTag(actualTag) === upstreamVersionFromTag(expectedTag);
             const remediation =
-              familyMismatch && actualTag === expectedTag
+              familyMismatch && upstreamMatches
                 ? "The tags match but the image family does not (slim vs docker.io). Run supabase stop, then supabase start with the same SUPABASE_USE_SLIM_IMAGES setting before syncing declarative schemas."
                 : "Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas.";
             return yield* new DeclarativeShadowDbError({
@@ -280,23 +295,6 @@ type StartLocalDatabaseDeps =
   ReturnType<typeof startLocalDatabase> extends Effect.Effect<infer _A, infer _E, infer R>
     ? R
     : never;
-
-/** Trailing `-r<N>` immutable-revision suffix a slim tag carries; docker.io tags never have one. */
-const REVISION_SUFFIX = /-r(0|[1-9][0-9]*)$/;
-
-/**
- * The tag portion of `image`, ignoring any `@sha256:…` digest suffix and, for a slim ref, its
- * `-r<N>` revision suffix — so a slim `<upstream>-r<N>` tag still compares equal to a docker.io
- * container running the same `<upstream>` version.
- */
-function dockerImageTag(image: string): string {
-  const trimmed = image.trim();
-  const withoutDigest = trimmed.split("@")[0] ?? trimmed;
-  const index = withoutDigest.lastIndexOf(":");
-  if (index < 0 || index === withoutDigest.length - 1) return "";
-  const tag = withoutDigest.slice(index + 1);
-  return isSlimImageRef(trimmed) ? tag.replace(REVISION_SUFFIX, "") : tag;
-}
 
 export function isMissingContainerInspectError(stderr: string): boolean {
   return stderr.toLowerCase().includes("no such container");
