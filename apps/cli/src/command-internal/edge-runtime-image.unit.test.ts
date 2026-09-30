@@ -5,33 +5,19 @@ import { BunServices } from "@effect/platform-bun";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { vi } from "vitest";
-import { catalogPins } from "@supabase/stack/internal/artifacts";
 
 import {
   dockerfileServiceImage,
   dockerfileServiceImageRaw,
 } from "../shared/services/dockerfile-images.ts";
+import {
+  expectedPinnedImage,
+  GHCR_SLIM_IMAGE_PATTERN,
+} from "../shared/services/slim-images.test-support.ts";
 import { resolveEdgeRuntimeImage } from "./edge-runtime-image.ts";
 
 const currentEdgeRuntime = dockerfileServiceImageRaw("edgeruntime");
 const currentEdgeRuntimeTag = currentEdgeRuntime.split(":")[1] ?? "";
-
-/**
- * The catalog's own pinned image for edge-runtime at `tag` — read straight from `catalogPins()`,
- * independent of `toSlimImage`, so this test actually exercises the catalog lookup instead of
- * passing whether or not it resolves (design B: a default Dockerfile tag always matches a
- * catalog pin).
- */
-function expectedPinnedEdgeRuntimeImage(tag: string): string {
-  const entry = catalogPins().find(
-    (candidate) =>
-      candidate.sourceService === "edge-runtime" && candidate.pin.upstreamVersion === tag,
-  );
-  if (entry === undefined) {
-    throw new Error(`no catalog pin for edge-runtime ${tag}`);
-  }
-  return entry.pin.image;
-}
 
 const resolve = (workdir: string, denoVersion: number) =>
   Effect.gen(function* () {
@@ -107,8 +93,8 @@ describe("resolveEdgeRuntimeImage", () => {
         join(dir, "supabase", ".temp", "edge-runtime-version"),
         `${currentEdgeRuntimeTag}\n`,
       );
-      const pinned = expectedPinnedEdgeRuntimeImage(currentEdgeRuntimeTag);
-      expect(pinned).toMatch(/^ghcr\.io\/supabase\/cli\/.+@sha256:[0-9a-f]{64}$/);
+      const pinned = expectedPinnedImage("edgeruntime", currentEdgeRuntime);
+      expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return resolve(dir, 2).pipe(
         Effect.tap((image) =>
           Effect.sync(() => {

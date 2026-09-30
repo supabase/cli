@@ -5,13 +5,16 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { afterEach, beforeEach, vi } from "vitest";
-import { catalogPins } from "@supabase/stack/internal/artifacts";
 
 import {
   dockerfileServiceImage,
   dockerfileServiceImageRaw,
 } from "../shared/services/dockerfile-images.ts";
 import { imageTag } from "../shared/services/slim-images.ts";
+import {
+  expectedPinnedImage,
+  GHCR_SLIM_IMAGE_PATTERN,
+} from "../shared/services/slim-images.test-support.ts";
 import { resolveDbImage } from "./db-image.ts";
 
 const currentPostgres = dockerfileServiceImageRaw("pg");
@@ -21,25 +24,6 @@ const currentPostgresTag = imageTag(currentPostgres) ?? "";
 const pg15Image = dockerfileServiceImageRaw("pg15");
 const pg15Tag = imageTag(pg15Image) ?? "";
 const pg14Image = dockerfileServiceImageRaw("pg14");
-
-/**
- * The catalog's own pinned image for postgres at `tag` — read straight from `catalogPins()`,
- * independent of `toSlimImage`, so a test asserting against this actually exercises the catalog
- * lookup instead of passing whether or not it resolves (design B: a default Dockerfile tag always
- * matches a catalog pin).
- */
-function expectedPinnedPostgresImage(tag: string): string {
-  const entry = catalogPins().find(
-    (candidate) => candidate.sourceService === "postgres" && candidate.pin.upstreamVersion === tag,
-  );
-  if (entry === undefined) {
-    throw new Error(`no catalog pin for postgres ${tag}`);
-  }
-  return entry.pin.image;
-}
-
-/** A regression to the docker.io fallback must fail an assertion built from this. */
-const GHCR_SLIM_IMAGE_PATTERN = /^ghcr\.io\/supabase\/cli\/.+@sha256:[0-9a-f]{64}$/;
 
 const withTemp = () => mkdtempSync(join(tmpdir(), "db-image-"));
 
@@ -135,7 +119,7 @@ describe("resolveDbImage", () => {
     it.effect("rewrites the current PG15 default tag to its catalog-pinned slim image", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = withTemp();
-      const pinned = expectedPinnedPostgresImage(pg15Tag);
+      const pinned = expectedPinnedImage("pg", pg15Image);
       expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 15)).toEqual({
@@ -167,7 +151,7 @@ describe("resolveDbImage", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = withTemp();
       writePin(dir, pg15Tag);
-      const pinned = expectedPinnedPostgresImage(pg15Tag);
+      const pinned = expectedPinnedImage("pg", pg15Image);
       expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 15)).toEqual({
@@ -195,7 +179,7 @@ describe("resolveDbImage", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = withTemp();
       writePin(dir, currentPostgresTag);
-      const pinned = expectedPinnedPostgresImage(currentPostgresTag);
+      const pinned = expectedPinnedImage("pg", currentPostgres);
       expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 17)).toEqual({

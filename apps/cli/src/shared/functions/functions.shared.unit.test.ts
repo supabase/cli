@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Effect } from "effect";
-import { catalogPins } from "@supabase/stack/internal/artifacts";
 
 import { dockerfileServiceImageRaw } from "../services/dockerfile-images.ts";
-import { slimCatalogPin } from "../services/slim-images.ts";
+import {
+  expectedPinnedImage,
+  GHCR_SLIM_IMAGE_PATTERN,
+} from "../services/slim-images.test-support.ts";
 import {
   DENO1_EDGE_RUNTIME_VERSION,
   edgeRuntimeImage,
@@ -12,28 +14,6 @@ import {
 
 const rawEdgeRuntimeImage = dockerfileServiceImageRaw("edgeruntime");
 const currentEdgeRuntimeTag = rawEdgeRuntimeImage.slice(rawEdgeRuntimeImage.lastIndexOf(":") + 1);
-
-/**
- * The catalog's own pinned image for `alias`'s (docker.io) `image` — read straight from
- * `catalogPins()`, independent of `toSlimImage`, so a test asserting against this actually
- * exercises the catalog lookup instead of passing whether or not it resolves (design B: a
- * default Dockerfile tag always matches a catalog pin). Only reuses `slimCatalogPin` for alias
- * and tag normalization, not the catalog image lookup itself.
- */
-function expectedPinnedImage(alias: string, image: string): string {
-  const pin = slimCatalogPin(alias, image);
-  if (pin === undefined) {
-    throw new Error(`no slim catalog pin for ${alias} ${image}`);
-  }
-  const entry = catalogPins().find(
-    (candidate) =>
-      candidate.sourceService === pin.service && candidate.pin.upstreamVersion === pin.version,
-  );
-  if (entry === undefined) {
-    throw new Error(`no catalog pin for ${pin.service} ${pin.version}`);
-  }
-  return entry.pin.image;
-}
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -50,7 +30,7 @@ describe("edgeRuntimeImage", () => {
   it("rewrites the current Dockerfile tag onto the catalog-pinned slim ghcr.io image when the flag is on", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     const pinned = expectedPinnedImage("edgeruntime", rawEdgeRuntimeImage);
-    expect(pinned).toMatch(/^ghcr\.io\/supabase\/cli\/.+@sha256:[0-9a-f]{64}$/);
+    expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
     expect(edgeRuntimeImage(currentEdgeRuntimeTag)).toBe(pinned);
   });
 

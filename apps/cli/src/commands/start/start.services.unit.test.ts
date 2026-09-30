@@ -1,11 +1,13 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { Schema } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { catalogPins } from "@supabase/stack/internal/artifacts";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import type { LocalServiceVersionOverrides } from "../../shared/services/services.shared.ts";
-import { slimCatalogPin } from "../../shared/services/slim-images.ts";
+import {
+  expectedPinnedImage,
+  GHCR_SLIM_IMAGE_PATTERN,
+} from "../../shared/services/slim-images.test-support.ts";
 import { serviceContainerIds, localDbContainerId } from "../../command-internal/docker-ids.ts";
 import { SERVICE_CATALOG } from "../../command-internal/service-catalog.ts";
 import { resolveStartGates, resolveStartImagePlan, type StartGates } from "./start.gates.ts";
@@ -16,30 +18,6 @@ const currentLogflare = dockerfileServiceImageRaw("logflare");
 const currentVector = dockerfileServiceImageRaw("vector");
 const currentPooler = dockerfileServiceImageRaw("supavisor");
 const currentPoolerTag = currentPooler.split(":")[1] ?? "";
-
-/**
- * The catalog's own pinned image for `alias`'s (docker.io) `image` — read straight from
- * `catalogPins()`, independent of `toSlimImage`, so a test asserting against this actually
- * exercises the catalog lookup instead of passing whether or not it resolves (design B: a
- * default Dockerfile tag always matches a catalog pin). Only reuses `slimCatalogPin` for alias
- * and tag normalization, not the catalog image lookup itself.
- */
-function expectedPinnedImage(alias: string, image: string): string {
-  const pin = slimCatalogPin(alias, image);
-  if (pin === undefined) {
-    throw new Error(`no slim catalog pin for ${alias} ${image}`);
-  }
-  const entry = catalogPins().find(
-    (candidate) =>
-      candidate.sourceService === pin.service && candidate.pin.upstreamVersion === pin.version,
-  );
-  if (entry === undefined) {
-    throw new Error(`no catalog pin for ${pin.service} ${pin.version}`);
-  }
-  return entry.pin.image;
-}
-
-const GHCR_SLIM_IMAGE_PATTERN = /^ghcr\.io\/supabase\/cli\/.+@sha256:[0-9a-f]{64}$/;
 
 describe("START_SERVICES", () => {
   it("has one row per SERVICE_CATALOG entry, in the catalog's startOrder", () => {
