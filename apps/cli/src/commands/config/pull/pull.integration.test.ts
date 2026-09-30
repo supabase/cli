@@ -2257,12 +2257,12 @@ describe("config pull integration", () => {
       .replace('account_sid = ""', 'account_sid = "ACdeclared"')
       .replace('message_service_sid = ""', 'message_service_sid = "MGdeclared"');
     const { layer } = setup({ toml: declared, yes: true, v2: never });
-    return withProcessEnv(
+    return withEnvVar(
       TWILIO_AUTH_TOKEN_VAR,
       "a-real-secret-value",
       Effect.gen(function* () {
         yield* configPull(noFlags);
-        const after = readFileSync(configPath(), "utf8");
+        const after = yield* readConfig;
         expect(after).toContain("enabled = false");
         expect(after).toContain('account_sid = "ACdeclared"');
 
