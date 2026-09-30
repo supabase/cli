@@ -22,6 +22,7 @@ import { stackBackendLayer } from "./stack-backend.ts";
 import { testDb } from "./test-db.handler.ts";
 import { runTestDbCommand } from "./test-db.command-handler.ts";
 import { DockerRun } from "./docker-run.service.ts";
+import { removeStateRootVolume } from "../../../../packages/stack/tests/docker-fixture.ts";
 import { StackError } from "@supabase/stack/effect";
 import type { InitializationCommandOptions, PostgresCommandOptions } from "@supabase/stack/effect";
 import type { Stack } from "@supabase/stack/effect";
@@ -70,11 +71,14 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
             "SELECT plan(1); SELECT fail('managed pgTAP failure'); SELECT * FROM finish();\n",
           );
 
+          const stateRoot = `${root}/stacks`;
+          if (runtime === "docker")
+            yield* Effect.addFinalizer(() => removeStateRootVolume(stateRoot));
           const api = yield* StackApi;
           const stack = yield* Effect.acquireRelease(
             api.create({
               projectRoot: root,
-              stateRoot: `${root}/stacks`,
+              stateRoot,
               cacheRoot: `${root}/cache`,
               runtime,
             }),

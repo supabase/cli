@@ -7,6 +7,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/
 import { homedir } from "node:os";
 
 import { makeTempHome, runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
+import { removeStateRootVolume } from "../../../../../../packages/stack/tests/docker-fixture.ts";
 
 const nativeSupported =
   (process.platform === "linux" && (process.arch === "x64" || process.arch === "arm64")) ||
@@ -78,6 +79,8 @@ describe("functions new (stack e2e)", () => {
           });
           const home = makeTempHome();
           yield* Effect.addFinalizer(() => Effect.sync(() => home[Symbol.dispose]()));
+          if (runtime === "docker")
+            yield* Effect.addFinalizer(() => removeStateRootVolume(path.join(home.dir, "stacks")));
           yield* fs.makeDirectory(path.join(projectDir, "supabase"), { recursive: true });
           yield* fs.writeFileString(
             path.join(projectDir, "supabase", "config.toml"),

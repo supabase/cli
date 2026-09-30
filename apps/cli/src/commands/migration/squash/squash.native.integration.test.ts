@@ -29,6 +29,7 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { migrationSquash } from "./squash.handler.ts";
 import type { MigrationSquashFlags } from "./squash.command.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
+import { removeStateRootVolume } from "../../../../../../packages/stack/tests/docker-fixture.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -132,10 +133,13 @@ describe("managed migration squash", { timeout: 180_000 }, () => {
             Effect.gen(function* () {
               const fs = yield* FileSystem.FileSystem;
               const path = yield* Path.Path;
+              const stateRoot = path.join(root, "stacks");
+              if (runtime === "docker")
+                yield* Effect.addFinalizer(() => removeStateRootVolume(stateRoot));
               const api = yield* StackApi;
               const current = yield* api.create({
                 projectRoot: root,
-                stateRoot: path.join(root, "stacks"),
+                stateRoot,
                 cacheRoot: path.join(root, "cache"),
                 runtime,
               });

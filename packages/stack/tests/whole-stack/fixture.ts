@@ -19,6 +19,7 @@ import { create, type Stack } from "../../src/effect.ts";
 import type { Observation } from "../../src/Rpc.ts";
 import { vectorAnalyticsConfig } from "./analytics.ts";
 import { cleanupDockerRoot } from "../docker-cleanup.ts";
+import { removeStateRootVolume } from "../docker-fixture.ts";
 import { destroyTestStack } from "../stack-cleanup.ts";
 
 type AnyService = Effect.Success<Stack["services"]["list"]>[number];
@@ -120,6 +121,8 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
     const functionsRoot = `${root}/functions`;
     const storageRoot = `${root}/storage`;
     const vectorConfigPath = `${root}/vector.yaml`;
+    if (runtime === "docker")
+      yield* Effect.addFinalizer(() => removeStateRootVolume(`${root}/state`));
     yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
     yield* fs.makeDirectory(storageRoot, { recursive: true });
     yield* fs.writeFileString(

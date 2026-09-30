@@ -8,6 +8,7 @@ import { homedir, tmpdir } from "node:os";
 import { spawnSupabase } from "../../../../tests/helpers/cli.ts";
 import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
+import { removeStateRootVolume } from "../../../../../../packages/stack/tests/docker-fixture.ts";
 
 const jwtSecret = "functions-serve-stack-e2e-secret-at-least-32-characters";
 const nativeSupported =
@@ -38,6 +39,8 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
     prefix: `functions-serve-${runtime}-`,
   });
   const home = yield* fs.makeTempDirectoryScoped({ prefix: "functions-serve-home-" });
+  if (runtime === "docker")
+    yield* Effect.addFinalizer(() => removeStateRootVolume(path.join(home, "stacks")));
   const functionsRoot = path.join(root, "supabase", "functions");
   yield* fs.makeDirectory(path.join(functionsRoot, "hello"), { recursive: true });
   yield* fs.writeFileString(

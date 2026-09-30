@@ -30,6 +30,7 @@ import { launchHost } from "./HostProcess.ts";
 import * as PromiseApi from "./index.ts";
 import * as State from "./State.ts";
 import { assertOwnerExited, watchLeaseRelease } from "../tests/owner.ts";
+import { removeStateRootVolume } from "../tests/docker-fixture.ts";
 import { foreignRelease } from "../tests/release-owner-fixture.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
@@ -220,9 +221,11 @@ const resetDataStory = (runtime: "native" | "docker") =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-reset-data-${runtime}-` });
+    const stateRoot = `${root}/state`;
+    if (runtime === "docker") yield* Effect.addFinalizer(() => removeStateRootVolume(stateRoot));
     const options = {
       projectRoot: root,
-      stateRoot: `${root}/state`,
+      stateRoot,
       cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
       runtime,
     } satisfies Parameters<typeof create>[0];

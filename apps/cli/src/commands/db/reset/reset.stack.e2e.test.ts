@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
+import { removeStateRootVolume } from "../../../../../../packages/stack/tests/docker-fixture.ts";
 
 const COMMAND_TIMEOUT_MS = 8 * 60_000;
 const TEST_TIMEOUT_MS = COMMAND_TIMEOUT_MS + 2 * 60_000;
@@ -164,6 +165,8 @@ describe("supabase db reset (stack e2e)", () => {
           const path = yield* Path.Path;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: `db-reset-${runtime}-` });
           const home = yield* fs.makeTempDirectoryScoped({ prefix: `db-reset-home-${runtime}-` });
+          if (runtime === "docker")
+            yield* Effect.addFinalizer(() => removeStateRootVolume(`${home}/stacks`));
           yield* writeFixture(root, fs, path);
           yield* fs.makeDirectory(path.join(home, "cache"), { recursive: true });
           yield* fs.makeDirectory(path.join(tmpdir(), "supabase-stack-artifacts"), {
