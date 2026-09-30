@@ -48,7 +48,8 @@ supabase stack prepare --capability rest --capability auth --output-format json
 When the stack is ready, `supabase stack start` prints the API, REST, Functions,
 database, Studio, MCP, and Mailpit URLs, the local publishable and secret keys, each service's
 state, and the runtime. Ports are assigned per project, so read the MCP URL from this output rather
-than assuming a default port.
+than assuming a default port. MCP is served at `<API_URL>/mcp`, present only when the shared API
+listener is up and Studio is a composition member with an HTTP endpoint.
 With `--output-format json`, start returns:
 
 ```json
@@ -61,22 +62,31 @@ With `--output-format json`, start returns:
       "address": "127.0.0.1",
       "port": 54322,
       "url": "tcp://127.0.0.1:54322"
-    },
-    "studio.mcp": {
-      "protocol": "http",
-      "address": "127.0.0.1",
-      "port": 54323,
-      "url": "http://127.0.0.1:54323/api/mcp"
     }
   },
   "lazy_services": ["rest", "auth", "studio"],
+  "env": {
+    "API_URL": "http://127.0.0.1:54321",
+    "DB_URL": "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+    "STUDIO_URL": "http://127.0.0.1:54323",
+    "MCP_URL": "http://127.0.0.1:54321/mcp",
+    "MAILPIT_URL": "http://127.0.0.1:54324",
+    "PUBLISHABLE_KEY": "sb_publishable_...",
+    "SECRET_KEY": "sb_secret_...",
+    "ANON_KEY": "ey...",
+    "SERVICE_ROLE_KEY": "ey..."
+  },
   "message": ""
 }
 ```
 
-`endpoints` uses the same `service.endpoint` keys as `stack status`, and `lazy_services` lists the
-services that start on their first request. For the complete connection set including credentials,
-use `supabase stack status --env --output-format json`.
+`endpoints` uses the same `service.endpoint` keys as `stack status`, with no synthetic entries.
+`lazy_services` lists the services that start on their first request. `env` is the same connection
+map `supabase stack status --env` exports, present on every success path; `stack status` (without
+`--env`) returns the same `env` key, degrading to whatever is available when credentials or the
+owner are unreachable. Plain `status` JSON `env` comes from saved bindings and can list values for
+stopped or sleeping members, while `--env` requires a reachable owner and a running primary
+database.
 
 ## Exporting environment variables
 
@@ -91,13 +101,20 @@ and credentials available from the observed composition; text mode emits dotenv 
 JSON or stream-JSON mode emits a variable map. Values that are unavailable because a member is
 stopped or unhealthy are omitted. Add `--output-format text` for an explicit dotenv file
 regardless of automatic agent output detection; this is dotenv data, not a shell script, and values
-are quoted so that sourcing the file performs no shell expansion. It also exports `MCP_URL`,
-Studio's MCP endpoint, whose port is assigned per project. The human-readable output of `start` and
-`status` shows the local publishable and secret keys and the database URL; their JSON results
-never include credentials, so this export is the machine-readable source for them. `--override-name`
-accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME` entries, requires `--env`, and rejects
-unknown variables, invalid names, and collisions. The DB-derived service-role JWT remains available
-when Auth is disabled; unavailable service URLs and credentials are omitted.
+are quoted so that sourcing the file performs no shell expansion. The exported variable set is
+`API_URL`, `REST_URL`, `FUNCTIONS_URL`, `DB_URL`, `STUDIO_URL`, `MCP_URL`, `MAILPIT_URL`,
+`PUBLISHABLE_KEY`, `SECRET_KEY`, `ANON_KEY`, and `SERVICE_ROLE_KEY`; `REST_URL` and
+`FUNCTIONS_URL` are `<API_URL>/rest/v1` and `<API_URL>/functions/v1`, `MCP_URL` is `<API_URL>/mcp`,
+whose port is assigned per project, and `DB_URL` uses the `postgres` role with the saved database
+password, URI-encoded, and no query string. `INBUCKET_URL` is also exported alongside
+`MAILPIT_URL`, with the same value, as a deprecated alias. `start` and `status` text output shows
+only the publishable and secret keys; `ANON_KEY` and `SERVICE_ROLE_KEY` appear only in JSON `env`
+and `status --env`. `start` and `status` JSON/stream-JSON results include this same connection map
+under `env`; `status --env` remains the dotenv/variable-map export, and `--override-name` only
+applies there. `--override-name` accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME`
+entries, requires `--env`, and rejects unknown variables, invalid names, and collisions. The
+DB-derived service-role JWT remains available when Auth is disabled; unavailable service URLs and
+credentials are omitted.
 
 The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pretty`, `json`,
 `toml`, `yaml`, `table`, and `csv`. `--output-format text`, `json`, or `stream-json` replace them.

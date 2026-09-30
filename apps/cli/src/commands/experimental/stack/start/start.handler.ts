@@ -1,16 +1,16 @@
 import { defaultRuntime } from "@supabase/stack/internal/artifacts";
 import {
+  connectionEnv,
   renderStackSummary,
+  stackConnections,
   stackEndpoints,
   summaryCredentials,
   type StackServiceView,
 } from "../stack-summary.ts";
 import { gray } from "../../../../command-internal/colors.ts";
-import {
-  currentShellPlatform,
-  shellQuoteArgument,
-} from "../../../../command-internal/shell-quote.ts";
+import { currentShellPlatform } from "../../../../command-internal/shell-quote.ts";
 import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
+import { statusEnvPointer } from "./start-summary.format.ts";
 import {
   automaticRuntimeNotice,
   selectStackRuntime,
@@ -302,16 +302,22 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         stackAcquireError(cause, { selectedRuntime, runtime, creating: target.id === undefined }),
       ),
     );
-    const platform = currentShellPlatform();
-    const selector = [
-      ...(settings.explicitWorkdir ? ["--workdir", target.projectRoot] : []),
-      ...(Option.isSome(flags.stack) ? ["--stack", flags.stack.value] : []),
-      ...(Option.isSome(flags.stackId) ? ["--stack-id", flags.stackId.value] : []),
-    ]
-      .map((argument) => ` ${shellQuoteArgument(argument, platform)}`)
-      .join("");
+    const statusPointer = statusEnvPointer(
+      {
+        explicitWorkdir: settings.explicitWorkdir,
+        projectRoot: target.projectRoot,
+        ...(Option.isSome(flags.stack) ? { stack: flags.stack.value } : {}),
+        ...(Option.isSome(flags.stackId) ? { stackId: flags.stackId.value } : {}),
+      },
+      currentShellPlatform(),
+    );
     const reportReady = (report: Effect.Success<ReturnType<typeof startReport>>, message: string) =>
       Effect.gen(function* () {
+        const credentials = yield* summaryCredentials(stack.credentials.get, output.warn);
+        const connections = stackConnections(
+          report.views.filter(({ activation }) => activation !== undefined),
+        );
+        const env = connectionEnv(connections, credentials);
         if (output.format !== "text")
           return yield* output.success(message, {
             id: stack.id,
@@ -320,11 +326,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             lazy_services: report.views
               .filter(({ activation }) => activation === "lazy")
               .map(({ service }) => service),
+            env,
           });
         if (message.length > 0) yield* output.success(message);
-        const credentials = yield* summaryCredentials(stack.credentials.get, output.warn);
         yield* output.raw(
-          `\n${renderStackSummary(report.views, credentials)}\n${gray(`Runtime: ${selectedRuntime}`, process.stdout)}\nRun supabase status --env${selector} to export these values as environment variables.\n`,
+          `\n${renderStackSummary(report.views, credentials)}\n${gray(`Runtime: ${selectedRuntime}`, process.stdout)}\nRun ${statusPointer} to export these values as environment variables.\n`,
         );
       });
     const runtimeNotice =

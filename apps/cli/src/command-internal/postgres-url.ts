@@ -46,6 +46,21 @@ export interface PostgresUrlInput {
   readonly runtimeParams?: Readonly<Record<string, string>>;
 }
 
+export interface UserFacingDatabaseUrlInput {
+  readonly host: string;
+  readonly port: number;
+  readonly password: string;
+}
+
+/**
+ * Builds the `postgres`-role connection string shown to users (stack summary, `db url`
+ * commands), without the tool-only query parameters {@link toPostgresURL} adds.
+ */
+export function toUserFacingDatabaseUrl(conn: UserFacingDatabaseUrlInput): string {
+  const host = isIPv6Host(conn.host) ? `[${conn.host}]` : conn.host;
+  return `postgresql://postgres:${encodeURIComponent(conn.password)}@${host}:${conn.port}/postgres`;
+}
+
 export function toPostgresURL(conn: PostgresUrlInput): string {
   const timeout =
     conn.connectTimeoutSeconds !== undefined && conn.connectTimeoutSeconds > 0
