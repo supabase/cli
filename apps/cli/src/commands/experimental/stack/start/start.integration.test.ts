@@ -400,6 +400,7 @@ const layers = (
   fixture: ReturnType<typeof fakeStack>,
   output = mockOutput(),
   existing = true,
+  explicitWorkdir = false,
 ) => {
   const telemetry = mockTelemetryStateTracked();
   const target = Layer.succeed(StackTargetResolver, {
@@ -422,7 +423,7 @@ const layers = (
     runtimeInfoLayer,
     output.layer,
     telemetry.layer,
-    mockCommandSettings({ workdir: root }),
+    mockCommandSettings({ workdir: root, explicitWorkdir }),
     target,
     api,
     Layer.succeed(ExperimentalFlag, false),
@@ -592,14 +593,16 @@ describe("experimental stack start", () => {
 
       yield* fixture.stack.composition.stop;
       const text = mockOutput();
-      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, text)));
+      yield* stackStart({ ...flags(excluded), stack: Option.some("feature demo") }).pipe(
+        Effect.provide(layers(root, fixture, text, true, true)),
+      );
       expect(text.stdoutText).toMatch(/Project URL +│ http:\/\/127\.0\.0\.1:23457 +│/u);
       expect(text.stdoutText).toMatch(/MCP +│ http:\/\/127\.0\.0\.1:23458\/api\/mcp +│/u);
       expect(text.stdoutText).not.toContain("GraphQL");
       expect(text.stdoutText).toMatch(/Secret +│ \S+ +│/u);
       expect(text.stdoutText).toMatch(/rest +│ running · healthy · lazy +│/u);
       expect(text.stdoutText).toContain(
-        "Runtime: native\nRun supabase status --env to export these values as environment variables.\n",
+        `Runtime: native\nRun supabase status --env --workdir ${root} --stack 'feature demo' to export these values as environment variables.\n`,
       );
     }).pipe(Effect.provide(BunServices.layer)),
   );

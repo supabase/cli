@@ -6,6 +6,10 @@ import {
   type StackServiceView,
 } from "../stack-summary.ts";
 import { gray } from "../../../../command-internal/colors.ts";
+import {
+  currentShellPlatform,
+  shellQuoteArgument,
+} from "../../../../command-internal/shell-quote.ts";
 import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import {
   automaticRuntimeNotice,
@@ -298,11 +302,14 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         stackAcquireError(cause, { selectedRuntime, runtime, creating: target.id === undefined }),
       ),
     );
-    const selector = Option.isSome(flags.stack)
-      ? ` --stack ${flags.stack.value}`
-      : Option.isSome(flags.stackId)
-        ? ` --stack-id ${flags.stackId.value}`
-        : "";
+    const platform = currentShellPlatform();
+    const selector = [
+      ...(settings.explicitWorkdir ? ["--workdir", target.projectRoot] : []),
+      ...(Option.isSome(flags.stack) ? ["--stack", flags.stack.value] : []),
+      ...(Option.isSome(flags.stackId) ? ["--stack-id", flags.stackId.value] : []),
+    ]
+      .map((argument) => ` ${shellQuoteArgument(argument, platform)}`)
+      .join("");
     const reportReady = (report: Effect.Success<ReturnType<typeof startReport>>, message: string) =>
       Effect.gen(function* () {
         if (output.format !== "text")

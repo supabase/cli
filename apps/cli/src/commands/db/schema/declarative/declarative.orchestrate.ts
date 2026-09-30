@@ -13,11 +13,11 @@ import { LoadPgDeltaSqlFiles, ReadPgDeltaExportManifest } from "../../shared/pgd
 import { DeclarativeCompatibilityError, DeclarativeDiffError } from "./declarative.errors.ts";
 import {
   classifyDeclarativeLoadCompatibility,
-  currentShellPlatform,
   formatDeclarativeUpgradeGate,
   type DeclarativeLoadCompatibilityFinding,
   type DeclarativeUpgradeGateText,
 } from "./declarative.flow.ts";
+import { currentShellPlatform } from "../../../../command-internal/shell-quote.ts";
 
 /** Ambient inputs shared by the orchestration steps. */
 export interface DeclarativeRunContext {

@@ -122,7 +122,7 @@ Storage HTTP endpoint. The CLI does not remove caller-owned Storage files during
 Text output reports progress and `Stack is ready.`, then prints the connection summary shared with
 `stack status` on stdout: API, REST, Functions, Studio, MCP, Mailpit, and database URLs for the
 members that expose them, the publishable and secret keys, a services table, the runtime, and a
-pointer to `supabase status --env` carrying any `--stack` or `--stack-id` selector. Progress lines
+pointer to `supabase status --env` that repeats an explicit `--workdir` and any `--stack` or `--stack-id` selector, shell-quoted. Progress lines
 and warnings written while the spinner is shown appear on their own rows.
 
 JSON output returns the stack `id`, its saved `runtime`, `endpoints` keyed by service and endpoint
