@@ -33,7 +33,7 @@ import {
   mockTelemetryStateTracked,
   withEnvVar,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { containerEngineSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
 import {
   DbConnection,
@@ -45,7 +45,6 @@ import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
 import { StackApi, stackApiLayer, StackTargetResolver } from "../stack.shared.ts";
 import { stackStart } from "./start.handler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
@@ -402,6 +401,8 @@ const layers = (
   output = mockOutput(),
   existing = true,
   explicitWorkdir = false,
+  // Fixtures request the native runtime, so pin a host that ships native artifacts.
+  runtimeInfo = mockRuntimeInfo({ platform: "linux", arch: "x64" }),
 ) => {
   const telemetry = mockTelemetryStateTracked();
   const target = Layer.succeed(StackTargetResolver, {
@@ -421,7 +422,7 @@ const layers = (
   });
   return Layer.mergeAll(
     BunServices.layer,
-    runtimeInfoLayer,
+    runtimeInfo,
     output.layer,
     telemetry.layer,
     mockCommandSettings({ workdir: root, explicitWorkdir }),
@@ -494,6 +495,48 @@ describe("experimental stack start", () => {
       expect(result).toMatchObject({ reason: "invalid-config" });
       expect(created).toBe(false);
     }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "rejects --runtime native on a platform with no native artifacts before creating a stack",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-start-native-unsupported-",
+        });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "unsupported"\n');
+        let created = false;
+        const fixture = fakeStack();
+        const base = layers(
+          root,
+          fixture,
+          mockOutput(),
+          false,
+          false,
+          mockRuntimeInfo({ platform: "win32", arch: "x64" }),
+        );
+        const api = Layer.succeed(StackApi, {
+          create: () =>
+            Effect.sync(() => {
+              created = true;
+              return fixture.stack;
+            }),
+          open: () => Effect.succeed(fixture.stack),
+          discover: () => Effect.succeed([]),
+          find: () => Effect.die("identity not used"),
+        });
+        const result = yield* stackStart(flags()).pipe(
+          Effect.flip,
+          Effect.provide(Layer.merge(base, api)),
+        );
+        expect(result).toMatchObject({
+          reason: "flags",
+          message: expect.stringContaining("Native artifacts are unsupported on win32/x64"),
+        });
+        expect(created).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("applies capability selection across repeated starts", () =>

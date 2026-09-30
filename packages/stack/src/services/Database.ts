@@ -31,6 +31,7 @@ import {
   makeContainerRuntime,
   type ContainerProcess,
   type ContainerRuntime,
+  type HostGateway,
 } from "../runtime/Container.ts";
 import { DatabaseBootstrapError, runDatabaseBootstrap } from "../runtime/DatabaseBootstrap.ts";
 import {
@@ -133,6 +134,8 @@ export interface DatabaseOptions {
   readonly runtime: DatabaseRuntime;
   /** Reuses one volume helper across databases in this host. */
   readonly helpers?: DockerHelperRegistry;
+  /** Shares one host-gateway probe across this host's container runtimes. */
+  readonly hostGateway?: HostGateway;
 }
 
 export interface DatabaseComponent {
@@ -513,6 +516,9 @@ export const makeDatabase = (
             engine: options.runtime,
             root: options.root,
             imageMirrors: slimImageMirrors,
+            ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
+            // PostgreSQL's outbound HTTP falls back across address families.
+            awaitHostGateway: false,
           });
     const storage: DockerDatabaseStorage | undefined =
       options.runtime === "native"

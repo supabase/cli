@@ -328,6 +328,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
           cacheRoot: options.cacheRoot,
           runtime: options.runtime,
           ...(options.helpers === undefined ? {} : { helpers: options.helpers }),
+          ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
         }).pipe(
           Effect.mapError(
             (cause) =>
@@ -348,6 +349,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
               engine: options.runtime,
               root: options.root,
               imageMirrors: slimImageMirrors,
+              ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
             });
       const deps: ProcessDependencies = { fs, path, crypto, client, spawner, container };
       switch (creation.service) {

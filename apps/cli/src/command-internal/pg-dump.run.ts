@@ -105,7 +105,8 @@ export const pgDumpClientExitMessage = (client: PgDumpClient, exitCode: number):
     ? `error running ${client.command}: exit ${exitCode}`
     : `error running container: exit ${exitCode}`;
 
-const dumpNetworkMode = (
+/** Network for a pg_dump tool container; host unless `--network-id` or `SUPABASE_NETWORK_ID` names one. */
+export const dumpNetworkMode = (
   networkId: string | undefined,
   forceHostNetwork: boolean,
   projectEnvValues: Readonly<Record<string, string>>,
