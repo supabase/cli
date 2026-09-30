@@ -145,7 +145,7 @@ export function resolveConfigPushTarget(
       );
       // A definitive answer (200 or 404) clears the task; an uncertain one marks it failed
       // since the diagnostic step didn't complete, though the push proceeds regardless.
-      yield* (probe.kind === "unknown" ? probing?.fail() : probing?.clear()) ?? Effect.void;
+      yield* (probe.kind === "unknown" ? probing?.fail() : probing?.clear) ?? Effect.void;
 
       if (probe.kind === "project") {
         return { kind: "project", ref, ...(probe.name === undefined ? {} : { name: probe.name }) };

@@ -118,7 +118,7 @@ export const projectsList = Effect.fn("projects.list")(function* (_flags: Projec
         decode: true,
       });
     }
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
     // Prints the not-linked message to stderr but still renders the table below.
     if (Option.isNone(linkedRef)) {

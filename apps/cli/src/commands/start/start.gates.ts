@@ -212,6 +212,7 @@ export interface StartImagePlanEntry {
  */
 export function resolveStartImagePlan(
   gates: StartGates,
+  slim: boolean,
   serviceVersions: LocalServiceVersionOverrides = {},
 ): ReadonlyArray<StartImagePlanEntry> {
   const plan: Array<StartImagePlanEntry> = [];
@@ -223,8 +224,8 @@ export function resolveStartImagePlan(
     const localServiceName = START_SERVICE_TO_LOCAL_VERSION_NAME[entry.service];
     const image =
       localServiceName === undefined
-        ? dockerfileServiceImage(alias)
-        : resolvePinnedImage(alias, localServiceName, serviceVersions);
+        ? dockerfileServiceImage(alias, slim)
+        : resolvePinnedImage(alias, localServiceName, serviceVersions, slim);
     plan.push({ service: entry.service, image });
   }
   return plan;

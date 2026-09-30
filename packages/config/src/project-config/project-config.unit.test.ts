@@ -579,6 +579,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
         shadow_port: 2,
         health_timeout: "5m",
         major_version: 15,
+        orioledb_version: "1.0",
         pooler: { enabled: true, port: 7777, pool_mode: "session" },
         migrations: { enabled: false },
         seed: { enabled: false },
@@ -1098,6 +1099,41 @@ describe("fromApiProjectConfig — auth section", () => {
       textlocal: { enabled: false },
       vonage: { enabled: false },
     });
+  });
+
+  test("a named provider with a null identity attribute is unconfigured, never enabled", () => {
+    const result = fromApiProjectConfig({
+      auth: { sms_provider: "twilio", external_phone_enabled: false, sms_twilio_account_sid: null },
+    });
+    expect(result.auth?.sms).toEqual({
+      enable_signup: false,
+      twilio: { enabled: false },
+      twilio_verify: { enabled: false },
+      messagebird: { enabled: false },
+      textlocal: { enabled: false },
+      vonage: { enabled: false },
+    });
+  });
+
+  test.each([
+    ["twilio", "sms_twilio_account_sid"],
+    ["twilio_verify", "sms_twilio_verify_account_sid"],
+    ["messagebird", "sms_messagebird_originator"],
+    ["textlocal", "sms_textlocal_sender"],
+    ["vonage", "sms_vonage_from"],
+  ] as const)("%s is enabled only with its identity attribute set", (provider, key) => {
+    const auth = { sms_provider: provider, external_phone_enabled: true };
+    const identified = fromApiProjectConfig({ auth: { ...auth, [key]: "id" } });
+    expect(identified.auth?.sms?.[provider]?.enabled).toBe(true);
+    for (const blank of ["", null]) {
+      const result = fromApiProjectConfig({ auth: { ...auth, [key]: blank } });
+      expect(result.auth?.sms?.[provider]?.enabled).toBe(false);
+    }
+  });
+
+  test("an identity attribute without sms_provider names no provider", () => {
+    const result = fromApiProjectConfig({ auth: { sms_twilio_account_sid: "AC1" } });
+    expect(result.auth?.sms).toEqual({ twilio: { account_sid: "AC1" } });
   });
 
   test("external_github_enabled maps to auth.external.github.enabled", () => {

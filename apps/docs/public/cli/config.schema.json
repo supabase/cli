@@ -1776,6 +1776,10 @@
           "description": "The database major version to use. This has to be the same as your remote database's.",
           "default": 17
         },
+        "orioledb_version": {
+          "type": "string",
+          "description": "OrioleDB version of the Postgres image to use for the local database. Requires `major_version` 15 or 17."
+        },
         "pooler": {
           "type": "object",
           "properties": {
@@ -2418,7 +2422,7 @@
         },
         "orioledb_version": {
           "type": "string",
-          "description": "Postgres storage engine version for OrioleDB."
+          "description": "Deprecated: use `db.orioledb_version` instead. Postgres storage engine version for OrioleDB."
         },
         "s3_host": {
           "type": "string",
@@ -4291,6 +4295,10 @@
                         "description": "The database major version to use. This has to be the same as your remote database's.",
                         "default": 17
                       },
+                      "orioledb_version": {
+                        "type": "string",
+                        "description": "OrioleDB version of the Postgres image to use for the local database. Requires `major_version` 15 or 17."
+                      },
                       "pooler": {
                         "type": "object",
                         "properties": {
@@ -4933,7 +4941,7 @@
                       },
                       "orioledb_version": {
                         "type": "string",
-                        "description": "Postgres storage engine version for OrioleDB."
+                        "description": "Deprecated: use `db.orioledb_version` instead. Postgres storage engine version for OrioleDB."
                       },
                       "s3_host": {
                         "type": "string",

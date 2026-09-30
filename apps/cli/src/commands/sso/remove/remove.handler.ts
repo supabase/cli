@@ -76,7 +76,7 @@ export const ssoRemove = Effect.fn("sso.remove")(function* (flags: SsoRemoveFlag
         Effect.tapError(() => removing?.fail() ?? Effect.void),
         Effect.catch((cause) => handleRemoveError(ref, providerId, cause)),
       );
-      yield* removing?.clear() ?? Effect.void;
+      yield* removing?.clear ?? Effect.void;
 
       const goFmt = Option.getOrUndefined(goOutputFlag);
 

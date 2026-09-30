@@ -12,13 +12,16 @@ import {
 /** Runtime that executes a local stack's services. */
 export type StackRuntime = "native" | "docker" | "podman";
 
-/** Raised when automatic selection finds no reachable container engine on a host without native support. */
+/** Raised when no reachable container engine exists or native is requested on an unsupported host. */
 export class StackRuntimeSelectionError extends Data.TaggedError("StackRuntimeSelectionError")<{
+  readonly reason: "engine-unreachable" | "native-unsupported";
   readonly message: string;
   readonly suggestion: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dockerNotRunning;
+    return this.reason === "native-unsupported"
+      ? actionability.provideFlags
+      : actionability.dockerNotRunning;
   }
 }
 
@@ -69,7 +72,20 @@ export const automaticRuntimeNotice = (
 export const selectStackRuntime = Effect.fn("StackRuntime.select")(function* (
   requested: StackRuntime | undefined,
 ) {
-  if (requested !== undefined) return requested;
+  if (requested !== undefined) {
+    if (requested === "native") {
+      const { platform, arch } = yield* RuntimeInfo;
+      // Fail before a stack is created; the runtime's own check only runs mid-start.
+      if (defaultRuntime({ os: platform, arch }) !== "native")
+        return yield* new StackRuntimeSelectionError({
+          reason: "native-unsupported",
+          message: `Native artifacts are unsupported on ${platform}/${arch}.`,
+          suggestion:
+            "Start Docker or Podman and rerun with --runtime docker or --runtime podman; if this stack already exists as native, run supabase stack destroy first.",
+        });
+    }
+    return requested;
+  }
   const spawner = yield* ChildProcessSpawner;
   for (const probe of engineProbes) {
     if (yield* engineReachable(spawner, probe)) return probe.runtime;
@@ -77,6 +93,7 @@ export const selectStackRuntime = Effect.fn("StackRuntime.select")(function* (
   const { platform, arch } = yield* RuntimeInfo;
   if (defaultRuntime({ os: platform, arch }) === "native") return "native";
   return yield* new StackRuntimeSelectionError({
+    reason: "engine-unreachable",
     message: `Neither Docker nor Podman is reachable, and native stacks are not supported on ${platform}/${arch}.`,
     suggestion: "Start Docker or Podman, then rerun the command.",
   });

@@ -12,7 +12,7 @@
 import { Data, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { detectGitBranch } from "../../shared/git/git-branch.ts";
+import { branchClause, detectGitBranch } from "../../shared/git/git-branch.ts";
 import {
   DebugFlag,
   NetworkIdFlag,
@@ -238,9 +238,9 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
         workdir,
       });
     }).pipe(Effect.catch((error) => skipSeeding(error.message, suggestionOf(error))));
-    const branch = Option.getOrElse(yield* detectGitBranch(workdir), () => "main");
+    const branch = yield* detectGitBranch(workdir);
     yield* output.raw(
-      `Finished ${aqua("supabase db reset")} on branch ${aqua(branch)}.\n`,
+      `Finished ${aqua("supabase db reset")}${branchClause(branch, aqua)}.\n`,
       "stderr",
     );
     return;
@@ -345,6 +345,9 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     );
   }
 
-  const branch = Option.getOrElse(yield* detectGitBranch(workdir), () => "main");
-  yield* output.raw(`Finished ${aqua("supabase db reset")} on branch ${aqua(branch)}.\n`, "stderr");
+  const branch = yield* detectGitBranch(workdir);
+  yield* output.raw(
+    `Finished ${aqua("supabase db reset")}${branchClause(branch, aqua)}.\n`,
+    "stderr",
+  );
 });

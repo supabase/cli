@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Fiber } from "effect";
+import { Deferred, Effect, Exit, Fiber, Schema } from "effect";
 import { feedbackClientLayer } from "./feedback-client.layer.ts";
 import type { FeedbackSubmission } from "./feedback-client.service.ts";
 import { FeedbackClient } from "./feedback-client.service.ts";
@@ -39,11 +39,16 @@ function recordingFetch(
 ) {
   const requests: Array<{ request: Request; bodyText: string }> = [];
   const fetch: typeof globalThis.fetch = Object.assign(
-    async (input: string | URL | Request, init?: RequestInit) => {
+    (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const request =
         input instanceof Request ? new Request(input, init) : new Request(String(input), init);
-      requests.push({ request, bodyText: await request.clone().text() });
-      return respond(request);
+      return request
+        .clone()
+        .text()
+        .then((bodyText) => {
+          requests.push({ request, bodyText });
+          return respond(request);
+        });
     },
     { preconnect: () => Promise.resolve() },
   );
@@ -56,6 +61,10 @@ function jsonResponse(body: unknown, status = 200) {
     headers: { "content-type": "application/json" },
   });
 }
+
+const decodeJsonBody = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 
 function layerWith(transport: ReturnType<typeof recordingFetch>) {
   return feedbackClientLayer({ environment: TEST_ENV, fetch: transport.fetch });
@@ -75,7 +84,7 @@ describe("feedbackClientLayer", () => {
         expect(request.method).toBe("POST");
         expect(request.url).toBe(`${TEST_ENV.url}/rest/v1/rpc/submit_interfaces_feedback`);
         expect(request.headers.get("apikey")).toBe(TEST_ENV.key);
-        expect(JSON.parse(bodyText)).toEqual({
+        expect(yield* decodeJsonBody(bodyText)).toEqual({
           feedback: "port conflicts when running two stacks",
           user_agent: "SupabaseCLI/9.9.9",
           project_ref: PROJECT_REF,
@@ -107,12 +116,12 @@ describe("feedbackClientLayer", () => {
           },
         });
 
-        const body = JSON.parse(transport.requests[0]!.bodyText);
+        const body = yield* decodeJsonBody(transport.requests[0]!.bodyText);
         // The RPC's `project_ref` parameter defaults to null server-side; the
         // CLI simply leaves it (and `user_id`) out of the call.
         expect(body).not.toHaveProperty("project_ref");
         expect(body).not.toHaveProperty("user_id");
-        expect(body.metadata).toEqual({
+        expect(body["metadata"]).toEqual({
           cli_version: "9.9.9",
           source: "cli",
           os: "linux",
@@ -172,20 +181,18 @@ describe("feedbackClientLayer", () => {
       // insert commit after the command was cancelled. The fake fetch behaves
       // like a real one: it settles only when its abort signal fires.
       let capturedSignal: AbortSignal | undefined;
-      const inFlight = Promise.withResolvers<void>();
+      const inFlight = Deferred.makeUnsafe<void>();
       const transport = recordingFetch((request) => {
         capturedSignal = request.signal;
-        inFlight.resolve();
-        return new Promise<Response>((_, reject) => {
-          request.signal.addEventListener("abort", () => reject(request.signal.reason));
-        });
+        Deferred.doneUnsafe(inFlight, Exit.void);
+        return Effect.runPromise(Effect.never, { signal: request.signal });
       });
       return Effect.gen(function* () {
         const client = yield* FeedbackClient;
         const fiber = yield* client
           .submit(SUBMISSION)
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Effect.promise(() => inFlight.promise);
+        yield* Deferred.await(inFlight);
         yield* Fiber.interrupt(fiber);
 
         expect(capturedSignal?.aborted).toBe(true);

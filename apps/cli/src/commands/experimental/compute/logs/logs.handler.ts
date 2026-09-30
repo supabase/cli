@@ -236,7 +236,7 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
                 tail: flags.tail,
                 window: logWindow(yield* DateTime.now),
               }).pipe(Effect.tapError(() => fetching.fail()));
-              yield* fetching.clear();
+              yield* fetching.clear;
               return rows;
             });
 
@@ -256,7 +256,7 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
         const deployed = yield* getCompute(api, projectRef, name).pipe(
           Effect.tapError(() => checking.fail()),
         );
-        yield* checking.clear();
+        yield* checking.clear;
         if (Option.isNone(deployed)) {
           return yield* new ComputeNotDeployedError({
             detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,

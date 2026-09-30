@@ -134,6 +134,7 @@ import {
   START_WAITING_FOR_HEALTH_CHECKS_MESSAGE,
 } from "./start.format.ts";
 import { resolveStartGates, resolveStartImagePlan } from "./start.gates.ts";
+import { slimImagesEnabled } from "../../shared/services/slim-images.ts";
 import {
   isUnhealthyStartError,
   rollbackStart,
@@ -755,7 +756,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     );
 
     // 7. Resolve every image that will actually be pulled before any container is created.
-    const imagePlan = resolveStartImagePlan(gates, serviceVersionOverrides);
+    const slim = yield* slimImagesEnabled;
+    const imagePlan = resolveStartImagePlan(gates, slim, serviceVersionOverrides);
     // Edge Runtime doesn't go through `resolveStartImagePlan` (see `start.gates.ts`'s header),
     // so its default image is resolved independently, pre-pulled when enabled and not excluded.
     const edgeRuntimeDefaultImage = gates.edgeRuntime
@@ -1099,6 +1101,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             spec: buildLogflareContainerSpec(
               {
                 image,
+                slim,
                 projectId,
                 networkId,
                 port: analyticsPort,
@@ -1131,6 +1134,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           return {
             spec: buildVectorContainerSpec({
               image,
+              slim,
               containerName: vectorContainerName,
               networkId,
               apiKey: ANALYTICS_API_KEY,
@@ -1189,6 +1193,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           return {
             spec: buildGotrueContainerSpec({
               image,
+              slim,
               projectId,
               networkId,
               dbUrl: values.dbUrl,
@@ -1221,6 +1226,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               projectId,
               networkId,
               image,
+              slim,
               ipVersion: realtimeIpVersion,
               maxHeaderLength: realtimeMaxHeaderLength,
               dbUrl: values.dbUrl,
@@ -1249,6 +1255,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               projectId,
               networkId,
               image,
+              slim,
               targetMigration: storageTargetMigration,
               fileSizeLimit: storageFileSizeLimit,
               s3Region: values.storageS3Region,
@@ -1334,6 +1341,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           return {
             spec: buildSupavisorContainerSpec({
               image,
+              slim,
               projectId,
               networkId,
               port: poolerPort,
@@ -1395,14 +1403,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             ...config.db,
             port: values.dbPort,
             major_version: majorVersion,
+            // Matches the already env-overridden value used to select `postgresImage` above;
+            // `postgresExtraEnv` reads this and its sibling S3 fields for its
+            // `POSTGRES_INITDB_ARGS` branch.
+            orioledb_version: orioledbVersion,
             settings: resolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
           },
-          // Matches the already env-overridden value used to select `postgresImage` above;
-          // `postgresExtraEnv` reads this and its sibling S3 fields for its
-          // `POSTGRES_INITDB_ARGS` branch.
           experimental: {
             ...config.experimental,
-            orioledb_version: orioledbVersion,
             s3_host: s3Host,
             s3_region: s3Region,
             s3_access_key: s3AccessKey,

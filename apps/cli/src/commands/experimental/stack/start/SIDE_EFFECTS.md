@@ -42,7 +42,8 @@ asks the user to start Docker or Podman. When auto selection skips Docker, an in
 saved Podman or native runtime and how to switch to Docker. An existing stack keeps its saved
 runtime and runs no probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
 When an explicit or saved Docker runtime is unreachable, the reported failure suggests starting
-Docker, and `--runtime native` for a new stack on platforms that support native.
+Docker, and `--runtime native` for a new stack on platforms that support native. Explicit
+`--runtime native` on a platform with no native artifacts fails before creating a stack.
 
 Native startup refuses root because PostgreSQL `initdb` cannot run as root, unless a Claude Code
 or Modal Sandbox is detected or `SUPABASE_NATIVE_POSTGRES_USER` names a non-root user. PostgreSQL then runs
@@ -96,7 +97,8 @@ apply needed catalog and webhook setup without replaying project migrations or s
 composition reapplies the webhook setting before activation.
 
 When configured, initial Storage bucket seeding creates buckets and uploads their `objects_path`
-files using the service-role JWT. Storage is started and made ready before those requests. A resumed
+files using the service-role JWT, silently overwriting or pruning existing buckets without a
+confirmation prompt. Storage is started and made ready before those requests. A resumed
 stack is not re-seeded. Projects without configured buckets make no bucket-seeding requests.
 
 A new stack is registered by its owner once that owner starts; if the owner fails to start (for
@@ -126,8 +128,9 @@ pointer to `supabase status --env` that repeats an explicit `--workdir` and any 
 and warnings written while the spinner is shown appear on their own rows.
 
 JSON output returns the stack `id`, its saved `runtime`, `endpoints` keyed by service and endpoint
-name (protocol, address, port, and URL, matching `stack status`, plus `studio.mcp` when Studio has
-an HTTP endpoint), `lazy_services` listing members that start on their first request (empty with
-`--eager`), and an empty message. See [`docs/stack-commands.md`](../../../../../docs/stack-commands.md)
-for an example. Credentials are not part of the JSON result. Failures retain typed command errors
-and package diagnostics. Telemetry state is flushed after success or failure.
+name (protocol, address, port, and URL, matching `stack status`, with no synthetic entries),
+`lazy_services` listing members that start on their first request (empty with `--eager`), `env`
+(the same connection map `stack status --env` exports, present on every success path), and an
+empty message. See [`docs/stack-commands.md`](../../../../../docs/stack-commands.md) for an
+example. Failures retain typed command errors and package diagnostics. Telemetry state is flushed
+after success or failure.

@@ -55,7 +55,7 @@ export const vanitySubdomainsGet = Effect.fn("vanity-subdomains.get")(function* 
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch(gateMapError({ projectRef: ref }, mapGetError)),
       );
-      yield* fetching?.clear() ?? Effect.void;
+      yield* fetching?.clear ?? Effect.void;
 
       const goOutput = Option.getOrUndefined(outputFlag);
 

@@ -40,7 +40,7 @@ export const orgsCreate = Effect.fn("orgs.create")(function* (flags: OrgsCreateF
         Effect.tapError(() => creating?.fail() ?? Effect.void),
         Effect.catch(mapCreateError),
       );
-    yield* creating?.clear() ?? Effect.void;
+    yield* creating?.clear ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 

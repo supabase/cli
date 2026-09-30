@@ -30,7 +30,7 @@ export const encryptionGetRootKey = Effect.fn("encryption.get-root-key")(functio
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(mapGetError),
     );
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
     if (output.format !== "text") {
       // json / stream-json — emit a structured result.

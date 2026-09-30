@@ -167,7 +167,7 @@ const resolveLinkBranchRef = Effect.fnUntraced(function* (value: string) {
     Effect.tapError(() => task?.fail() ?? Effect.void),
     Effect.catch(mapBranchListError),
   );
-  yield* task?.clear() ?? Effect.void;
+  yield* task?.clear ?? Effect.void;
 
   const found: LinkBranch | undefined = branches.find(
     // UUID matching is case-insensitive (canonical ids are lowercase hex, but uppercase input
@@ -393,7 +393,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
           Effect.timeout(LINK_CACHE_CORRELATION_TIMEOUT),
           Effect.map((branches) => branches.some((branch) => branch.project_ref === ref)),
           Effect.orElseSucceed(() => false),
-          Effect.ensuring(correlating?.clear() ?? Effect.void),
+          Effect.ensuring(correlating?.clear ?? Effect.void),
         );
         if (!verified) {
           yield* fs.remove(paths.linkedProjectCache, { force: true }).pipe(Effect.ignore);

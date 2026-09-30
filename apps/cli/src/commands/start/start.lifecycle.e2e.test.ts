@@ -17,6 +17,7 @@ import {
 import { getRegistryImageUrl } from "../../command-internal/docker-registry.ts";
 import { SERVICE_CATALOG } from "../../command-internal/service-catalog.ts";
 import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
+import { slimImagesEnabled } from "../../shared/services/slim-images.ts";
 
 class StartE2eSetupError extends Data.TaggedError("StartE2eSetupError")<{
   readonly message: string;
@@ -286,7 +287,9 @@ describe("supabase start (e2e)", () => {
         const mailpitContainer = serviceContainerName("inbucket", projectId);
         // The exact tag `start` resolves for Mailpit, so its already-cached check finds this
         // broken build without reaching a registry.
-        const mailpitImage = yield* getRegistryImageUrl(dockerfileServiceImage("mailpit"));
+        const mailpitImage = yield* getRegistryImageUrl(
+          dockerfileServiceImage("mailpit", yield* slimImagesEnabled),
+        );
 
         const init = yield* runSupabaseEffect(["init"], {
           cwd: projectDir,
