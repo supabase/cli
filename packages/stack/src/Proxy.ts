@@ -1,5 +1,5 @@
 import { NodeSink, NodeSocket, NodeSocketServer, NodeStream } from "@effect/platform-node";
-import { Data, Effect, Option, Stream } from "effect";
+import { Data, Duration, Effect, Option, Stream } from "effect";
 import type { Scope } from "effect";
 import type { SocketServer } from "effect/unstable/socket";
 import * as Net from "node:net";
@@ -16,6 +16,26 @@ export class ProxyError extends Data.TaggedError("ProxyError")<{
 
 const proxyError = (cause: unknown) =>
   new ProxyError({ message: cause instanceof Error ? cause.message : String(cause), cause });
+
+/**
+ * Safely above `ProcessRecipe`'s 60-second process-launch budget, so a wake that also has to
+ * start a stopped prerequisite still has time to finish.
+ */
+export const wakeTimeout: Duration.Input = "120 seconds";
+
+/** Bounds a proxy's wait for a lazy target so a stalled wake fails visibly instead of hanging. */
+export const awaitWake = <A, R>(
+  label: string,
+  target: Effect.Effect<A, ProxyError, R>,
+  timeout: Duration.Input = wakeTimeout,
+): Effect.Effect<A, ProxyError, R> =>
+  target.pipe(
+    Effect.timeoutOrElse({
+      duration: timeout,
+      orElse: () =>
+        Effect.fail(new ProxyError({ message: `Wake for ${label} did not complete in time` })),
+    }),
+  );
 
 /** Binds a dedicated public listener and retains the socket until its scope closes. */
 export const bindTcp = (host: string, port: number) =>
@@ -59,6 +79,8 @@ export const serveTcp = Effect.fn("Proxy.serveTcp")(
   (
     listener: SocketServer.SocketServer["Service"],
     target: Effect.Effect<BackendAddress, ProxyError, Scope.Scope>,
+    label: string,
+    timeout: Duration.Input = wakeTimeout,
   ) =>
     listener.run(() =>
       Effect.scoped(
@@ -86,13 +108,16 @@ export const serveTcp = Effect.fn("Proxy.serveTcp")(
             });
           });
           yield* Effect.gen(function* () {
-            const address = yield* target;
+            const address = yield* awaitWake(label, target, timeout);
             const backend = yield* connect(address);
             yield* Effect.all([copy(incoming, backend), copy(backend, incoming)], {
               concurrency: "unbounded",
               discard: true,
             });
-          }).pipe(Effect.raceFirst(closed));
+          }).pipe(
+            Effect.tapError((cause) => Effect.logError(`Endpoint ${label} failed`, cause)),
+            Effect.raceFirst(closed),
+          );
         }),
       ).pipe(Effect.catchTag("ProxyError", () => Effect.void)),
     ),

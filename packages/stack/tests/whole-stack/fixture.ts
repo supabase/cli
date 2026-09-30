@@ -7,6 +7,7 @@ import {
   FileSystem,
   Layer,
   Option,
+  Path,
   Redacted,
   Ref,
   Stream,
@@ -85,6 +86,18 @@ const watchServiceLogs = Effect.fn("WholeStack.watchServiceLogs")(
 );
 
 const endpoint = (port: "auto") => ({ port });
+
+/** Bounds diagnostic log text to its last lines, so a runaway owner log stays readable. */
+export const tailLines = (content: string, limit: number): string =>
+  content.trimEnd().split("\n").slice(-limit).join("\n");
+
+const ownerLogTail = Effect.fn("WholeStack.ownerLogTail")(
+  (fs: FileSystem.FileSystem, path: Path.Path, stateRoot: string, stackId: string) =>
+    fs.readFileString(path.join(stateRoot, stackId, "owner.log")).pipe(
+      Effect.map((content) => tailLines(content, 40)),
+      Effect.orElseSucceed(() => ""),
+    ),
+);
 
 export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
   Effect.gen(function* () {
@@ -227,8 +240,10 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
               ),
             );
             const tails = yield* Ref.get(logTails);
+            const path = yield* Path.Path;
+            const ownerLog = yield* ownerLogTail(fs, path, locations.stateRoot, stack.id);
             yield* Effect.logError(
-              `Whole-stack failure diagnostics: cause=${Cause.pretty(exit.cause)} statuses=${statuses.join(",")} logs=${tails.map(([name, value]) => `${name}: ${value}`).join("\n")}`,
+              `Whole-stack failure diagnostics: cause=${Cause.pretty(exit.cause)} statuses=${statuses.join(",")} logs=${tails.map(([name, value]) => `${name}: ${value}`).join("\n")} owner log=${ownerLog}`,
             );
           }).pipe(Effect.ignoreCause)
         : Effect.void,

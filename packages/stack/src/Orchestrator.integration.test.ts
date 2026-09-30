@@ -57,6 +57,7 @@ const makeInstance = (
     );
     const instance: RegisteredInstance = {
       id,
+      service: id,
       core,
       startAt: (revision, inputs, wake, guard) => core.startAt(revision, inputs, wake, guard),
       restart: (revision, inputs, candidate, guard) =>

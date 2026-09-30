@@ -1,6 +1,7 @@
 import { Data, Effect, FiberSet, Ref, Schedule, Scope } from "effect";
+import type { Duration } from "effect";
 import { PortError } from "./Ports.ts";
-import type { BackendAddress, ProxyError } from "./Proxy.ts";
+import { awaitWake, type BackendAddress, type ProxyError } from "./Proxy.ts";
 import {
   createServer,
   request as upstreamRequest,
@@ -27,6 +28,8 @@ export interface HttpRoute {
   readonly upstreamPrefix?: string;
   readonly upstreamHost?: string;
   readonly keyRewrite?: HttpRouteKeyRewrite;
+  /** Overrides `Proxy.wakeTimeout` for this route's target wait; tests inject a short budget. */
+  readonly wakeTimeout?: Duration.Input;
 }
 
 /** Configures Supabase API-key rewriting for one HTTP route. */
@@ -325,7 +328,10 @@ const forward = Effect.fn("HttpProxy.forward")(
 const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
   (request: IncomingMessage, response: ServerResponse, route: HttpRoute) =>
     Effect.gen(function* () {
-      const backend = yield* Effect.raceFirst(route.target, disconnected(request, response));
+      const backend = yield* Effect.raceFirst(
+        awaitWake(route.id, route.target, route.wakeTimeout),
+        disconnected(request, response),
+      );
       yield* forward(request, response, route, backend).pipe(
         Effect.retry(retryOnce(request, response, route)),
       );
@@ -336,7 +342,7 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
   (request: IncomingMessage, client: Duplex, head: Buffer, route: HttpRoute) =>
     Effect.gen(function* () {
       const backend = yield* Effect.raceFirst(
-        route.target,
+        awaitWake(route.id, route.target, route.wakeTimeout),
         Effect.callback<never, HttpProxyDisconnected>((resume) => {
           const onClose = () => resume(Effect.fail(new HttpProxyDisconnected()));
           client.once("close", onClose);

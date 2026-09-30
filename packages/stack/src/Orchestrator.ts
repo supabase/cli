@@ -67,6 +67,8 @@ interface RegisteredCore {
 
 export interface RegisteredInstance {
   readonly id: string;
+  /** The service kind this instance runs, for wake observability; the id is the graph identity. */
+  readonly service: string;
   readonly core: RegisteredCore;
   readonly startAt: (
     revision: number,
@@ -177,6 +179,7 @@ export interface Interface<Entry extends RegisteredInstance = RegisteredInstance
   readonly acquire: (
     id: string,
     awaitReady?: boolean,
+    trigger?: string,
   ) => Effect.Effect<void, OrchestratorError | LifecycleError, Scope.Scope>;
 }
 
@@ -884,7 +887,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <
     restartComposition: restartComposition(),
     stopNamespace: stopNamespace(),
     destroyNamespace: destroyNamespace(),
-    acquire: Effect.fn("Orchestrator.acquire")((id, awaitReady = true) =>
+    acquire: Effect.fn("Orchestrator.acquire")((id, awaitReady = true, trigger) =>
       Effect.gen(function* () {
         const instance = yield* node(id);
         const scope = yield* Scope.Scope;
@@ -913,11 +916,27 @@ export const make = Effect.fn("Orchestrator.make")(function* <
           }),
         );
         if (wake) {
+          yield* Effect.logInfo(
+            `Waking ${instance.service} ${id}${trigger === undefined ? "" : ` (${trigger})`}`,
+          );
           const plan = yield* snapshotPlan(id);
           for (const member of plan.order) yield* (yield* node(member)).bind;
-          yield* startNode(id, true, awaitReady, plan);
+          yield* startNode(id, true, awaitReady, plan).pipe(
+            Effect.tapError((cause) =>
+              Effect.logError(`${instance.service} ${id} failed to wake`, cause),
+            ),
+          );
         }
-        if (awaitReady) yield* instance.core.ready;
+        if (awaitReady) {
+          yield* instance.core.ready.pipe(
+            Effect.tapError((cause) =>
+              wake
+                ? Effect.logError(`${instance.service} ${id} failed to become ready`, cause)
+                : Effect.void,
+            ),
+          );
+          if (wake) yield* Effect.logInfo(`${instance.service} ${id} is ready`);
+        }
       }),
     ),
   };
