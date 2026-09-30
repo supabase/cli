@@ -63,6 +63,11 @@ import {
   type PasswdEntry,
 } from "../runtime/postgres-user.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
+import {
+  containerInstancePath,
+  ensureOwnedInstanceRoot,
+  removeOwnedInstanceRoot,
+} from "./InstanceRoot.ts";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import {
   instanceSnapshotsDirectory,
@@ -349,42 +354,29 @@ const publishLogs = publishProcessLogs;
 const runtimeFromContainer = (process: ContainerProcess, discard: boolean): RuntimeSession =>
   runtimeSessionFromContainer(process, describePostgresExit, { discard });
 
-const ensureOwnedRoot = Effect.fn("Database.ensureOwnedRoot")((
+const databaseOwnerFileName = ".supabase-database-owner.json";
+
+const ensureOwnedRoot = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   root: string,
   stackId: string,
   instanceId: string,
-): Effect.Effect<void, DatabaseError> => {
-  const ownerFile = path.join(root, ".supabase-database-owner.json");
-  const marker = JSON.stringify({ stackId, instanceId });
-  return Effect.gen(function* () {
-    yield* fs
-      .makeDirectory(root, { recursive: true, mode: 0o700 })
-      .pipe(Effect.mapError((cause) => databaseError("data", cause)));
-    const present = yield* fs
-      .exists(ownerFile)
-      .pipe(Effect.mapError((cause) => databaseError("data", cause)));
-    if (present) {
-      const existing = yield* fs
-        .readFileString(ownerFile)
-        .pipe(Effect.mapError((cause) => databaseError("data", cause)));
-      if (existing !== marker)
-        return yield* databaseError("data", "Database root belongs to another instance");
-    } else {
-      const entries = yield* fs
-        .readDirectory(root)
-        .pipe(Effect.mapError((cause) => databaseError("data", cause)));
-      if (entries.length > 0)
-        return yield* databaseError("data", "Database root is non-empty and unmarked");
-      yield* fs
-        .writeFileString(ownerFile, marker, { mode: 0o600, flag: "wx" })
-        .pipe(Effect.mapError((cause) => databaseError("data", cause)));
-    }
-  });
-});
+): Effect.Effect<void, DatabaseError> =>
+  ensureOwnedInstanceRoot(
+    {
+      fs,
+      path,
+      root,
+      stackId,
+      instanceId,
+      ownerFileName: databaseOwnerFileName,
+      label: "Database root",
+    },
+    databaseError,
+  );
 
-const removeOwnedRoot = Effect.fn("Database.removeOwnedRoot")((
+const removeOwnedRoot = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   root: string,
@@ -393,38 +385,21 @@ const removeOwnedRoot = Effect.fn("Database.removeOwnedRoot")((
   removeData: Effect.Effect<void, ServiceError>,
   /** Root entries kept with the owner marker; when empty the root itself is removed. */
   keep: ReadonlyArray<string> = [],
-): Effect.Effect<void, ServiceError> => {
-  const ownerFile = path.join(root, ".supabase-database-owner.json");
-  const marker = JSON.stringify({ stackId, instanceId });
-  return Effect.gen(function* () {
-    const present = yield* fs
-      .exists(ownerFile)
-      .pipe(Effect.mapError((cause) => errorFor("destroy", cause)));
-    if (!present) {
-      if (yield* fs.exists(root).pipe(Effect.mapError((cause) => errorFor("destroy", cause))))
-        return yield* errorFor("destroy", "Database root is unmarked");
-      return;
-    }
-    const existing = yield* fs
-      .readFileString(ownerFile)
-      .pipe(Effect.mapError((cause) => errorFor("destroy", cause)));
-    if (existing !== marker)
-      return yield* errorFor("destroy", "Database root belongs to another instance");
-    yield* removeData;
-    if (keep.length === 0)
-      return yield* fs
-        .remove(root, { recursive: true, force: true })
-        .pipe(Effect.mapError((cause) => errorFor("destroy", cause)));
-    const names = yield* fs
-      .readDirectory(root)
-      .pipe(Effect.mapError((cause) => errorFor("destroy", cause)));
-    for (const name of names)
-      if (name !== path.basename(ownerFile) && !keep.includes(name))
-        yield* fs
-          .remove(path.join(root, name), { recursive: true, force: true })
-          .pipe(Effect.mapError((cause) => errorFor("destroy", cause)));
-  });
-});
+): Effect.Effect<void, ServiceError> =>
+  removeOwnedInstanceRoot(
+    {
+      fs,
+      path,
+      root,
+      stackId,
+      instanceId,
+      ownerFileName: databaseOwnerFileName,
+      label: "Database root",
+    },
+    removeData,
+    errorFor,
+    keep,
+  );
 
 const nativeProcess = (
   artifact: PreparedNativeArtifact,
@@ -567,7 +542,7 @@ export const makeDatabase = (
               env: {},
               mounts: [
                 storage === undefined
-                  ? { source: instanceRoot, target: "/instance", readOnly: false }
+                  ? { source: instanceRoot, target: containerInstancePath, readOnly: false }
                   : yield* storage.mount(version).pipe(
                       Effect.map((mount) => ({ ...mount, target: "/var/lib/postgresql/data" })),
                       Effect.mapError((cause) => errorFor("data", cause)),

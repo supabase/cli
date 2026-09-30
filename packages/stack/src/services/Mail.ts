@@ -21,7 +21,10 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   executable: "bin/mailpit",
   ports: { http: 8025, smtp: 1025, pop3: 1110 },
   healthPath: "/readyz",
-  env: (_creation, endpoints, container) => {
+  // Mailpit otherwise defaults to a /tmp file named from the current time, shared by name across
+  // parallel instances and deleted on every stop, which loses captured mail on idle sleep.
+  instanceDirectory: true,
+  env: (_creation, endpoints, container, instanceDir) => {
     const http = endpoints.get("http");
     const smtp = endpoints.get("smtp");
     const pop3 = endpoints.get("pop3");
@@ -46,6 +49,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
           }),
       // Docker gateway addresses can make SMTP reverse DNS delay Auth recovery.
       MP_SMTP_DISABLE_RDNS: "true",
+      ...(instanceDir === undefined ? {} : { MP_DATABASE: `${instanceDir}/mailpit.db` }),
     });
   },
   args: () => Effect.succeed([]),
