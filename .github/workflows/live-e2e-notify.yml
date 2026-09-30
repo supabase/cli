@@ -10,27 +10,24 @@ permissions:
   contents: read
 
 jobs:
-  notify:
+  classify:
     if: github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     continue-on-error: true
-    concurrency:
-      group: live-e2e-notify-${{ github.event.workflow_run.head_branch }}
-      cancel-in-progress: false
+    outputs:
+      suite: ${{ steps.classify.outputs.suite }}
+      startup_failure: ${{ steps.classify.outputs.startup_failure }}
     steps:
-      - name: Notify Slack
-        id: notify
+      - name: Classify suite result
+        id: classify
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
-          BRANCH: ${{ github.event.workflow_run.head_branch }}
           CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
         run: |
           set -euo pipefail
 
@@ -52,18 +49,52 @@ jobs:
           elif [[ "$current_suite" == none || ("$current_suite" == failure && "$WORKFLOW_NAME" == "Release") ]]; then
             # Release's generic notification covers release failures and runs
             # that reused a staging result without creating a suite job.
+            echo "Current ${WORKFLOW_NAME} suite: ${current_suite}; nothing to notify"
             exit 0
           fi
+          echo "Current ${WORKFLOW_NAME} suite: ${current_suite}"
+          {
+            echo "suite=${current_suite}"
+            echo "startup_failure=${startup_failure}"
+          } >> "$GITHUB_OUTPUT"
+
+  notify:
+    needs: classify
+    if: needs.classify.outputs.suite != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    # A group keeps one pending job and replaces it when another arrives, so
+    # only real suite results take the lock.
+    concurrency:
+      group: live-e2e-notify-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    steps:
+      - name: Notify Slack
+        id: notify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          CURRENT_SUITE: ${{ needs.classify.outputs.suite }}
+          STARTUP_FAILURE: ${{ needs.classify.outputs.startup_failure }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
+        run: |
+          set -euo pipefail
 
           # The artifact records what this notifier last reported for the branch;
           # reruns and repeated results dedupe against it. Fork runs can upload
           # artifacts with the same name, so only same-repository runs count.
-          state_artifact="live-e2e-alert-state-${BRANCH//[^A-Za-z0-9._-]/-}"
+          branch_digest="$(printf '%s' "$BRANCH" | sha256sum | cut -c1-12)"
+          state_artifact="live-e2e-alert-state-${BRANCH//[^A-Za-z0-9._-]/-}-${branch_digest}"
           state_dir="${RUNNER_TEMP}/live-e2e-alert-state"
           mkdir -p "$state_dir"
           recorded_state=unknown
-          if artifacts="$(gh api -X GET "/repos/${REPOSITORY}/actions/artifacts" -f "name=${state_artifact}" -F per_page=20)"; then
-            artifact_id="$(jq -r 'first(.artifacts[]? | select(.workflow_run.head_repository_id == .workflow_run.repository_id)) // empty | select(.expired != true) | .id' <<< "$artifacts")"
+          if artifacts="$(gh api -X GET "/repos/${REPOSITORY}/actions/artifacts" -f "name=${state_artifact}" -F per_page=100)"; then
+            artifact_id="$(jq -r 'first(.artifacts[]? | select(.workflow_run.repository_id != null and .workflow_run.head_repository_id == .workflow_run.repository_id)) // empty | select(.expired != true) | .id' <<< "$artifacts")"
             if [[ -z "$artifact_id" ]]; then
               recorded_state=none
             elif gh api "/repos/${REPOSITORY}/actions/artifacts/${artifact_id}/zip" > "${state_dir}/previous.zip" \
@@ -73,10 +104,9 @@ jobs:
             fi
           fi
           echo "Recorded state for ${BRANCH}: ${recorded_state}"
-          echo "Current ${WORKFLOW_NAME} suite: ${current_suite}"
 
           # Passes are not posted; recording them re-arms the next failure alert.
-          if [[ "$current_suite" == success ]]; then
+          if [[ "$CURRENT_SUITE" == success ]]; then
             if [[ "$recorded_state" != failing && "$recorded_state" != unknown ]]; then
               echo "Action: none (no open failure)"
               exit 0
@@ -92,7 +122,7 @@ jobs:
               echo "::warning::Could not read ${state_artifact}; posting the failure in case it is new."
             fi
             new_state=failing
-            if [[ "$startup_failure" == true ]]; then
+            if [[ "$STARTUP_FAILURE" == true ]]; then
               header="❌ Live E2E failed to start"
               text="Live E2E failed to start"
               detail="The Live E2E workflow failed before it produced a Live e2e job."
