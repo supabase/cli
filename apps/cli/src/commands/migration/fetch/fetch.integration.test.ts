@@ -254,21 +254,42 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("cancels the overwrite on an unrecognised piped answer", () => {
+  it.live.each(
+    ["u", "yess", "nope", "   "].flatMap((answer) => [
+      { answer, isTTY: false },
+      { answer, isTTY: true },
+    ]),
+  )(
+    "cancels the overwrite on the unrecognised answer $answer (isTTY $isTTY)",
+    ({ answer, isTTY }) => {
+      const { layer } = setup(tmp.current, {
+        isTTY,
+        pipedInput: `${answer}\n`,
+        rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
+      });
+      return Effect.gen(function* () {
+        yield* seedExistingMigration(tmp.current);
+        const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
+        }
+        expect(yield* listMigrations(tmp.current)).toEqual(["existing.sql"]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live.each(["\n", "", " YES \n"])("overwrites on the piped answer %j", (pipedInput) => {
     const { layer } = setup(tmp.current, {
       isTTY: false,
-      pipedInput: "nope\n",
+      pipedInput,
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
       yield* seedExistingMigration(tmp.current);
-      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
-      }
-      expect(yield* listMigrations(tmp.current)).toEqual(["existing.sql"]);
+      yield* migrationFetch(flags());
+      expect(yield* listMigrations(tmp.current)).toContain("20240101000000_init.sql");
     }).pipe(Effect.provide(layer));
   });
 
