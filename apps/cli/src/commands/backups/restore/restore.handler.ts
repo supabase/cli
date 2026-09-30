@@ -41,7 +41,7 @@ export const backupsRestore = Effect.fn("backups.restore")(function* (flags: Bac
         Effect.tapError(() => restoring?.fail() ?? Effect.void),
         Effect.catch(mapRestoreError),
       );
-    yield* restoring?.clear() ?? Effect.void;
+    yield* restoring?.clear ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 

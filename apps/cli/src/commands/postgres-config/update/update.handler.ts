@@ -71,7 +71,7 @@ export const postgresConfigUpdate = Effect.fn("postgres-config.update")(function
         unmarshalMessage: (description) => `failed to unmarshal update response: ${description}`,
       }).pipe(Effect.tapError(() => updating?.fail() ?? Effect.void));
 
-      yield* updating?.clear() ?? Effect.void;
+      yield* updating?.clear ?? Effect.void;
       yield* writePostgresConfigOutput(updated);
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));

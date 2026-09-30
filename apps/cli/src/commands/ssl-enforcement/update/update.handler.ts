@@ -66,7 +66,7 @@ export const sslEnforcementUpdate = Effect.fn("ssl-enforcement.update")(function
           Effect.tapError(() => updating?.fail() ?? Effect.void),
           Effect.catch(mapUpdateError),
         );
-      yield* updating?.clear() ?? Effect.void;
+      yield* updating?.clear ?? Effect.void;
 
       const goFmt = Option.getOrUndefined(goOutputFlag);
 

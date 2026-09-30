@@ -67,7 +67,7 @@ export const secretsList = Effect.fn("secrets.list")(function* (flags: SecretsLi
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(mapListError),
     );
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
     const sorted = sortSecrets(response);
     const goFmt = Option.getOrUndefined(goOutputFlag);

@@ -49,7 +49,7 @@ export const sslEnforcementGet = Effect.fn("ssl-enforcement.get")(function* (
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch(mapGetError),
       );
-      yield* fetching?.clear() ?? Effect.void;
+      yield* fetching?.clear ?? Effect.void;
 
       const goFmt = Option.getOrUndefined(goOutputFlag);
 

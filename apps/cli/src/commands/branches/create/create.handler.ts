@@ -120,7 +120,7 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
           ),
         ),
       );
-    yield* creating?.clear() ?? Effect.void;
+    yield* creating?.clear ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 

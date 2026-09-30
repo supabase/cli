@@ -42,7 +42,7 @@ export const orgsList = Effect.fn("orgs.list")(function* (_flags: OrgsListFlags)
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(mapListError),
     );
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 

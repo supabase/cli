@@ -160,7 +160,7 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
     ).pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit)
-          ? task.clear()
+          ? task.clear
           : Option.match(Cause.findErrorOption(exit.cause), {
               onNone: () => (Cause.hasInterruptsOnly(exit.cause) ? task.cancel() : task.fail()),
               onSome: (error) => task.fail(error.message),

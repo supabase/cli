@@ -75,7 +75,7 @@ export const ssoList = Effect.fn("sso.list")(function* (flags: SsoListFlags) {
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch((cause) => handleListError(ref, cause)),
       );
-      yield* fetching?.clear() ?? Effect.void;
+      yield* fetching?.clear ?? Effect.void;
 
       const goFmt = Option.getOrUndefined(goOutputFlag);
       const payload = { providers: response.items };
