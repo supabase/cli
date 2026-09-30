@@ -546,11 +546,16 @@ it.live(
             Effect.provide(NodeHttpClient.layerNodeHttp),
           )).status,
         ).toBe(404);
-        // Owns a raw connection to the shared listener so its closure can be observed directly,
-        // instead of reprobing the port afterward.
+        // A served keep-alive request proves the listener accepted and tracks this socket, so its
+        // closure is observed directly instead of by reprobing the port.
         const probe = yield* Effect.callback<Net.Socket, FixtureError>((resume) => {
           const connection = Net.createConnection({ host: address.host, port: address.port });
-          connection.once("connect", () => resume(Effect.succeed(connection)));
+          connection.once("connect", () => {
+            connection.write(
+              `GET /mcp HTTP/1.1\r\nHost: ${address.host}:${address.port}\r\nConnection: keep-alive\r\n\r\n`,
+            );
+          });
+          connection.once("data", () => resume(Effect.succeed(connection)));
           connection.on("error", (cause) =>
             resume(Effect.fail(new FixtureError({ message: cause.message }))),
           );
