@@ -70,7 +70,7 @@ export interface SlimCatalogPin {
 }
 
 /** OrioleDB tags are docker.io-only; slim-services does not publish them. */
-export function isOrioleImage(image: string): boolean {
+function isOrioleImage(image: string): boolean {
   const tag = imageTag(image);
   return tag !== undefined && tag.toLowerCase().includes("orioledb");
 }
