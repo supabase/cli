@@ -740,8 +740,10 @@ it.live("delivers a keyed POST once when the upstream resets after reading its b
   return Effect.scoped(
     Effect.gen(function* () {
       const bodies: Array<string> = [];
+      let connections = 0;
       // Answers GETs on a keep-alive connection; resets after reading a POST body in full.
       const backend = createTcpServer((socket) => {
+        connections += 1;
         socket.on("error", () => {});
         let buffered = Buffer.alloc(0);
         socket.on("data", (chunk: Buffer) => {
@@ -773,6 +775,7 @@ it.live("delivers a keyed POST once when the upstream resets after reading its b
       });
       expect(post.status).toBe(502);
       expect(bodies).toEqual(["insert"]);
+      expect(connections).toBe(2);
       expect(logs).toHaveLength(1);
       expect(logs[0]).toContain("Route rest request failed");
     }),
