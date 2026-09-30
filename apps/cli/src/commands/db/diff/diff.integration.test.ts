@@ -544,7 +544,9 @@ describe("db diff", () => {
       expect(stdout(s.out)).toBe("create table players ();\n\n");
       expect(stderr(s.out)).toContain("Creating shadow database...");
       expect(stderr(s.out)).toContain("Diffing schemas...");
-      expect(stderr(s.out)).toContain("Finished supabase db diff on branch");
+      // The temp workdir sits outside any git checkout, so the branch is unknown and
+      // the "Finished" line omits the clause instead of falsely claiming "main".
+      expect(stderr(s.out)).toContain("Finished supabase db diff.\n");
       expect(s.telemetry.flushed).toBe(true);
       const expectedHost = FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
       expect(s.shadowSetupJobCalls.length).toBeGreaterThan(0);
@@ -562,7 +564,7 @@ describe("db diff", () => {
         }
       }
       expect(sawHost).toBe(true);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("GITHUB_HEAD_REF", undefined, body));
   });
 
   it.effect("forwards SUPABASE_SSL_DEBUG=TRUE to the migra script as true", () => {

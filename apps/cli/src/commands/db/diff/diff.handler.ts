@@ -7,7 +7,7 @@ import {
   NetworkIdFlag,
 } from "../../../command-internal/global-flags.ts";
 import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
-import { detectGitBranch } from "../../../shared/git/git-branch.ts";
+import { branchClause, detectGitBranch } from "../../../shared/git/git-branch.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -730,9 +730,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // Detect the branch from the resolved workdir, not the caller's CWD, so
       // `supabase --workdir … db diff` reports the project's branch, not the
       // directory the command was invoked from.
-      const branch = Option.getOrElse(yield* detectGitBranch(cliSettings.workdir), () => "main");
+      const branch = yield* detectGitBranch(cliSettings.workdir);
       yield* output.raw(
-        `Finished ${aqua("supabase db diff")} on branch ${aqua(branch)}.\n\n`,
+        `Finished ${aqua("supabase db diff")}${branchClause(branch, aqua)}.\n\n`,
         "stderr",
       );
     }
