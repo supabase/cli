@@ -10,7 +10,7 @@ import { shellQuote } from "../storage/DockerSnapshotBackend.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { makeDatabaseSnapshots, type SnapshotScope } from "./DatabaseSnapshot.ts";
 
-const version = "17.6.1.173";
+const version = "17.11.0.002";
 
 class ShellError extends Data.TaggedError("ShellError")<{ readonly message: string }> {}
 
@@ -511,7 +511,7 @@ for (const { name, make } of engines)
           const target = yield* engine.instance("target");
 
           yield* shell(
-            `printf '%s' ${shellQuote(saved.replace(version, "15.14.1.173"))} > ${descriptor}`,
+            `printf '%s' ${shellQuote(saved.replace(version, "15.19.0.002"))} > ${descriptor}`,
           );
           expect(yield* target.restoreSnapshot("key")).toBe(false);
           expect(yield* contents(target.data)).toBe("");

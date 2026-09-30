@@ -1058,7 +1058,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.writeFileString(path.join(nativeRoot, "data", "PG_VERSION"), "17\n");
         yield* fs.writeFileString(
           path.join(nativeRoot, ".supabase-database-ready.json"),
-          '{"version":"17.6.1.173","runtime":"native","profile":"supabase"}',
+          '{"version":"17.11.0.002","runtime":"native","profile":"supabase"}',
         );
         const nativeSnapshots = yield* makeDatabaseSnapshots({
           instanceRoot: nativeRoot,

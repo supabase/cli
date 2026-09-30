@@ -1577,7 +1577,7 @@ describe("db start stack backend", () => {
   const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
     service: "database",
     config: {
-      version: "17.6.1.173",
+      version: "17.11.0.002",
       databasePassword: Redacted.make("secret"),
       jwtSecret: Redacted.make("secret"),
       jwtExpiry: 3600,

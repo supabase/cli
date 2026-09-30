@@ -96,7 +96,7 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
         const error = yield* runner
           .run({
             command: initialization.auth({
-              version: "v2.196.0",
+              version: "v2.197.0",
               databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
             }),
             credentials,
@@ -139,7 +139,7 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
         const command = yield* runner
           .run({
             command: initialization.auth({
-              version: "v2.196.0",
+              version: "v2.197.0",
               databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
             }),
             credentials,
@@ -197,7 +197,7 @@ it.effect.skipIf(target === undefined || process.platform === "win32")(
         const command = yield* runner
           .run({
             command: initialization.auth({
-              version: "v2.196.0",
+              version: "v2.197.0",
               databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
             }),
             credentials,

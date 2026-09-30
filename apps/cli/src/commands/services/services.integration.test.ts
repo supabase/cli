@@ -333,13 +333,13 @@ describe("services", () => {
       expect(out.stderrText).toBe("");
       expect(rows).toHaveLength(13);
       expect(rows).toContainEqual(
-        expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "15.14.1.173" }),
+        expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "15.19.0.002" }),
       );
       expect(rows).toContainEqual(
-        expect.objectContaining({ name: "ghcr.io/supabase/cli/mailpit", local: "v1.30.2" }),
+        expect.objectContaining({ name: "ghcr.io/supabase/cli/mailpit", local: "v1.31.3" }),
       );
       expect(rows).toContainEqual(
-        expect.objectContaining({ name: "ghcr.io/supabase/cli/vector", local: "0.53.0" }),
+        expect.objectContaining({ name: "ghcr.io/supabase/cli/vector", local: "0.58.0" }),
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -359,7 +359,7 @@ describe("services", () => {
 
       const rows = yield* decodeServiceRows(out.stdoutText);
       expect(rows).toContainEqual(
-        expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "15.14.1.173" }),
+        expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "15.19.0.002" }),
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -377,10 +377,10 @@ describe("services", () => {
 
         const rows = yield* decodeServiceRows(out.stdoutText);
         expect(rows).toContainEqual(
-          expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "17.6.1.173" }),
+          expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "17.11.0.002" }),
         );
         expect(rows).toContainEqual(
-          expect.objectContaining({ name: "ghcr.io/supabase/cli/auth", local: "v2.196.0" }),
+          expect.objectContaining({ name: "ghcr.io/supabase/cli/auth", local: "v2.197.0" }),
         );
         expect(out.stderrText).toContain("unsupported PostgreSQL major version: 16");
         expect(out.stderrText).toContain("using default stack catalog versions");
@@ -396,7 +396,7 @@ describe("services", () => {
 
       const rows = yield* decodeServiceRows(out.stdoutText);
       expect(rows).toContainEqual(
-        expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "17.6.1.173" }),
+        expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "17.11.0.002" }),
       );
       expect(out.stderrText).toMatch(/^failed to read config:/);
       expect(out.stderrText).toContain("using default stack catalog versions");
@@ -580,7 +580,7 @@ major_version = 15
       expect(stackRows).toContainEqual(
         expect.objectContaining({
           name: "ghcr.io/supabase/cli/postgres",
-          local: "17.6.1.173",
+          local: "17.11.0.002",
           remote: "17.6.1.200",
         }),
       );

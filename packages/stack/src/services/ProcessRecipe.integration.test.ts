@@ -49,12 +49,12 @@ import * as Pooler from "./Pooler.ts";
 
 type TestCreation = RecipeCreation<"rest", Record<string, never>> & {
   readonly service: "rest";
-  readonly version: "v16.2";
+  readonly version: "v16.4";
 };
 
 const creation: TestCreation = {
   service: "rest",
-  version: "v16.2",
+  version: "v16.4",
   config: {},
 };
 
