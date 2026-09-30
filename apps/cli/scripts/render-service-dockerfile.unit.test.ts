@@ -41,19 +41,26 @@ describe("renderDockerfile against the real catalog and Dockerfile", () => {
     expect(renderDockerfile(tampered)).toBe(currentTsDockerfile);
   });
 
-  test("leaves every hand-/Dependabot-managed line untouched, including comments and pg14", () => {
-    const rendered = renderDockerfile(currentTsDockerfile);
-    for (const line of [
-      "FROM library/kong:2.8.1 AS kong",
-      "FROM supabase/pgadmin-schema-diff:cli-0.0.5 AS differ",
-      "FROM supabase/migra:3.0.1663481299 AS migra",
-      "FROM supabase/pg_prove:3.36 AS pgprove",
-    ]) {
-      expect(rendered).toContain(line);
+  test("preserves hand-/Dependabot-managed lines verbatim, even when their own tags change", () => {
+    // Simulates a Dependabot bump of kong/differ/migra/pgprove: give each a synthetic marker
+    // tag (never a real pin) and confirm the generator leaves those exact lines alone rather
+    // than reverting or otherwise touching them.
+    const marker = "99.99.99-fixture-marker";
+    let tampered = currentTsDockerfile;
+    for (const alias of ["kong", "differ", "migra", "pgprove"]) {
+      const pattern = new RegExp(`^FROM (\\S+):(\\S+) AS ${alias}$`, "m");
+      const match = pattern.exec(tampered);
+      expect(match, `no line for hand-managed alias '${alias}'`).not.toBeNull();
+      tampered = tampered.replace(pattern, `FROM $1:${marker} AS ${alias}`);
     }
-    // pg14 has no slim build: its tag is whatever the checked-in file already pins, verbatim.
-    const pg14Line = currentTsDockerfile.split("\n").find((line) => line.endsWith("AS pg14"));
-    expect(pg14Line).toBeDefined();
-    expect(rendered).toContain(pg14Line);
+    expect(tampered).not.toBe(currentTsDockerfile);
+
+    const rendered = renderDockerfile(tampered);
+    for (const alias of ["kong", "differ", "migra", "pgprove"]) {
+      const tamperedLine = tampered.split("\n").find((line) => line.endsWith(`AS ${alias}`));
+      expect(tamperedLine).toBeDefined();
+      expect(tamperedLine).toContain(marker);
+      expect(rendered).toContain(tamperedLine);
+    }
   });
 });

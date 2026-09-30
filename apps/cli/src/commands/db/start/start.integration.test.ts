@@ -1577,7 +1577,10 @@ describe("db start stack backend", () => {
   const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
     service: "database",
     config: {
-      version: "17.11.0.002",
+      // Derived from the real catalog's major-17 pin, not hardcoded: `dbStart`'s stack-backend
+      // path resolves the desired version through the same catalog, so a bump would otherwise
+      // make the "resumes the existing database" test below see a spurious version mismatch.
+      version: postgresVersion("17"),
       databasePassword: Redacted.make("secret"),
       jwtSecret: Redacted.make("secret"),
       jwtExpiry: 3600,
