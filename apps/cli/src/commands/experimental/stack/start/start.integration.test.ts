@@ -44,7 +44,6 @@ import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
 import { StackApi, stackApiLayer, StackTargetResolver } from "../stack.shared.ts";
 import { stackStart } from "./start.handler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
@@ -401,7 +400,8 @@ const layers = (
   output = mockOutput(),
   existing = true,
   explicitWorkdir = false,
-  runtimeInfo = runtimeInfoLayer,
+  // Fixtures request the native runtime, so pin a host that ships native artifacts.
+  runtimeInfo = mockRuntimeInfo({ platform: "linux", arch: "x64" }),
 ) => {
   const telemetry = mockTelemetryStateTracked();
   const target = Layer.succeed(StackTargetResolver, {
